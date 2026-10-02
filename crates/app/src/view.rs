@@ -42,7 +42,15 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let range = viewport::visible_range(entries.len(), ROW_H, p.offset, p.height);
     let mut list = column![widget::Space::new().height(range.start as f32 * ROW_H)];
     for i in range.clone() {
-        list = list.push(file_row(app, side, i, &entries[i], i == cursor, active));
+        list = list.push(file_row(
+            app,
+            side,
+            i,
+            &entries[i],
+            i == cursor,
+            active,
+            p.panel.is_marked(&entries[i]),
+        ));
     }
     list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * ROW_H));
     let list = scrollable(list)
@@ -59,14 +67,14 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             }))
             .into(),
         None => {
-            let t = p.panel.totals();
+            let (t, m) = (p.panel.totals(), p.panel.marked_totals());
             text(fl!(
                 "status",
-                sel_bytes = "0",
+                sel_bytes = format::size(m.bytes),
                 bytes = format::size(t.bytes),
-                sel_files = "0",
+                sel_files = m.files.to_string(),
                 files = t.files.to_string(),
-                sel_dirs = "0",
+                sel_dirs = m.dirs.to_string(),
                 dirs = t.dirs.to_string()
             ))
             .size(TEXT)
@@ -93,7 +101,7 @@ fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Mess
         let label = container(cell(format::dir_title(t.panel.cwd())))
             .padding([2, 8])
             .max_width(160.0)
-            .class(cursor_style(i == tabs.active_index(), pane_active));
+            .class(cursor_style(i == tabs.active_index(), pane_active, false));
         bar = bar.push(
             mouse_area(label)
                 .on_press(Message::SelectTab(side, i))
@@ -142,6 +150,7 @@ fn file_row<'a>(
     e: &'a Entry,
     is_cursor: bool,
     active: bool,
+    is_marked: bool,
 ) -> Element<'a, Message> {
     let is_parent = e.name == PARENT;
     let size = if e.is_dir() {
@@ -170,7 +179,7 @@ fn file_row<'a>(
         .height(Length::Fixed(ROW_H))
         .width(Length::Fill)
         .clip(true)
-        .class(cursor_style(is_cursor, active));
+        .class(cursor_style(is_cursor, active, is_marked));
     mouse_area(row)
         .on_press(Message::Click(side, i))
         .on_double_click(Message::DoubleClick(side, i))
@@ -218,25 +227,31 @@ fn bar_style(active: bool) -> theme::Container<'static> {
     })
 }
 
-fn cursor_style(is_cursor: bool, active: bool) -> theme::Container<'static> {
+/// Cursor row: accent (dimmed in the inactive pane). Marked rows: red text; a marked row under the
+/// active cursor becomes a red bar instead — red text on the accent bar is unreadable in light accents.
+fn cursor_style(is_cursor: bool, active: bool, marked: bool) -> theme::Container<'static> {
     theme::Container::custom(move |t| {
-        if !is_cursor {
-            return container::Style::default();
-        }
         let c = t.cosmic();
-        let mut bg = Color::from(c.accent_color());
-        if active {
-            container::Style {
-                background: Some(bg.into()),
-                text_color: Some(c.on_accent_color().into()),
-                ..Default::default()
+        let mut style = container::Style::default();
+        match (is_cursor, active, marked) {
+            (true, true, true) => {
+                style.background = Some(Color::from(c.destructive_color()).into());
+                style.text_color = Some(c.on_destructive_color().into());
             }
-        } else {
-            bg.a = 0.35;
-            container::Style {
-                background: Some(bg.into()),
-                ..Default::default()
+            (true, true, false) => {
+                style.background = Some(Color::from(c.accent_color()).into());
+                style.text_color = Some(c.on_accent_color().into());
             }
+            (true, false, _) => {
+                let mut bg = Color::from(c.accent_color());
+                bg.a = 0.35;
+                style.background = Some(bg.into());
+            }
+            _ => {}
         }
+        if marked && !(is_cursor && active) {
+            style.text_color = Some(c.destructive_text_color().into());
+        }
+        style
     })
 }

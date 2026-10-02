@@ -1,11 +1,13 @@
 use crate::fl;
 use crate::keymap::{self, Action};
 use cosmic::app::{Core, Task};
+use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
 use shagoff_core::format::TimeZone;
 use shagoff_core::listing::{self, Entry};
+use shagoff_core::mask::Mask;
 use shagoff_core::panel::Panel;
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
@@ -58,6 +60,13 @@ impl Tab {
     }
 }
 
+/// Num+ / Num− dialog: mask input for the pane that was active when it opened.
+pub struct MaskDialog {
+    side: usize,
+    select: bool,
+    input: String,
+}
+
 pub struct App {
     core: Core,
     pub panes: [Tabs<Tab>; 2],
@@ -67,6 +76,10 @@ pub struct App {
     pub active: usize,
     pub tz: TimeZone,
     next_id: u64,
+    /// Current keyboard modifiers, for Ctrl+click.
+    mods: Modifiers,
+    mask_dialog: Option<MaskDialog>,
+    mask_input_id: widget::Id,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +99,10 @@ pub enum Message {
     Scrolled(usize, f32, f32),
     SelectTab(usize, usize),
     CloseTabAt(usize, usize),
+    Modifiers(Modifiers),
+    MaskInput(String),
+    MaskSubmit,
+    MaskCancel,
     Exit,
 }
 
@@ -123,6 +140,9 @@ impl Application for App {
             active: 0,
             tz: TimeZone::system(),
             next_id: 2,
+            mods: Modifiers::empty(),
+            mask_dialog: None,
+            mask_input_id: widget::Id::unique(),
         };
         let task = Task::batch([app.load(0, left, None), app.load(1, home, None)]);
         (app, task)
@@ -130,7 +150,16 @@ impl Application for App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Key(action) => return self.act(self.active, action),
+            Message::Key(action) => {
+                if self.mask_dialog.is_some() {
+                    // The dialog is modal: only Escape reaches us; panels must not move.
+                    if action == Action::Cancel {
+                        self.mask_dialog = None;
+                    }
+                    return Task::none();
+                }
+                return self.act(self.active, action);
+            }
             Message::Listed {
                 side,
                 tab,
@@ -160,7 +189,11 @@ impl Application for App {
             }
             Message::Click(side, i) => {
                 self.active = side;
-                self.panes[side].active_mut().panel.set_cursor(i);
+                let panel = &mut self.panes[side].active_mut().panel;
+                panel.set_cursor(i);
+                if self.mods.control() {
+                    panel.toggle_mark();
+                }
             }
             Message::DoubleClick(side, i) => {
                 self.active = side;
@@ -185,6 +218,21 @@ impl Application for App {
                 self.panes[side].close(i);
                 return self.restore_scroll(side);
             }
+            Message::Modifiers(m) => self.mods = m,
+            Message::MaskInput(s) => {
+                if let Some(d) = &mut self.mask_dialog {
+                    d.input = s;
+                }
+            }
+            Message::MaskSubmit => {
+                if let Some(d) = self.mask_dialog.take() {
+                    self.panes[d.side]
+                        .active_mut()
+                        .panel
+                        .mark_by_mask(&Mask::parse(&d.input), d.select);
+                }
+            }
+            Message::MaskCancel => self.mask_dialog = None,
             Message::Exit => return cosmic::iced::exit(),
         }
         Task::none()
@@ -200,12 +248,39 @@ impl Application for App {
             }) if status == event::Status::Ignored => {
                 keymap::action(&key, physical_key, modifiers).map(Message::Key)
             }
+            cosmic::iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
+                Some(Message::Modifiers(m))
+            }
             _ => None,
         })
     }
 
     fn view(&self) -> Element<'_, Message> {
         crate::view::view(self)
+    }
+
+    fn dialog(&self) -> Option<Element<'_, Message>> {
+        let d = self.mask_dialog.as_ref()?;
+        let title = if d.select {
+            fl!("select-group")
+        } else {
+            fl!("unselect-group")
+        };
+        Some(
+            widget::dialog()
+                .title(title)
+                .control(
+                    widget::text_input("", d.input.as_str())
+                        .id(self.mask_input_id.clone())
+                        .on_input(Message::MaskInput)
+                        .on_submit(|_| Message::MaskSubmit),
+                )
+                .primary_action(widget::button::suggested(fl!("ok")).on_press(Message::MaskSubmit))
+                .secondary_action(
+                    widget::button::standard(fl!("cancel")).on_press(Message::MaskCancel),
+                )
+                .into(),
+        )
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {
@@ -278,15 +353,21 @@ impl App {
                 }
             }
             Action::Root => return self.load(side, "/".into(), None),
-            Action::Mark
-            | Action::MarkDown
-            | Action::MarkUp
-            | Action::SelectGroup
-            | Action::UnselectGroup
-            | Action::Invert
-            | Action::SelectAll
-            | Action::UnselectAll
-            | Action::Cancel => {}
+            Action::Mark => panel.toggle_mark(),
+            Action::MarkDown => panel.toggle_mark_and_move(1),
+            Action::MarkUp => panel.toggle_mark_and_move(-1),
+            Action::Invert => panel.invert(),
+            Action::SelectAll => panel.mark_all(true),
+            Action::UnselectAll => panel.mark_all(false),
+            Action::Cancel => {}
+            Action::SelectGroup | Action::UnselectGroup => {
+                self.mask_dialog = Some(MaskDialog {
+                    side,
+                    select: action == Action::SelectGroup,
+                    input: "*".into(),
+                });
+                return widget::text_input::focus(self.mask_input_id.clone());
+            }
             Action::Reload => {
                 let cwd = panel.cwd().to_path_buf();
                 return self.load(side, cwd, None);
