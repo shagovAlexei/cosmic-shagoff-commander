@@ -40,6 +40,10 @@ pub enum Action {
     ToggleHidden,
     /// Alt+F1 / Alt+F2: drive list for pane 0 / 1.
     Drives(usize),
+    /// Alt+symbol: quick search starting with this character.
+    QuickSearch(char),
+    /// Ctrl+S: quick filter field.
+    QuickFilter,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -48,10 +52,17 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         return None;
     }
     if mods.alt() {
-        // Alt+F1/F2 only; other Alt combos belong to the compositor and future menus.
+        // Alt+F1/F2: drives; Alt+symbol: quick search (TC). Other Alt combos belong to the compositor.
         return match key {
             Key::Named(Named::F1) if mods == Modifiers::ALT => Some(Action::Drives(0)),
             Key::Named(Named::F2) if mods == Modifiers::ALT => Some(Action::Drives(1)),
+            Key::Character(s) if mods == Modifiers::ALT => {
+                let mut chars = s.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) if !c.is_control() => Some(Action::QuickSearch(c)),
+                    _ => None,
+                }
+            }
             _ => None,
         };
     }
@@ -93,6 +104,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyT), true, false) => Some(Action::NewTab),
         (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
         (Physical::Code(Code::KeyH), true, false) => Some(Action::ToggleHidden),
+        (Physical::Code(Code::KeyS), true, false) => Some(Action::QuickFilter),
         (Physical::Code(Code::Space), false, false) => Some(Action::Mark),
         (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
         (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
@@ -245,7 +257,7 @@ mod tests {
         assert_eq!(named(Named::F1, ALT | Modifiers::SHIFT), None);
         assert_eq!(named(Named::Enter, ALT), None);
         assert_eq!(named(Named::F4, ALT), None); // Alt+F4 stays with the compositor
-        assert_eq!(chr("a", Code::KeyA, ALT), None);
+        assert_eq!(chr("a", Code::KeyA, ALT), Some(Action::QuickSearch('a')));
         assert_eq!(named(Named::F1, Modifiers::LOGO), None);
     }
 
@@ -253,5 +265,21 @@ mod tests {
     fn escape_is_not_a_panel_key() {
         // Escape is routed to DialogCancel by app::route_event before the keymap.
         assert_eq!(named(Named::Escape, NONE), None);
+    }
+
+    #[test]
+    fn alt_letter_is_quick_search() {
+        assert_eq!(chr("d", Code::KeyD, ALT), Some(Action::QuickSearch('d')));
+        assert_eq!(chr("в", Code::KeyD, ALT), Some(Action::QuickSearch('в')));
+        assert_eq!(chr("1", Code::Digit1, ALT), Some(Action::QuickSearch('1')));
+        assert_eq!(chr("D", Code::KeyD, ALT | Modifiers::SHIFT), None);
+        assert_eq!(chr("d", Code::KeyD, ALT | CTRL), None);
+        assert_eq!(named(Named::F1, ALT), Some(Action::Drives(0))); // still drives
+    }
+
+    #[test]
+    fn ctrl_s_is_quick_filter() {
+        assert_eq!(chr("s", Code::KeyS, CTRL), Some(Action::QuickFilter));
+        assert_eq!(chr("ы", Code::KeyS, CTRL), Some(Action::QuickFilter));
     }
 }

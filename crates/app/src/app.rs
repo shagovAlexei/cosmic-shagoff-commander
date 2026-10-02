@@ -653,6 +653,7 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
+            Action::QuickSearch(_) | Action::QuickFilter => {}
             Action::Copy
             | Action::Move
             | Action::Rename
