@@ -7,7 +7,7 @@ Guidance for Claude Code in this repository. Reply to the user in Russian; code,
 Shagoff Commander is a dual-pane file manager for Pop!_OS 24.04 COSMIC, written in Rust on libcosmic (an iced fork). The goal is to behave as close as possible to **Total Commander for Windows** in layout and keyboard.
 
 - `.claude/docs/tc-reference.md` is the source of truth for "how TC does it". Check it before implementing any key or behaviour, and update it when you add one.
-- Full design and its rationale: `.claude/docs/specs/2026-10-02-architecture-design.md`.
+- Full design and its rationale: `.claude/docs/specs/00-architecture-design.md`.
 - Phases and backlog: `.claude/docs/ROADMAP.md`.
 
 Fixed names (never change these):
@@ -39,22 +39,22 @@ The workspace has two crates.
 - **`crates/core` (`shagoff-core`)** has no libcosmic dependency. All logic lives here and is unit-tested.
   - `panel.rs`: `Panel { cwd, entries, cursor, marked, sort, show_hidden }` plus pure functions (cursor moves, Insert/Space marking, mask marking, invert, sort, `targets()`).
   - `listing.rs`: `scan()` on `std::fs`. `..` comes first, then folders, then files.
-  - `ops.rs`: our own synchronous engine (`plan`, `transfer`, `delete`) driven through a `Handler` trait — not cosmic-files' (that one needs compio; see the phase 5 spec). Writes go to `<name>.shagoff-part` then `rename`; a moved source is deleted only after its copy succeeded; symlinks are never followed.
+  - `ops.rs`: our own synchronous engine (`plan`, `transfer`, `delete`) driven through a `Handler` trait — not cosmic-files' (that one needs compio; see the phase 5 spec). Writes go to a hidden `.<name>.<pid>.<n>.shagoff-part` (created with O_EXCL) then `rename`; a moved source is deleted only after its copy succeeded; symlinks are never followed.
 - **`crates/app` (`shagoff-commander`)** is the libcosmic UI.
   - `app.rs`: `App { panes: [Pane; 2], active }`.
   - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error.
   - `view/`: drive buttons, tabs, path line, column table, status line, F-key bar.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
   - `dialogs.rs`: modal dialogs.
-  - `watcher.rs`: `notify` on both panes' cwd.
-  - `config.rs`: cosmic-config.
+  - `watcher.rs`: `notify` on the active tab's cwd of each pane, debounced; ignores open/read events (our own scan opens the dir). Paused while a file operation runs.
+  - `config.rs`: cosmic-config `Config` (settings, `~/.config/cosmic/<APP_ID>/v1/`, applied live) and `State` (tabs, `~/.local/state/cosmic/<APP_ID>/v1/`, written when it changes). `App::build` takes both, so tests never touch disk.
 
 Data flow: key or button → keymap → `Action` → `App::update`. From there, one of:
 - navigation or selection → a pure `core::Panel` function;
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Implemented so far: `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `ops`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with stale-result check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). No config yet. Modules appear phase by phase, so check the tree before assuming one exists.
+Implemented so far (MVP done): `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `ops`, `drives`, `session`, `launch`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with a generation check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). `config.rs` and `watcher.rs` are in; drive buttons, F3/F4 and Alt+F1/F2 too. Modules appear phase by phase, so check the tree before assuming one exists.
 
 ## Conventions
 

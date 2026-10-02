@@ -17,6 +17,25 @@ pub fn size(n: u64) -> String {
     out
 }
 
+/// `1536` → `1.5 K`; binary units, one decimal below 100.
+pub fn human(n: u64) -> String {
+    const UNITS: [&str; 5] = ["K", "M", "G", "T", "P"];
+    if n < 1024 {
+        return format!("{n} B");
+    }
+    let mut v = n as f64 / 1024.0;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    if v < 100.0 {
+        format!("{v:.1} {}", UNITS[unit])
+    } else {
+        format!("{v:.0} {}", UNITS[unit])
+    }
+}
+
 /// `02.10.2026 13:49` in `tz`; empty if the time is out of range.
 pub fn date(t: SystemTime, tz: &TimeZone) -> String {
     jiff::Timestamp::try_from(t)
@@ -64,6 +83,15 @@ mod tests {
     use super::*;
     use crate::listing::Kind;
     use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn human_sizes() {
+        assert_eq!(human(0), "0 B");
+        assert_eq!(human(1023), "1023 B");
+        assert_eq!(human(1536), "1.5 K");
+        assert_eq!(human(12_900_000_000), "12.0 G");
+        assert_eq!(human(450 * 1024 * 1024 * 1024), "450 G");
+    }
 
     fn entry(name: &str, ext: &str, kind: Kind) -> Entry {
         Entry {

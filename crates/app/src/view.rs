@@ -8,6 +8,7 @@ use cosmic::iced::widget::{column, row};
 use cosmic::iced::{Alignment, Color, Length};
 use cosmic::widget::{self, button, container, mouse_area, scrollable, text};
 use cosmic::{Element, theme};
+use shagoff_core::drives;
 use shagoff_core::format;
 use shagoff_core::listing::Entry;
 use shagoff_core::panel::PARENT;
@@ -83,7 +84,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         }
     };
 
-    let mut col = column![];
+    let mut col = column![drive_bar(app, side)];
     if tabs.items().len() > 1 {
         col = col.push(tab_bar(side, tabs, active));
     }
@@ -93,6 +94,33 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .push(container(status).padding([2, 6]))
         .width(Length::Fill)
         .into()
+}
+
+/// Drive buttons (the one holding cwd highlighted) and free space on the current disk.
+// ponytail: many drives overflow the row; wrap in a horizontal scrollable when they stop fitting.
+fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
+    let current = drives::containing(&app.drives, app.panes[side].active().panel.cwd());
+    let mut bar = row![].spacing(2).align_y(Alignment::Center);
+    for (i, d) in app.drives.iter().enumerate() {
+        let b = if Some(i) == current {
+            button::suggested(d.label.clone())
+        } else {
+            button::text(d.label.clone())
+        };
+        bar = bar.push(b.on_press(Message::Drive(side, i)));
+    }
+    bar = bar.push(widget::Space::new().width(Length::Fill));
+    if let Some((free, total)) = app.space[side] {
+        bar = bar.push(
+            text(fl!(
+                "disk-free",
+                free = format::human(free),
+                total = format::human(total)
+            ))
+            .size(TEXT),
+        );
+    }
+    container(bar).padding([2, 6]).into()
 }
 
 /// Shown only with 2+ tabs; the active tab is styled like the cursor row.
@@ -196,15 +224,14 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
 }
 
 pub fn fkey_bar() -> Element<'static, Message> {
-    let disabled = |label: String| button::standard(label).width(Length::Fill);
     let key = |label: String, action| {
         button::standard(label)
             .on_press(Message::Key(action))
             .width(Length::Fill)
     };
     row![
-        disabled(fl!("fkey-view")),
-        disabled(fl!("fkey-edit")),
+        key(fl!("fkey-view"), Action::View),
+        key(fl!("fkey-edit"), Action::Edit),
         key(fl!("fkey-copy"), Action::Copy),
         key(fl!("fkey-move"), Action::Move),
         key(fl!("fkey-mkdir"), Action::Mkdir),

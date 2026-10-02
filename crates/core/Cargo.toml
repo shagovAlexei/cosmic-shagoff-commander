@@ -9,6 +9,8 @@ repository.workspace = true
 
 [dependencies]
 jiff = "0.2"
+rustix = { version = "1", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
 trash = "5"
 
 [dev-dependencies]

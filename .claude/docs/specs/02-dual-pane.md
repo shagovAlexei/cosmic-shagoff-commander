@@ -1,7 +1,7 @@
 # Фаза 2: две панели
 
 Дата: 2026-10-02. Статус: одобрен.
-Основа: [архитектурный спек](2026-10-02-architecture-design.md), [фаза 1](2026-10-02-core-panel.md), [эталон TC](../tc-reference.md).
+Основа: [архитектурный спек](00-architecture-design.md), [фаза 1](01-core-panel.md), [эталон TC](../tc-reference.md).
 
 ## Цель
 

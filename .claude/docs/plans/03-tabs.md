@@ -11,7 +11,7 @@
 
 **Tech Stack:** Rust 2024, libcosmic (pinned rev).
 
-**Spec:** `.claude/docs/specs/2026-10-02-tabs.md`
+**Spec:** `.claude/docs/specs/03-tabs.md`
 
 ## Global Constraints
 
@@ -527,7 +527,7 @@ This task is UI glue. The logic it relies on was tested in Tasks 1 and 2. Here i
   ```bash
   git add TESTING.md .claude CLAUDE.md && git commit -m "docs: phase 3 checklist, roadmap, tc-reference"
   git push -u origin feat/tabs
-  gh pr create --title "Tabs (phase 3)" --body "Spec: .claude/docs/specs/2026-10-02-tabs.md
+  gh pr create --title "Tabs (phase 3)" --body "Spec: .claude/docs/specs/03-tabs.md
   Plan: .claude/docs/plans/03-tabs.md"
   gh pr checks --watch
   ```

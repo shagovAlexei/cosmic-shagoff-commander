@@ -1,20 +1,26 @@
+use crate::config::{self, Config, LastTab, State};
 use crate::dialogs::{self, Dialog, InputOp};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
 use cosmic::app::{Core, Task};
+use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
+use shagoff_core::drives::{self, Drive};
 use shagoff_core::format::TimeZone;
+use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
 use shagoff_core::panel::{PARENT, Panel};
+use shagoff_core::session::{self, PaneState};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,8 +41,8 @@ pub struct Tab {
     pub panel: Panel,
     pub offset: f32,
     pub height: f32,
-    /// Path of the scan in flight; results for any other path are stale.
-    pending: Option<PathBuf>,
+    /// Generation and path of the scan in flight; any other result is stale.
+    pub(crate) pending: Option<(u64, PathBuf)>,
     pub error: Option<String>,
 }
 
@@ -49,6 +55,15 @@ impl Tab {
             height: FALLBACK_LIST_H,
             pending: None,
             error: None,
+        }
+    }
+
+    /// Where the tab is going: the dir being scanned, else the shown one. Rescans use this so they
+    /// never cancel a navigation still in flight.
+    fn target(&self) -> PathBuf {
+        match &self.pending {
+            Some((_, p)) => p.clone(),
+            None => self.panel.cwd().to_path_buf(),
         }
     }
 
@@ -104,6 +119,15 @@ pub struct App {
     job: Option<Running>,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
     input_id: widget::Id,
+    pub home: PathBuf,
+    pub config: Config,
+    config_handler: Option<cosmic_config::Config>,
+    state_handler: Option<cosmic_config::Config>,
+    /// Last state written, to skip identical writes.
+    saved: State,
+    pub drives: Vec<Drive>,
+    /// (free, total) bytes of each pane's current disk.
+    pub space: [Option<(u64, u64)>; 2],
 }
 
 #[derive(Debug, Clone)]
@@ -112,9 +136,12 @@ pub enum Message {
     Listed {
         side: usize,
         tab: u64,
+        generation: u64,
         path: PathBuf,
         focus: Option<String>,
         result: Result<Vec<Entry>, String>,
+        /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
+        space: Option<(u64, u64)>,
     },
     Click(usize, usize),
     DoubleClick(usize, usize),
@@ -131,6 +158,11 @@ pub enum Message {
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
     CancelJob,
+    /// The watched dir of this pane's active tab changed.
+    Changed(usize),
+    /// Drive button / drive list entry: (side, drive index).
+    Drive(usize, usize),
+    Config(Config),
     Exit,
 }
 
@@ -153,33 +185,125 @@ impl Application for App {
         // Tab is ours (switch pane); libcosmic's Tab focus-walk would also focus buttons that Enter then fires.
         core.set_keyboard_nav(false);
         let home = std::env::home_dir().unwrap_or_else(|| "/".into());
-        let left = flags
-            .left
-            .and_then(|p| p.canonicalize().ok())
-            .filter(|p| p.is_dir())
-            .unwrap_or_else(|| home.clone());
-        let mut app = Self {
-            core,
-            panes: [
-                Tabs::new(Tab::new(1, left.clone())),
-                Tabs::new(Tab::new(2, home.clone())),
-            ],
-            scroll_ids: [widget::Id::unique(), widget::Id::unique()],
-            active: 0,
-            tz: TimeZone::system(),
-            next_id: 2,
-            mods: Modifiers::empty(),
-            dialog: None,
-            job: None,
-            input_id: widget::Id::unique(),
-        };
-        let task = Task::batch([app.load(0, left, None), app.load(1, home, None)]);
+        let (ch, sh) = (config::config_handler(), config::state_handler());
+        let (cfg, state): (Config, State) = (config::read(ch.as_ref()), config::read(sh.as_ref()));
+        let saved = state.clone();
+        let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
+        app.saved = saved;
+        (app.config_handler, app.state_handler) = (ch, sh);
         (app, task)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        self.save_state();
+        task
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        let mut subs = vec![
+            event::listen_with(route_event),
+            self.core()
+                .watch_config::<Config>(APP_ID)
+                .map(|u| Message::Config(u.config)),
+        ];
+        if self.job.is_none() {
+            // Paused during file operations: finish_job rescans both panes anyway.
+            for side in 0..2 {
+                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                subs.push(crate::watcher::watch(side, cwd));
+            }
+        }
+        Subscription::batch(subs)
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        crate::view::view(self)
+    }
+
+    fn dialog(&self) -> Option<Element<'_, Message>> {
+        if let Some(d) = &self.dialog {
+            return Some(dialogs::view(d, &self.input_id, &self.tz, &self.drives));
+        }
+        self.job.as_ref().map(dialogs::progress)
+    }
+
+    fn footer(&self) -> Option<Element<'_, Message>> {
+        Some(crate::view::fkey_bar())
+    }
+}
+
+impl App {
+    /// Everything but the disk-backed config handlers (tests use this directly).
+    pub fn build(
+        core: Core,
+        config: Config,
+        state: State,
+        left: Option<PathBuf>,
+        home: PathBuf,
+    ) -> (Self, Task<Message>) {
+        let mut app = Self {
+            core,
+            panes: [
+                Tabs::new(Tab::new(0, home.clone())),
+                Tabs::new(Tab::new(0, home.clone())),
+            ],
+            scroll_ids: [widget::Id::unique(), widget::Id::unique()],
+            active: state.active.min(1),
+            tz: TimeZone::system(),
+            next_id: 0,
+            mods: Modifiers::empty(),
+            dialog: None,
+            job: None,
+            input_id: widget::Id::unique(),
+            home,
+            config,
+            config_handler: None,
+            state_handler: None,
+            saved: State::default(),
+            drives: Vec::new(),
+            space: [None, None],
+        };
+        let left = left
+            .and_then(|p| p.canonicalize().ok())
+            .filter(|p| p.is_dir());
+        for side in 0..2 {
+            let (mut paths, active) = session::restore(&state.panes[side], &app.home);
+            if side == 0
+                && let Some(l) = &left
+            {
+                paths[active] = l.clone();
+            }
+            let mut tabs = Tabs::new(app.new_tab(paths[0].clone()));
+            for p in &paths[1..] {
+                tabs.open_after(app.new_tab(p.clone()));
+            }
+            tabs.select(active);
+            app.panes[side] = tabs;
+        }
+        app.refresh_mounts();
+        let task = app.load_all();
+        (app, task)
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
+                if let Some(Dialog::Drives { side, cursor }) = &mut self.dialog {
+                    match action {
+                        Action::Up => *cursor = cursor.saturating_sub(1),
+                        Action::Down => {
+                            *cursor = (*cursor + 1).min(self.drives.len().saturating_sub(1))
+                        }
+                        Action::Enter => {
+                            let (side, i) = (*side, *cursor);
+                            self.dialog = None;
+                            return self.go_drive(side, i);
+                        }
+                        _ => {}
+                    }
+                    return Task::none();
+                }
                 if let Some(d) = &self.dialog {
                     // Modal: panels must not move. Enter confirms a dialog without a text field.
                     if action == Action::Enter && matches!(d, Dialog::ConfirmDelete { .. }) {
@@ -195,9 +319,11 @@ impl Application for App {
             Message::Listed {
                 side,
                 tab,
+                generation,
                 path,
                 focus,
                 result,
+                space,
             } => {
                 let Some(t) = self.panes[side]
                     .items_mut()
@@ -206,7 +332,7 @@ impl Application for App {
                 else {
                     return Task::none(); // tab was closed
                 };
-                if t.pending.as_ref() != Some(&path) {
+                if t.pending.as_ref().map(|(g, _)| *g) != Some(generation) {
                     return Task::none(); // stale: the user has moved on
                 }
                 t.pending = None;
@@ -214,6 +340,10 @@ impl Application for App {
                     Ok(entries) => {
                         t.error = None;
                         t.panel.set_listing(path, entries, focus.as_deref());
+                        if self.panes[side].active().id == tab {
+                            self.refresh_mounts();
+                            self.space[side] = space;
+                        }
                         return self.reveal(side, tab);
                     }
                     Err(e) => t.error = Some(e),
@@ -244,11 +374,11 @@ impl Application for App {
             Message::SelectTab(side, i) => {
                 self.active = side;
                 self.panes[side].select(i);
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
             Message::CloseTabAt(side, i) => {
                 self.panes[side].close(i);
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
             Message::Modifiers(m) => self.mods = m,
             Message::DialogInput(s) => {
@@ -281,32 +411,84 @@ impl Application for App {
                 other => self.dialog = other,
             },
             Message::CancelJob => self.cancel_job(),
+            Message::Changed(side) => {
+                let t = self.panes[side].active();
+                // A change in the dir we are leaving must not cancel the scan of the one we enter.
+                if self.job.is_none() && t.target() == t.panel.cwd() {
+                    let cwd = t.target();
+                    return self.load(side, cwd, None);
+                }
+            }
+            Message::Drive(side, i) => {
+                if self.job.is_none() {
+                    self.dialog = None;
+                    return self.go_drive(side, i);
+                }
+            }
+            Message::Config(c) => {
+                let hidden_changed = c.show_hidden != self.config.show_hidden;
+                self.config = c;
+                if hidden_changed {
+                    return self.apply_hidden();
+                }
+            }
             Message::Exit => return cosmic::iced::exit(),
         }
         Task::none()
     }
 
-    fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(route_event)
+    fn new_tab(&mut self, path: PathBuf) -> Tab {
+        let mut t = Tab::new(self.next_id(), path);
+        t.panel.set_show_hidden(self.config.show_hidden);
+        t
     }
 
-    fn view(&self) -> Element<'_, Message> {
-        crate::view::view(self)
-    }
-
-    fn dialog(&self) -> Option<Element<'_, Message>> {
-        if let Some(d) = &self.dialog {
-            return Some(dialogs::view(d, &self.input_id, &self.tz));
+    /// Rescan every tab of both panes (startup, Ctrl+H).
+    fn load_all(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for side in 0..2 {
+            for i in 0..self.panes[side].items().len() {
+                let dir = self.panes[side].items()[i].target();
+                tasks.push(self.load_tab(side, i, dir, None));
+            }
         }
-        self.job.as_ref().map(dialogs::progress)
+        Task::batch(tasks)
     }
 
-    fn footer(&self) -> Option<Element<'_, Message>> {
-        Some(crate::view::fkey_bar())
+    fn apply_hidden(&mut self) -> Task<Message> {
+        let on = self.config.show_hidden;
+        for side in 0..2 {
+            for t in self.panes[side].items_mut() {
+                t.panel.set_show_hidden(on);
+            }
+        }
+        self.load_all()
     }
-}
 
-impl App {
+    /// Write tab paths when they changed (cheap compare on every message; no write if equal).
+    fn save_state(&mut self) {
+        let state = State {
+            panes: [0, 1].map(|s| PaneState {
+                tabs: self.panes[s]
+                    .items()
+                    .iter()
+                    .map(|t| t.panel.cwd().to_path_buf())
+                    .collect(),
+                active: self.panes[s].active_index(),
+            }),
+            active: self.active,
+        };
+        if state == self.saved {
+            return;
+        }
+        if let Some(h) = &self.state_handler
+            && let Err(e) = state.write_entry(h)
+        {
+            log::warn!("state: {e}");
+        }
+        self.saved = state;
+    }
+
     fn next_id(&mut self) -> u64 {
         self.next_id += 1;
         self.next_id
@@ -314,23 +496,40 @@ impl App {
 
     /// Scan `path` for the active tab of `side` in the background; the result lands in `Message::Listed`.
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
-        let t = self.panes[side].active_mut();
-        t.pending = Some(path.clone());
+        let i = self.panes[side].active_index();
+        self.load_tab(side, i, path, focus)
+    }
+
+    /// Scan `path` for tab `i` of `side` in the background.
+    fn load_tab(
+        &mut self,
+        side: usize,
+        i: usize,
+        path: PathBuf,
+        focus: Option<String>,
+    ) -> Task<Message> {
+        let generation = self.next_id();
+        let t = &mut self.panes[side].items_mut()[i];
+        t.pending = Some((generation, path.clone()));
         let tab = t.id;
         let show_hidden = t.panel.show_hidden();
         Task::perform(
             async move {
                 let p = path.clone();
-                let result = tokio::task::spawn_blocking(move || listing::scan(&p, show_hidden))
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| e.to_string()));
+                let (result, space) = tokio::task::spawn_blocking(move || {
+                    let result = listing::scan(&p, show_hidden).map_err(|e| e.to_string());
+                    (result, drives::space(&p))
+                })
+                .await
+                .unwrap_or_else(|e| (Err(e.to_string()), None));
                 Message::Listed {
                     side,
                     tab,
+                    generation,
                     path,
                     focus,
                     result,
+                    space,
                 }
             },
             cosmic::Action::App,
@@ -369,7 +568,7 @@ impl App {
                 }
                 let file = panel.current().map(|e| panel.cwd().join(&e.os_name));
                 if let Some(file) = file
-                    && let Err(err) = open_detached(&file)
+                    && let Err(err) = spawn_detached(&launch::command(&[], &["xdg-open"], &file))
                 {
                     t.error = Some(fl!("open-failed", err = err.to_string()));
                 }
@@ -386,7 +585,36 @@ impl App {
             Action::Invert => panel.invert(),
             Action::SelectAll => panel.mark_all(true),
             Action::UnselectAll => panel.mark_all(false),
-            Action::Cancel => {}
+            Action::ToggleHidden => {
+                let on = !self.config.show_hidden;
+                match &self.config_handler {
+                    Some(h) => {
+                        if let Err(e) = self.config.set_show_hidden(h, on) {
+                            log::warn!("config: {e}");
+                        }
+                    }
+                    None => self.config.show_hidden = on,
+                }
+                return self.apply_hidden();
+            }
+            Action::View | Action::Edit => {
+                let file = panel
+                    .current()
+                    .filter(|e| !e.is_dir() && e.name != PARENT)
+                    .map(|e| panel.cwd().join(&e.os_name));
+                if let Some(file) = file {
+                    let argv = if action == Action::View {
+                        launch::command(&self.config.viewer, &["xdg-open"], &file)
+                    } else {
+                        launch::command(&self.config.editor, &["cosmic-edit"], &file)
+                    };
+                    if let Err(err) = spawn_detached(&argv) {
+                        t.error = Some(fl!("open-failed", err = err.to_string()));
+                    }
+                }
+            }
+            // Opened by `dialog_for` above.
+            Action::Drives(_) => {}
             Action::Copy
             | Action::Move
             | Action::Rename
@@ -407,16 +635,26 @@ impl App {
             }
             Action::CloseTab => {
                 let i = self.panes[side].active_index();
-                self.panes[side].close(i);
-                return self.restore_scroll(side);
+                if !self.panes[side].close(i) {
+                    if self.config.last_tab_close == LastTab::Home {
+                        let home = self
+                            .config
+                            .home_dir
+                            .clone()
+                            .unwrap_or_else(|| self.home.clone());
+                        return self.load(side, home, None);
+                    }
+                    return Task::none();
+                }
+                return self.tab_switched(side);
             }
             Action::NextTab => {
                 self.panes[side].next();
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
             Action::PrevTab => {
                 self.panes[side].prev();
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
         }
         self.reveal(side, tab)
@@ -470,6 +708,11 @@ impl App {
                     paths,
                 })
             }
+            Action::Drives(s) => Some(Dialog::Drives {
+                side: s,
+                cursor: drives::containing(&self.drives, self.panes[s].active().panel.cwd())
+                    .unwrap_or(0),
+            }),
             _ => None,
         }
     }
@@ -507,6 +750,7 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
+            Dialog::Drives { side, cursor } => self.go_drive(side, cursor),
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -668,6 +912,27 @@ impl App {
         }
     }
 
+    /// Mounts change rarely and procfs never blocks: re-read with every listing.
+    fn refresh_mounts(&mut self) {
+        if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
+            self.drives = drives::parse(&m, &self.home);
+        }
+    }
+
+    fn go_drive(&mut self, side: usize, i: usize) -> Task<Message> {
+        let Some(path) = self.drives.get(i).map(|d| d.path.clone()) else {
+            return Task::none();
+        };
+        self.active = side;
+        self.load(side, path, None)
+    }
+
+    /// The newly shown tab was not watched while hidden: restore its scroll and rescan it.
+    fn tab_switched(&mut self, side: usize) -> Task<Message> {
+        let dir = self.panes[side].active().target();
+        Task::batch([self.restore_scroll(side), self.load(side, dir, None)])
+    }
+
     /// Scroll the pane's list to the active tab's stored offset.
     fn restore_scroll(&self, side: usize) -> Task<Message> {
         scrollable::scroll_to(
@@ -724,9 +989,10 @@ fn dir_input(dir: &Path) -> String {
     if s.ends_with('/') { s } else { s + "/" }
 }
 
-/// `xdg-open` without blocking the UI or leaving a zombie.
-fn open_detached(path: &std::path::Path) -> std::io::Result<()> {
-    let mut child = std::process::Command::new("xdg-open").arg(path).spawn()?;
+/// Run `argv` without blocking the UI or leaving a zombie.
+fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
+    let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
+    let mut child = std::process::Command::new(prog).args(args).spawn()?;
     std::thread::spawn(move || child.wait());
     Ok(())
 }
@@ -734,8 +1000,260 @@ fn open_detached(path: &std::path::Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, LastTab, State};
     use cosmic::iced::keyboard::key::{Code, Named, Physical};
     use cosmic::iced::keyboard::{Key, Location};
+    use shagoff_core::drives::Drive;
+    use shagoff_core::session::PaneState;
+
+    fn app_with(config: Config, state: State) -> App {
+        App::build(Core::default(), config, state, None, std::env::temp_dir()).0
+    }
+
+    fn cwds(app: &App, side: usize) -> Vec<PathBuf> {
+        app.panes[side]
+            .items()
+            .iter()
+            .map(|t| t.panel.cwd().to_path_buf())
+            .collect()
+    }
+
+    #[test]
+    fn spawn_detached_reports_missing_program() {
+        let argv = [
+            std::ffi::OsString::from("/nonexistent/shagoff-test-prog"),
+            "x".into(),
+        ];
+        assert!(spawn_detached(&argv).is_err());
+    }
+
+    #[test]
+    fn drive_dialog_navigates_and_opens() {
+        let mut app = app_with(Config::default(), State::default());
+        app.drives = vec![
+            Drive {
+                label: "/".into(),
+                path: "/".into(),
+            },
+            Drive {
+                label: "tmp".into(),
+                path: std::env::temp_dir(),
+            },
+        ];
+        let _ = app.update(Message::Key(Action::Drives(1)));
+        assert!(matches!(app.dialog, Some(Dialog::Drives { side: 1, .. })));
+        let _ = app.update(Message::Key(Action::Up));
+        let _ = app.update(Message::Key(Action::Up)); // clamped at 0
+        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 0, .. })));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Down)); // clamped at 1
+        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 1, .. })));
+        app.panes[1].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::Enter));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.active, 1);
+        assert!(app.panes[1].active().pending.is_some());
+    }
+
+    fn entry(name: &str) -> Entry {
+        Entry {
+            name: name.into(),
+            os_name: name.into(),
+            ext: String::new(),
+            size: 0,
+            mtime: std::time::UNIX_EPOCH,
+            kind: shagoff_core::listing::Kind::File,
+            is_link: false,
+            mode: 0o644,
+        }
+    }
+
+    #[test]
+    fn regression_second_scan_of_same_path_wins() {
+        let mut app = app_with(Config::default(), State::default());
+        let (id, cwd) = (
+            app.panes[0].active().id,
+            app.panes[0].active().panel.cwd().to_path_buf(),
+        );
+        let _ = app.load(0, cwd.clone(), None);
+        let first = app.panes[0].active().pending.as_ref().unwrap().0;
+        let _ = app.load(0, cwd.clone(), None);
+        let second = app.panes[0].active().pending.as_ref().unwrap().0;
+        let listed = |generation, name: &str| Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: cwd.clone(),
+            focus: None,
+            result: Ok(vec![entry(name)]),
+            space: None,
+        };
+        let _ = app.update(listed(second, "new"));
+        let _ = app.update(listed(first, "old")); // late, stale
+        let names: Vec<_> = app.panes[0]
+            .active()
+            .panel
+            .entries()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert!(
+            names.contains(&"new".to_string()) && !names.contains(&"old".to_string()),
+            "{names:?}"
+        );
+    }
+
+    /// Start navigating pane 0 to a fresh temp dir; returns (dir guard, tab id, generation).
+    fn navigating(app: &mut App) -> (tempfile::TempDir, u64, u64) {
+        let tmp = tempfile::tempdir().unwrap();
+        let _ = app.load(0, tmp.path().into(), None);
+        let t = app.panes[0].active();
+        let generation = t.pending.as_ref().unwrap().0;
+        (tmp, t.id, generation)
+    }
+
+    fn listed_ok(id: u64, generation: u64, path: &Path) -> Message {
+        Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: path.into(),
+            focus: None,
+            result: Ok(vec![]),
+            space: Some((1, 2)),
+        }
+    }
+
+    #[test]
+    fn regression_watcher_does_not_cancel_navigation() {
+        let mut app = app_with(Config::default(), State::default());
+        let (tmp, id, generation) = navigating(&mut app);
+        let _ = app.update(Message::Changed(0)); // old dir changed while the new one loads
+        let _ = app.update(listed_ok(id, generation, tmp.path()));
+        assert_eq!(app.panes[0].active().panel.cwd(), tmp.path());
+    }
+
+    #[test]
+    fn regression_ctrl_h_keeps_pending_navigation() {
+        let mut app = app_with(Config::default(), State::default());
+        let (tmp, _, _) = navigating(&mut app);
+        let _ = app.update(Message::Key(Action::ToggleHidden));
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending.as_deref(), Some(tmp.path()));
+    }
+
+    #[test]
+    fn listed_brings_free_space_of_the_active_tab() {
+        let mut app = app_with(Config::default(), State::default());
+        let (tmp, id, generation) = navigating(&mut app);
+        let _ = app.update(listed_ok(id, generation, tmp.path()));
+        assert_eq!(app.space[0], Some((1, 2)));
+    }
+
+    #[test]
+    fn build_restores_tabs_and_active_pane() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        let state = State {
+            panes: [
+                PaneState {
+                    tabs: vec![tmp.path().into(), a.clone()],
+                    active: 1,
+                },
+                PaneState {
+                    tabs: vec![tmp.path().join("gone")],
+                    active: 0,
+                },
+            ],
+            active: 1,
+        };
+        let app = app_with(Config::default(), state);
+        assert_eq!(cwds(&app, 0), [tmp.path().to_path_buf(), a]);
+        assert_eq!(app.panes[0].active_index(), 1);
+        assert_eq!(cwds(&app, 1), [tmp.path().to_path_buf()]);
+        assert_eq!(app.active, 1);
+    }
+
+    #[test]
+    fn argv_path_replaces_the_active_left_tab() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = State {
+            panes: [
+                PaneState {
+                    tabs: vec!["/".into(), "/".into()],
+                    active: 1,
+                },
+                PaneState::default(),
+            ],
+            active: 0,
+        };
+        let app = App::build(
+            Core::default(),
+            Config::default(),
+            state,
+            Some(tmp.path().into()),
+            "/".into(),
+        )
+        .0;
+        assert_eq!(
+            cwds(&app, 0),
+            [PathBuf::from("/"), tmp.path().canonicalize().unwrap()]
+        );
+    }
+
+    #[test]
+    fn ctrl_h_flips_hidden_in_every_tab() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::NewTab));
+        let _ = app.update(Message::Key(Action::ToggleHidden));
+        assert!(app.config.show_hidden);
+        for side in 0..2 {
+            assert!(
+                app.panes[side]
+                    .items()
+                    .iter()
+                    .all(|t| t.panel.show_hidden())
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_w_on_last_tab_obeys_config() {
+        let mut app = app_with(Config::default(), State::default());
+        app.panes[0].active_mut().pending = None;
+        let before = cwds(&app, 0);
+        let _ = app.update(Message::Key(Action::CloseTab));
+        assert_eq!(cwds(&app, 0), before); // Nothing: no change
+        assert!(app.panes[0].active().pending.is_none());
+
+        let config = Config {
+            last_tab_close: LastTab::Home,
+            home_dir: Some("/".into()),
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::CloseTab));
+        assert!(
+            app.panes[0].active().pending.is_some(),
+            "should load home_dir"
+        );
+    }
+
+    #[test]
+    fn config_change_of_show_hidden_applies_to_tabs() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Config(Config {
+            show_hidden: true,
+            ..Config::default()
+        }));
+        assert!(app.panes[1].active().panel.show_hidden());
+    }
 
     fn press(named: Named, code: Code, status: event::Status) -> Option<Message> {
         let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {

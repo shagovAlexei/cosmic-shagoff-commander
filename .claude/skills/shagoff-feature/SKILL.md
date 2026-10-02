@@ -13,7 +13,7 @@ Every feature and every MVP phase goes through these steps in order. Do not skip
    - the matching rows in `.claude/docs/tc-reference.md`
 
    If something should behave "like TC", tc-reference.md is the source of truth. If the feature adds keys or behaviour, update tc-reference.md.
-2. **Spec.** Write it to `.claude/docs/specs/YYYY-MM-DD-<topic>.md`. This location overrides the brainstorming default `docs/superpowers/specs`. The user reviews the spec.
+2. **Spec.** Write it to `.claude/docs/specs/NN-<topic>.md`, where NN is the same number its plan gets (phase number for MVP phases); no dates in file names. This location overrides the brainstorming default `docs/superpowers/specs`. The user reviews the spec.
 3. **Plan.** Invoke `superpowers:writing-plans`. Save the plan to `.claude/docs/plans/NN-<topic>.md`, where NN is the next free number.
 4. **Branch.**
    ```sh

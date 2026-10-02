@@ -13,7 +13,7 @@
 
 **Tech Stack:** Rust 2024, libcosmic (pinned rev), `jiff` 0.2 (already in the tree), `tokio` (`spawn_blocking`).
 
-**Spec:** `.claude/docs/specs/2026-10-02-dual-pane.md`
+**Spec:** `.claude/docs/specs/02-dual-pane.md`
 
 ## Global Constraints
 
@@ -1132,7 +1132,7 @@ This task is UI glue with no unit tests (the logic is tested in Tasks 1–3). It
   ```bash
   git add TESTING.md .claude CLAUDE.md && git commit -m "docs: phase 2 checklist, roadmap, CLAUDE.md"
   git push -u origin feat/dual-pane
-  gh pr create --title "Two TC panels (phase 2)" --body "Spec: .claude/docs/specs/2026-10-02-dual-pane.md
+  gh pr create --title "Two TC panels (phase 2)" --body "Spec: .claude/docs/specs/02-dual-pane.md
   Plan: .claude/docs/plans/02-dual-pane.md"
   gh pr checks --watch
   ```

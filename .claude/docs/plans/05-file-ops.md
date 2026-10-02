@@ -11,7 +11,7 @@
 
 **Tech Stack:** Rust 2024, std::fs, crate `trash = "5"` (core), libcosmic (pinned rev).
 
-**Spec:** `.claude/docs/specs/2026-10-02-file-ops.md`
+**Spec:** `.claude/docs/specs/05-file-ops.md`
 
 ## Global Constraints
 

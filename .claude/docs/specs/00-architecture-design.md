@@ -27,7 +27,7 @@
 
 ### Что копируем из cosmic-files
 
-> Обновлено в фазе 5: движок операций сделан свой, см. [спек фазы 5](2026-10-02-file-ops.md). Ниже — исходный план.
+> Обновлено в фазе 5: движок операций сделан свой, см. [спек фазы 5](05-file-ops.md). Ниже — исходный план.
 
 Каждый файл копируется в PR той фазы, где он впервые нужен, и с пометкой источника в начале файла:
 
@@ -114,7 +114,7 @@ Cargo workspace из двух крейтов.
 
 ## Процесс
 
-1. Брейншторм (`superpowers:brainstorming`) → спек `.claude/docs/specs/YYYY-MM-DD-<тема>.md`.
+1. Брейншторм (`superpowers:brainstorming`) → спек `.claude/docs/specs/NN-<тема>.md`.
 2. План (`superpowers:writing-plans`) → `.claude/docs/plans/NN-<тема>.md`.
 3. Ветка `feat/<тема>`. Логику ядра пишем через TDD. Перед PR — `just verify`.
 4. `/code-review` → PR через `gh` → зелёный CI → merge в `main`. Напрямую в `main` не коммитим.

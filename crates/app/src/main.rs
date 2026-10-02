@@ -1,9 +1,11 @@
 mod app;
+mod config;
 mod dialogs;
 mod i18n;
 mod jobs;
 mod keymap;
 mod view;
+mod watcher;
 
 fn main() -> cosmic::iced::Result {
     simple_logger::SimpleLogger::new()
