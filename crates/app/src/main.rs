@@ -1,5 +1,7 @@
 mod app;
 mod i18n;
+mod keymap;
+mod view;
 
 fn main() -> cosmic::iced::Result {
     simple_logger::SimpleLogger::new()
@@ -8,5 +10,9 @@ fn main() -> cosmic::iced::Result {
         .init()
         .ok();
     i18n::init(&i18n_embed::DesktopLanguageRequester::requested_languages());
-    cosmic::app::run::<app::App>(cosmic::app::Settings::default(), ())
+    let flags = app::Flags {
+        left: std::env::args_os().nth(1).map(Into::into),
+    };
+    let settings = cosmic::app::Settings::default().size(cosmic::iced::Size::new(1200.0, 800.0));
+    cosmic::app::run::<app::App>(settings, flags)
 }

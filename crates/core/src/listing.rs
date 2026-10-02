@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::{
     ffi::OsString,
     fs, io,
@@ -23,6 +24,8 @@ pub struct Entry {
     pub mtime: SystemTime,
     pub kind: Kind,
     pub is_link: bool,
+    /// Unix permission bits (of the link target for symlinks).
+    pub mode: u32,
 }
 
 impl Entry {
@@ -67,6 +70,7 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
             size,
             kind,
             is_link,
+            mode: meta.permissions().mode(),
         });
     }
     Ok(out)
@@ -138,6 +142,17 @@ mod tests {
         let v = scan(d.path(), false).unwrap();
         assert!(v.iter().all(|e| !e.name.starts_with('.')));
         assert_eq!(v.len(), 6);
+    }
+
+    #[test]
+    fn scan_reads_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x");
+        fs::write(&p, "").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o640)).unwrap();
+        let v = scan(d.path(), true).unwrap();
+        assert_eq!(v[0].mode & 0o777, 0o640);
     }
 
     #[test]

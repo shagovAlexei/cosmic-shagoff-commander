@@ -4244,12 +4244,14 @@ dependencies = [
  "rust-embed",
  "shagoff-core",
  "simple_logger",
+ "tokio",
 ]
 
 [[package]]
 name = "shagoff-core"
 version = "0.1.0"
 dependencies = [
+ "jiff",
  "tempfile",
 ]
 

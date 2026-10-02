@@ -1,4 +1,4 @@
-# Веха 1: core — листинг, сортировка, Panel. План реализации
+# Фаза 1: core — листинг, сортировка, Panel. План реализации
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -9,7 +9,7 @@
 - `sort` is a pure comparator;
 - `panel` holds state and never touches the filesystem.
 
-The UI (milestone 2) calls `listing::scan` in the background and passes the result to `Panel::set_listing`.
+The UI (phase 2) calls `listing::scan` in the background and passes the result to `Panel::set_listing`.
 
 **Tech Stack:** Rust 2024 and std only. `tempfile` is a dev-dependency.
 
@@ -476,7 +476,7 @@ The UI (milestone 2) calls `listing::scan` in the background and passes the resu
 
 **Interfaces:**
 - Consumes: `listing::{Entry, Kind}` from Task 1; `sort::{Sort, SortKey, sort_entries}` from Task 2.
-- Produces (used by the UI in milestone 2):
+- Produces (used by the UI in phase 2):
   - `pub const PARENT: &str = ".."`
   - `pub struct Panel` with:
     - `new(cwd: PathBuf) -> Self`
@@ -812,7 +812,7 @@ The UI (milestone 2) calls `listing::scan` in the background and passes the resu
 ### Task 4: Docs and PR
 
 **Files:**
-- Modify: `.claude/docs/ROADMAP.md` (tick milestones 0 and 1)
+- Modify: `.claude/docs/ROADMAP.md` (tick phases 0 and 1)
 - Modify: `CLAUDE.md` (replace the sentence "Only bootstrap exists so far (an empty window)." with "Implemented so far: `crates/core` (`listing`, `sort`, `panel`); the app is still an empty window.")
 
 - [ ] **Step 1: Edit both files as described above**
@@ -820,9 +820,9 @@ The UI (milestone 2) calls `listing::scan` in the background and passes the resu
 - [ ] **Step 2: Commit, push and open the PR**
   ```bash
   git add .claude CLAUDE.md
-  git commit -m "docs: milestone 1 spec, plan, roadmap"
+  git commit -m "docs: phase 1 spec, plan, roadmap"
   git push -u origin feat/core-panel
-  gh pr create --title "core: listing, sort, Panel (milestone 1)" --body "Spec: .claude/docs/specs/2026-10-02-core-panel.md
+  gh pr create --title "core: listing, sort, Panel (phase 1)" --body "Spec: .claude/docs/specs/2026-10-02-core-panel.md
   Plan: .claude/docs/plans/01-core-panel.md"
   gh pr checks --watch
   ```

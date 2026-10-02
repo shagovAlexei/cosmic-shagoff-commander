@@ -8,7 +8,7 @@ Shagoff Commander is a dual-pane file manager for Pop!_OS 24.04 COSMIC, written 
 
 - `.claude/docs/tc-reference.md` is the source of truth for "how TC does it". Check it before implementing any key or behaviour, and update it when you add one.
 - Full design and its rationale: `.claude/docs/specs/2026-10-02-architecture-design.md`.
-- Milestones and backlog: `.claude/docs/ROADMAP.md`.
+- Phases and backlog: `.claude/docs/ROADMAP.md`.
 
 Fixed names (never change these):
 
@@ -54,7 +54,7 @@ Data flow: key or button → keymap → `Action` → `App::update`. From there, 
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Implemented so far: `crates/core` (`listing`, `sort`, `panel`); the app is still an empty window. Modules appear milestone by milestone, so check the tree before assuming one exists.
+Implemented so far: `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`); `crates/app` (`app.rs` two panes + background scan with stale-result check, `keymap.rs`, `view.rs` virtualized list). No tabs, marks, operations or config yet. Modules appear phase by phase, so check the tree before assuming one exists.
 
 ## Conventions
 
@@ -67,7 +67,7 @@ Implemented so far: `crates/core` (`listing`, `sort`, `panel`); the app is still
 
 ## Workflow
 
-Every feature or milestone follows the project skill **`shagoff-feature`** (`.claude/skills/shagoff-feature/SKILL.md`):
+Every feature or phase follows the project skill **`shagoff-feature`** (`.claude/skills/shagoff-feature/SKILL.md`):
 
 1. brainstorm → spec in `.claude/docs/specs/`
 2. `writing-plans` → plan in `.claude/docs/plans/NN-<topic>.md`
