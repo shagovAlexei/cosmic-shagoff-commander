@@ -8,6 +8,7 @@ pub mod listing;
 pub mod mask;
 pub mod ops;
 pub mod panel;
+pub mod quicksearch;
 pub mod session;
 pub mod sort;
 pub mod tabs;

@@ -50,7 +50,7 @@ fn tokens(s: &str) -> Vec<String> {
 }
 
 /// `*` = any run, `?` = one char. Greedy with backtracking to the last `*`.
-fn glob(pattern: &str, name: &str) -> bool {
+pub(crate) fn glob(pattern: &str, name: &str) -> bool {
     let p: Vec<char> = pattern.chars().collect();
     let n: Vec<char> = name.chars().collect();
     let (mut pi, mut ni) = (0, 0);
