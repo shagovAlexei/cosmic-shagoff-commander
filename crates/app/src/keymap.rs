@@ -30,6 +30,12 @@ pub enum Action {
     SelectAll,
     UnselectAll,
     Cancel,
+    Copy,
+    Move,
+    Rename,
+    Mkdir,
+    Delete,
+    DeletePermanent,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -58,6 +64,12 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
             (Named::ArrowUp, false, true) => Action::MarkUp,
             (Named::Escape, false, false) => Action::Cancel,
+            (Named::F5, false, false) => Action::Copy,
+            (Named::F6, false, false) => Action::Move,
+            (Named::F6, false, true) | (Named::F2, false, false) => Action::Rename,
+            (Named::F7, false, false) => Action::Mkdir,
+            (Named::F8 | Named::Delete, false, false) => Action::Delete,
+            (Named::F8 | Named::Delete, false, true) => Action::DeletePermanent,
             _ => return None,
         });
     }
@@ -181,6 +193,20 @@ mod tests {
     fn main_keyboard_plus_is_not_numpad() {
         assert_eq!(chr("+", Code::Equal, Modifiers::SHIFT), None);
         assert_eq!(chr("-", Code::Minus, NONE), None);
+    }
+
+    #[test]
+    fn operation_keys() {
+        const SHIFT: Modifiers = Modifiers::SHIFT;
+        assert_eq!(named(Named::F5, NONE), Some(Action::Copy));
+        assert_eq!(named(Named::F6, NONE), Some(Action::Move));
+        assert_eq!(named(Named::F6, SHIFT), Some(Action::Rename));
+        assert_eq!(named(Named::F2, NONE), Some(Action::Rename));
+        assert_eq!(named(Named::F7, NONE), Some(Action::Mkdir));
+        assert_eq!(named(Named::F8, NONE), Some(Action::Delete));
+        assert_eq!(named(Named::Delete, NONE), Some(Action::Delete));
+        assert_eq!(named(Named::F8, SHIFT), Some(Action::DeletePermanent));
+        assert_eq!(named(Named::Delete, SHIFT), Some(Action::DeletePermanent));
     }
 
     #[test]

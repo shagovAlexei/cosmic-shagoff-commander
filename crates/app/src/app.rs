@@ -352,6 +352,12 @@ impl App {
             Action::SelectAll => panel.mark_all(true),
             Action::UnselectAll => panel.mark_all(false),
             Action::Cancel => {}
+            Action::Copy
+            | Action::Move
+            | Action::Rename
+            | Action::Mkdir
+            | Action::Delete
+            | Action::DeletePermanent => {}
             Action::SelectGroup | Action::UnselectGroup => {
                 self.mask_dialog = Some(MaskDialog {
                     side,
