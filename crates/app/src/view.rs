@@ -46,7 +46,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     }
     list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * ROW_H));
     let list = scrollable(list)
-        .id(p.scroll_id.clone())
+        .id(app.scroll_ids[side].clone())
         .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
         .height(Length::Fill);
 

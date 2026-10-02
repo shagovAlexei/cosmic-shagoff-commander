@@ -26,7 +26,6 @@ pub struct Tab {
     /// Stable id: scan results are routed by it, so they land in the right tab even after switching.
     pub id: u64,
     pub panel: Panel,
-    pub scroll_id: widget::Id,
     pub offset: f32,
     pub height: f32,
     /// Path of the scan in flight; results for any other path are stale.
@@ -39,7 +38,6 @@ impl Tab {
         Self {
             id,
             panel: Panel::new(cwd),
-            scroll_id: widget::Id::unique(),
             offset: 0.0,
             height: FALLBACK_LIST_H,
             pending: None,
@@ -47,12 +45,11 @@ impl Tab {
         }
     }
 
-    /// Copy for Ctrl+T: same dir, sort, cursor and scroll; fresh id and scroll widget.
+    /// Copy for Ctrl+T: same dir, sort, cursor and scroll; fresh id.
     fn duplicate(&self, id: u64) -> Self {
         Self {
             id,
             panel: self.panel.clone(),
-            scroll_id: widget::Id::unique(),
             offset: self.offset,
             height: self.height,
             pending: None,
@@ -64,6 +61,9 @@ impl Tab {
 pub struct App {
     core: Core,
     pub panes: [Tabs<Tab>; 2],
+    /// One scroll widget id per pane, not per tab: iced's tree diff keeps the first id it saw at a
+    /// position (`Tree::diff` → `set_id` for `Internal::Set` ids), so per-tab ids would never match.
+    pub scroll_ids: [widget::Id; 2],
     pub active: usize,
     pub tz: TimeZone,
     next_id: u64,
@@ -119,6 +119,7 @@ impl Application for App {
                 Tabs::new(Tab::new(1, left.clone())),
                 Tabs::new(Tab::new(2, home.clone())),
             ],
+            scroll_ids: [widget::Id::unique(), widget::Id::unique()],
             active: 0,
             tz: TimeZone::system(),
             next_id: 2,
@@ -304,8 +305,10 @@ impl App {
         self.reveal(side, tab)
     }
 
-    /// Scroll tab `tab` so its cursor row is fully visible (harmless if the tab is not on screen).
+    /// Keep tab `tab`'s cursor row fully visible. An inactive tab only gets its offset updated;
+    /// `restore_scroll` applies it when that tab is shown.
     fn reveal(&mut self, side: usize, tab: u64) -> Task<Message> {
+        let is_active = self.panes[side].active().id == tab;
         let Some(t) = self.panes[side]
             .items_mut()
             .iter_mut()
@@ -316,26 +319,23 @@ impl App {
         match viewport::scroll_to_cursor(t.panel.cursor(), ROW_H, t.offset, t.height) {
             Some(y) => {
                 t.offset = y;
-                scrollable::scroll_to(
-                    t.scroll_id.clone(),
-                    AbsoluteOffset {
-                        x: None,
-                        y: Some(y),
-                    },
-                )
+                if is_active {
+                    self.restore_scroll(side)
+                } else {
+                    Task::none()
+                }
             }
             None => Task::none(),
         }
     }
 
-    /// After switching tabs: put the newly shown tab's list back at its own scroll offset.
+    /// Scroll the pane's list to the active tab's stored offset.
     fn restore_scroll(&self, side: usize) -> Task<Message> {
-        let t = self.panes[side].active();
         scrollable::scroll_to(
-            t.scroll_id.clone(),
+            self.scroll_ids[side].clone(),
             AbsoluteOffset {
                 x: None,
-                y: Some(t.offset),
+                y: Some(self.panes[side].active().offset),
             },
         )
     }
