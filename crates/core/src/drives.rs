@@ -12,7 +12,7 @@ pub struct Drive {
 
 /// `/` and `home` first, then `/dev/*` mounts except loop/squashfs/`/boot*`, in mounts order.
 /// A device mounted twice gives one drive: its `/media` or `/run/media` mount, else the first.
-pub fn parse(mounts: &str, home: &Path) -> Vec<Drive> {
+pub fn parse<'a>(mounts: &'a str, home: &Path) -> Vec<Drive> {
     let mut out = vec![
         Drive {
             label: "/".into(),
@@ -24,16 +24,35 @@ pub fn parse(mounts: &str, home: &Path) -> Vec<Drive> {
         },
     ];
     let mut devices: Vec<&str> = Vec::new(); // devices[i] owns out[i + 2]
-    for line in mounts.lines() {
+    let fields = |line: &'a str| {
         let mut f = line.split_whitespace();
-        let (Some(dev), Some(point), Some(fs)) = (f.next(), f.next(), f.next()) else {
+        (f.next(), f.next(), f.next())
+    };
+    // The devices behind `/` and `~` already have a button, wherever else they are mounted.
+    let builtin: Vec<&str> = mounts
+        .lines()
+        .filter_map(|l| match fields(l) {
+            (Some(dev), Some(point), _)
+                if unescape(point) == Path::new("/") || unescape(point) == home =>
+            {
+                Some(dev)
+            }
+            _ => None,
+        })
+        .collect();
+    for line in mounts.lines() {
+        let (Some(dev), Some(point), Some(fs)) = fields(line) else {
             continue;
         };
-        if !dev.starts_with("/dev/") || dev.starts_with("/dev/loop") || fs == "squashfs" {
+        if !dev.starts_with("/dev/")
+            || dev.starts_with("/dev/loop")
+            || fs == "squashfs"
+            || builtin.contains(&dev)
+        {
             continue;
         }
         let path = unescape(point);
-        if path == Path::new("/") || path == home || path.starts_with("/boot") {
+        if path.starts_with("/boot") {
             continue;
         }
         let label = path
@@ -150,6 +169,13 @@ tmpfs /run tmpfs rw 0 0
     #[test]
     fn parse_skips_root_and_home_repeats() {
         let m = "/dev/a / ext4 rw 0 0\n/dev/b /home/u ext4 rw 0 0\n";
+        assert_eq!(labels(&parse(m, Path::new("/home/u"))), ["/", "~"]);
+    }
+
+    #[test]
+    fn regression_root_or_home_device_mounted_again_gets_no_extra_button() {
+        let m = "/dev/a / ext4 rw 0 0\n/dev/a /media/u/rootbind ext4 rw 0 0\n\
+                 /dev/b /home/u ext4 rw 0 0\n/dev/b /run/media/u/homebind ext4 rw 0 0\n";
         assert_eq!(labels(&parse(m, Path::new("/home/u"))), ["/", "~"]);
     }
 

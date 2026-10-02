@@ -107,7 +107,7 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
         } else {
             button::text(d.label.clone())
         };
-        bar = bar.push(b.on_press(Message::Drive(side, i)));
+        bar = bar.push(b.on_press(Message::Drive(side, d.path.clone())));
     }
     bar = bar.push(widget::Space::new().width(Length::Fill));
     if let Some((free, total)) = app.space[side] {

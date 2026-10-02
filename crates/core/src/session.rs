@@ -9,6 +9,14 @@ pub struct PaneState {
     pub active: usize,
 }
 
+/// `~` and `~/x` → under `home`; anything else unchanged (`~user` is not supported).
+pub fn expand_home(path: &Path, home: &Path) -> PathBuf {
+    match path.strip_prefix("~") {
+        Ok(rest) => home.join(rest),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
 /// `path` or its nearest existing ancestor dir; `fallback` for relative or empty paths.
 // ponytail: `is_dir` blocks on a dead network mount at startup; restore in spawn_blocking if that bites.
 pub fn existing_dir(path: &Path, fallback: &Path) -> PathBuf {
@@ -61,6 +69,21 @@ mod tests {
         assert_eq!(
             existing_dir(Path::new(""), Path::new("/fb")),
             Path::new("/fb")
+        );
+    }
+
+    #[test]
+    fn expand_home_handles_tilde_forms() {
+        let home = Path::new("/home/u");
+        assert_eq!(expand_home(Path::new("~"), home), home);
+        assert_eq!(
+            expand_home(Path::new("~/work"), home),
+            Path::new("/home/u/work")
+        );
+        assert_eq!(expand_home(Path::new("/tmp"), home), Path::new("/tmp"));
+        assert_eq!(
+            expand_home(Path::new("~other/x"), home),
+            Path::new("~other/x")
         );
     }
 

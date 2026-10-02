@@ -160,8 +160,8 @@ pub enum Message {
     CancelJob,
     /// The watched dir of this pane's active tab changed.
     Changed(usize),
-    /// Drive button / drive list entry: (side, drive index).
-    Drive(usize, usize),
+    /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
+    Drive(usize, PathBuf),
     Config(Config),
     Exit,
 }
@@ -223,7 +223,7 @@ impl Application for App {
 
     fn dialog(&self) -> Option<Element<'_, Message>> {
         if let Some(d) = &self.dialog {
-            return Some(dialogs::view(d, &self.input_id, &self.tz, &self.drives));
+            return Some(dialogs::view(d, &self.input_id, &self.tz));
         }
         self.job.as_ref().map(dialogs::progress)
     }
@@ -242,6 +242,7 @@ impl App {
         left: Option<PathBuf>,
         home: PathBuf,
     ) -> (Self, Task<Message>) {
+        let home_fallback = home.clone();
         let mut app = Self {
             core,
             panes: [
@@ -264,9 +265,10 @@ impl App {
             drives: Vec::new(),
             space: [None, None],
         };
+        // A file opens its folder; a missing path keeps the saved tab.
         let left = left
             .and_then(|p| p.canonicalize().ok())
-            .filter(|p| p.is_dir());
+            .map(|p| session::existing_dir(&p, &home_fallback));
         for side in 0..2 {
             let (mut paths, active) = session::restore(&state.panes[side], &app.home);
             if side == 0
@@ -289,16 +291,19 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
-                if let Some(Dialog::Drives { side, cursor }) = &mut self.dialog {
+                if let Some(Dialog::Drives {
+                    side,
+                    cursor,
+                    drives,
+                }) = &mut self.dialog
+                {
                     match action {
                         Action::Up => *cursor = cursor.saturating_sub(1),
-                        Action::Down => {
-                            *cursor = (*cursor + 1).min(self.drives.len().saturating_sub(1))
-                        }
+                        Action::Down => *cursor = (*cursor + 1).min(drives.len().saturating_sub(1)),
                         Action::Enter => {
-                            let (side, i) = (*side, *cursor);
+                            let (side, path) = (*side, drives.get(*cursor).map(|d| d.path.clone()));
                             self.dialog = None;
-                            return self.go_drive(side, i);
+                            return path.map_or_else(Task::none, |p| self.go_drive(side, p));
                         }
                         _ => {}
                     }
@@ -419,10 +424,10 @@ impl App {
                     return self.load(side, cwd, None);
                 }
             }
-            Message::Drive(side, i) => {
+            Message::Drive(side, path) => {
                 if self.job.is_none() {
                     self.dialog = None;
-                    return self.go_drive(side, i);
+                    return self.go_drive(side, path);
                 }
             }
             Message::Config(c) => {
@@ -637,11 +642,13 @@ impl App {
                 let i = self.panes[side].active_index();
                 if !self.panes[side].close(i) {
                     if self.config.last_tab_close == LastTab::Home {
-                        let home = self
-                            .config
-                            .home_dir
-                            .clone()
-                            .unwrap_or_else(|| self.home.clone());
+                        let home = match &self.config.home_dir {
+                            Some(d) => session::existing_dir(
+                                &session::expand_home(d, &self.home),
+                                &self.home,
+                            ),
+                            None => self.home.clone(),
+                        };
                         return self.load(side, home, None);
                     }
                     return Task::none();
@@ -708,10 +715,12 @@ impl App {
                     paths,
                 })
             }
+            // A copy: mounts are re-read on every listing and must not shift under the cursor.
             Action::Drives(s) => Some(Dialog::Drives {
                 side: s,
                 cursor: drives::containing(&self.drives, self.panes[s].active().panel.cwd())
                     .unwrap_or(0),
+                drives: self.drives.clone(),
             }),
             _ => None,
         }
@@ -750,7 +759,14 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
-            Dialog::Drives { side, cursor } => self.go_drive(side, cursor),
+            Dialog::Drives {
+                side,
+                cursor,
+                drives,
+            } => match drives.get(cursor) {
+                Some(d) => self.go_drive(side, d.path.clone()),
+                None => Task::none(),
+            },
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -919,10 +935,7 @@ impl App {
         }
     }
 
-    fn go_drive(&mut self, side: usize, i: usize) -> Task<Message> {
-        let Some(path) = self.drives.get(i).map(|d| d.path.clone()) else {
-            return Task::none();
-        };
+    fn go_drive(&mut self, side: usize, path: PathBuf) -> Task<Message> {
         self.active = side;
         self.load(side, path, None)
     }
@@ -1204,6 +1217,61 @@ mod tests {
             cwds(&app, 0),
             [PathBuf::from("/"), tmp.path().canonicalize().unwrap()]
         );
+    }
+
+    #[test]
+    fn argv_file_opens_its_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("f.txt");
+        std::fs::write(&file, "x").unwrap();
+        let app = App::build(
+            Core::default(),
+            Config::default(),
+            State::default(),
+            Some(file),
+            "/".into(),
+        )
+        .0;
+        assert_eq!(cwds(&app, 0), [tmp.path().canonicalize().unwrap()]);
+    }
+
+    #[test]
+    fn regression_last_tab_home_dir_with_tilde_or_gone() {
+        let config = Config {
+            last_tab_close: LastTab::Home,
+            home_dir: Some("~/shagoff-no-such-dir".into()),
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let _ = app.update(Message::Key(Action::CloseTab));
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(std::env::temp_dir())); // `~` = app.home, missing dir → parent
+    }
+
+    #[test]
+    fn regression_drive_list_is_fixed_while_dialog_open() {
+        let mut app = app_with(Config::default(), State::default());
+        let drive = |label: &str, path: &str| Drive {
+            label: label.into(),
+            path: path.into(),
+        };
+        app.drives = vec![drive("/", "/"), drive("usr", "/usr"), drive("etc", "/etc")];
+        let _ = app.update(Message::Key(Action::Drives(0))); // cursor on "/" (cwd is temp_dir)
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Down)); // on "etc"
+        app.drives.remove(1); // a stick was pulled: indices shift under the open dialog
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::Enter));
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(PathBuf::from("/etc")));
     }
 
     #[test]
