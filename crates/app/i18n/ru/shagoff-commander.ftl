@@ -17,3 +17,34 @@ select-group = Выделить группу
 unselect-group = Снять выделение
 ok = OK
 cancel = Отмена
+copy-to = Копировать { $what } в:
+move-to = Переместить { $what } в:
+n-files = { $n ->
+    [one] { $n } файл
+    [few] { $n } файла
+   *[many] { $n } файлов
+}
+mkdir = Новый каталог
+rename = Переименовать
+delete-trash = Удалить { $what } в корзину?
+delete-permanent = Удалить { $what } безвозвратно? Это нельзя отменить.
+delete = Удалить
+copying = Копирование
+moving = Перемещение
+deleting = Удаление
+progress-bytes = { $done } б из { $total } б
+progress-items = { $done } из { $total }
+file-exists = Файл уже существует
+new-file = Новый: { $size } б, { $date }
+existing-file = Существующий: { $size } б, { $date }
+replace = Заменить
+skip = Пропустить
+replace-all = Заменить все
+skip-all = Пропустить все
+replace-older = Заменить старые
+op-error = Ошибка
+retry = Повторить
+plan-into-itself = Нельзя скопировать каталог в самого себя: { $path }
+plan-same-file = Источник и цель совпадают: { $path }
+rename-bad-name = Недопустимое имя: нужно простое имя без «/»
+rename-exists = Имя занято каталогом: { $path }

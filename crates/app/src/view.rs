@@ -2,6 +2,7 @@
 
 use crate::app::{App, Message, ROW_H, Tab};
 use crate::fl;
+use crate::keymap::Action;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
 use cosmic::iced::widget::{column, row};
 use cosmic::iced::{Alignment, Color, Length};
@@ -196,13 +197,18 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
 
 pub fn fkey_bar() -> Element<'static, Message> {
     let disabled = |label: String| button::standard(label).width(Length::Fill);
+    let key = |label: String, action| {
+        button::standard(label)
+            .on_press(Message::Key(action))
+            .width(Length::Fill)
+    };
     row![
         disabled(fl!("fkey-view")),
         disabled(fl!("fkey-edit")),
-        disabled(fl!("fkey-copy")),
-        disabled(fl!("fkey-move")),
-        disabled(fl!("fkey-mkdir")),
-        disabled(fl!("fkey-delete")),
+        key(fl!("fkey-copy"), Action::Copy),
+        key(fl!("fkey-move"), Action::Move),
+        key(fl!("fkey-mkdir"), Action::Mkdir),
+        key(fl!("fkey-delete"), Action::Delete),
         button::standard(fl!("fkey-exit"))
             .on_press(Message::Exit)
             .width(Length::Fill),

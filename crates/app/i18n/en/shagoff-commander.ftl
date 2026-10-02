@@ -17,3 +17,33 @@ select-group = Select group
 unselect-group = Unselect group
 ok = OK
 cancel = Cancel
+copy-to = Copy { $what } to:
+move-to = Move { $what } to:
+n-files = { $n ->
+    [one] { $n } file
+   *[other] { $n } files
+}
+mkdir = New folder
+rename = Rename
+delete-trash = Move { $what } to trash?
+delete-permanent = Delete { $what } permanently? This cannot be undone.
+delete = Delete
+copying = Copying
+moving = Moving
+deleting = Deleting
+progress-bytes = { $done } b of { $total } b
+progress-items = { $done } of { $total }
+file-exists = File already exists
+new-file = New: { $size } b, { $date }
+existing-file = Existing: { $size } b, { $date }
+replace = Replace
+skip = Skip
+replace-all = Replace all
+skip-all = Skip all
+replace-older = Replace older
+op-error = Error
+retry = Retry
+plan-into-itself = Cannot copy a folder into itself: { $path }
+plan-same-file = Source and target are the same: { $path }
+rename-bad-name = Invalid name: use a plain name without "/"
+rename-exists = Name is taken by a folder: { $path }

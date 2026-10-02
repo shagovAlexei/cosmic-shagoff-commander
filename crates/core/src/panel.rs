@@ -187,6 +187,30 @@ impl Panel {
         sum(self.entries.iter().filter(|e| self.is_marked(e)))
     }
 
+    /// What an operation acts on: marked entries (in list order), else the row under the cursor; never `..`.
+    pub fn targets(&self) -> Vec<PathBuf> {
+        let marked: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| self.is_marked(e))
+            .map(|e| self.cwd.join(&e.os_name))
+            .collect();
+        if !marked.is_empty() {
+            return marked;
+        }
+        self.current()
+            .filter(|e| e.name != PARENT)
+            .map(|e| vec![self.cwd.join(&e.os_name)])
+            .unwrap_or_default()
+    }
+
+    /// Drop marks of processed entries (by file name).
+    pub fn unmark(&mut self, paths: &[PathBuf]) {
+        for name in paths.iter().filter_map(|p| p.file_name()) {
+            self.marked.remove(name);
+        }
+    }
+
     pub fn current(&self) -> Option<&Entry> {
         self.entries.get(self.cursor)
     }
@@ -523,6 +547,26 @@ mod tests {
                 dirs: 1
             }
         );
+    }
+
+    #[test]
+    fn targets_are_marked_or_cursor_never_parent() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1)]);
+        assert!(p.targets().is_empty()); // cursor on ".."
+        p.set_cursor(1);
+        assert_eq!(p.targets(), [PathBuf::from("/x/a")]);
+        p.set_cursor(2);
+        p.toggle_mark(); // mark b
+        p.set_cursor(1); // cursor on a, but marks win
+        assert_eq!(p.targets(), [PathBuf::from("/x/b")]);
+    }
+
+    #[test]
+    fn unmark_removes_given_paths() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1)]);
+        p.mark_all(true);
+        p.unmark(&[PathBuf::from("/x/a")]);
+        assert_eq!(marked_names(&p), ["b"]);
     }
 
     #[test]
