@@ -3,6 +3,7 @@
 
 pub mod drives;
 pub mod format;
+pub mod history;
 pub mod launch;
 pub mod listing;
 pub mod mask;

@@ -25,6 +25,15 @@ pub struct Config {
     pub editor: Vec<String>,
     pub last_tab_close: LastTab,
     pub home_dir: Option<PathBuf>,
+    /// Ctrl+D favourites, in menu order.
+    pub hotlist: Vec<HotEntry>,
+}
+
+/// A favourite dir (Ctrl+D).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HotEntry {
+    pub name: String,
+    pub path: PathBuf,
 }
 
 impl Default for Config {
@@ -35,6 +44,7 @@ impl Default for Config {
             editor: vec!["cosmic-edit".into()],
             last_tab_close: LastTab::Nothing,
             home_dir: None,
+            hotlist: Vec::new(),
         }
     }
 }

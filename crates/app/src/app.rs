@@ -1,5 +1,5 @@
-use crate::config::{self, Config, LastTab, State};
-use crate::dialogs::{self, Dialog, InputOp};
+use crate::config::{self, Config, HotEntry, LastTab, State};
+use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -10,7 +10,8 @@ use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
 use shagoff_core::drives::{self, Drive};
-use shagoff_core::format::TimeZone;
+use shagoff_core::format::{self, TimeZone};
+use shagoff_core::history::History;
 use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
@@ -44,6 +45,8 @@ pub struct Tab {
     /// Generation and path of the scan in flight; any other result is stale.
     pub(crate) pending: Option<(u64, PathBuf)>,
     pub error: Option<String>,
+    /// Alt+← / Alt+→ / Alt+↓.
+    pub(crate) history: History,
 }
 
 impl Tab {
@@ -55,6 +58,7 @@ impl Tab {
             height: FALLBACK_LIST_H,
             pending: None,
             error: None,
+            history: History::default(),
         }
     }
 
@@ -81,6 +85,7 @@ impl Tab {
             height: self.height,
             pending: None,
             error: None,
+            history: self.history.clone(),
         }
     }
 }
@@ -143,7 +148,6 @@ pub struct App {
 pub enum Message {
     Key(Action),
     Listed {
-        side: usize,
         tab: u64,
         generation: u64,
         path: PathBuf,
@@ -171,6 +175,8 @@ pub enum Message {
     CancelJob,
     /// A panel key a focused text field captured (F-keys, PgUp/PgDn, Insert, Ctrl+…).
     FieldKey(Action),
+    /// Click on entry i of the open list dialog.
+    ListPick(usize),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
     /// Enter in that field.
@@ -309,19 +315,21 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
-                if let Some(Dialog::Drives {
-                    side,
-                    cursor,
-                    drives,
-                }) = &mut self.dialog
+                if let Some(Dialog::List { kind, cursor, .. }) = &self.dialog
+                    && *kind == ListKind::Hotlist
+                    && *cursor >= 1
+                    && matches!(action, Action::Delete | Action::DeletePermanent)
                 {
+                    let i = *cursor - 1;
+                    return self.hotlist_remove(i);
+                }
+                if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
                     match action {
                         Action::Up => *cursor = cursor.saturating_sub(1),
-                        Action::Down => *cursor = (*cursor + 1).min(drives.len().saturating_sub(1)),
+                        Action::Down => *cursor = (*cursor + 1).min(items.len().saturating_sub(1)),
                         Action::Enter => {
-                            let (side, path) = (*side, drives.get(*cursor).map(|d| d.path.clone()));
-                            self.dialog = None;
-                            return path.map_or_else(Task::none, |p| self.go_drive(side, p));
+                            let i = *cursor;
+                            return self.pick(i);
                         }
                         _ => {}
                     }
@@ -364,7 +372,6 @@ impl App {
                 return self.act(self.active, action);
             }
             Message::Listed {
-                side,
                 tab,
                 generation,
                 path,
@@ -372,12 +379,18 @@ impl App {
                 result,
                 space,
             } => {
+                // The tab may have moved (Ctrl+U): find it by id; `side` is only where it started.
+                let Some(side) =
+                    (0..2).find(|&s| self.panes[s].items().iter().any(|t| t.id == tab))
+                else {
+                    return Task::none(); // tab was closed
+                };
                 let Some(t) = self.panes[side]
                     .items_mut()
                     .iter_mut()
                     .find(|t| t.id == tab)
                 else {
-                    return Task::none(); // tab was closed
+                    return Task::none();
                 };
                 if t.pending.as_ref().map(|(g, _)| *g) != Some(generation) {
                     return Task::none(); // stale: the user has moved on
@@ -386,6 +399,7 @@ impl App {
                 match result {
                     Ok(entries) => {
                         t.error = None;
+                        t.history.visit(&path); // no-op for a rescan of the current entry
                         t.panel.set_listing(path, entries, focus.as_deref());
                         if self.panes[side].active().id == tab {
                             self.refresh_mounts();
@@ -514,6 +528,7 @@ impl App {
                 return self.reveal(side, tab);
             }
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
+            Message::ListPick(i) => return self.pick(i),
             Message::FieldKey(action) => {
                 if self.search.is_some() && self.dialog.is_none() {
                     return self.handle(Message::Key(action));
@@ -538,7 +553,7 @@ impl App {
                 self.search = None;
                 if self.job.is_none() {
                     self.dialog = None;
-                    return self.go_drive(side, path);
+                    return self.go_to(side, path);
                 }
             }
             Message::Config(c) => {
@@ -639,7 +654,6 @@ impl App {
                 .await
                 .unwrap_or_else(|e| (Err(e.to_string()), None));
                 Message::Listed {
-                    side,
                     tab,
                     generation,
                     path,
@@ -748,6 +762,25 @@ impl App {
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
             Action::QuickSearch(_) | Action::QuickFilter => {} // handled above
+            Action::HistoryBack | Action::HistoryForward => {
+                let history = &mut self.panes[side].active_mut().history;
+                let step = if action == Action::HistoryBack {
+                    history.back()
+                } else {
+                    history.forward()
+                };
+                if let Some(path) = step {
+                    return self.load(side, path, None);
+                }
+            }
+            Action::SwapPanes => {
+                self.panes.swap(0, 1);
+                self.space.swap(0, 1);
+                self.search = None;
+                return Task::batch([self.restore_scroll(0), self.restore_scroll(1)]);
+            }
+            // Opened by `dialog_for` above.
+            Action::HistoryList | Action::Hotlist => {}
             Action::Copy
             | Action::Move
             | Action::Rename
@@ -843,12 +876,41 @@ impl App {
                     paths,
                 })
             }
+            Action::Hotlist => Some(Dialog::List {
+                kind: ListKind::Hotlist,
+                side,
+                cursor: 0,
+                items: self.hotlist_items(),
+            }),
+            Action::HistoryList => Some(Dialog::List {
+                kind: ListKind::History,
+                side,
+                cursor: 0,
+                items: self.panes[side]
+                    .active()
+                    .history
+                    .recent()
+                    .into_iter()
+                    .map(|p| ListItem {
+                        label: format::dir_title(&p),
+                        path: p,
+                    })
+                    .collect(),
+            }),
             // A copy: mounts are re-read on every listing and must not shift under the cursor.
-            Action::Drives(s) => Some(Dialog::Drives {
+            Action::Drives(s) => Some(Dialog::List {
+                kind: ListKind::Drives,
                 side: s,
                 cursor: drives::containing(&self.drives, self.panes[s].active().panel.cwd())
                     .unwrap_or(0),
-                drives: self.drives.clone(),
+                items: self
+                    .drives
+                    .iter()
+                    .map(|d| ListItem {
+                        label: d.label.clone(),
+                        path: d.path.clone(),
+                    })
+                    .collect(),
             }),
             _ => None,
         }
@@ -887,14 +949,14 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
-            Dialog::Drives {
-                side,
-                cursor,
-                drives,
-            } => match drives.get(cursor) {
-                Some(d) => self.go_drive(side, d.path.clone()),
-                None => Task::none(),
-            },
+            d @ Dialog::List { .. } => {
+                let i = match &d {
+                    Dialog::List { cursor, .. } => *cursor,
+                    _ => 0,
+                };
+                self.dialog = Some(d);
+                self.pick(i)
+            }
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -1104,7 +1166,72 @@ impl App {
         }
     }
 
-    fn go_drive(&mut self, side: usize, path: PathBuf) -> Task<Message> {
+    /// Enter / click on entry `i` of the open list.
+    fn pick(&mut self, i: usize) -> Task<Message> {
+        let Some(Dialog::List {
+            kind, side, items, ..
+        }) = self.dialog.take()
+        else {
+            return Task::none();
+        };
+        if kind == ListKind::Hotlist && i == 0 {
+            let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+            if !self.config.hotlist.iter().any(|e| e.path == cwd) {
+                let mut list = self.config.hotlist.clone();
+                list.push(HotEntry {
+                    name: format::dir_title(&cwd),
+                    path: cwd,
+                });
+                self.save_hotlist(list);
+            }
+            return Task::none();
+        }
+        match items.get(i) {
+            Some(item) => self.go_to(side, item.path.clone()),
+            None => Task::none(),
+        }
+    }
+
+    /// Hotlist rows: "add current dir" (empty path), then the favourites.
+    fn hotlist_items(&self) -> Vec<ListItem> {
+        std::iter::once(ListItem {
+            label: fl!("hotlist-add"),
+            path: PathBuf::new(),
+        })
+        .chain(self.config.hotlist.iter().map(|e| ListItem {
+            label: e.name.clone(),
+            path: e.path.clone(),
+        }))
+        .collect()
+    }
+
+    fn save_hotlist(&mut self, list: Vec<HotEntry>) {
+        match &self.config_handler {
+            Some(h) => {
+                if let Err(e) = self.config.set_hotlist(h, list) {
+                    log::warn!("config: {e}");
+                }
+            }
+            None => self.config.hotlist = list,
+        }
+    }
+
+    /// Delete on hotlist entry `i`: drop it, save, refresh the open list in place.
+    fn hotlist_remove(&mut self, i: usize) -> Task<Message> {
+        let mut list = self.config.hotlist.clone();
+        if i < list.len() {
+            list.remove(i);
+            self.save_hotlist(list);
+        }
+        let fresh = self.hotlist_items();
+        if let Some(Dialog::List { items, cursor, .. }) = &mut self.dialog {
+            *cursor = (*cursor).min(fresh.len() - 1);
+            *items = fresh;
+        }
+        Task::none()
+    }
+
+    fn go_to(&mut self, side: usize, path: PathBuf) -> Task<Message> {
         self.active = side;
         self.load(side, path, None)
     }
@@ -1238,6 +1365,7 @@ fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::config::{Config, LastTab, State};
+    use crate::dialogs::ListKind;
     use cosmic::iced::keyboard::key::{Code, Named, Physical};
     use cosmic::iced::keyboard::{Key, Location};
     use shagoff_core::drives::Drive;
@@ -1278,13 +1406,20 @@ mod tests {
             },
         ];
         let _ = app.update(Message::Key(Action::Drives(1)));
-        assert!(matches!(app.dialog, Some(Dialog::Drives { side: 1, .. })));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::List {
+                kind: ListKind::Drives,
+                side: 1,
+                ..
+            })
+        ));
         let _ = app.update(Message::Key(Action::Up));
         let _ = app.update(Message::Key(Action::Up)); // clamped at 0
-        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 0, .. })));
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 0, .. })));
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::Down)); // clamped at 1
-        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 1, .. })));
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 1, .. })));
         app.panes[1].active_mut().pending = None;
         let _ = app.update(Message::Key(Action::Enter));
         assert!(app.dialog.is_none());
@@ -1317,7 +1452,6 @@ mod tests {
         let _ = app.load(0, cwd.clone(), None);
         let second = app.panes[0].active().pending.as_ref().unwrap().0;
         let listed = |generation, name: &str| Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: cwd.clone(),
@@ -1351,7 +1485,6 @@ mod tests {
 
     fn listed_ok(id: u64, generation: u64, path: &Path) -> Message {
         Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: path.into(),
@@ -1537,7 +1670,6 @@ mod tests {
             (t.id, t.pending.as_ref().unwrap().0)
         };
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: "/root/secret".into(),
@@ -1568,7 +1700,6 @@ mod tests {
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let entries = listing::scan(tmp.path(), false).unwrap();
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: tmp.path().into(),
@@ -1588,7 +1719,6 @@ mod tests {
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let entries = (0..20).map(|i| entry(&format!("f{i:02}"))).collect();
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: std::env::temp_dir(),
@@ -1648,7 +1778,6 @@ mod tests {
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let entries = names.iter().map(|n| entry(n)).collect();
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: std::env::temp_dir(),
@@ -1725,7 +1854,6 @@ mod tests {
         let mut sub = entry("sub");
         sub.kind = shagoff_core::listing::Kind::Dir;
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: cwd.clone(),
@@ -1772,6 +1900,180 @@ mod tests {
         let _ = app.update(Message::DialogCancel); // in search field: only close
         assert!(app.search.is_none());
         assert_eq!(cursor_name(&app), "a.rs");
+    }
+
+    #[test]
+    fn clicking_a_list_entry_opens_it() {
+        let mut app = app_with(Config::default(), State::default());
+        app.drives = vec![
+            Drive {
+                label: "/".into(),
+                path: "/".into(),
+            },
+            Drive {
+                label: "etc".into(),
+                path: "/etc".into(),
+            },
+        ];
+        let _ = app.update(Message::Key(Action::Drives(1)));
+        app.panes[1].active_mut().pending = None;
+        let _ = app.update(Message::ListPick(1));
+        assert!(app.dialog.is_none());
+        let pending = app.panes[1]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(PathBuf::from("/etc")));
+    }
+
+    /// Simulate a finished scan of `path` for the active tab of `side`.
+    fn arrive(app: &mut App, side: usize, path: &Path) {
+        let _ = app.load(side, path.into(), None);
+        let t = app.panes[side].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: path.into(),
+            focus: None,
+            result: Ok(vec![]),
+            space: None,
+        });
+    }
+
+    fn pending_of(app: &App, side: usize) -> Option<PathBuf> {
+        app.panes[side]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone())
+    }
+
+    #[test]
+    fn alt_left_right_walk_tab_history() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 0, Path::new("/etc"));
+        let _ = app.update(Message::Key(Action::HistoryBack));
+        assert_eq!(pending_of(&app, 0), Some(PathBuf::from("/usr")));
+        arrive(&mut app, 0, Path::new("/usr")); // the jump lands
+        let _ = app.update(Message::Key(Action::HistoryForward));
+        assert_eq!(pending_of(&app, 0), Some(PathBuf::from("/etc")));
+    }
+
+    #[test]
+    fn rescan_does_not_add_history() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, &std::env::temp_dir()); // the start dir's first listing
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 0, Path::new("/usr")); // Ctrl+R / watcher
+        let _ = app.update(Message::Key(Action::HistoryBack));
+        // One step back leaves /usr for the start dir, not /usr again.
+        assert_eq!(pending_of(&app, 0), Some(std::env::temp_dir()));
+    }
+
+    #[test]
+    fn alt_down_lists_history() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 0, Path::new("/etc"));
+        let _ = app.update(Message::Key(Action::HistoryList));
+        let Some(Dialog::List {
+            kind: ListKind::History,
+            items,
+            ..
+        }) = &app.dialog
+        else {
+            panic!("no history list");
+        };
+        assert_eq!(items[0].path, Path::new("/etc"));
+        assert!(items.iter().any(|i| i.path == Path::new("/usr")));
+    }
+
+    #[test]
+    fn ctrl_u_swaps_panes() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 1, Path::new("/etc"));
+        app.space = [Some((1, 10)), Some((2, 20))];
+        let _ = app.update(Message::Key(Action::SwapPanes));
+        assert_eq!(app.space, [Some((2, 20)), Some((1, 10))]); // free space follows its pane
+        assert_eq!(app.panes[0].active().panel.cwd(), Path::new("/etc"));
+        assert_eq!(app.panes[1].active().panel.cwd(), Path::new("/usr"));
+    }
+
+    #[test]
+    fn regression_swap_keeps_scan_in_flight() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.load(0, "/usr".into(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Key(Action::SwapPanes)); // tab now on side 1
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: "/usr".into(),
+            focus: None,
+            result: Ok(vec![]),
+            space: None,
+        });
+        let t = app.panes[1].active();
+        assert_eq!(t.panel.cwd(), Path::new("/usr"));
+        assert!(t.pending.is_none(), "tab stuck in pending");
+    }
+
+    fn hotlist_items(app: &App) -> Vec<PathBuf> {
+        match &app.dialog {
+            Some(Dialog::List {
+                kind: ListKind::Hotlist,
+                items,
+                ..
+            }) => items.iter().map(|i| i.path.clone()).collect(),
+            _ => panic!("hotlist not open"),
+        }
+    }
+
+    #[test]
+    fn hotlist_add_once_delete_clamps() {
+        let mut app = app_with(Config::default(), State::default());
+        let cwd = app.panes[0].active().panel.cwd().to_path_buf();
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Enter)); // row 0: add current dir
+        let paths: Vec<_> = app.config.hotlist.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(paths, std::slice::from_ref(&cwd));
+        assert!(app.dialog.is_none());
+
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Enter)); // add again: no duplicate
+        assert_eq!(app.config.hotlist.len(), 1);
+
+        let _ = app.update(Message::Key(Action::Hotlist));
+        assert_eq!(hotlist_items(&app).len(), 2); // add row + one entry
+        let _ = app.update(Message::Key(Action::Delete)); // on the add row: nothing
+        assert_eq!(app.config.hotlist.len(), 1);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Delete)); // remove the entry
+        assert!(app.config.hotlist.is_empty());
+        assert_eq!(hotlist_items(&app).len(), 1); // still open
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 0, .. })));
+    }
+
+    #[test]
+    fn hotlist_entry_opens_its_dir() {
+        let config = Config {
+            hotlist: vec![crate::config::HotEntry {
+                name: "etc".into(),
+                path: "/etc".into(),
+            }],
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Down));
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::Enter));
+        assert_eq!(pending_of(&app, 0), Some(PathBuf::from("/etc")));
     }
 
     #[test]
