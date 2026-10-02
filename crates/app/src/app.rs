@@ -781,6 +781,7 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::HistoryList | Action::Hotlist => {}
+            Action::ClipCopy | Action::ClipCut | Action::ClipPaste => {}
             Action::Copy
             | Action::Move
             | Action::Rename
