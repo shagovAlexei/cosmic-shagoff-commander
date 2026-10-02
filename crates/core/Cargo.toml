@@ -1,0 +1,10 @@
+[package]
+name = "shagoff-core"
+description = "UI-free core of Shagoff Commander: panels, listing, file operations"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.shagovAlexei.cosmic-shagoff-commander</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Shagoff Commander</name>
+  <summary>Dual-pane file manager in the spirit of Total Commander</summary>
+  <developer id="io.github.shagovAlexei"><name>Shagov Alexei</name></developer>
+  <url type="homepage">https://github.com/shagovAlexei/cosmic-shagoff-commander</url>
+  <launchable type="desktop-id">io.github.shagovAlexei.cosmic-shagoff-commander.desktop</launchable>
+  <provides><binary>shagoff-commander</binary></provides>
+</component>
