@@ -12,6 +12,7 @@ jiff = "0.2"
 rustix = { version = "1", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 trash = "5"
+url = "2"
 
 [dev-dependencies]
 tempfile = "3"
