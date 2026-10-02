@@ -51,7 +51,12 @@ impl Tab {
     fn duplicate(&self, id: u64) -> Self {
         Self {
             id,
-            panel: self.panel.clone(),
+            panel: {
+                // TC: a new tab starts without a selection
+                let mut panel = self.panel.clone();
+                panel.mark_all(false);
+                panel
+            },
             offset: self.offset,
             height: self.height,
             pending: None,
