@@ -122,3 +122,4 @@
 | `regression_shrinking_window_keeps_cursor_visible` | После уменьшения окна курсор уходил за край | техдолг |
 | `regression_swap_keeps_scan_in_flight` | Чтение каталога, начатое до Ctrl+U, терялось, вкладка застревала | 08 |
 | `regression_recent_starts_with_the_current_entry_after_back` | После Alt+← список Alt+↓ начинался не с текущего каталога | 08 |
+| `regression_paste_during_navigation_lands_in_target` | Ctrl+V сразу после Enter на папке вставлял в покидаемый каталог | 09 |

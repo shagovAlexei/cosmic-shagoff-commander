@@ -1026,7 +1026,8 @@ impl App {
         sources: Vec<PathBuf>,
         input: &str,
     ) -> Task<Message> {
-        let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+        // While a navigation is in flight the rows still show the dir being left; aim at where the tab is going.
+        let cwd = self.panes[side].active().target();
         let (method, kind) = match op {
             InputOp::Copy => (Method::Copy, OpKind::Copy),
             _ => (Method::Move, OpKind::Move),
@@ -2319,5 +2320,23 @@ mod tests {
         assert!(app.dialog.is_some());
         let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![a]))));
         assert!(app.job.is_none());
+    }
+
+    #[test]
+    fn regression_paste_during_navigation_lands_in_target() {
+        let (tmp, mut app, a) = paste_setup();
+        let next = tmp.path().join("next");
+        std::fs::create_dir(&next).unwrap();
+        let _ = app.load(0, next.clone(), None); // scan still pending: rows show dst
+        let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![a]))));
+        assert!(app.job.is_some());
+        let copied = next.join("a");
+        for _ in 0..200 {
+            if copied.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(copied.exists(), "pasted into the dir being left");
     }
 }
