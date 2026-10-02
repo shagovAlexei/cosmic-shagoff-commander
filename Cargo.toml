@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Shagov Alexei <shagov.alexei@gmail.com>"]
+license = "GPL-3.0-only"
+repository = "https://github.com/shagovAlexei/cosmic-shagoff-commander"

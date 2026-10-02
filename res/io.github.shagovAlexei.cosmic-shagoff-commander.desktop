@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Shagoff Commander
+Comment=Dual-pane file manager in the spirit of Total Commander
+Comment[ru]=Двухпанельный файловый менеджер в духе Total Commander
+Exec=shagoff-commander %U
+Terminal=false
+Type=Application
+StartupNotify=true
+Icon=io.github.shagovAlexei.cosmic-shagoff-commander
+Categories=COSMIC;Utility;FileManager;System;
+Keywords=files;file manager;commander;total commander;
+MimeType=inode/directory;

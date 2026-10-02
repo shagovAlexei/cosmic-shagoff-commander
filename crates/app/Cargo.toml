@@ -1,0 +1,22 @@
+[package]
+name = "shagoff-commander"
+description = "Total Commander-style dual-pane file manager for COSMIC"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+shagoff-core = { path = "../core" }
+i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10"
+rust-embed = "8"
+log = "0.4"
+simple_logger = "5"
+
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic.git"
+rev = "ef490df50b0a05a21c494c3f75737581bf0b39d9"
+default-features = false
+features = ["tokio", "winit", "wayland", "wgpu", "multi-window"]
