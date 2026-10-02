@@ -351,7 +351,13 @@ impl App {
                         }
                         return self.reveal(side, tab);
                     }
-                    Err(e) => t.error = Some(e),
+                    Err(e) => {
+                        t.error = Some(fl!(
+                            "list-failed",
+                            path = path.display().to_string(),
+                            err = e
+                        ))
+                    }
                 }
             }
             Message::Click(side, i) => {
@@ -542,6 +548,8 @@ impl App {
     }
 
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
+        // An error stays in the status line until the next action in that pane.
+        self.panes[side].active_mut().error = None;
         if let Some(d) = self.dialog_for(side, action) {
             let focus = matches!(d, Dialog::Mask { .. } | Dialog::Input { .. });
             self.dialog = Some(d);
@@ -611,8 +619,12 @@ impl App {
                 let file = panel
                     .current()
                     .filter(|e| !e.is_dir() && e.name != PARENT)
-                    .map(|e| panel.cwd().join(&e.os_name));
-                if let Some(file) = file {
+                    .map(|e| (panel.cwd().join(&e.os_name), e.name.clone()));
+                if let Some((file, name)) = file {
+                    if !file.exists() {
+                        t.error = Some(fl!("broken-link", name = name));
+                        return Task::none();
+                    }
                     let argv = if action == Action::View {
                         launch::command(&self.config.viewer, &["xdg-open"], &file)
                     } else {
@@ -796,7 +808,7 @@ impl App {
                 self.load(side, cwd, focus)
             }
             Err(e) => {
-                t.error = Some(e.to_string());
+                t.error = Some(fl!("mkdir-failed", path = name, err = e.to_string()));
                 Task::none()
             }
         }
@@ -1307,6 +1319,59 @@ mod tests {
         let _ = app.load(0, "/usr".into(), None);
         let _ = app.update(Message::Key(Action::Enter)); // cursor on ".." of the old dir
         assert_eq!(pending_path(&app), Some(PathBuf::from("/usr")));
+    }
+
+    #[test]
+    fn listing_error_names_the_dir_and_clears_on_next_key() {
+        let mut app = app_with(Config::default(), State::default());
+        let (id, generation) = {
+            let _ = app.load(0, "/root/secret".into(), None);
+            let t = app.panes[0].active();
+            (t.id, t.pending.as_ref().unwrap().0)
+        };
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: "/root/secret".into(),
+            focus: None,
+            result: Err("Permission denied".into()),
+            space: None,
+        });
+        let err = app.panes[0].active().error.clone().unwrap_or_default();
+        assert!(
+            err.contains("/root/secret") && err.contains("Permission denied"),
+            "{err}"
+        );
+        let _ = app.update(Message::Key(Action::Down));
+        assert!(app.panes[0].active().error.is_none());
+    }
+
+    #[test]
+    fn regression_f3_on_broken_symlink_reports_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("nowhere", tmp.path().join("dangling")).unwrap();
+        let config = Config {
+            viewer: vec!["/nonexistent/viewer".into()], // never launch anything from a test
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let _ = app.load(0, tmp.path().into(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let entries = listing::scan(tmp.path(), false).unwrap();
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: tmp.path().into(),
+            focus: Some("dangling".into()),
+            result: Ok(entries),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::View));
+        let err = app.panes[0].active().error.clone().unwrap_or_default();
+        assert_eq!(err, fl!("broken-link", name = "dangling"));
     }
 
     #[test]
