@@ -88,3 +88,13 @@
 | `regression_second_scan_of_same_path_wins` | Из двух чтений одного каталога применялось старое, новое отбрасывалось | фаза 6 |
 | `regression_watcher_does_not_cancel_navigation` | Изменения в покидаемом каталоге (загрузка браузера) отменяли переход в другой каталог | фаза 6 |
 | `regression_ctrl_h_keeps_pending_navigation` | Ctrl+H сразу после Enter перечитывал старый каталог и отменял переход | фаза 6 |
+| `regression_dir_readable_but_not_searchable_lists_names` | Каталог `r--` без `x` показывался пустым | техдолг |
+| `regression_human_rounds_before_choosing_unit` | «100.0 G» и «1024 K» на границах единиц | техдолг |
+| `regression_root_or_home_device_mounted_again_gets_no_extra_button` | Повторное монтирование диска `/` или home давало лишнюю кнопку | техдолг |
+| `regression_last_tab_home_dir_with_tilde_or_gone` | `home_dir` с `~` или удалённым каталогом → ошибка при Ctrl+W | техдолг |
+| `regression_drive_list_is_fixed_while_dialog_open` | Список дисков менялся под открытым Alt+F1, Enter уходил не туда | техдолг |
+| `regression_backspace_while_loading_goes_up_from_the_target` | Быстрые Backspace на медленной ФС терялись | техдолг |
+| `regression_f3_on_broken_symlink_reports_it` | F3/F4 на битой ссылке молча ничего не делали | техдолг |
+| `regression_trailing_slash_means_into_a_new_dir` | Цель `новая/` для одного файла давала ошибку ENOTDIR | техдолг |
+| `regression_click_on_half_visible_row_scrolls_it_in` | Клик по обрезанной строке не докручивал её | техдолг |
+| `regression_shrinking_window_keeps_cursor_visible` | После уменьшения окна курсор уходил за край | техдолг |
