@@ -84,6 +84,8 @@ impl Application for App {
 
     fn init(mut core: Core, flags: Flags) -> (Self, Task<Message>) {
         core.window.header_title = fl!("app-title");
+        // Tab is ours (switch pane); libcosmic's Tab focus-walk would also focus buttons that Enter then fires.
+        core.set_keyboard_nav(false);
         let home = std::env::home_dir().unwrap_or_else(|| "/".into());
         let left = flags
             .left
