@@ -44,10 +44,15 @@ impl History {
         Some(self.items[self.pos].clone())
     }
 
-    /// Unique dirs, most recent visit first.
+    /// Unique dirs: the current one first, then the rest by most recent visit.
     pub fn recent(&self) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = Vec::new();
-        for p in self.items.iter().rev() {
+        for p in self
+            .items
+            .get(self.pos)
+            .into_iter()
+            .chain(self.items.iter().rev())
+        {
             if !out.contains(p) {
                 out.push(p.clone());
             }
@@ -118,6 +123,13 @@ mod tests {
         }
         assert_eq!(steps, LIMIT - 1); // LIMIT entries kept, oldest (/d0) dropped
         assert_eq!(h.forward(), Some("/d2".into()));
+    }
+
+    #[test]
+    fn regression_recent_starts_with_the_current_entry_after_back() {
+        let mut h = h(&["/a", "/b", "/c"]);
+        h.back(); // now at /b
+        assert_eq!(h.recent(), [PathBuf::from("/b"), "/c".into(), "/a".into()]);
     }
 
     #[test]

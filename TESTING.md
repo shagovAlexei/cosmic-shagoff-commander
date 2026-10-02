@@ -115,3 +115,4 @@
 | `regression_click_on_half_visible_row_scrolls_it_in` | Клик по обрезанной строке не докручивал её | техдолг |
 | `regression_shrinking_window_keeps_cursor_visible` | После уменьшения окна курсор уходил за край | техдолг |
 | `regression_swap_keeps_scan_in_flight` | Чтение каталога, начатое до Ctrl+U, терялось, вкладка застревала | 08 |
+| `regression_recent_starts_with_the_current_entry_after_back` | После Alt+← список Alt+↓ начинался не с текущего каталога | 08 |

@@ -775,6 +775,7 @@ impl App {
             }
             Action::SwapPanes => {
                 self.panes.swap(0, 1);
+                self.space.swap(0, 1);
                 self.search = None;
                 return Task::batch([self.restore_scroll(0), self.restore_scroll(1)]);
             }
@@ -1995,7 +1996,9 @@ mod tests {
         let mut app = app_with(Config::default(), State::default());
         arrive(&mut app, 0, Path::new("/usr"));
         arrive(&mut app, 1, Path::new("/etc"));
+        app.space = [Some((1, 10)), Some((2, 20))];
         let _ = app.update(Message::Key(Action::SwapPanes));
+        assert_eq!(app.space, [Some((2, 20)), Some((1, 10))]); // free space follows its pane
         assert_eq!(app.panes[0].active().panel.cwd(), Path::new("/etc"));
         assert_eq!(app.panes[1].active().panel.cwd(), Path::new("/usr"));
     }
