@@ -58,7 +58,6 @@ pub enum Dialog {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(dead_code, reason = "History/Hotlist arrive in the next commits")]
 pub enum ListKind {
     Drives,
     History,

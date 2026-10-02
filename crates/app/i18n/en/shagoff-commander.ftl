@@ -59,3 +59,4 @@ filter-label = Filter:
 filter-status = Filter: { $pattern } ·
 history = History
 hotlist = Hotlist
+hotlist-add = Add current directory

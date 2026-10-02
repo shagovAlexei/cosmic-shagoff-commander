@@ -1,4 +1,4 @@
-use crate::config::{self, Config, LastTab, State};
+use crate::config::{self, Config, HotEntry, LastTab, State};
 use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind};
 use crate::fl;
 use crate::jobs::{self, Job};
@@ -315,6 +315,14 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
+                if let Some(Dialog::List { kind, cursor, .. }) = &self.dialog
+                    && *kind == ListKind::Hotlist
+                    && *cursor >= 1
+                    && matches!(action, Action::Delete | Action::DeletePermanent)
+                {
+                    let i = *cursor - 1;
+                    return self.hotlist_remove(i);
+                }
                 if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
                     match action {
                         Action::Up => *cursor = cursor.saturating_sub(1),
@@ -867,6 +875,12 @@ impl App {
                     paths,
                 })
             }
+            Action::Hotlist => Some(Dialog::List {
+                kind: ListKind::Hotlist,
+                side,
+                cursor: 0,
+                items: self.hotlist_items(),
+            }),
             Action::HistoryList => Some(Dialog::List {
                 kind: ListKind::History,
                 side,
@@ -1153,13 +1167,67 @@ impl App {
 
     /// Enter / click on entry `i` of the open list.
     fn pick(&mut self, i: usize) -> Task<Message> {
-        let Some(Dialog::List { side, items, .. }) = self.dialog.take() else {
+        let Some(Dialog::List {
+            kind, side, items, ..
+        }) = self.dialog.take()
+        else {
             return Task::none();
         };
+        if kind == ListKind::Hotlist && i == 0 {
+            let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+            if !self.config.hotlist.iter().any(|e| e.path == cwd) {
+                let mut list = self.config.hotlist.clone();
+                list.push(HotEntry {
+                    name: format::dir_title(&cwd),
+                    path: cwd,
+                });
+                self.save_hotlist(list);
+            }
+            return Task::none();
+        }
         match items.get(i) {
             Some(item) => self.go_to(side, item.path.clone()),
             None => Task::none(),
         }
+    }
+
+    /// Hotlist rows: "add current dir" (empty path), then the favourites.
+    fn hotlist_items(&self) -> Vec<ListItem> {
+        std::iter::once(ListItem {
+            label: fl!("hotlist-add"),
+            path: PathBuf::new(),
+        })
+        .chain(self.config.hotlist.iter().map(|e| ListItem {
+            label: e.name.clone(),
+            path: e.path.clone(),
+        }))
+        .collect()
+    }
+
+    fn save_hotlist(&mut self, list: Vec<HotEntry>) {
+        match &self.config_handler {
+            Some(h) => {
+                if let Err(e) = self.config.set_hotlist(h, list) {
+                    log::warn!("config: {e}");
+                }
+            }
+            None => self.config.hotlist = list,
+        }
+    }
+
+    /// Delete on hotlist entry `i`: drop it, save, refresh the open list in place.
+    fn hotlist_remove(&mut self, i: usize) -> Task<Message> {
+        let mut list = self.config.hotlist.clone();
+        if i < list.len() {
+            list.remove(i);
+            self.save_hotlist(list);
+        }
+        let fresh = self.hotlist_items();
+        if let Some(Dialog::List { items, cursor, .. }) = &mut self.dialog {
+            *cursor = (*cursor).min(fresh.len() - 1);
+            *items = fresh;
+        }
+        Task::none()
     }
 
     fn go_to(&mut self, side: usize, path: PathBuf) -> Task<Message> {
@@ -1950,6 +2018,59 @@ mod tests {
         let t = app.panes[1].active();
         assert_eq!(t.panel.cwd(), Path::new("/usr"));
         assert!(t.pending.is_none(), "tab stuck in pending");
+    }
+
+    fn hotlist_items(app: &App) -> Vec<PathBuf> {
+        match &app.dialog {
+            Some(Dialog::List {
+                kind: ListKind::Hotlist,
+                items,
+                ..
+            }) => items.iter().map(|i| i.path.clone()).collect(),
+            _ => panic!("hotlist not open"),
+        }
+    }
+
+    #[test]
+    fn hotlist_add_once_delete_clamps() {
+        let mut app = app_with(Config::default(), State::default());
+        let cwd = app.panes[0].active().panel.cwd().to_path_buf();
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Enter)); // row 0: add current dir
+        let paths: Vec<_> = app.config.hotlist.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(paths, std::slice::from_ref(&cwd));
+        assert!(app.dialog.is_none());
+
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Enter)); // add again: no duplicate
+        assert_eq!(app.config.hotlist.len(), 1);
+
+        let _ = app.update(Message::Key(Action::Hotlist));
+        assert_eq!(hotlist_items(&app).len(), 2); // add row + one entry
+        let _ = app.update(Message::Key(Action::Delete)); // on the add row: nothing
+        assert_eq!(app.config.hotlist.len(), 1);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Delete)); // remove the entry
+        assert!(app.config.hotlist.is_empty());
+        assert_eq!(hotlist_items(&app).len(), 1); // still open
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 0, .. })));
+    }
+
+    #[test]
+    fn hotlist_entry_opens_its_dir() {
+        let config = Config {
+            hotlist: vec![crate::config::HotEntry {
+                name: "etc".into(),
+                path: "/etc".into(),
+            }],
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Down));
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::Enter));
+        assert_eq!(pending_of(&app, 0), Some(PathBuf::from("/etc")));
     }
 
     #[test]

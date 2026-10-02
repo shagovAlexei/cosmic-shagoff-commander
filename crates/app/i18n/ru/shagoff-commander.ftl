@@ -60,3 +60,4 @@ filter-label = Фильтр:
 filter-status = Фильтр: { $pattern } ·
 history = История
 hotlist = Избранное
+hotlist-add = Добавить текущий каталог
