@@ -3,6 +3,7 @@
 use crate::app::{Message, OpKind, Running};
 use crate::fl;
 use cosmic::iced::Length;
+use cosmic::iced::widget::text::Wrapping;
 use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
 use shagoff_core::format::{self, TimeZone};
@@ -311,10 +312,13 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 };
                 b.on_press(Message::MrCase(c))
             };
-            let mut table = column![row![
-                widget::text::heading(fl!("mr-old")).width(Length::FillPortion(1)),
-                widget::text::heading(fl!("mr-new")).width(Length::FillPortion(1)),
-            ]]
+            let mut table = column![
+                row![
+                    widget::text::heading(fl!("mr-old")).width(Length::FillPortion(1)),
+                    widget::text::heading(fl!("mr-new")).width(Length::FillPortion(1)),
+                ]
+                .spacing(16)
+            ]
             .spacing(2);
             let rows = m.rows(tz);
             for r in &rows {
@@ -322,14 +326,25 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     None => r.new.clone(),
                     Some(p) => format!("⚠ {}  ({})", r.new, problem(p)),
                 };
-                table = table.push(row![
-                    widget::text(r.old.clone()).width(Length::FillPortion(1)),
-                    widget::text(new).width(Length::FillPortion(1)),
-                ]);
+                // Long names have no spaces to break at: wrap by glyph instead of overlapping.
+                table = table.push(
+                    row![
+                        widget::text(r.old.clone())
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .width(Length::FillPortion(1)),
+                        widget::text(new)
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .width(Length::FillPortion(1)),
+                    ]
+                    .spacing(16),
+                );
             }
             let ok = rows.iter().all(|r| r.problem.is_none());
             widget::dialog()
                 .title(fl!("multi-rename"))
+                // Wider than the default 570 px: two columns of file names.
+                .width(Length::Fill)
+                .max_width(1100.0)
                 .control(
                     column![
                         row![name, edit(fl!("mr-ext"), &m.rule.ext, MrField::Ext)].spacing(8),
