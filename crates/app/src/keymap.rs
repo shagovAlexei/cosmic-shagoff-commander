@@ -57,6 +57,7 @@ pub enum Action {
     ClipCopy,
     ClipCut,
     ClipPaste,
+    MultiRename,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -126,6 +127,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyC), true, false) => Some(Action::ClipCopy),
         (Physical::Code(Code::KeyX), true, false) => Some(Action::ClipCut),
         (Physical::Code(Code::KeyV), true, false) => Some(Action::ClipPaste),
+        (Physical::Code(Code::KeyM), true, false) => Some(Action::MultiRename),
         (Physical::Code(Code::Space), false, false) => Some(Action::Mark),
         (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
         (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
@@ -195,6 +197,13 @@ mod tests {
         assert_eq!(chr("v", Code::KeyV, CTRL), Some(Action::ClipPaste));
         assert_eq!(chr("м", Code::KeyV, CTRL), Some(Action::ClipPaste));
         assert_eq!(chr("c", Code::KeyC, NONE), None);
+    }
+
+    #[test]
+    fn ctrl_m_multi_rename() {
+        assert_eq!(chr("m", Code::KeyM, CTRL), Some(Action::MultiRename));
+        assert_eq!(chr("ь", Code::KeyM, CTRL), Some(Action::MultiRename)); // Russian layout
+        assert_eq!(chr("m", Code::KeyM, NONE), None);
     }
 
     #[test]

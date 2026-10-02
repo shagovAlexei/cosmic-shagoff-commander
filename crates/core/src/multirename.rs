@@ -405,9 +405,11 @@ mod tests {
 
     #[test]
     fn find_replace_every_occurrence_on_the_full_name() {
-        let mut r = Rule::default();
-        r.find = "a".into();
-        r.replace = "o".into();
+        let mut r = Rule {
+            find: "a".into(),
+            replace: "o".into(),
+            ..Rule::default()
+        };
         assert_eq!(nn(&r, "banana.tar"), "bonono.tor");
         r.find = String::new(); // empty find → skipped
         assert_eq!(nn(&r, "banana.tar"), "banana.tar");
@@ -415,9 +417,11 @@ mod tests {
 
     #[test]
     fn case_modes_apply_last_and_handle_cyrillic() {
-        let mut r = Rule::default();
-        r.find = "x".into();
-        r.replace = "Y".into();
+        let mut r = Rule {
+            find: "x".into(),
+            replace: "Y".into(),
+            ..Rule::default()
+        };
         for (case, want) in [
             (Case::Keep, "Фото YY.Jpg"),
             (Case::Upper, "ФОТО YY.JPG"),
@@ -495,9 +499,11 @@ mod tests {
     #[test]
     fn unchanged_row_collides_as_duplicate() {
         // a.txt → b.txt while b.txt keeps its name: two rows want b.txt.
-        let mut r = Rule::default();
-        r.find = "a".into();
-        r.replace = "b".into();
+        let r = Rule {
+            find: "a".into(),
+            replace: "b".into(),
+            ..Rule::default()
+        };
         let rows = preview(&r, &files(&["a.txt", "b.txt"]), &taken(&[]), &TimeZone::UTC);
         assert_eq!(
             problems(&rows),
