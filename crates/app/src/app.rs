@@ -147,6 +147,8 @@ pub enum Message {
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
     CancelJob,
+    /// The watched dir of this pane's active tab changed.
+    Changed(usize),
     /// Drive button / drive list entry: (side, drive index).
     Drive(usize, usize),
     Config(Config),
@@ -188,12 +190,20 @@ impl Application for App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
+        let mut subs = vec![
             event::listen_with(route_event),
             self.core()
                 .watch_config::<Config>(APP_ID)
                 .map(|u| Message::Config(u.config)),
-        ])
+        ];
+        if self.job.is_none() {
+            // Paused during file operations: finish_job rescans both panes anyway.
+            for side in 0..2 {
+                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                subs.push(crate::watcher::watch(side, cwd));
+            }
+        }
+        Subscription::batch(subs)
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -389,6 +399,12 @@ impl App {
                 other => self.dialog = other,
             },
             Message::CancelJob => self.cancel_job(),
+            Message::Changed(side) => {
+                if self.job.is_none() {
+                    let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                    return self.load(side, cwd, None);
+                }
+            }
             Message::Drive(side, i) => {
                 if self.job.is_none() {
                     self.dialog = None;

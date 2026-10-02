@@ -4276,6 +4276,7 @@ dependencies = [
  "i18n-embed-fl",
  "libcosmic",
  "log",
+ "notify",
  "rust-embed",
  "serde",
  "shagoff-core",
