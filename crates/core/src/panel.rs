@@ -218,9 +218,7 @@ impl Panel {
 
     /// Parent dir and the name to focus there (the dir we leave).
     pub fn parent_path(&self) -> Option<(PathBuf, String)> {
-        let parent = self.cwd.parent()?;
-        let name = self.cwd.file_name()?.to_string_lossy().into_owned();
-        Some((parent.to_path_buf(), name))
+        parent_of(&self.cwd)
     }
 
     /// Where Enter leads: `..` → parent (with focus), a dir → inside it, a file → `None`.
@@ -264,6 +262,13 @@ fn parent_entry() -> Entry {
         is_link: false,
         mode: 0,
     }
+}
+
+/// `/a/b` → (`/a`, "b"): where Backspace leads and which name to put the cursor on.
+pub fn parent_of(path: &Path) -> Option<(PathBuf, String)> {
+    let parent = path.parent()?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    Some((parent.to_path_buf(), name))
 }
 
 #[cfg(test)]

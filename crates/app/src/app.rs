@@ -15,7 +15,7 @@ use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
-use shagoff_core::panel::{PARENT, Panel};
+use shagoff_core::panel::{self, PARENT, Panel};
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
@@ -554,6 +554,8 @@ impl App {
         let t = self.panes[side].active_mut();
         let page = viewport::page_rows(ROW_H, t.height) as isize;
         let tab = t.id;
+        let target = t.target();
+        let loading = target != t.panel.cwd();
         let panel = &mut t.panel;
         match action {
             Action::SwitchPane => {
@@ -567,6 +569,8 @@ impl App {
             Action::Home => panel.cursor_home(),
             Action::End => panel.cursor_end(),
             Action::Sort(key) => panel.set_sort(key),
+            // The rows on screen belong to the dir being left: entering one would undo the navigation.
+            Action::Enter if loading => {}
             Action::Enter => {
                 if let Some((path, focus)) = panel.enter_path() {
                     return self.load(side, path, focus);
@@ -578,8 +582,9 @@ impl App {
                     t.error = Some(fl!("open-failed", err = err.to_string()));
                 }
             }
+            // From where the tab is going, so quick Backspaces on a slow fs are not lost.
             Action::Parent => {
-                if let Some((path, focus)) = panel.parent_path() {
+                if let Some((path, focus)) = panel::parent_of(&target) {
                     return self.load(side, path, Some(focus));
                 }
             }
@@ -1272,6 +1277,36 @@ mod tests {
             .as_ref()
             .map(|(_, p)| p.clone());
         assert_eq!(pending, Some(PathBuf::from("/etc")));
+    }
+
+    fn pending_path(app: &App) -> Option<PathBuf> {
+        app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone())
+    }
+
+    #[test]
+    fn regression_backspace_while_loading_goes_up_from_the_target() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.load(0, "/usr/share/doc".into(), None); // slow fs: not listed yet
+        let _ = app.update(Message::Key(Action::Parent));
+        assert_eq!(pending_path(&app), Some(PathBuf::from("/usr/share")));
+        let _ = app.update(Message::Key(Action::Parent));
+        assert_eq!(pending_path(&app), Some(PathBuf::from("/usr")));
+    }
+
+    #[test]
+    fn enter_while_loading_is_ignored() {
+        // The rows on screen belong to the dir being left; entering one would undo the navigation.
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(listed_ok(id, generation, &std::env::temp_dir())); // shows ".."
+        let _ = app.load(0, "/usr".into(), None);
+        let _ = app.update(Message::Key(Action::Enter)); // cursor on ".." of the old dir
+        assert_eq!(pending_path(&app), Some(PathBuf::from("/usr")));
     }
 
     #[test]
