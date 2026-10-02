@@ -1,7 +1,10 @@
 //! Ctrl+M multi-rename: TC-style name masks, find/replace, case, collision check and a safe rename order.
 
 use jiff::tz::TimeZone;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::SystemTime;
+use std::{fs, io};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Case {
@@ -188,6 +191,76 @@ fn apply_case(s: &str, case: Case) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Problem {
+    /// Empty, `.`, `..`, or contains `/` or NUL.
+    BadName,
+    /// Two or more rows get this name.
+    Duplicate,
+    /// A file in the dir that is not being renamed already has this name.
+    Exists,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub old: String,
+    pub new: String,
+    pub problem: Option<Problem>,
+}
+
+/// `files`: (name, mtime) in panel order; `taken`: names in the dir that are not being renamed.
+pub fn preview(
+    rule: &Rule,
+    files: &[(String, SystemTime)],
+    taken: &HashSet<String>,
+    tz: &TimeZone,
+) -> Vec<Row> {
+    let rows = files
+        .iter()
+        .enumerate()
+        .map(|(i, (old, mtime))| Row {
+            old: old.clone(),
+            new: new_name(rule, old, *mtime, i, tz),
+            problem: None,
+        })
+        .collect();
+    check(rows, taken)
+}
+
+/// Sets each row's problem. A new name equal to another renamed row's old name is fine (chain/swap).
+fn check(mut rows: Vec<Row>, taken: &HashSet<String>) -> Vec<Row> {
+    let mut count: HashMap<String, usize> = HashMap::new();
+    for r in &rows {
+        *count.entry(r.new.clone()).or_default() += 1;
+    }
+    for r in &mut rows {
+        let n = r.new.as_str();
+        r.problem = if n.is_empty() || n == "." || n == ".." || n.contains(['/', '\0']) {
+            Some(Problem::BadName)
+        } else if count[n] > 1 {
+            Some(Problem::Duplicate)
+        } else if taken.contains(n) {
+            Some(Problem::Exists)
+        } else {
+            None
+        };
+    }
+    rows
+}
+
+/// Names in `dir` (hidden ones too) other than the files being renamed.
+pub fn other_names(dir: &Path, renamed: &[(String, SystemTime)]) -> io::Result<HashSet<String>> {
+    let skip: HashSet<&str> = renamed.iter().map(|(n, _)| n.as_str()).collect();
+    let mut out = HashSet::new();
+    for e in fs::read_dir(dir)? {
+        let name = e?.file_name().to_string_lossy().into_owned();
+        if !skip.contains(name.as_str()) {
+            out.insert(name);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,5 +396,110 @@ mod tests {
         }
         r.case = Case::Title;
         assert_eq!(nn(&r, "élan"), "Élan");
+    }
+
+    fn files(names: &[&str]) -> Vec<(String, SystemTime)> {
+        names.iter().map(|n| (n.to_string(), when())).collect()
+    }
+
+    fn taken(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    fn row(old: &str, new: &str) -> Row {
+        Row {
+            old: old.into(),
+            new: new.into(),
+            problem: None,
+        }
+    }
+
+    fn problems(rows: &[Row]) -> Vec<Option<Problem>> {
+        rows.iter().map(|r| r.problem).collect()
+    }
+
+    #[test]
+    fn preview_numbers_rows_in_order() {
+        let rows = preview(
+            &rule("x[C]", "[E]"),
+            &files(&["b.txt", "a.txt"]),
+            &taken(&[]),
+            &TimeZone::UTC,
+        );
+        let new: Vec<&str> = rows.iter().map(|r| r.new.as_str()).collect();
+        assert_eq!(new, ["x1.txt", "x2.txt"]);
+        assert_eq!(rows[0].old, "b.txt");
+        assert_eq!(problems(&rows), [None, None]);
+    }
+
+    #[test]
+    fn bad_names_are_flagged() {
+        for mask in ["", ".", "..", "a/b"] {
+            let rows = preview(
+                &rule(mask, ""),
+                &files(&["a.txt"]),
+                &taken(&[]),
+                &TimeZone::UTC,
+            );
+            assert_eq!(problems(&rows), [Some(Problem::BadName)], "{mask:?}");
+        }
+    }
+
+    #[test]
+    fn duplicates_flag_every_row() {
+        let rows = preview(
+            &rule("same", "[E]"),
+            &files(&["a.txt", "b.txt", "c.md"]),
+            &taken(&[]),
+            &TimeZone::UTC,
+        );
+        assert_eq!(
+            problems(&rows),
+            [Some(Problem::Duplicate), Some(Problem::Duplicate), None]
+        );
+    }
+
+    #[test]
+    fn unchanged_row_collides_as_duplicate() {
+        // a.txt → b.txt while b.txt keeps its name: two rows want b.txt.
+        let mut r = Rule::default();
+        r.find = "a".into();
+        r.replace = "b".into();
+        let rows = preview(&r, &files(&["a.txt", "b.txt"]), &taken(&[]), &TimeZone::UTC);
+        assert_eq!(
+            problems(&rows),
+            [Some(Problem::Duplicate), Some(Problem::Duplicate)]
+        );
+    }
+
+    #[test]
+    fn name_of_a_file_not_renamed_is_exists() {
+        let rows = preview(
+            &rule("c", "[E]"),
+            &files(&["a.txt"]),
+            &taken(&["c.txt"]),
+            &TimeZone::UTC,
+        );
+        assert_eq!(problems(&rows), [Some(Problem::Exists)]);
+    }
+
+    #[test]
+    fn chain_and_swap_are_not_problems() {
+        // A new name that is another renamed row's old name is free: `taken` never holds it.
+        let chain = vec![row("a", "b"), row("b", "c")];
+        assert_eq!(check(chain.clone(), &taken(&[])), chain);
+        let swap = vec![row("a", "b"), row("b", "a")];
+        assert_eq!(check(swap.clone(), &taken(&[])), swap);
+    }
+
+    #[test]
+    fn other_names_includes_hidden_and_skips_renamed() {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["a", "b", ".hidden"] {
+            std::fs::write(d.path().join(n), "").unwrap();
+        }
+        let got = other_names(d.path(), &files(&["a"])).unwrap();
+        assert_eq!(got, taken(&["b", ".hidden"]));
+        assert!(other_names(&d.path().join("missing"), &[]).is_err());
     }
 }
