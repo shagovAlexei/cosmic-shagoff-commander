@@ -148,7 +148,6 @@ pub struct App {
 pub enum Message {
     Key(Action),
     Listed {
-        side: usize,
         tab: u64,
         generation: u64,
         path: PathBuf,
@@ -365,7 +364,6 @@ impl App {
                 return self.act(self.active, action);
             }
             Message::Listed {
-                side: _, // the tab is found by id below; it may have moved (Ctrl+U)
                 tab,
                 generation,
                 path,
@@ -648,7 +646,6 @@ impl App {
                 .await
                 .unwrap_or_else(|e| (Err(e.to_string()), None));
                 Message::Listed {
-                    side,
                     tab,
                     generation,
                     path,
@@ -1386,7 +1383,6 @@ mod tests {
         let _ = app.load(0, cwd.clone(), None);
         let second = app.panes[0].active().pending.as_ref().unwrap().0;
         let listed = |generation, name: &str| Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: cwd.clone(),
@@ -1420,7 +1416,6 @@ mod tests {
 
     fn listed_ok(id: u64, generation: u64, path: &Path) -> Message {
         Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: path.into(),
@@ -1606,7 +1601,6 @@ mod tests {
             (t.id, t.pending.as_ref().unwrap().0)
         };
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: "/root/secret".into(),
@@ -1637,7 +1631,6 @@ mod tests {
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let entries = listing::scan(tmp.path(), false).unwrap();
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: tmp.path().into(),
@@ -1657,7 +1650,6 @@ mod tests {
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let entries = (0..20).map(|i| entry(&format!("f{i:02}"))).collect();
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: std::env::temp_dir(),
@@ -1717,7 +1709,6 @@ mod tests {
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let entries = names.iter().map(|n| entry(n)).collect();
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: std::env::temp_dir(),
@@ -1794,7 +1785,6 @@ mod tests {
         let mut sub = entry("sub");
         sub.kind = shagoff_core::listing::Kind::Dir;
         let _ = app.update(Message::Listed {
-            side: 0,
             tab: id,
             generation,
             path: cwd.clone(),
@@ -1874,7 +1864,6 @@ mod tests {
         let t = app.panes[side].active();
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let _ = app.update(Message::Listed {
-            side,
             tab: id,
             generation,
             path: path.into(),
@@ -1951,7 +1940,6 @@ mod tests {
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
         let _ = app.update(Message::Key(Action::SwapPanes)); // tab now on side 1
         let _ = app.update(Message::Listed {
-            side: 0, // side when the scan started
             tab: id,
             generation,
             path: "/usr".into(),
