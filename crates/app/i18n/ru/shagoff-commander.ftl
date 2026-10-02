@@ -48,3 +48,5 @@ plan-into-itself = Нельзя скопировать каталог в сам�
 plan-same-file = Источник и цель совпадают: { $path }
 rename-bad-name = Недопустимое имя: нужно простое имя без «/»
 rename-exists = Имя занято каталогом: { $path }
+disk-free = { $free } свободно из { $total }
+drives = Диск

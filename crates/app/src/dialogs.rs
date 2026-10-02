@@ -4,6 +4,7 @@ use crate::app::{Message, OpKind, Running};
 use crate::fl;
 use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
+use shagoff_core::drives::Drive;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
 use std::path::PathBuf;
@@ -48,6 +49,8 @@ pub enum Dialog {
         error: String,
         reply: mpsc::Sender<ErrorChoice>,
     },
+    /// Alt+F1 / Alt+F2.
+    Drives { side: usize, cursor: usize },
 }
 
 impl Dialog {
@@ -71,7 +74,12 @@ fn what(paths: &[PathBuf]) -> String {
     }
 }
 
-pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<'a, Message> {
+pub fn view<'a>(
+    d: &'a Dialog,
+    input_id: &widget::Id,
+    tz: &TimeZone,
+    drives: &'a [Drive],
+) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
     let field = |value: &'a str| {
@@ -169,6 +177,26 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     widget::button::standard(fl!("cancel"))
                         .on_press(Message::Resolve(Resolution::Cancel)),
                 )
+                .into()
+        }
+        Dialog::Drives { side, cursor } => {
+            let mut list = column![].spacing(2);
+            for (i, d) in drives.iter().enumerate() {
+                let label = format!("{}   {}", d.label, d.path.display());
+                let b = if i == *cursor {
+                    widget::button::suggested(label)
+                } else {
+                    widget::button::text(label)
+                };
+                list = list.push(
+                    b.on_press(Message::Drive(*side, i))
+                        .width(cosmic::iced::Length::Fill),
+                );
+            }
+            widget::dialog()
+                .title(fl!("drives"))
+                .control(list)
+                .secondary_action(cancel)
                 .into()
         }
         Dialog::Error { path, error, .. } => widget::dialog()

@@ -9,6 +9,7 @@ use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
+use shagoff_core::drives::{self, Drive};
 use shagoff_core::format::TimeZone;
 use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
@@ -115,6 +116,9 @@ pub struct App {
     state_handler: Option<cosmic_config::Config>,
     /// Last state written, to skip identical writes.
     saved: State,
+    pub drives: Vec<Drive>,
+    /// (free, total) bytes of each pane's current disk.
+    pub space: [Option<(u64, u64)>; 2],
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +147,8 @@ pub enum Message {
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
     CancelJob,
+    /// Drive button / drive list entry: (side, drive index).
+    Drive(usize, usize),
     Config(Config),
     Exit,
 }
@@ -196,7 +202,7 @@ impl Application for App {
 
     fn dialog(&self) -> Option<Element<'_, Message>> {
         if let Some(d) = &self.dialog {
-            return Some(dialogs::view(d, &self.input_id, &self.tz));
+            return Some(dialogs::view(d, &self.input_id, &self.tz, &self.drives));
         }
         self.job.as_ref().map(dialogs::progress)
     }
@@ -234,6 +240,8 @@ impl App {
             config_handler: None,
             state_handler: None,
             saved: State::default(),
+            drives: Vec::new(),
+            space: [None, None],
         };
         let left = left
             .and_then(|p| p.canonicalize().ok())
@@ -252,6 +260,8 @@ impl App {
             tabs.select(active);
             app.panes[side] = tabs;
         }
+        app.refresh_drives(0);
+        app.refresh_drives(1);
         let task = app.load_all();
         (app, task)
     }
@@ -259,6 +269,21 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
+                if let Some(Dialog::Drives { side, cursor }) = &mut self.dialog {
+                    match action {
+                        Action::Up => *cursor = cursor.saturating_sub(1),
+                        Action::Down => {
+                            *cursor = (*cursor + 1).min(self.drives.len().saturating_sub(1))
+                        }
+                        Action::Enter => {
+                            let (side, i) = (*side, *cursor);
+                            self.dialog = None;
+                            return self.go_drive(side, i);
+                        }
+                        _ => {}
+                    }
+                    return Task::none();
+                }
                 if let Some(d) = &self.dialog {
                     // Modal: panels must not move. Enter confirms a dialog without a text field.
                     if action == Action::Enter && matches!(d, Dialog::ConfirmDelete { .. }) {
@@ -294,6 +319,9 @@ impl App {
                     Ok(entries) => {
                         t.error = None;
                         t.panel.set_listing(path, entries, focus.as_deref());
+                        if self.panes[side].active().id == tab {
+                            self.refresh_drives(side);
+                        }
                         return self.reveal(side, tab);
                     }
                     Err(e) => t.error = Some(e),
@@ -361,6 +389,12 @@ impl App {
                 other => self.dialog = other,
             },
             Message::CancelJob => self.cancel_job(),
+            Message::Drive(side, i) => {
+                if self.job.is_none() {
+                    self.dialog = None;
+                    return self.go_drive(side, i);
+                }
+            }
             Message::Config(c) => {
                 let hidden_changed = c.show_hidden != self.config.show_hidden;
                 self.config = c;
@@ -546,6 +580,7 @@ impl App {
                     }
                 }
             }
+            // Opened by `dialog_for` above.
             Action::Drives(_) => {}
             Action::Copy
             | Action::Move
@@ -640,6 +675,11 @@ impl App {
                     paths,
                 })
             }
+            Action::Drives(s) => Some(Dialog::Drives {
+                side: s,
+                cursor: drives::containing(&self.drives, self.panes[s].active().panel.cwd())
+                    .unwrap_or(0),
+            }),
             _ => None,
         }
     }
@@ -677,6 +717,7 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
+            Dialog::Drives { side, cursor } => self.go_drive(side, cursor),
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -838,6 +879,22 @@ impl App {
         }
     }
 
+    /// Mounts change rarely and are cheap to read: re-read with every listing.
+    fn refresh_drives(&mut self, side: usize) {
+        if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
+            self.drives = drives::parse(&m, &self.home);
+        }
+        self.space[side] = drives::space(self.panes[side].active().panel.cwd());
+    }
+
+    fn go_drive(&mut self, side: usize, i: usize) -> Task<Message> {
+        let Some(path) = self.drives.get(i).map(|d| d.path.clone()) else {
+            return Task::none();
+        };
+        self.active = side;
+        self.load(side, path, None)
+    }
+
     /// The newly shown tab was not watched while hidden: restore its scroll and rescan it.
     fn tab_switched(&mut self, side: usize) -> Task<Message> {
         let cwd = self.panes[side].active().panel.cwd().to_path_buf();
@@ -914,6 +971,7 @@ mod tests {
     use crate::config::{Config, LastTab, State};
     use cosmic::iced::keyboard::key::{Code, Named, Physical};
     use cosmic::iced::keyboard::{Key, Location};
+    use shagoff_core::drives::Drive;
     use shagoff_core::session::PaneState;
 
     fn app_with(config: Config, state: State) -> App {
@@ -935,6 +993,34 @@ mod tests {
             "x".into(),
         ];
         assert!(spawn_detached(&argv).is_err());
+    }
+
+    #[test]
+    fn drive_dialog_navigates_and_opens() {
+        let mut app = app_with(Config::default(), State::default());
+        app.drives = vec![
+            Drive {
+                label: "/".into(),
+                path: "/".into(),
+            },
+            Drive {
+                label: "tmp".into(),
+                path: std::env::temp_dir(),
+            },
+        ];
+        let _ = app.update(Message::Key(Action::Drives(1)));
+        assert!(matches!(app.dialog, Some(Dialog::Drives { side: 1, .. })));
+        let _ = app.update(Message::Key(Action::Up));
+        let _ = app.update(Message::Key(Action::Up)); // clamped at 0
+        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 0, .. })));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Down)); // clamped at 1
+        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 1, .. })));
+        app.panes[1].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::Enter));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.active, 1);
+        assert!(app.panes[1].active().pending.is_some());
     }
 
     fn entry(name: &str) -> Entry {
