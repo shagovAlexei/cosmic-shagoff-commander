@@ -1,5 +1,6 @@
 use crate::dialogs::{self, Dialog, InputOp};
 use crate::fl;
+use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
 use cosmic::app::{Core, Task};
 use cosmic::iced::keyboard::Modifiers;
@@ -9,11 +10,14 @@ use cosmic::{Application, Element, widget};
 use shagoff_core::format::TimeZone;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
+use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
 use shagoff_core::panel::{PARENT, Panel};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
 /// Fixed row height of the file list; the viewport math depends on it.
@@ -66,6 +70,25 @@ impl Tab {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpKind {
+    Copy,
+    Move,
+    Delete,
+}
+
+/// A file operation in progress (the progress dialog's data).
+pub struct Running {
+    pub side: usize,
+    pub kind: OpKind,
+    pub done: u64,
+    pub total: u64,
+    pub current: String,
+    cancel: Arc<AtomicBool>,
+    /// Name to put the source pane's cursor on afterwards (rename).
+    focus: Option<String>,
+}
+
 pub struct App {
     core: Core,
     pub panes: [Tabs<Tab>; 2],
@@ -78,6 +101,7 @@ pub struct App {
     /// Current keyboard modifiers, for Ctrl+click.
     mods: Modifiers,
     dialog: Option<Dialog>,
+    job: Option<Running>,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
     input_id: widget::Id,
 }
@@ -103,6 +127,10 @@ pub enum Message {
     DialogInput(String),
     DialogSubmit,
     DialogCancel,
+    Op(jobs::Event),
+    Resolve(Resolution),
+    ErrorAnswer(ErrorChoice),
+    CancelJob,
     Exit,
 }
 
@@ -142,6 +170,7 @@ impl Application for App {
             next_id: 2,
             mods: Modifiers::empty(),
             dialog: None,
+            job: None,
             input_id: widget::Id::unique(),
         };
         let task = Task::batch([app.load(0, left, None), app.load(1, home, None)]);
@@ -157,6 +186,9 @@ impl Application for App {
                         return self.submit_dialog();
                     }
                     return Task::none();
+                }
+                if self.job.is_some() {
+                    return Task::none(); // panels wait for the running operation
                 }
                 return self.act(self.active, action);
             }
@@ -225,7 +257,30 @@ impl Application for App {
                 }
             }
             Message::DialogSubmit => return self.submit_dialog(),
-            Message::DialogCancel => self.dialog = None,
+            Message::DialogCancel => match self.dialog.take() {
+                Some(Dialog::Conflict { reply, .. }) => {
+                    let _ = reply.send(Resolution::Cancel);
+                }
+                Some(Dialog::Error { reply, .. }) => {
+                    let _ = reply.send(ErrorChoice::Cancel);
+                }
+                Some(_) => {}
+                None => self.cancel_job(),
+            },
+            Message::Op(event) => return self.on_job_event(event),
+            Message::Resolve(r) => match self.dialog.take() {
+                Some(Dialog::Conflict { reply, .. }) => {
+                    let _ = reply.send(r);
+                }
+                other => self.dialog = other,
+            },
+            Message::ErrorAnswer(c) => match self.dialog.take() {
+                Some(Dialog::Error { reply, .. }) => {
+                    let _ = reply.send(c);
+                }
+                other => self.dialog = other,
+            },
+            Message::CancelJob => self.cancel_job(),
             Message::Exit => return cosmic::iced::exit(),
         }
         Task::none()
@@ -240,9 +295,10 @@ impl Application for App {
     }
 
     fn dialog(&self) -> Option<Element<'_, Message>> {
-        self.dialog
-            .as_ref()
-            .map(|d| dialogs::view(d, &self.input_id))
+        if let Some(d) = &self.dialog {
+            return Some(dialogs::view(d, &self.input_id, &self.tz));
+        }
+        self.job.as_ref().map(dialogs::progress)
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {
@@ -451,6 +507,11 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
+            // Answered with their own buttons, not Enter/OK.
+            d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
+                self.dialog = Some(d);
+                Task::none()
+            }
         }
     }
 
@@ -476,24 +537,112 @@ impl App {
         }
     }
 
-    // ponytail: stubs until the job runner lands (next task).
+    /// F5 / F6 / rename: resolve the target, then run the transfer on a worker thread.
     fn start_transfer(
         &mut self,
-        _op: InputOp,
-        _side: usize,
-        _sources: Vec<PathBuf>,
-        _input: &str,
+        op: InputOp,
+        side: usize,
+        sources: Vec<PathBuf>,
+        input: &str,
     ) -> Task<Message> {
+        let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+        let (method, kind) = match op {
+            InputOp::Copy => (Method::Copy, OpKind::Copy),
+            _ => (Method::Move, OpKind::Move),
+        };
+        let (pairs, focus) = if op == InputOp::Rename {
+            // Not `plan`: typing an existing dir name must rename-clash, not move into that dir.
+            let Some(src) = sources.into_iter().next() else {
+                return Task::none();
+            };
+            if input.is_empty() || src.file_name().is_some_and(|n| n == input) {
+                return Task::none();
+            }
+            (vec![(src, cwd.join(input))], Some(input.to_string()))
+        } else {
+            match ops::plan(&sources, &cwd.join(input)) {
+                Ok(pairs) => (pairs, None),
+                Err(e) => {
+                    self.panes[side].active_mut().error = Some(plan_error(&e));
+                    return Task::none();
+                }
+            }
+        };
+        self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
+    }
+
+    fn start_delete(&mut self, side: usize, permanent: bool, paths: Vec<PathBuf>) -> Task<Message> {
+        self.start_job(side, OpKind::Delete, Job::Delete { paths, permanent }, None)
+    }
+
+    fn start_job(
+        &mut self,
+        side: usize,
+        kind: OpKind,
+        job: Job,
+        focus: Option<String>,
+    ) -> Task<Message> {
+        let (cancel, events) = jobs::spawn(job);
+        self.job = Some(Running {
+            side,
+            kind,
+            done: 0,
+            total: 0,
+            current: String::new(),
+            cancel,
+            focus,
+        });
+        Task::run(events, |e| cosmic::Action::App(Message::Op(e)))
+    }
+
+    fn cancel_job(&self) {
+        if let Some(j) = &self.job {
+            j.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn on_job_event(&mut self, event: jobs::Event) -> Task<Message> {
+        match event {
+            jobs::Event::Progress {
+                done,
+                total,
+                current,
+            } => {
+                if let Some(j) = &mut self.job {
+                    (j.done, j.total) = (done, total);
+                    j.current = current
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                }
+            }
+            jobs::Event::Conflict { src, dst, reply } => {
+                self.dialog = Some(Dialog::Conflict { src, dst, reply });
+            }
+            jobs::Event::Error { path, error, reply } => {
+                self.dialog = Some(Dialog::Error { path, error, reply });
+            }
+            jobs::Event::Finished(report) => return self.finish_job(&report),
+        }
         Task::none()
     }
 
-    fn start_delete(
-        &mut self,
-        _side: usize,
-        _permanent: bool,
-        _paths: Vec<PathBuf>,
-    ) -> Task<Message> {
-        Task::none()
+    /// Unmark what was processed and reload both panes (cursor on the renamed entry, if any).
+    fn finish_job(&mut self, report: &Report) -> Task<Message> {
+        let Some(job) = self.job.take() else {
+            return Task::none();
+        };
+        let side = job.side;
+        self.panes[side]
+            .active_mut()
+            .panel
+            .unmark(&report.completed);
+        let here = self.panes[side].active().panel.cwd().to_path_buf();
+        let there = self.panes[1 - side].active().panel.cwd().to_path_buf();
+        Task::batch([
+            self.load(side, here, job.focus),
+            self.load(1 - side, there, None),
+        ])
     }
 
     /// Keep tab `tab`'s cursor row fully visible. An inactive tab only gets its offset updated;
@@ -557,6 +706,14 @@ fn route_event(
             Some(Message::Modifiers(m))
         }
         _ => None,
+    }
+}
+
+fn plan_error(e: &PlanError) -> String {
+    match e {
+        PlanError::IntoItself(p) => fl!("plan-into-itself", path = p.display().to_string()),
+        PlanError::SameFile(p) => fl!("plan-same-file", path = p.display().to_string()),
+        PlanError::Empty => String::new(),
     }
 }
 

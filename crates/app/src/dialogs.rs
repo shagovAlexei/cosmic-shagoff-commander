@@ -1,9 +1,13 @@
 //! Modal dialogs: one enum, one view per variant.
 
-use crate::app::Message;
+use crate::app::{Message, OpKind, Running};
 use crate::fl;
+use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
+use shagoff_core::format::{self, TimeZone};
+use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
 use std::path::PathBuf;
+use std::sync::mpsc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputOp {
@@ -33,6 +37,17 @@ pub enum Dialog {
         permanent: bool,
         paths: Vec<PathBuf>,
     },
+    /// Asked by a running job; the worker blocks until `reply` gets an answer (or is dropped → Cancel).
+    Conflict {
+        src: FileInfo,
+        dst: FileInfo,
+        reply: mpsc::Sender<Resolution>,
+    },
+    Error {
+        path: PathBuf,
+        error: String,
+        reply: mpsc::Sender<ErrorChoice>,
+    },
 }
 
 impl Dialog {
@@ -40,7 +55,7 @@ impl Dialog {
     pub fn input_mut(&mut self) -> Option<&mut String> {
         match self {
             Dialog::Mask { input, .. } | Dialog::Input { input, .. } => Some(input),
-            Dialog::ConfirmDelete { .. } => None,
+            _ => None,
         }
     }
 }
@@ -56,7 +71,7 @@ fn what(paths: &[PathBuf]) -> String {
     }
 }
 
-pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id) -> Element<'a, Message> {
+pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
     let field = |value: &'a str| {
@@ -112,5 +127,99 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id) -> Element<'a, Message> {
                 .secondary_action(cancel)
                 .into()
         }
+        Dialog::Conflict { src, dst, .. } => {
+            let line = |key: &str, f: &FileInfo| {
+                let (size, date) = (format::size(f.size), format::date(f.mtime, tz));
+                match key {
+                    "new" => fl!("new-file", size = size, date = date),
+                    _ => fl!("existing-file", size = size, date = date),
+                }
+            };
+            let answer = |label: String, r: Resolution| {
+                widget::button::standard(label).on_press(Message::Resolve(r))
+            };
+            widget::dialog()
+                .title(fl!("file-exists"))
+                .body(format!(
+                    "{}\n{}\n{}",
+                    dst.path.display(),
+                    line("new", src),
+                    line("existing", dst)
+                ))
+                .control(
+                    column![
+                        row![
+                            answer(fl!("skip"), Resolution::Skip),
+                            answer(fl!("skip-all"), Resolution::SkipAll),
+                        ]
+                        .spacing(8),
+                        row![
+                            answer(fl!("replace-all"), Resolution::ReplaceAll),
+                            answer(fl!("replace-older"), Resolution::ReplaceOlder),
+                        ]
+                        .spacing(8),
+                    ]
+                    .spacing(8),
+                )
+                .primary_action(
+                    widget::button::suggested(fl!("replace"))
+                        .on_press(Message::Resolve(Resolution::Replace)),
+                )
+                .secondary_action(
+                    widget::button::standard(fl!("cancel"))
+                        .on_press(Message::Resolve(Resolution::Cancel)),
+                )
+                .into()
+        }
+        Dialog::Error { path, error, .. } => widget::dialog()
+            .title(fl!("op-error"))
+            .body(format!("{}\n{error}", path.display()))
+            .primary_action(
+                widget::button::suggested(fl!("retry"))
+                    .on_press(Message::ErrorAnswer(ErrorChoice::Retry)),
+            )
+            .secondary_action(
+                widget::button::standard(fl!("cancel"))
+                    .on_press(Message::ErrorAnswer(ErrorChoice::Cancel)),
+            )
+            .tertiary_action(
+                widget::button::standard(fl!("skip"))
+                    .on_press(Message::ErrorAnswer(ErrorChoice::Skip)),
+            )
+            .into(),
     }
+}
+
+/// Shown while a job runs and no question is pending.
+pub fn progress(job: &Running) -> Element<'_, Message> {
+    let title = match job.kind {
+        OpKind::Copy => fl!("copying"),
+        OpKind::Move => fl!("moving"),
+        OpKind::Delete => fl!("deleting"),
+    };
+    let counts = match job.kind {
+        OpKind::Delete => fl!(
+            "progress-items",
+            done = job.done.to_string(),
+            total = job.total.to_string()
+        ),
+        _ => fl!(
+            "progress-bytes",
+            done = format::size(job.done),
+            total = format::size(job.total)
+        ),
+    };
+    let fraction = job.done as f32 / job.total.max(1) as f32;
+    widget::dialog()
+        .title(title)
+        .body(job.current.clone())
+        .control(
+            column![
+                widget::progress_bar::determinate_linear(fraction),
+                widget::text(counts)
+            ]
+            .spacing(8),
+        )
+        .primary_action(widget::button::standard(fl!("cancel")).on_press(Message::CancelJob))
+        .into()
 }
