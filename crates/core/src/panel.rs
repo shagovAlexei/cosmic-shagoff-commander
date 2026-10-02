@@ -114,7 +114,7 @@ impl Panel {
         if e.name == PARENT {
             return self.parent_path().map(|(p, n)| (p, Some(n)));
         }
-        e.is_dir().then(|| (self.cwd.join(&e.name), None))
+        e.is_dir().then(|| (self.cwd.join(&e.os_name), None))
     }
 
     fn index_of(&self, name: &str) -> Option<usize> {
@@ -129,6 +129,7 @@ impl Panel {
 fn parent_entry() -> Entry {
     Entry {
         name: PARENT.into(),
+        os_name: PARENT.into(),
         ext: String::new(),
         size: 0,
         mtime: UNIX_EPOCH,
@@ -145,6 +146,7 @@ mod tests {
     fn f(name: &str, size: u64) -> Entry {
         Entry {
             name: name.into(),
+            os_name: name.into(),
             ext: String::new(),
             size,
             mtime: UNIX_EPOCH,
@@ -283,6 +285,21 @@ mod tests {
         new.mtime = UNIX_EPOCH + Duration::from_secs(2);
         p.set_listing(PathBuf::from("/x"), vec![new, old], None);
         assert_eq!(names(&p), ["..", "old", "new"]);
+    }
+
+    #[test]
+    fn enter_non_utf8_dir_uses_real_name() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let mut bad = d("ignored");
+        bad.os_name = OsStr::from_bytes(b"x\xff").to_owned();
+        bad.name = bad.os_name.to_string_lossy().into_owned();
+        let mut p = loaded("/x", vec![bad]);
+        p.move_cursor(1);
+        assert_eq!(
+            p.enter_path(),
+            Some((Path::new("/x").join(OsStr::from_bytes(b"x\xff")), None))
+        );
     }
 
     #[test]

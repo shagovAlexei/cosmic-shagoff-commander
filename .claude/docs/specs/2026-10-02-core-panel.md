@@ -13,7 +13,7 @@
 
 ```rust
 pub enum Kind { Dir, File }
-pub struct Entry { name: String, ext: String, size: u64, mtime: SystemTime, kind: Kind, is_link: bool }
+pub struct Entry { name: String, os_name: OsString, ext: String, size: u64, mtime: SystemTime, kind: Kind, is_link: bool }
 pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>>
 ```
 
@@ -21,7 +21,7 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>>
 - Симлинк на каталог: `Kind::Dir`, `is_link = true`. Битый симлинк: `Kind::File`, `is_link = true`, размер 0.
 - `ext` бывает только у файлов: это часть имени после последней точки, если точка не первый символ (`archive.tar.gz` → `gz`, `.bashrc` → пусто). У каталогов расширения нет.
 - Скрытый элемент — тот, чьё имя начинается с `.`. При `show_hidden = false` такие пропускаем.
-- Имя, которое нельзя перевести в UTF-8, показываем через `to_string_lossy`. Это известное ограничение: позже нужно хранить `OsString` для операций.
+- `name` — имя для показа (`to_string_lossy`), `os_name` — настоящее имя на диске. Пути строятся только из `os_name`, поэтому в каталог с именем не в UTF-8 можно войти. Если два имени после замены символов совпали, порядок решает `os_name`.
 - `..` здесь не добавляем.
 
 ## `sort.rs`

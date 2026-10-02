@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     fs, io,
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
@@ -12,7 +13,10 @@ pub enum Kind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
+    /// Display name (lossy UTF-8).
     pub name: String,
+    /// Real on-disk name; use it for paths, never `name`.
+    pub os_name: OsString,
     /// Extension of files only (`archive.tar.gz` → `gz`, `.bashrc` → empty); always empty for dirs.
     pub ext: String,
     pub size: u64,
@@ -32,7 +36,8 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
     let mut out = Vec::new();
     for item in fs::read_dir(path)? {
         let Ok(item) = item else { continue };
-        let name = item.file_name().to_string_lossy().into_owned();
+        let os_name = item.file_name();
+        let name = os_name.to_string_lossy().into_owned();
         if !show_hidden && name.starts_with('.') {
             continue;
         }
@@ -55,6 +60,7 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
             String::new()
         };
         out.push(Entry {
+            os_name,
             mtime: meta.modified().unwrap_or(UNIX_EPOCH),
             name,
             ext,
@@ -149,5 +155,6 @@ mod tests {
         let v = scan(d.path(), true).unwrap();
         assert_eq!(v.len(), 1);
         assert!(v[0].name.starts_with("bad"));
+        assert_eq!(v[0].os_name, OsStr::from_bytes(b"bad\xffname"));
     }
 }

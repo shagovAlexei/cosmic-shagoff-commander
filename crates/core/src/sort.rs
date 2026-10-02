@@ -78,7 +78,9 @@ pub fn sort_entries(entries: &mut [Entry], sort: Sort) {
             SortKey::Size => a.size.cmp(&b.size),
             SortKey::Date => a.mtime.cmp(&b.mtime),
         }
-        .then_with(|| natural_cmp(&a.name, &b.name));
+        .then_with(|| natural_cmp(&a.name, &b.name))
+        // lossy names can collide; the real name keeps the order total
+        .then_with(|| a.os_name.cmp(&b.os_name));
         if sort.asc { ord } else { ord.reverse() }
     });
 }
@@ -96,6 +98,7 @@ mod tests {
         };
         Entry {
             name: name.into(),
+            os_name: name.into(),
             ext,
             size,
             mtime: UNIX_EPOCH + Duration::from_secs(secs),
@@ -128,6 +131,21 @@ mod tests {
         assert_eq!(natural_cmp("a", "A"), Greater);
         assert_eq!(natural_cmp("file01", "file1"), Less);
         assert_eq!(natural_cmp("file1", "file01"), Greater);
+    }
+
+    #[test]
+    fn lossy_equal_names_order_by_real_name() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let mk = |raw: &[u8]| {
+            let mut x = e("", Kind::File, 0, 0);
+            x.os_name = OsStr::from_bytes(raw).to_owned();
+            x.name = x.os_name.to_string_lossy().into_owned();
+            x
+        };
+        let mut v = vec![mk(b"a\xff"), mk(b"a\xfe")];
+        sort_entries(&mut v, Sort::default());
+        assert_eq!(v[0].os_name, OsStr::from_bytes(b"a\xfe"));
     }
 
     #[test]
