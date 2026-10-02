@@ -10,7 +10,8 @@ use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
 use shagoff_core::drives::{self, Drive};
-use shagoff_core::format::TimeZone;
+use shagoff_core::format::{self, TimeZone};
+use shagoff_core::history::History;
 use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
@@ -44,6 +45,8 @@ pub struct Tab {
     /// Generation and path of the scan in flight; any other result is stale.
     pub(crate) pending: Option<(u64, PathBuf)>,
     pub error: Option<String>,
+    /// Alt+← / Alt+→ / Alt+↓.
+    pub(crate) history: History,
 }
 
 impl Tab {
@@ -55,6 +58,7 @@ impl Tab {
             height: FALLBACK_LIST_H,
             pending: None,
             error: None,
+            history: History::default(),
         }
     }
 
@@ -81,6 +85,7 @@ impl Tab {
             height: self.height,
             pending: None,
             error: None,
+            history: self.history.clone(),
         }
     }
 }
@@ -368,12 +373,18 @@ impl App {
                 result,
                 space,
             } => {
+                // The tab may have moved (Ctrl+U): find it by id; `side` is only where it started.
+                let Some(side) =
+                    (0..2).find(|&s| self.panes[s].items().iter().any(|t| t.id == tab))
+                else {
+                    return Task::none(); // tab was closed
+                };
                 let Some(t) = self.panes[side]
                     .items_mut()
                     .iter_mut()
                     .find(|t| t.id == tab)
                 else {
-                    return Task::none(); // tab was closed
+                    return Task::none();
                 };
                 if t.pending.as_ref().map(|(g, _)| *g) != Some(generation) {
                     return Task::none(); // stale: the user has moved on
@@ -382,6 +393,7 @@ impl App {
                 match result {
                     Ok(entries) => {
                         t.error = None;
+                        t.history.visit(&path); // no-op for a rescan of the current entry
                         t.panel.set_listing(path, entries, focus.as_deref());
                         if self.panes[side].active().id == tab {
                             self.refresh_mounts();
@@ -745,11 +757,24 @@ impl App {
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
             Action::QuickSearch(_) | Action::QuickFilter => {} // handled above
-            Action::HistoryBack
-            | Action::HistoryForward
-            | Action::HistoryList
-            | Action::Hotlist
-            | Action::SwapPanes => {}
+            Action::HistoryBack | Action::HistoryForward => {
+                let history = &mut self.panes[side].active_mut().history;
+                let step = if action == Action::HistoryBack {
+                    history.back()
+                } else {
+                    history.forward()
+                };
+                if let Some(path) = step {
+                    return self.load(side, path, None);
+                }
+            }
+            Action::SwapPanes => {
+                self.panes.swap(0, 1);
+                self.search = None;
+                return Task::batch([self.restore_scroll(0), self.restore_scroll(1)]);
+            }
+            // Opened by `dialog_for` above.
+            Action::HistoryList | Action::Hotlist => {}
             Action::Copy
             | Action::Move
             | Action::Rename
@@ -845,6 +870,21 @@ impl App {
                     paths,
                 })
             }
+            Action::HistoryList => Some(Dialog::List {
+                kind: ListKind::History,
+                side,
+                cursor: 0,
+                items: self.panes[side]
+                    .active()
+                    .history
+                    .recent()
+                    .into_iter()
+                    .map(|p| ListItem {
+                        label: format::dir_title(&p),
+                        path: p,
+                    })
+                    .collect(),
+            }),
             // A copy: mounts are re-read on every listing and must not shift under the cursor.
             Action::Drives(s) => Some(Dialog::List {
                 kind: ListKind::Drives,
@@ -1826,6 +1866,102 @@ mod tests {
             .as_ref()
             .map(|(_, p)| p.clone());
         assert_eq!(pending, Some(PathBuf::from("/etc")));
+    }
+
+    /// Simulate a finished scan of `path` for the active tab of `side`.
+    fn arrive(app: &mut App, side: usize, path: &Path) {
+        let _ = app.load(side, path.into(), None);
+        let t = app.panes[side].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            side,
+            tab: id,
+            generation,
+            path: path.into(),
+            focus: None,
+            result: Ok(vec![]),
+            space: None,
+        });
+    }
+
+    fn pending_of(app: &App, side: usize) -> Option<PathBuf> {
+        app.panes[side]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone())
+    }
+
+    #[test]
+    fn alt_left_right_walk_tab_history() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 0, Path::new("/etc"));
+        let _ = app.update(Message::Key(Action::HistoryBack));
+        assert_eq!(pending_of(&app, 0), Some(PathBuf::from("/usr")));
+        arrive(&mut app, 0, Path::new("/usr")); // the jump lands
+        let _ = app.update(Message::Key(Action::HistoryForward));
+        assert_eq!(pending_of(&app, 0), Some(PathBuf::from("/etc")));
+    }
+
+    #[test]
+    fn rescan_does_not_add_history() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, &std::env::temp_dir()); // the start dir's first listing
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 0, Path::new("/usr")); // Ctrl+R / watcher
+        let _ = app.update(Message::Key(Action::HistoryBack));
+        // One step back leaves /usr for the start dir, not /usr again.
+        assert_eq!(pending_of(&app, 0), Some(std::env::temp_dir()));
+    }
+
+    #[test]
+    fn alt_down_lists_history() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 0, Path::new("/etc"));
+        let _ = app.update(Message::Key(Action::HistoryList));
+        let Some(Dialog::List {
+            kind: ListKind::History,
+            items,
+            ..
+        }) = &app.dialog
+        else {
+            panic!("no history list");
+        };
+        assert_eq!(items[0].path, Path::new("/etc"));
+        assert!(items.iter().any(|i| i.path == Path::new("/usr")));
+    }
+
+    #[test]
+    fn ctrl_u_swaps_panes() {
+        let mut app = app_with(Config::default(), State::default());
+        arrive(&mut app, 0, Path::new("/usr"));
+        arrive(&mut app, 1, Path::new("/etc"));
+        let _ = app.update(Message::Key(Action::SwapPanes));
+        assert_eq!(app.panes[0].active().panel.cwd(), Path::new("/etc"));
+        assert_eq!(app.panes[1].active().panel.cwd(), Path::new("/usr"));
+    }
+
+    #[test]
+    fn regression_swap_keeps_scan_in_flight() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.load(0, "/usr".into(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Key(Action::SwapPanes)); // tab now on side 1
+        let _ = app.update(Message::Listed {
+            side: 0, // side when the scan started
+            tab: id,
+            generation,
+            path: "/usr".into(),
+            focus: None,
+            result: Ok(vec![]),
+            space: None,
+        });
+        let t = app.panes[1].active();
+        assert_eq!(t.panel.cwd(), Path::new("/usr"));
+        assert!(t.pending.is_none(), "tab stuck in pending");
     }
 
     #[test]
