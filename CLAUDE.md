@@ -7,7 +7,7 @@ Guidance for Claude Code in this repository. Reply to the user in Russian; code,
 Shagoff Commander is a dual-pane file manager for Pop!_OS 24.04 COSMIC, written in Rust on libcosmic (an iced fork). The goal is to behave as close as possible to **Total Commander for Windows** in layout and keyboard.
 
 - `.claude/docs/tc-reference.md` is the source of truth for "how TC does it". Check it before implementing any key or behaviour, and update it when you add one.
-- Full design and its rationale: `.claude/docs/specs/2026-10-02-architecture-design.md`.
+- Full design and its rationale: `.claude/docs/specs/00-architecture-design.md`.
 - Phases and backlog: `.claude/docs/ROADMAP.md`.
 
 Fixed names (never change these):

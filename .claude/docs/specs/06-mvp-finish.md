@@ -1,7 +1,7 @@
 # Фаза 6: F3/F4, диски, watcher, конфиг. MVP готов
 
 Дата: 2026-10-02. Статус: одобрен.
-Основа: [архитектурный спек](2026-10-02-architecture-design.md), [фаза 5](2026-10-02-file-ops.md), [эталон TC](../tc-reference.md).
+Основа: [архитектурный спек](00-architecture-design.md), [фаза 5](05-file-ops.md), [эталон TC](../tc-reference.md).
 
 ## Решения
 

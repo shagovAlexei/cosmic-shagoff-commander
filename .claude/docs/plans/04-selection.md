@@ -10,7 +10,7 @@
 
 **Tech Stack:** Rust 2024, libcosmic (pinned rev). No new crates.
 
-**Spec:** `.claude/docs/specs/2026-10-02-selection.md`
+**Spec:** `.claude/docs/specs/04-selection.md`
 
 ## Global Constraints
 

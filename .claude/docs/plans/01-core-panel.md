@@ -13,7 +13,7 @@ The UI (phase 2) calls `listing::scan` in the background and passes the result t
 
 **Tech Stack:** Rust 2024 and std only. `tempfile` is a dev-dependency.
 
-**Spec:** `.claude/docs/specs/2026-10-02-core-panel.md`
+**Spec:** `.claude/docs/specs/01-core-panel.md`
 
 ## Global Constraints
 
@@ -822,7 +822,7 @@ The UI (phase 2) calls `listing::scan` in the background and passes the result t
   git add .claude CLAUDE.md
   git commit -m "docs: phase 1 spec, plan, roadmap"
   git push -u origin feat/core-panel
-  gh pr create --title "core: listing, sort, Panel (phase 1)" --body "Spec: .claude/docs/specs/2026-10-02-core-panel.md
+  gh pr create --title "core: listing, sort, Panel (phase 1)" --body "Spec: .claude/docs/specs/01-core-panel.md
   Plan: .claude/docs/plans/01-core-panel.md"
   gh pr checks --watch
   ```
