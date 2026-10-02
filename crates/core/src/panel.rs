@@ -1,0 +1,303 @@
+use crate::listing::{Entry, Kind};
+use crate::sort::{Sort, SortKey, sort_entries};
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+/// Name of the synthetic "go up" row.
+pub const PARENT: &str = "..";
+
+/// One panel's state. Never touches the filesystem: the UI scans and hands results to `set_listing`.
+#[derive(Debug)]
+pub struct Panel {
+    cwd: PathBuf,
+    entries: Vec<Entry>,
+    cursor: usize,
+    sort: Sort,
+    show_hidden: bool,
+}
+
+impl Panel {
+    pub fn new(cwd: PathBuf) -> Self {
+        Self {
+            cwd,
+            entries: Vec::new(),
+            cursor: 0,
+            sort: Sort::default(),
+            show_hidden: false,
+        }
+    }
+
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub fn sort(&self) -> Sort {
+        self.sort
+    }
+
+    pub fn show_hidden(&self) -> bool {
+        self.show_hidden
+    }
+
+    pub fn set_show_hidden(&mut self, on: bool) {
+        self.show_hidden = on;
+    }
+
+    /// The only way to load a directory, so cwd, entries and cursor always change together.
+    /// Cursor: `focus` if present; else on a rescan of the same dir the same name, falling back to the old index;
+    /// else (new dir) the first row. Always clamped.
+    pub fn set_listing(&mut self, cwd: PathBuf, mut entries: Vec<Entry>, focus: Option<&str>) {
+        let same_dir = cwd == self.cwd;
+        let keep = match focus {
+            Some(f) => Some(f.to_owned()),
+            None if same_dir => self.current().map(|e| e.name.clone()),
+            None => None,
+        };
+        let old = if same_dir { self.cursor } else { 0 };
+        sort_entries(&mut entries, self.sort);
+        if cwd.parent().is_some() {
+            entries.insert(0, parent_entry());
+        }
+        self.cwd = cwd;
+        self.entries = entries;
+        self.cursor = keep.and_then(|n| self.index_of(&n)).unwrap_or(old);
+        self.move_cursor(0); // clamp
+    }
+
+    pub fn move_cursor(&mut self, delta: isize) {
+        let last = self.entries.len().saturating_sub(1);
+        self.cursor = self.cursor.saturating_add_signed(delta).min(last);
+    }
+
+    pub fn cursor_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn cursor_end(&mut self) {
+        self.cursor = self.entries.len().saturating_sub(1);
+    }
+
+    /// Same column flips direction; a new column starts ascending. Keeps `..` first and the cursor on its name.
+    pub fn set_sort(&mut self, key: SortKey) {
+        let asc = self.sort.key != key || !self.sort.asc;
+        self.sort = Sort { key, asc };
+        let name = self.current().map(|e| e.name.clone());
+        let start = usize::from(self.parent_row());
+        sort_entries(&mut self.entries[start..], self.sort);
+        if let Some(i) = name.and_then(|n| self.index_of(&n)) {
+            self.cursor = i;
+        }
+    }
+
+    pub fn current(&self) -> Option<&Entry> {
+        self.entries.get(self.cursor)
+    }
+
+    /// Parent dir and the name to focus there (the dir we leave).
+    pub fn parent_path(&self) -> Option<(PathBuf, String)> {
+        let parent = self.cwd.parent()?;
+        let name = self.cwd.file_name()?.to_string_lossy().into_owned();
+        Some((parent.to_path_buf(), name))
+    }
+
+    /// Where Enter leads: `..` → parent (with focus), a dir → inside it, a file → `None`.
+    pub fn enter_path(&self) -> Option<(PathBuf, Option<String>)> {
+        let e = self.current()?;
+        if e.name == PARENT {
+            return self.parent_path().map(|(p, n)| (p, Some(n)));
+        }
+        e.is_dir().then(|| (self.cwd.join(&e.name), None))
+    }
+
+    fn index_of(&self, name: &str) -> Option<usize> {
+        self.entries.iter().position(|e| e.name == name)
+    }
+
+    fn parent_row(&self) -> bool {
+        self.entries.first().is_some_and(|e| e.name == PARENT)
+    }
+}
+
+fn parent_entry() -> Entry {
+    Entry {
+        name: PARENT.into(),
+        ext: String::new(),
+        size: 0,
+        mtime: UNIX_EPOCH,
+        kind: Kind::Dir,
+        is_link: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn f(name: &str, size: u64) -> Entry {
+        Entry {
+            name: name.into(),
+            ext: String::new(),
+            size,
+            mtime: UNIX_EPOCH,
+            kind: Kind::File,
+            is_link: false,
+        }
+    }
+    fn d(name: &str) -> Entry {
+        Entry {
+            kind: Kind::Dir,
+            ..f(name, 0)
+        }
+    }
+    fn names(p: &Panel) -> Vec<&str> {
+        p.entries().iter().map(|e| e.name.as_str()).collect()
+    }
+    fn loaded(cwd: &str, entries: Vec<Entry>) -> Panel {
+        let mut p = Panel::new(PathBuf::from(cwd));
+        p.set_listing(PathBuf::from(cwd), entries, None);
+        p
+    }
+
+    #[test]
+    fn parent_row_first_except_at_root() {
+        let p = loaded("/home/u", vec![f("b", 1), d("a")]);
+        assert_eq!(names(&p), ["..", "a", "b"]);
+        let root = loaded("/", vec![f("b", 1), d("a")]);
+        assert_eq!(names(&root), ["a", "b"]);
+    }
+
+    #[test]
+    fn empty_root_has_no_rows_and_cursor_is_safe() {
+        let mut p = loaded("/", vec![]);
+        assert!(p.current().is_none());
+        p.move_cursor(5);
+        p.move_cursor(-5);
+        p.cursor_end();
+        assert_eq!(p.cursor(), 0);
+        assert!(p.enter_path().is_none());
+    }
+
+    #[test]
+    fn cursor_clamps_at_edges() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1), f("c", 1)]);
+        p.move_cursor(-1);
+        assert_eq!(p.cursor(), 0);
+        p.move_cursor(100);
+        assert_eq!(p.cursor(), 3);
+        p.cursor_home();
+        assert_eq!(p.cursor(), 0);
+        p.cursor_end();
+        assert_eq!(p.current().unwrap().name, "c");
+    }
+
+    #[test]
+    fn new_dir_puts_cursor_on_first_row() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1), f("c", 1)]);
+        p.cursor_end();
+        p.set_listing(
+            PathBuf::from("/x/y"),
+            vec![f("q", 1), f("r", 1), f("s", 1)],
+            None,
+        );
+        assert_eq!(p.cursor(), 0);
+        assert_eq!(p.cwd(), Path::new("/x/y"));
+    }
+
+    #[test]
+    fn rescan_keeps_cursor_on_same_name() {
+        let mut p = loaded("/x", vec![f("b", 1), f("c", 1)]);
+        p.cursor_end(); // on "c"
+        p.set_listing(
+            PathBuf::from("/x"),
+            vec![f("a", 1), f("b", 1), f("c", 1)],
+            None,
+        );
+        assert_eq!(p.current().unwrap().name, "c");
+    }
+
+    #[test]
+    fn rescan_keeps_index_when_name_gone() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1), f("c", 1)]);
+        p.move_cursor(2); // on "b" (index 2, after "..")
+        p.set_listing(PathBuf::from("/x"), vec![f("a", 1), f("c", 1)], None);
+        assert_eq!(p.current().unwrap().name, "c");
+    }
+
+    #[test]
+    fn rescan_clamps_when_list_shrinks() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1), f("c", 1)]);
+        p.cursor_end();
+        p.set_listing(PathBuf::from("/x"), vec![f("a", 1)], None);
+        assert_eq!(p.current().unwrap().name, "a");
+    }
+
+    #[test]
+    fn focus_wins_over_everything() {
+        let mut p = loaded("/x/y", vec![f("q", 1)]);
+        p.set_listing(PathBuf::from("/x"), vec![d("w"), d("y"), d("z")], Some("y"));
+        assert_eq!(p.current().unwrap().name, "y");
+    }
+
+    #[test]
+    fn set_sort_toggles_and_keeps_cursor_and_parent_row() {
+        let mut p = loaded("/x", vec![f("a", 3), f("b", 1), f("c", 2)]);
+        p.move_cursor(1); // on "a"
+        p.set_sort(SortKey::Size);
+        assert_eq!(
+            p.sort(),
+            Sort {
+                key: SortKey::Size,
+                asc: true
+            }
+        );
+        assert_eq!(names(&p), ["..", "b", "c", "a"]);
+        assert_eq!(p.current().unwrap().name, "a");
+        p.set_sort(SortKey::Size);
+        assert_eq!(
+            p.sort(),
+            Sort {
+                key: SortKey::Size,
+                asc: false
+            }
+        );
+        assert_eq!(names(&p), ["..", "a", "c", "b"]);
+        assert_eq!(p.current().unwrap().name, "a");
+    }
+
+    #[test]
+    fn set_listing_uses_current_sort() {
+        let mut p = loaded("/x", vec![]);
+        p.set_sort(SortKey::Date);
+        let mut old = f("old", 1);
+        old.mtime = UNIX_EPOCH + Duration::from_secs(1);
+        let mut new = f("new", 1);
+        new.mtime = UNIX_EPOCH + Duration::from_secs(2);
+        p.set_listing(PathBuf::from("/x"), vec![new, old], None);
+        assert_eq!(names(&p), ["..", "old", "new"]);
+    }
+
+    #[test]
+    fn navigation_paths() {
+        let mut p = loaded("/x/y", vec![d("sub"), f("file", 1)]);
+        // cursor on ".."
+        assert_eq!(
+            p.enter_path(),
+            Some((PathBuf::from("/x"), Some("y".into())))
+        );
+        assert_eq!(p.parent_path(), Some((PathBuf::from("/x"), "y".into())));
+        p.move_cursor(1);
+        assert_eq!(p.enter_path(), Some((PathBuf::from("/x/y/sub"), None)));
+        p.move_cursor(1);
+        assert_eq!(p.enter_path(), None);
+        assert_eq!(loaded("/", vec![]).parent_path(), None);
+    }
+}
