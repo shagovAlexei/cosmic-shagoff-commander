@@ -10,6 +10,7 @@ pub struct PaneState {
 }
 
 /// `path` or its nearest existing ancestor dir; `fallback` for relative or empty paths.
+// ponytail: `is_dir` blocks on a dead network mount at startup; restore in spawn_blocking if that bites.
 pub fn existing_dir(path: &Path, fallback: &Path) -> PathBuf {
     path.ancestors()
         .find(|p| p.is_absolute() && p.is_dir())

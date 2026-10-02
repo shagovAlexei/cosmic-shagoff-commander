@@ -41,8 +41,8 @@ pub struct Tab {
     pub panel: Panel,
     pub offset: f32,
     pub height: f32,
-    /// Generation of the scan in flight; any other result is stale.
-    pub(crate) pending: Option<u64>,
+    /// Generation and path of the scan in flight; any other result is stale.
+    pub(crate) pending: Option<(u64, PathBuf)>,
     pub error: Option<String>,
 }
 
@@ -55,6 +55,15 @@ impl Tab {
             height: FALLBACK_LIST_H,
             pending: None,
             error: None,
+        }
+    }
+
+    /// Where the tab is going: the dir being scanned, else the shown one. Rescans use this so they
+    /// never cancel a navigation still in flight.
+    fn target(&self) -> PathBuf {
+        match &self.pending {
+            Some((_, p)) => p.clone(),
+            None => self.panel.cwd().to_path_buf(),
         }
     }
 
@@ -131,6 +140,8 @@ pub enum Message {
         path: PathBuf,
         focus: Option<String>,
         result: Result<Vec<Entry>, String>,
+        /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
+        space: Option<(u64, u64)>,
     },
     Click(usize, usize),
     DoubleClick(usize, usize),
@@ -270,8 +281,7 @@ impl App {
             tabs.select(active);
             app.panes[side] = tabs;
         }
-        app.refresh_drives(0);
-        app.refresh_drives(1);
+        app.refresh_mounts();
         let task = app.load_all();
         (app, task)
     }
@@ -313,6 +323,7 @@ impl App {
                 path,
                 focus,
                 result,
+                space,
             } => {
                 let Some(t) = self.panes[side]
                     .items_mut()
@@ -321,7 +332,7 @@ impl App {
                 else {
                     return Task::none(); // tab was closed
                 };
-                if t.pending != Some(generation) {
+                if t.pending.as_ref().map(|(g, _)| *g) != Some(generation) {
                     return Task::none(); // stale: the user has moved on
                 }
                 t.pending = None;
@@ -330,7 +341,8 @@ impl App {
                         t.error = None;
                         t.panel.set_listing(path, entries, focus.as_deref());
                         if self.panes[side].active().id == tab {
-                            self.refresh_drives(side);
+                            self.refresh_mounts();
+                            self.space[side] = space;
                         }
                         return self.reveal(side, tab);
                     }
@@ -400,8 +412,10 @@ impl App {
             },
             Message::CancelJob => self.cancel_job(),
             Message::Changed(side) => {
-                if self.job.is_none() {
-                    let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                let t = self.panes[side].active();
+                // A change in the dir we are leaving must not cancel the scan of the one we enter.
+                if self.job.is_none() && t.target() == t.panel.cwd() {
+                    let cwd = t.target();
                     return self.load(side, cwd, None);
                 }
             }
@@ -434,8 +448,8 @@ impl App {
         let mut tasks = Vec::new();
         for side in 0..2 {
             for i in 0..self.panes[side].items().len() {
-                let cwd = self.panes[side].items()[i].panel.cwd().to_path_buf();
-                tasks.push(self.load_tab(side, i, cwd, None));
+                let dir = self.panes[side].items()[i].target();
+                tasks.push(self.load_tab(side, i, dir, None));
             }
         }
         Task::batch(tasks)
@@ -496,16 +510,18 @@ impl App {
     ) -> Task<Message> {
         let generation = self.next_id();
         let t = &mut self.panes[side].items_mut()[i];
-        t.pending = Some(generation);
+        t.pending = Some((generation, path.clone()));
         let tab = t.id;
         let show_hidden = t.panel.show_hidden();
         Task::perform(
             async move {
                 let p = path.clone();
-                let result = tokio::task::spawn_blocking(move || listing::scan(&p, show_hidden))
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| e.to_string()));
+                let (result, space) = tokio::task::spawn_blocking(move || {
+                    let result = listing::scan(&p, show_hidden).map_err(|e| e.to_string());
+                    (result, drives::space(&p))
+                })
+                .await
+                .unwrap_or_else(|e| (Err(e.to_string()), None));
                 Message::Listed {
                     side,
                     tab,
@@ -513,6 +529,7 @@ impl App {
                     path,
                     focus,
                     result,
+                    space,
                 }
             },
             cosmic::Action::App,
@@ -895,12 +912,11 @@ impl App {
         }
     }
 
-    /// Mounts change rarely and are cheap to read: re-read with every listing.
-    fn refresh_drives(&mut self, side: usize) {
+    /// Mounts change rarely and procfs never blocks: re-read with every listing.
+    fn refresh_mounts(&mut self) {
         if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
             self.drives = drives::parse(&m, &self.home);
         }
-        self.space[side] = drives::space(self.panes[side].active().panel.cwd());
     }
 
     fn go_drive(&mut self, side: usize, i: usize) -> Task<Message> {
@@ -913,8 +929,8 @@ impl App {
 
     /// The newly shown tab was not watched while hidden: restore its scroll and rescan it.
     fn tab_switched(&mut self, side: usize) -> Task<Message> {
-        let cwd = self.panes[side].active().panel.cwd().to_path_buf();
-        Task::batch([self.restore_scroll(side), self.load(side, cwd, None)])
+        let dir = self.panes[side].active().target();
+        Task::batch([self.restore_scroll(side), self.load(side, dir, None)])
     }
 
     /// Scroll the pane's list to the active tab's stored offset.
@@ -1060,9 +1076,9 @@ mod tests {
             app.panes[0].active().panel.cwd().to_path_buf(),
         );
         let _ = app.load(0, cwd.clone(), None);
-        let first = app.panes[0].active().pending.unwrap();
+        let first = app.panes[0].active().pending.as_ref().unwrap().0;
         let _ = app.load(0, cwd.clone(), None);
-        let second = app.panes[0].active().pending.unwrap();
+        let second = app.panes[0].active().pending.as_ref().unwrap().0;
         let listed = |generation, name: &str| Message::Listed {
             side: 0,
             tab: id,
@@ -1070,6 +1086,7 @@ mod tests {
             path: cwd.clone(),
             focus: None,
             result: Ok(vec![entry(name)]),
+            space: None,
         };
         let _ = app.update(listed(second, "new"));
         let _ = app.update(listed(first, "old")); // late, stale
@@ -1084,6 +1101,57 @@ mod tests {
             names.contains(&"new".to_string()) && !names.contains(&"old".to_string()),
             "{names:?}"
         );
+    }
+
+    /// Start navigating pane 0 to a fresh temp dir; returns (dir guard, tab id, generation).
+    fn navigating(app: &mut App) -> (tempfile::TempDir, u64, u64) {
+        let tmp = tempfile::tempdir().unwrap();
+        let _ = app.load(0, tmp.path().into(), None);
+        let t = app.panes[0].active();
+        let generation = t.pending.as_ref().unwrap().0;
+        (tmp, t.id, generation)
+    }
+
+    fn listed_ok(id: u64, generation: u64, path: &Path) -> Message {
+        Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: path.into(),
+            focus: None,
+            result: Ok(vec![]),
+            space: Some((1, 2)),
+        }
+    }
+
+    #[test]
+    fn regression_watcher_does_not_cancel_navigation() {
+        let mut app = app_with(Config::default(), State::default());
+        let (tmp, id, generation) = navigating(&mut app);
+        let _ = app.update(Message::Changed(0)); // old dir changed while the new one loads
+        let _ = app.update(listed_ok(id, generation, tmp.path()));
+        assert_eq!(app.panes[0].active().panel.cwd(), tmp.path());
+    }
+
+    #[test]
+    fn regression_ctrl_h_keeps_pending_navigation() {
+        let mut app = app_with(Config::default(), State::default());
+        let (tmp, _, _) = navigating(&mut app);
+        let _ = app.update(Message::Key(Action::ToggleHidden));
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending.as_deref(), Some(tmp.path()));
+    }
+
+    #[test]
+    fn listed_brings_free_space_of_the_active_tab() {
+        let mut app = app_with(Config::default(), State::default());
+        let (tmp, id, generation) = navigating(&mut app);
+        let _ = app.update(listed_ok(id, generation, tmp.path()));
+        assert_eq!(app.space[0], Some((1, 2)));
     }
 
     #[test]

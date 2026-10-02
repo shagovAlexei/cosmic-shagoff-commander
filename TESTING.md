@@ -86,3 +86,5 @@
 | `regression_special_files_are_skipped_not_hung` | Копирование FIFO вешало приложение | фаза 5 |
 | `regression_merge_keeps_existing_dir_mode` | Слияние меняло права существующего каталога | фаза 5 |
 | `regression_second_scan_of_same_path_wins` | Из двух чтений одного каталога применялось старое, новое отбрасывалось | фаза 6 |
+| `regression_watcher_does_not_cancel_navigation` | Изменения в покидаемом каталоге (загрузка браузера) отменяли переход в другой каталог | фаза 6 |
+| `regression_ctrl_h_keeps_pending_navigation` | Ctrl+H сразу после Enter перечитывал старый каталог и отменял переход | фаза 6 |
