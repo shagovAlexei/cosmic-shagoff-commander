@@ -1,0 +1,153 @@
+use std::{
+    fs, io,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Dir,
+    File,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub name: String,
+    /// Extension of files only (`archive.tar.gz` → `gz`, `.bashrc` → empty); always empty for dirs.
+    pub ext: String,
+    pub size: u64,
+    pub mtime: SystemTime,
+    pub kind: Kind,
+    pub is_link: bool,
+}
+
+impl Entry {
+    pub fn is_dir(&self) -> bool {
+        self.kind == Kind::Dir
+    }
+}
+
+/// Lists `path` without `..`. Unreadable items are skipped; only failing to read the dir itself is an error.
+pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
+    let mut out = Vec::new();
+    for item in fs::read_dir(path)? {
+        let Ok(item) = item else { continue };
+        let name = item.file_name().to_string_lossy().into_owned();
+        if !show_hidden && name.starts_with('.') {
+            continue;
+        }
+        // DirEntry::metadata does not follow symlinks.
+        let Ok(lmeta) = item.metadata() else { continue };
+        let is_link = lmeta.file_type().is_symlink();
+        let target = if is_link {
+            fs::metadata(item.path()).ok()
+        } else {
+            Some(lmeta.clone())
+        };
+        let (kind, size, meta) = match &target {
+            Some(m) if m.is_dir() => (Kind::Dir, 0, m),
+            Some(m) => (Kind::File, m.len(), m),
+            None => (Kind::File, 0, &lmeta), // broken symlink
+        };
+        let ext = if kind == Kind::File {
+            ext_of(&name)
+        } else {
+            String::new()
+        };
+        out.push(Entry {
+            mtime: meta.modified().unwrap_or(UNIX_EPOCH),
+            name,
+            ext,
+            size,
+            kind,
+            is_link,
+        });
+    }
+    Ok(out)
+}
+
+fn ext_of(name: &str) -> String {
+    match name.rfind('.') {
+        Some(i) if i > 0 => name[i + 1..].to_string(),
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn find<'a>(v: &'a [Entry], name: &str) -> &'a Entry {
+        v.iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} not listed"))
+    }
+
+    fn fixture() -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("a.txt"), "hello").unwrap();
+        fs::write(d.path().join("archive.tar.gz"), "").unwrap();
+        fs::write(d.path().join(".bashrc"), "").unwrap();
+        fs::write(d.path().join("noext"), "").unwrap();
+        fs::create_dir(d.path().join("sub.d")).unwrap();
+        symlink(d.path().join("sub.d"), d.path().join("link_dir")).unwrap();
+        symlink(d.path().join("nope"), d.path().join("broken")).unwrap();
+        d
+    }
+
+    #[test]
+    fn scan_lists_files_dirs_and_links() {
+        let d = fixture();
+        let v = scan(d.path(), true).unwrap();
+        assert_eq!(v.len(), 7);
+        let a = find(&v, "a.txt");
+        assert_eq!(
+            (a.kind, a.size, a.ext.as_str(), a.is_link),
+            (Kind::File, 5, "txt", false)
+        );
+        let sub = find(&v, "sub.d");
+        assert_eq!((sub.kind, sub.ext.as_str()), (Kind::Dir, ""));
+        let link = find(&v, "link_dir");
+        assert_eq!((link.kind, link.is_link), (Kind::Dir, true));
+        let broken = find(&v, "broken");
+        assert_eq!(
+            (broken.kind, broken.size, broken.is_link),
+            (Kind::File, 0, true)
+        );
+    }
+
+    #[test]
+    fn scan_ext_rules() {
+        let d = fixture();
+        let v = scan(d.path(), true).unwrap();
+        assert_eq!(find(&v, "archive.tar.gz").ext, "gz");
+        assert_eq!(find(&v, ".bashrc").ext, "");
+        assert_eq!(find(&v, "noext").ext, "");
+    }
+
+    #[test]
+    fn scan_hides_dotfiles_unless_asked() {
+        let d = fixture();
+        let v = scan(d.path(), false).unwrap();
+        assert!(v.iter().all(|e| !e.name.starts_with('.')));
+        assert_eq!(v.len(), 6);
+    }
+
+    #[test]
+    fn scan_missing_dir_is_error() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(scan(&d.path().join("missing"), true).is_err());
+    }
+
+    #[test]
+    fn scan_non_utf8_name_is_listed() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join(OsStr::from_bytes(b"bad\xffname")), "").unwrap();
+        let v = scan(d.path(), true).unwrap();
+        assert_eq!(v.len(), 1);
+        assert!(v[0].name.starts_with("bad"));
+    }
+}
