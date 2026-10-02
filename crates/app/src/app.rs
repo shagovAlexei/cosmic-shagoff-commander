@@ -8,6 +8,7 @@ use shagoff_core::format::TimeZone;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::panel::Panel;
 use shagoff_core::sort::SortKey;
+use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
 use std::path::PathBuf;
 
@@ -21,9 +22,10 @@ pub struct Flags {
     pub left: Option<PathBuf>,
 }
 
-pub struct Pane {
+pub struct Tab {
+    /// Stable id: scan results are routed by it, so they land in the right tab even after switching.
+    pub id: u64,
     pub panel: Panel,
-    pub scroll_id: widget::Id,
     pub offset: f32,
     pub height: f32,
     /// Path of the scan in flight; results for any other path are stale.
@@ -31,13 +33,25 @@ pub struct Pane {
     pub error: Option<String>,
 }
 
-impl Pane {
-    fn new(cwd: PathBuf) -> Self {
+impl Tab {
+    fn new(id: u64, cwd: PathBuf) -> Self {
         Self {
+            id,
             panel: Panel::new(cwd),
-            scroll_id: widget::Id::unique(),
             offset: 0.0,
             height: FALLBACK_LIST_H,
+            pending: None,
+            error: None,
+        }
+    }
+
+    /// Copy for Ctrl+T: same dir, sort, cursor and scroll; fresh id.
+    fn duplicate(&self, id: u64) -> Self {
+        Self {
+            id,
+            panel: self.panel.clone(),
+            offset: self.offset,
+            height: self.height,
             pending: None,
             error: None,
         }
@@ -46,9 +60,13 @@ impl Pane {
 
 pub struct App {
     core: Core,
-    pub panes: [Pane; 2],
+    pub panes: [Tabs<Tab>; 2],
+    /// One scroll widget id per pane, not per tab: iced's tree diff keeps the first id it saw at a
+    /// position (`Tree::diff` → `set_id` for `Internal::Set` ids), so per-tab ids would never match.
+    pub scroll_ids: [widget::Id; 2],
     pub active: usize,
     pub tz: TimeZone,
+    next_id: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +74,7 @@ pub enum Message {
     Key(Action),
     Listed {
         side: usize,
+        tab: u64,
         path: PathBuf,
         focus: Option<String>,
         result: Result<Vec<Entry>, String>,
@@ -63,8 +82,10 @@ pub enum Message {
     Click(usize, usize),
     DoubleClick(usize, usize),
     Header(usize, SortKey),
-    /// side, scroll offset y, viewport height
+    /// side, scroll offset y, viewport height (of the active tab)
     Scrolled(usize, f32, f32),
+    SelectTab(usize, usize),
+    CloseTabAt(usize, usize),
     Exit,
 }
 
@@ -94,9 +115,14 @@ impl Application for App {
             .unwrap_or_else(|| home.clone());
         let mut app = Self {
             core,
-            panes: [Pane::new(left.clone()), Pane::new(home.clone())],
+            panes: [
+                Tabs::new(Tab::new(1, left.clone())),
+                Tabs::new(Tab::new(2, home.clone())),
+            ],
+            scroll_ids: [widget::Id::unique(), widget::Id::unique()],
             active: 0,
             tz: TimeZone::system(),
+            next_id: 2,
         };
         let task = Task::batch([app.load(0, left, None), app.load(1, home, None)]);
         (app, task)
@@ -107,31 +133,38 @@ impl Application for App {
             Message::Key(action) => return self.act(self.active, action),
             Message::Listed {
                 side,
+                tab,
                 path,
                 focus,
                 result,
             } => {
-                let pane = &mut self.panes[side];
-                if pane.pending.as_ref() != Some(&path) {
+                let Some(t) = self.panes[side]
+                    .items_mut()
+                    .iter_mut()
+                    .find(|t| t.id == tab)
+                else {
+                    return Task::none(); // tab was closed
+                };
+                if t.pending.as_ref() != Some(&path) {
                     return Task::none(); // stale: the user has moved on
                 }
-                pane.pending = None;
+                t.pending = None;
                 match result {
                     Ok(entries) => {
-                        pane.error = None;
-                        pane.panel.set_listing(path, entries, focus.as_deref());
-                        return self.reveal(side);
+                        t.error = None;
+                        t.panel.set_listing(path, entries, focus.as_deref());
+                        return self.reveal(side, tab);
                     }
-                    Err(e) => pane.error = Some(e),
+                    Err(e) => t.error = Some(e),
                 }
             }
             Message::Click(side, i) => {
                 self.active = side;
-                self.panes[side].panel.set_cursor(i);
+                self.panes[side].active_mut().panel.set_cursor(i);
             }
             Message::DoubleClick(side, i) => {
                 self.active = side;
-                self.panes[side].panel.set_cursor(i);
+                self.panes[side].active_mut().panel.set_cursor(i);
                 return self.act(side, Action::Enter);
             }
             Message::Header(side, key) => {
@@ -139,8 +172,18 @@ impl Application for App {
                 return self.act(side, Action::Sort(key));
             }
             Message::Scrolled(side, offset, height) => {
-                self.panes[side].offset = offset;
-                self.panes[side].height = height;
+                let t = self.panes[side].active_mut();
+                t.offset = offset;
+                t.height = height;
+            }
+            Message::SelectTab(side, i) => {
+                self.active = side;
+                self.panes[side].select(i);
+                return self.restore_scroll(side);
+            }
+            Message::CloseTabAt(side, i) => {
+                self.panes[side].close(i);
+                return self.restore_scroll(side);
             }
             Message::Exit => return cosmic::iced::exit(),
         }
@@ -171,11 +214,17 @@ impl Application for App {
 }
 
 impl App {
-    /// Scan `path` in the background; the result lands in `Message::Listed`.
+    fn next_id(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    /// Scan `path` for the active tab of `side` in the background; the result lands in `Message::Listed`.
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
-        let pane = &mut self.panes[side];
-        pane.pending = Some(path.clone());
-        let show_hidden = pane.panel.show_hidden();
+        let t = self.panes[side].active_mut();
+        t.pending = Some(path.clone());
+        let tab = t.id;
+        let show_hidden = t.panel.show_hidden();
         Task::perform(
             async move {
                 let p = path.clone();
@@ -185,6 +234,7 @@ impl App {
                     .and_then(|r| r.map_err(|e| e.to_string()));
                 Message::Listed {
                     side,
+                    tab,
                     path,
                     focus,
                     result,
@@ -195,8 +245,10 @@ impl App {
     }
 
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
-        let page = viewport::page_rows(ROW_H, self.panes[side].height) as isize;
-        let panel = &mut self.panes[side].panel;
+        let t = self.panes[side].active_mut();
+        let page = viewport::page_rows(ROW_H, t.height) as isize;
+        let tab = t.id;
+        let panel = &mut t.panel;
         match action {
             Action::SwitchPane => {
                 self.active = 1 - self.active;
@@ -217,7 +269,7 @@ impl App {
                 if let Some(file) = file
                     && let Err(err) = open_detached(&file)
                 {
-                    self.panes[side].error = Some(fl!("open-failed", err = err.to_string()));
+                    t.error = Some(fl!("open-failed", err = err.to_string()));
                 }
             }
             Action::Parent => {
@@ -230,26 +282,62 @@ impl App {
                 let cwd = panel.cwd().to_path_buf();
                 return self.load(side, cwd, None);
             }
+            Action::NewTab => {
+                let id = self.next_id();
+                let copy = self.panes[side].active().duplicate(id);
+                self.panes[side].open_after(copy);
+                return self.restore_scroll(side);
+            }
+            Action::CloseTab => {
+                let i = self.panes[side].active_index();
+                self.panes[side].close(i);
+                return self.restore_scroll(side);
+            }
+            Action::NextTab => {
+                self.panes[side].next();
+                return self.restore_scroll(side);
+            }
+            Action::PrevTab => {
+                self.panes[side].prev();
+                return self.restore_scroll(side);
+            }
         }
-        self.reveal(side)
+        self.reveal(side, tab)
     }
 
-    /// Scroll so the cursor row is fully visible.
-    fn reveal(&mut self, side: usize) -> Task<Message> {
-        let pane = &mut self.panes[side];
-        match viewport::scroll_to_cursor(pane.panel.cursor(), ROW_H, pane.offset, pane.height) {
+    /// Keep tab `tab`'s cursor row fully visible. An inactive tab only gets its offset updated;
+    /// `restore_scroll` applies it when that tab is shown.
+    fn reveal(&mut self, side: usize, tab: u64) -> Task<Message> {
+        let is_active = self.panes[side].active().id == tab;
+        let Some(t) = self.panes[side]
+            .items_mut()
+            .iter_mut()
+            .find(|t| t.id == tab)
+        else {
+            return Task::none();
+        };
+        match viewport::scroll_to_cursor(t.panel.cursor(), ROW_H, t.offset, t.height) {
             Some(y) => {
-                pane.offset = y;
-                scrollable::scroll_to(
-                    pane.scroll_id.clone(),
-                    AbsoluteOffset {
-                        x: None,
-                        y: Some(y),
-                    },
-                )
+                t.offset = y;
+                if is_active {
+                    self.restore_scroll(side)
+                } else {
+                    Task::none()
+                }
             }
             None => Task::none(),
         }
+    }
+
+    /// Scroll the pane's list to the active tab's stored offset.
+    fn restore_scroll(&self, side: usize) -> Task<Message> {
+        scrollable::scroll_to(
+            self.scroll_ids[side].clone(),
+            AbsoluteOffset {
+                x: None,
+                y: Some(self.panes[side].active().offset),
+            },
+        )
     }
 }
 

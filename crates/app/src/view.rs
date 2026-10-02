@@ -1,6 +1,6 @@
 //! TC layout: per pane a path line, column headers, a virtualized file list and a status line.
 
-use crate::app::{App, Message, ROW_H};
+use crate::app::{App, Message, ROW_H, Tab};
 use crate::fl;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
 use cosmic::iced::widget::{column, row};
@@ -11,6 +11,7 @@ use shagoff_core::format;
 use shagoff_core::listing::Entry;
 use shagoff_core::panel::PARENT;
 use shagoff_core::sort::{Sort, SortKey};
+use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
 
 const W_EXT: f32 = 60.0;
@@ -27,7 +28,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 fn pane(app: &App, side: usize) -> Element<'_, Message> {
-    let p = &app.panes[side];
+    let tabs = &app.panes[side];
+    let p = tabs.active();
     let active = app.active == side;
     let entries = p.panel.entries();
     let cursor = p.panel.cursor();
@@ -44,7 +46,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     }
     list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * ROW_H));
     let list = scrollable(list)
-        .id(p.scroll_id.clone())
+        .id(app.scroll_ids[side].clone())
         .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
         .height(Length::Fill);
 
@@ -72,14 +74,34 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         }
     };
 
-    column![
-        path,
-        header(side, p.panel.sort()),
-        list,
-        container(status).padding([2, 6])
-    ]
-    .width(Length::Fill)
-    .into()
+    let mut col = column![];
+    if tabs.items().len() > 1 {
+        col = col.push(tab_bar(side, tabs, active));
+    }
+    col.push(path)
+        .push(header(side, p.panel.sort()))
+        .push(list)
+        .push(container(status).padding([2, 6]))
+        .width(Length::Fill)
+        .into()
+}
+
+/// Shown only with 2+ tabs; the active tab is styled like the cursor row.
+fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Message> {
+    let mut bar = row![].spacing(2);
+    for (i, t) in tabs.items().iter().enumerate() {
+        let label = container(cell(format::dir_title(t.panel.cwd())))
+            .padding([2, 8])
+            .max_width(160.0)
+            .class(cursor_style(i == tabs.active_index(), pane_active));
+        bar = bar.push(
+            mouse_area(label)
+                .on_press(Message::SelectTab(side, i))
+                .on_middle_press(Message::CloseTabAt(side, i))
+                .on_double_click(Message::CloseTabAt(side, i)),
+        );
+    }
+    bar.into()
 }
 
 /// Column headers on the same grid as `file_row` (padding 6, spacing 6), so labels sit over their columns.

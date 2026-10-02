@@ -15,7 +15,7 @@ pub struct Totals {
 }
 
 /// One panel's state. Never touches the filesystem: the UI scans and hands results to `set_listing`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Panel {
     cwd: PathBuf,
     entries: Vec<Entry>,

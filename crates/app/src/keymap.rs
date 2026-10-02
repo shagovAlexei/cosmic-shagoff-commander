@@ -17,33 +17,44 @@ pub enum Action {
     Root,
     Reload,
     Sort(SortKey),
+    NewTab,
+    CloseTab,
+    NextTab,
+    PrevTab,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
     use cosmic::iced::keyboard::key::{Code, Named};
-    let ctrl = mods.control();
+    if mods.alt() || mods.logo() {
+        return None;
+    }
+    let (ctrl, shift) = (mods.control(), mods.shift());
     if let Key::Named(n) = key {
-        return Some(match (n, ctrl) {
-            (Named::Tab, false) => Action::SwitchPane,
-            (Named::ArrowUp, false) => Action::Up,
-            (Named::ArrowDown, false) => Action::Down,
-            (Named::PageUp, false) => Action::PageUp,
-            (Named::PageDown, false) => Action::PageDown,
-            (Named::Home, false) => Action::Home,
-            (Named::End, false) => Action::End,
-            (Named::Enter, false) => Action::Enter,
-            (Named::Backspace, false) | (Named::PageUp, true) => Action::Parent,
-            (Named::F3, true) => Action::Sort(SortKey::Name),
-            (Named::F4, true) => Action::Sort(SortKey::Ext),
-            (Named::F5, true) => Action::Sort(SortKey::Date),
-            (Named::F6, true) => Action::Sort(SortKey::Size),
+        return Some(match (n, ctrl, shift) {
+            (Named::Tab, false, false) => Action::SwitchPane,
+            (Named::Tab, true, false) => Action::NextTab,
+            (Named::Tab, true, true) => Action::PrevTab,
+            (Named::ArrowUp, false, false) => Action::Up,
+            (Named::ArrowDown, false, false) => Action::Down,
+            (Named::PageUp, false, false) => Action::PageUp,
+            (Named::PageDown, false, false) => Action::PageDown,
+            (Named::Home, false, false) => Action::Home,
+            (Named::End, false, false) => Action::End,
+            (Named::Enter, false, false) => Action::Enter,
+            (Named::Backspace, false, false) | (Named::PageUp, true, false) => Action::Parent,
+            (Named::F3, true, false) => Action::Sort(SortKey::Name),
+            (Named::F4, true, false) => Action::Sort(SortKey::Ext),
+            (Named::F5, true, false) => Action::Sort(SortKey::Date),
+            (Named::F6, true, false) => Action::Sort(SortKey::Size),
             _ => return None,
         });
     }
     // Letter shortcuts by physical key so they work in any layout.
-    match (physical, ctrl) {
-        (Physical::Code(Code::KeyR), true) => Some(Action::Reload),
-        (Physical::Code(Code::Backslash), true) => Some(Action::Root),
+    match (physical, ctrl, shift) {
+        (Physical::Code(Code::KeyR), true, false) => Some(Action::Reload),
+        (Physical::Code(Code::Backslash), true, false) => Some(Action::Root),
+        (Physical::Code(Code::KeyT), true, false) => Some(Action::NewTab),
+        (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
         _ => None,
     }
 }
@@ -97,6 +108,28 @@ mod tests {
         assert_eq!(chr("\\", Code::Backslash, CTRL), Some(Action::Root));
         assert_eq!(chr("ё", Code::Backslash, CTRL), Some(Action::Root));
         assert_eq!(chr("r", Code::KeyR, NONE), None);
+    }
+
+    #[test]
+    fn tab_keys() {
+        const CTRL_SHIFT: Modifiers = Modifiers::CTRL.union(Modifiers::SHIFT);
+        assert_eq!(named(Named::Tab, CTRL), Some(Action::NextTab));
+        assert_eq!(named(Named::Tab, CTRL_SHIFT), Some(Action::PrevTab));
+        assert_eq!(chr("t", Code::KeyT, CTRL), Some(Action::NewTab));
+        assert_eq!(chr("е", Code::KeyT, CTRL), Some(Action::NewTab)); // Russian layout
+        assert_eq!(chr("w", Code::KeyW, CTRL), Some(Action::CloseTab));
+        assert_eq!(chr("ц", Code::KeyW, CTRL), Some(Action::CloseTab));
+    }
+
+    #[test]
+    fn modifiers_must_match_exactly() {
+        const SHIFT: Modifiers = Modifiers::SHIFT;
+        const ALT: Modifiers = Modifiers::ALT;
+        assert_eq!(named(Named::Tab, SHIFT), None);
+        assert_eq!(named(Named::Enter, ALT), None);
+        assert_eq!(named(Named::ArrowDown, SHIFT), None);
+        assert_eq!(named(Named::F3, CTRL.union(ALT)), None);
+        assert_eq!(chr("R", Code::KeyR, CTRL.union(SHIFT)), None);
     }
 
     #[test]
