@@ -6,6 +6,14 @@ use std::time::UNIX_EPOCH;
 /// Name of the synthetic "go up" row.
 pub const PARENT: &str = "..";
 
+/// Status-line totals, excluding the `..` row.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Totals {
+    pub bytes: u64,
+    pub files: usize,
+    pub dirs: usize,
+}
+
 /// One panel's state. Never touches the filesystem: the UI scans and hands results to `set_listing`.
 #[derive(Debug)]
 pub struct Panel {
@@ -95,6 +103,26 @@ impl Panel {
         if let Some(i) = name.and_then(|n| self.index_of(&n)) {
             self.cursor = i;
         }
+    }
+
+    pub fn set_cursor(&mut self, i: usize) {
+        self.cursor = i;
+        self.move_cursor(0); // clamp
+    }
+
+    pub fn totals(&self) -> Totals {
+        let start = usize::from(self.parent_row());
+        self.entries[start..]
+            .iter()
+            .fold(Totals::default(), |mut t, e| {
+                if e.is_dir() {
+                    t.dirs += 1;
+                } else {
+                    t.files += 1;
+                    t.bytes += e.size;
+                }
+                t
+            })
     }
 
     pub fn current(&self) -> Option<&Entry> {
@@ -302,6 +330,29 @@ mod tests {
             p.enter_path(),
             Some((Path::new("/x").join(OsStr::from_bytes(b"x\xff")), None))
         );
+    }
+
+    #[test]
+    fn set_cursor_clamps() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1)]);
+        p.set_cursor(1);
+        assert_eq!(p.current().unwrap().name, "a");
+        p.set_cursor(99);
+        assert_eq!(p.current().unwrap().name, "b");
+    }
+
+    #[test]
+    fn totals_skip_parent_row() {
+        let p = loaded("/x", vec![d("sub"), f("a", 1000), f("b", 24)]);
+        assert_eq!(
+            p.totals(),
+            Totals {
+                bytes: 1024,
+                files: 2,
+                dirs: 1
+            }
+        );
+        assert_eq!(loaded("/", vec![]).totals(), Totals::default());
     }
 
     #[test]
