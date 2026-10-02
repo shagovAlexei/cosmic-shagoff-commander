@@ -2,7 +2,7 @@
 
 use jiff::tz::TimeZone;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{fs, io};
 
@@ -261,6 +261,39 @@ pub fn other_names(dir: &Path, renamed: &[(String, SystemTime)]) -> io::Result<H
     Ok(out)
 }
 
+/// Rename pairs in a safe order; unchanged rows dropped. A pair whose target is still another
+/// pending file's name waits; when all remaining pairs wait (a cycle), one file is parked under a
+/// hidden temp name first. Rows must be problem-free (see `preview`).
+pub fn plan(dir: &Path, rows: &[Row]) -> Vec<(PathBuf, PathBuf)> {
+    let mut todo: Vec<(String, String)> = rows
+        .iter()
+        .filter(|r| r.new != r.old)
+        .map(|r| (r.old.clone(), r.new.clone()))
+        .collect();
+    let mut out = Vec::new();
+    let mut parked = 0;
+    // ponytail: O(n²) over the remaining pairs; fine for hundreds of files, index by name if it shows.
+    while !todo.is_empty() {
+        let busy: HashSet<&str> = todo.iter().map(|(old, _)| old.as_str()).collect();
+        let free = todo
+            .iter()
+            .position(|(_, new)| !busy.contains(new.as_str()));
+        match free {
+            Some(i) => {
+                let (old, new) = todo.remove(i);
+                out.push((dir.join(old), dir.join(new)));
+            }
+            None => {
+                let tmp = format!(".{}.{}.{parked}.shagoff-mr", todo[0].0, std::process::id());
+                parked += 1;
+                out.push((dir.join(&todo[0].0), dir.join(&tmp)));
+                todo[0].0 = tmp;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,5 +534,60 @@ mod tests {
         let got = other_names(d.path(), &files(&["a"])).unwrap();
         assert_eq!(got, taken(&["b", ".hidden"]));
         assert!(other_names(&d.path().join("missing"), &[]).is_err());
+    }
+
+    /// Runs the plan with plain renames, asserting no step overwrites anything.
+    fn run(pairs: &[(std::path::PathBuf, std::path::PathBuf)]) {
+        for (a, b) in pairs {
+            assert!(!b.exists(), "{b:?} would be overwritten");
+            std::fs::rename(a, b).unwrap();
+        }
+    }
+
+    fn contents(dir: &Path, name: &str) -> String {
+        std::fs::read_to_string(dir.join(name)).unwrap()
+    }
+
+    #[test]
+    fn plan_drops_unchanged_rows() {
+        let d = Path::new("/d");
+        assert_eq!(
+            plan(d, &[row("a", "a"), row("b", "c")]),
+            [(d.join("b"), d.join("c"))]
+        );
+        assert!(plan(d, &[row("a", "a")]).is_empty());
+    }
+
+    #[test]
+    fn plan_orders_a_chain() {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["a", "b"] {
+            std::fs::write(d.path().join(n), n).unwrap();
+        }
+        let pairs = plan(d.path(), &[row("a", "b"), row("b", "c")]);
+        assert_eq!(pairs.len(), 2);
+        run(&pairs);
+        assert_eq!(
+            (contents(d.path(), "b"), contents(d.path(), "c")),
+            ("a".into(), "b".into())
+        );
+    }
+
+    #[test]
+    fn plan_swaps_through_a_temp_name() {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["a", "b", "c"] {
+            std::fs::write(d.path().join(n), n).unwrap();
+        }
+        // a → b → c → a: a three-way cycle.
+        let pairs = plan(d.path(), &[row("a", "b"), row("b", "c"), row("c", "a")]);
+        assert_eq!(pairs.len(), 4);
+        run(&pairs);
+        let got: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|n| contents(d.path(), n))
+            .collect();
+        assert_eq!(got, ["c", "a", "b"]);
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 3); // no temp left behind
     }
 }
