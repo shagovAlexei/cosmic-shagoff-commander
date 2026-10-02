@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod dialogs;
 mod i18n;
 mod jobs;

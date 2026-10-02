@@ -4277,8 +4277,10 @@ dependencies = [
  "libcosmic",
  "log",
  "rust-embed",
+ "serde",
  "shagoff-core",
  "simple_logger",
+ "tempfile",
  "tokio",
 ]
 
