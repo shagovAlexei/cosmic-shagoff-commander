@@ -53,6 +53,12 @@ pub fn display_name(e: &Entry) -> String {
     }
 }
 
+/// Tab title: the last path component, `/` for the root.
+pub fn dir_title(p: &std::path::Path) -> String {
+    p.file_name()
+        .map_or_else(|| "/".to_string(), |n| n.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +76,13 @@ mod tests {
             is_link: false,
             mode: 0,
         }
+    }
+
+    #[test]
+    fn dir_title_last_component_or_root() {
+        use std::path::Path;
+        assert_eq!(dir_title(Path::new("/home/shag")), "shag");
+        assert_eq!(dir_title(Path::new("/")), "/");
     }
 
     #[test]
