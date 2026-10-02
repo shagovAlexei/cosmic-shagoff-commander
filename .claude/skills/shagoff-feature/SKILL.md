@@ -1,11 +1,11 @@
 ---
 name: shagoff-feature
-description: Use when starting any new feature, MVP milestone, or non-trivial change in Shagoff Commander — runs the project cycle brainstorm → spec → plan → branch → TDD → verify → review → PR, with docs under .claude/docs.
+description: Use when starting any new feature, MVP phase, or non-trivial change in Shagoff Commander — runs the project cycle brainstorm → spec → plan → branch → TDD → verify → review → PR, with docs under .claude/docs.
 ---
 
 # Feature cycle for Shagoff Commander
 
-Every feature and every MVP milestone goes through these steps in order. Do not skip a step. Each step's gate is the user's approval.
+Every feature and every MVP phase goes through these steps in order. Do not skip a step. Each step's gate is the user's approval.
 
 1. **Brainstorm.** Invoke `superpowers:brainstorming`. Before you ask any questions, read:
    - `CLAUDE.md`
@@ -28,7 +28,7 @@ Every feature and every MVP milestone goes through these steps in order. Do not 
 6. **Verify.** `just verify` must pass. Then run the app with `cargo run -p shagoff-commander` and walk through the feature by hand. Add its manual check to `TESTING.md`.
 7. **Review.** Run `/code-review` and fix what it confirms.
 8. **PR.**
-   - Update `ROADMAP.md` by ticking the milestone or feature.
+   - Update `ROADMAP.md` by ticking the phase or feature.
    - If the architecture changed, update `CLAUDE.md`.
    - Then:
      ```sh
