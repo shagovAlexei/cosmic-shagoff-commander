@@ -168,7 +168,7 @@ fn token(t: &str, cx: &Ctx) -> Option<String> {
             if from == 0 {
                 return None;
             }
-            let take = to.map_or(usize::MAX, |to| (to + 1).saturating_sub(from));
+            let take = to.map_or(usize::MAX, |to| to.saturating_add(1).saturating_sub(from));
             src.chars().skip(from - 1).take(take).collect()
         }
     })
@@ -193,7 +193,7 @@ fn apply_case(s: &str, case: Case) -> String {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Problem {
-    /// Empty, `.`, `..`, or contains `/` or NUL.
+    /// Empty, `.`, `..`, contains `/` or NUL, or longer than 255 bytes.
     BadName,
     /// Two or more rows get this name.
     Duplicate,
@@ -235,7 +235,12 @@ fn check(mut rows: Vec<Row>, taken: &HashSet<String>) -> Vec<Row> {
     }
     for r in &mut rows {
         let n = r.new.as_str();
-        r.problem = if n.is_empty() || n == "." || n == ".." || n.contains(['/', '\0']) {
+        r.problem = if n.is_empty()
+            || n == "."
+            || n == ".."
+            || n.contains(['/', '\0'])
+            || n.len() > NAME_MAX
+        {
             Some(Problem::BadName)
         } else if count[n] > 1 {
             Some(Problem::Duplicate)
@@ -247,6 +252,9 @@ fn check(mut rows: Vec<Row>, taken: &HashSet<String>) -> Vec<Row> {
     }
     rows
 }
+
+/// Longest file name in bytes on Linux filesystems.
+const NAME_MAX: usize = 255;
 
 /// Names in `dir` (hidden ones too) other than the files being renamed.
 pub fn other_names(dir: &Path, renamed: &[(String, SystemTime)]) -> io::Result<HashSet<String>> {
@@ -284,7 +292,8 @@ pub fn plan(dir: &Path, rows: &[Row]) -> Vec<(PathBuf, PathBuf)> {
                 out.push((dir.join(old), dir.join(new)));
             }
             None => {
-                let tmp = format!(".{}.{}.{parked}.shagoff-mr", todo[0].0, std::process::id());
+                // Short and independent of the old name, so it fits even when the old name is 255 bytes.
+                let tmp = format!(".shagoff-mr.{}.{parked}", std::process::id());
                 parked += 1;
                 out.push((dir.join(&todo[0].0), dir.join(&tmp)));
                 todo[0].0 = tmp;
@@ -595,5 +604,39 @@ mod tests {
             .collect();
         assert_eq!(got, ["c", "a", "b"]);
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 3); // no temp left behind
+    }
+
+    #[test]
+    fn huge_range_end_does_not_overflow() {
+        assert_eq!(nn(&rule("[N2-18446744073709551615]", ""), "abc"), "bc");
+    }
+
+    #[test]
+    fn names_over_255_bytes_are_bad() {
+        let long = "я".repeat(128); // 256 bytes
+        let rows = preview(
+            &rule(&long, ""),
+            &files(&["a"]),
+            &taken(&[]),
+            &TimeZone::UTC,
+        );
+        assert_eq!(problems(&rows), [Some(Problem::BadName)]);
+        let ok = "я".repeat(127); // 254 bytes
+        let rows = preview(&rule(&ok, ""), &files(&["a"]), &taken(&[]), &TimeZone::UTC);
+        assert_eq!(problems(&rows), [None]);
+    }
+
+    #[test]
+    fn cycle_of_max_length_names_fits_the_temp_name() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = ("a".repeat(255), "b".repeat(255));
+        std::fs::write(d.path().join(&a), "a").unwrap();
+        std::fs::write(d.path().join(&b), "b").unwrap();
+        let pairs = plan(d.path(), &[row(&a, &b), row(&b, &a)]);
+        run(&pairs);
+        assert_eq!(
+            (contents(d.path(), &a), contents(d.path(), &b)),
+            ("b".into(), "a".into())
+        );
     }
 }

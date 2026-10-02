@@ -1068,7 +1068,7 @@ impl App {
                     .and_then(|c| rows.iter().find(|r| &r.old == c))
                     .map(|r| r.new.clone());
                 let job = Job::Transfer {
-                    method: Method::Move,
+                    method: Method::Rename,
                     pairs,
                 };
                 self.start_job(m.side, OpKind::Move, job, focus)

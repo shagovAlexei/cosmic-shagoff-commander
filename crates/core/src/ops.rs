@@ -11,6 +11,8 @@ use std::time::SystemTime;
 pub enum Method {
     Copy,
     Move,
+    /// Ctrl+M: rename in place; never replaces, merges or falls back to copying.
+    Rename,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +225,17 @@ impl Transfer<'_> {
             && let Some(step) = self.rename(src, dst, &meta)
         {
             return step;
+        }
+        if self.method == Method::Rename {
+            let size = tree_size(src);
+            return match self.retry(src, || rename_noreplace(src, dst)) {
+                Ok(()) => {
+                    self.done += size;
+                    self.h.progress(self.done, self.total, src);
+                    Step::Done
+                }
+                Err(s) => s,
+            };
         }
         if !meta.is_dir() && !meta.is_file() && !meta.file_type().is_symlink() {
             // A FIFO would block `open` forever and a device would stream endlessly.
@@ -504,6 +517,22 @@ impl Transfer<'_> {
                 },
             }
         }
+    }
+}
+
+/// `rename` that fails with `AlreadyExists` instead of replacing `dst`.
+fn rename_noreplace(src: &Path, dst: &Path) -> io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+    use rustix::io::Errno;
+    match renameat_with(CWD, src, CWD, dst, RenameFlags::NOREPLACE) {
+        // ponytail: filesystem without RENAME_NOREPLACE; check-then-rename leaves a tiny race window.
+        Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => {
+            if fs::symlink_metadata(dst).is_ok() {
+                return Err(io::ErrorKind::AlreadyExists.into());
+            }
+            fs::rename(src, dst)
+        }
+        r => r.map_err(io::Error::from),
     }
 }
 
@@ -891,6 +920,49 @@ mod tests {
         assert_eq!(read(&to.join("good")), "ok");
         assert!(!to.join("bad").exists() && no_part_files(&to));
         assert_eq!(r.completed, [good]);
+    }
+
+    #[test]
+    fn regression_rename_method_never_replaces_or_merges() {
+        // Ctrl+M chain where an earlier step failed: the target is still a file of the batch.
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("a"), d.path().join("b"));
+        write(&a, "a");
+        write(&b, "b");
+        write(&d.path().join("x/in"), "in");
+        write(&d.path().join("y/keep"), "keep");
+        let (x, y) = (d.path().join("x"), d.path().join("y"));
+        let mut h = Script {
+            errors: vec![ErrorChoice::Skip, ErrorChoice::Skip],
+            ..Default::default()
+        };
+        let r = transfer(
+            Method::Rename,
+            &[(a.clone(), b.clone()), (x.clone(), y.clone())],
+            &mut h,
+        );
+        assert_eq!(h.asked, 0, "never a Replace question");
+        assert_eq!((read(&a), read(&b)), ("a".into(), "b".into()));
+        assert!(
+            x.join("in").exists() && !y.join("in").exists(),
+            "dirs not merged"
+        );
+        assert_eq!(h.errored, [a, x]);
+        assert!(r.completed.is_empty());
+    }
+
+    #[test]
+    fn rename_method_renames_in_place() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, c) = (d.path().join("a"), d.path().join("c"));
+        write(&a, "a");
+        let r = transfer(
+            Method::Rename,
+            &[(a.clone(), c.clone())],
+            &mut Script::default(),
+        );
+        assert_eq!(read(&c), "a");
+        assert_eq!(r.completed, [a]);
     }
 
     #[test]
