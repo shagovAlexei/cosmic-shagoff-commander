@@ -54,7 +54,7 @@ Data flow: key or button → keymap → `Action` → `App::update`. From there, 
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Only bootstrap exists so far (an empty window). Modules appear milestone by milestone, so check the tree before assuming one exists.
+Implemented so far: `crates/core` (`listing`, `sort`, `panel`); the app is still an empty window. Modules appear milestone by milestone, so check the tree before assuming one exists.
 
 ## Conventions
 
