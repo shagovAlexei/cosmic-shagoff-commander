@@ -59,6 +59,50 @@ pub enum PlanError {
     SameFile(PathBuf),
 }
 
+/// F8 (trash) / Shift+F8 (permanent, never following symlinks). Progress counts items.
+pub fn delete(paths: &[PathBuf], permanent: bool, h: &mut dyn Handler) -> Report {
+    let mut report = Report::default();
+    let total = paths.len() as u64;
+    for (i, p) in paths.iter().enumerate() {
+        if h.cancelled() {
+            report.cancelled = true;
+            break;
+        }
+        loop {
+            let r = if permanent {
+                remove(p)
+            } else {
+                trash::delete(p).map_err(io::Error::other)
+            };
+            match r {
+                Ok(()) => {
+                    report.completed.push(p.clone());
+                    break;
+                }
+                Err(e) => match h.error(p, &e) {
+                    ErrorChoice::Retry => {}
+                    ErrorChoice::Skip => break,
+                    ErrorChoice::Cancel => {
+                        report.cancelled = true;
+                        return report;
+                    }
+                },
+            }
+        }
+        h.progress(i as u64 + 1, total, p);
+    }
+    report
+}
+
+/// `remove_dir_all` does not follow symlinks (std ≥ 1.58); a link is removed as a file.
+fn remove(p: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(p)?.is_dir() {
+        fs::remove_dir_all(p)
+    } else {
+        fs::remove_file(p)
+    }
+}
+
 const PART: &str = ".shagoff-part";
 
 /// (source, destination) pairs, TC rules: existing dir → inside it; one source and no such path →
@@ -735,5 +779,87 @@ mod tests {
         assert_eq!(read(&to.join("good")), "ok");
         assert!(!to.join("bad").exists() && !to.join("bad.shagoff-part").exists());
         assert_eq!(r.completed, [good]);
+    }
+
+    #[test]
+    fn move_renames_on_same_fs() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        write(&a, "x");
+        let to = d.path().join("to");
+        fs::create_dir(&to).unwrap();
+        let pairs = plan(std::slice::from_ref(&a), &to).unwrap();
+        let r = transfer(Method::Move, &pairs, &mut Script::default());
+        assert!(!a.exists());
+        assert_eq!(read(&to.join("a")), "x");
+        assert_eq!(r.completed, [a]);
+    }
+
+    #[test]
+    fn move_merges_into_existing_dir() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("src/dir/new.txt"), "new");
+        write(&d.path().join("to/dir/keep.txt"), "keep");
+        let src = d.path().join("src/dir");
+        let pairs = plan(std::slice::from_ref(&src), &d.path().join("to")).unwrap();
+        transfer(Method::Move, &pairs, &mut Script::default());
+        assert!(!src.exists());
+        assert_eq!(read(&d.path().join("to/dir/new.txt")), "new");
+        assert_eq!(read(&d.path().join("to/dir/keep.txt")), "keep");
+    }
+
+    #[test]
+    fn move_keeps_skipped_files_in_source() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("src/dir/a"), "new-a");
+        write(&d.path().join("src/dir/b"), "new-b");
+        write(&d.path().join("to/dir/a"), "old-a");
+        let src = d.path().join("src/dir");
+        let mut h = Script {
+            conflicts: vec![Resolution::Skip],
+            ..Default::default()
+        };
+        let pairs = plan(std::slice::from_ref(&src), &d.path().join("to")).unwrap();
+        let r = transfer(Method::Move, &pairs, &mut h);
+        assert_eq!(read(&src.join("a")), "new-a"); // skipped → still in source
+        assert!(!src.join("b").exists()); // moved
+        assert_eq!(read(&d.path().join("to/dir/b")), "new-b");
+        assert_eq!(read(&d.path().join("to/dir/a")), "old-a");
+        assert!(r.completed.is_empty()); // the dir was not fully moved
+    }
+
+    #[test]
+    fn delete_permanent_does_not_follow_symlinks() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = d.path().join("outside");
+        write(&outside.join("keep.txt"), "keep");
+        let victim = d.path().join("victim");
+        write(&victim.join("sub/x"), "x");
+        symlink(&outside, victim.join("link")).unwrap();
+        let file = d.path().join("f");
+        write(&file, "f");
+        let r = delete(
+            &[victim.clone(), file.clone()],
+            true,
+            &mut Script::default(),
+        );
+        assert!(!victim.exists() && !file.exists());
+        assert_eq!(read(&outside.join("keep.txt")), "keep");
+        assert_eq!(r.completed, [victim, file]);
+    }
+
+    #[test]
+    fn delete_error_skip_continues() {
+        let d = tempfile::tempdir().unwrap();
+        let missing = d.path().join("missing");
+        let file = d.path().join("f");
+        write(&file, "f");
+        let mut h = Script {
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        let r = delete(&[missing.clone(), file.clone()], true, &mut h);
+        assert_eq!(h.errored, [missing]);
+        assert_eq!(r.completed, [file]);
     }
 }
