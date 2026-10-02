@@ -44,6 +44,15 @@ pub enum Action {
     QuickSearch(char),
     /// Ctrl+S: quick filter field.
     QuickFilter,
+    /// Alt+← / Alt+→: step through the tab's directory history.
+    HistoryBack,
+    HistoryForward,
+    /// Alt+↓: the tab's recent directories as a list.
+    HistoryList,
+    /// Ctrl+D: favourite directories.
+    Hotlist,
+    /// Ctrl+U: swap the two panels.
+    SwapPanes,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -56,6 +65,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         return match key {
             Key::Named(Named::F1) if mods == Modifiers::ALT => Some(Action::Drives(0)),
             Key::Named(Named::F2) if mods == Modifiers::ALT => Some(Action::Drives(1)),
+            Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Action::HistoryBack),
+            Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
+            Key::Named(Named::ArrowDown) if mods == Modifiers::ALT => Some(Action::HistoryList),
             Key::Character(s) if mods == Modifiers::ALT => {
                 let mut chars = s.chars();
                 match (chars.next(), chars.next()) {
@@ -105,6 +117,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
         (Physical::Code(Code::KeyH), true, false) => Some(Action::ToggleHidden),
         (Physical::Code(Code::KeyS), true, false) => Some(Action::QuickFilter),
+        (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
+        (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
         (Physical::Code(Code::Space), false, false) => Some(Action::Mark),
         (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
         (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
@@ -281,5 +295,21 @@ mod tests {
     fn ctrl_s_is_quick_filter() {
         assert_eq!(chr("s", Code::KeyS, CTRL), Some(Action::QuickFilter));
         assert_eq!(chr("ы", Code::KeyS, CTRL), Some(Action::QuickFilter));
+    }
+
+    #[test]
+    fn alt_arrows_walk_history() {
+        assert_eq!(named(Named::ArrowLeft, ALT), Some(Action::HistoryBack));
+        assert_eq!(named(Named::ArrowRight, ALT), Some(Action::HistoryForward));
+        assert_eq!(named(Named::ArrowDown, ALT), Some(Action::HistoryList));
+        assert_eq!(named(Named::ArrowLeft, ALT | Modifiers::SHIFT), None);
+    }
+
+    #[test]
+    fn ctrl_d_hotlist_ctrl_u_swap() {
+        assert_eq!(chr("d", Code::KeyD, CTRL), Some(Action::Hotlist));
+        assert_eq!(chr("в", Code::KeyD, CTRL), Some(Action::Hotlist));
+        assert_eq!(chr("u", Code::KeyU, CTRL), Some(Action::SwapPanes));
+        assert_eq!(chr("г", Code::KeyU, CTRL), Some(Action::SwapPanes));
     }
 }

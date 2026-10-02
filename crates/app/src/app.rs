@@ -748,6 +748,11 @@ impl App {
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
             Action::QuickSearch(_) | Action::QuickFilter => {} // handled above
+            Action::HistoryBack
+            | Action::HistoryForward
+            | Action::HistoryList
+            | Action::Hotlist
+            | Action::SwapPanes => {}
             Action::Copy
             | Action::Move
             | Action::Rename
