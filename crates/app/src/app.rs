@@ -365,7 +365,7 @@ impl App {
                 return self.act(self.active, action);
             }
             Message::Listed {
-                side,
+                side: _, // the tab is found by id below; it may have moved (Ctrl+U)
                 tab,
                 generation,
                 path,
