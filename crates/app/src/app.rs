@@ -239,20 +239,7 @@ impl Application for App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(|event, status, _| match event {
-            cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
-                key,
-                physical_key,
-                modifiers,
-                ..
-            }) if status == event::Status::Ignored => {
-                keymap::action(&key, physical_key, modifiers).map(Message::Key)
-            }
-            cosmic::iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
-                Some(Message::Modifiers(m))
-            }
-            _ => None,
-        })
+        event::listen_with(route_event)
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -431,9 +418,72 @@ impl App {
     }
 }
 
+/// Window events → messages. Panel keys only when no widget took the event (`Ignored`).
+fn route_event(
+    event: cosmic::iced::Event,
+    status: event::Status,
+    _window: cosmic::iced::window::Id,
+) -> Option<Message> {
+    match event {
+        // Any status: a focused text_input captures Escape to unfocus itself, and the dialog must still close.
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            modifiers,
+            ..
+        }) if modifiers.is_empty() => Some(Message::MaskCancel),
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key,
+            modifiers,
+            ..
+        }) if status == event::Status::Ignored => {
+            keymap::action(&key, physical_key, modifiers).map(Message::Key)
+        }
+        cosmic::iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
+            Some(Message::Modifiers(m))
+        }
+        _ => None,
+    }
+}
+
 /// `xdg-open` without blocking the UI or leaving a zombie.
 fn open_detached(path: &std::path::Path) -> std::io::Result<()> {
     let mut child = std::process::Command::new("xdg-open").arg(path).spawn()?;
     std::thread::spawn(move || child.wait());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmic::iced::keyboard::key::{Code, Named, Physical};
+    use cosmic::iced::keyboard::{Key, Location};
+
+    fn press(named: Named, code: Code, status: event::Status) -> Option<Message> {
+        let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(named),
+            modified_key: Key::Named(named),
+            physical_key: Physical::Code(code),
+            location: Location::Standard,
+            modifiers: Modifiers::empty(),
+            text: None,
+            repeat: false,
+        });
+        route_event(event, status, cosmic::iced::window::Id::unique())
+    }
+
+    #[test]
+    fn escape_closes_dialog_even_when_text_input_captured_it() {
+        // libcosmic's text_input captures Escape (to unfocus itself); the dialog must still close.
+        let msg = press(Named::Escape, Code::Escape, event::Status::Captured);
+        assert!(matches!(msg, Some(Message::MaskCancel)), "{msg:?}");
+    }
+
+    #[test]
+    fn captured_keys_do_not_reach_the_panels() {
+        let msg = press(Named::ArrowDown, Code::ArrowDown, event::Status::Captured);
+        assert!(msg.is_none(), "{msg:?}");
+        let msg = press(Named::ArrowDown, Code::ArrowDown, event::Status::Ignored);
+        assert!(matches!(msg, Some(Message::Key(Action::Down))), "{msg:?}");
+    }
 }
