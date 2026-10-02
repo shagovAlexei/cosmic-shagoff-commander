@@ -65,3 +65,9 @@
 
 | Тест | Баг | PR |
 |---|---|---|
+| `regression_copy_never_truncates_its_own_source` | Временный `<имя>.shagoff-part` совпадал с источником и обнулял его | фаза 5 |
+| `regression_user_file_named_like_a_part_is_untouched` | Пользовательский файл `x.shagoff-part` затирался при копировании `x` | фаза 5 |
+| `regression_sources_with_colliding_part_names_both_survive` | Два источника делили одно имя временного файла | фаза 5 |
+| `regression_plan_sees_through_dotdot_and_symlink_detours` | `nope/../a/new` и путь через симлинк обходили защиту «в самого себя» | фаза 5 |
+| `regression_special_files_are_skipped_not_hung` | Копирование FIFO вешало приложение | фаза 5 |
+| `regression_merge_keeps_existing_dir_mode` | Слияние меняло права существующего каталога | фаза 5 |

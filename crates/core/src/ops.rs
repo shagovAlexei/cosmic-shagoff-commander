@@ -1,9 +1,10 @@
 //! File operations: copy / move / delete. Synchronous — run it on a worker thread. The UI is reached
 //! only through `Handler`, so tests drive the engine with scripted answers.
 
+use std::ffi::OsString;
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +58,30 @@ pub enum PlanError {
     Empty,
     IntoItself(PathBuf),
     SameFile(PathBuf),
+    /// Rename: empty, `.`, `..`, or contains `/`.
+    BadName,
+    /// Rename onto an existing entry where a dir is involved (would merge or clash).
+    Exists(PathBuf),
+}
+
+/// Shift+F6 / F2: the single pair for renaming `src` to `name` in the same dir. Empty = unchanged.
+/// A dir on either side of an existing name is refused (it would merge); file onto file goes on
+/// to the engine's Replace/Skip question.
+pub fn rename_pairs(src: &Path, name: &str) -> Result<Vec<(PathBuf, PathBuf)>, PlanError> {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+        return Err(PlanError::BadName);
+    }
+    if src.file_name().is_some_and(|n| n == name) {
+        return Ok(vec![]);
+    }
+    let dst = src.with_file_name(name);
+    if let Ok(dm) = fs::symlink_metadata(&dst) {
+        let src_is_dir = fs::symlink_metadata(src).is_ok_and(|m| m.is_dir());
+        if src_is_dir || dm.is_dir() {
+            return Err(PlanError::Exists(dst));
+        }
+    }
+    Ok(vec![(src.to_path_buf(), dst)])
 }
 
 /// F8 (trash) / Shift+F8 (permanent, never following symlinks). Progress counts items.
@@ -118,7 +143,7 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
             (true, Some(name)) => dest.join(name),
             _ => dest.to_path_buf(),
         };
-        let (s, d) = (absolute(src), absolute(&dst));
+        let (s, d) = (resolve(src), resolve(&dst));
         if s == d {
             return Err(PlanError::SameFile(src.clone()));
         }
@@ -197,6 +222,10 @@ impl Transfer<'_> {
         {
             return step;
         }
+        if !meta.is_dir() && !meta.is_file() && !meta.file_type().is_symlink() {
+            // A FIFO would block `open` forever and a device would stream endlessly.
+            return self.refuse(src, 0, "special file (pipe, socket or device): not copied");
+        }
         if meta.is_dir() {
             self.dir(src, dst, &meta)
         } else if meta.file_type().is_symlink() {
@@ -249,14 +278,21 @@ impl Transfer<'_> {
     }
 
     fn dir(&mut self, src: &Path, dst: &Path, meta: &Metadata) -> Step {
-        match fs::symlink_metadata(dst) {
-            Ok(dm) if dm.is_dir() => {} // merge into the existing dir
+        let created = match fs::symlink_metadata(dst) {
+            Ok(dm) if dm.is_dir() => false, // merge into the existing dir
             Ok(_) => return self.clash(dst, tree_size(src)),
             Err(_) => {
                 if let Err(s) = self.retry(dst, || fs::create_dir(dst)) {
                     return s;
                 }
+                true
             }
+        };
+        // Second line of defence behind `plan`: never walk into our own output.
+        if let (Ok(s), Ok(d)) = (src.canonicalize(), dst.canonicalize())
+            && d.starts_with(&s)
+        {
+            return self.refuse(dst, tree_size(src), "cannot copy a folder into itself");
         }
         let names = match self.retry(src, || {
             fs::read_dir(src)?
@@ -274,8 +310,11 @@ impl Transfer<'_> {
                 Step::Cancel => return Step::Cancel,
             }
         }
-        // After the children: a read-only dir would have blocked writing them.
-        let _ = fs::set_permissions(dst, meta.permissions());
+        // After the children (a read-only dir would block them); only on dirs we made — merging
+        // into an existing dir must not change its mode.
+        if created {
+            let _ = fs::set_permissions(dst, meta.permissions());
+        }
         if !complete {
             return Step::Skipped;
         }
@@ -295,12 +334,20 @@ impl Transfer<'_> {
         if let Some(step) = self.resolve_existing(src, meta, dst, 0) {
             return step;
         }
-        // Link at the part path, then rename over: replacing stays atomic.
-        let part = part_path(dst);
-        let _ = fs::remove_file(&part);
-        if let Err(s) = self.retry(dst, || std::os::unix::fs::symlink(&target, &part)) {
-            return s;
-        }
+        // Link at a fresh part name, then rename over: replacing stays atomic.
+        let mut n = 0;
+        let part = loop {
+            let part = part_name(dst, n);
+            match std::os::unix::fs::symlink(&target, &part) {
+                Ok(()) => break part,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+                Err(e) => match self.h.error(dst, &e) {
+                    ErrorChoice::Retry => {}
+                    ErrorChoice::Skip => return Step::Skipped,
+                    ErrorChoice::Cancel => return Step::Cancel,
+                },
+            }
+        };
         if let Err(s) = self.retry(dst, || fs::rename(&part, dst)) {
             let _ = fs::remove_file(&part);
             return s;
@@ -318,29 +365,29 @@ impl Transfer<'_> {
         if let Some(step) = self.resolve_existing(src, meta, dst, size) {
             return step;
         }
-        let part = part_path(dst);
         let start = self.done;
-        loop {
+        let part = loop {
             self.done = start;
-            match self.copy_contents(src, &part, meta) {
-                Ok(true) => break,
-                Ok(false) => {
-                    let _ = fs::remove_file(&part);
-                    return Step::Cancel;
+            let result = create_part(dst).and_then(|(part, w)| {
+                let done = self.copy_contents(src, w, meta);
+                if !matches!(done, Ok(true)) {
+                    let _ = fs::remove_file(&part); // only ever our own, freshly created part
                 }
-                Err(e) => {
-                    let _ = fs::remove_file(&part);
-                    match self.h.error(src, &e) {
-                        ErrorChoice::Retry => {}
-                        ErrorChoice::Skip => {
-                            self.done = start + size;
-                            return Step::Skipped;
-                        }
-                        ErrorChoice::Cancel => return Step::Cancel,
+                done.map(|finished| finished.then_some(part))
+            });
+            match result {
+                Ok(Some(part)) => break part,
+                Ok(None) => return Step::Cancel,
+                Err(e) => match self.h.error(src, &e) {
+                    ErrorChoice::Retry => {}
+                    ErrorChoice::Skip => {
+                        self.done = start + size;
+                        return Step::Skipped;
                     }
-                }
+                    ErrorChoice::Cancel => return Step::Cancel,
+                },
             }
-        }
+        };
         if let Err(s) = self.retry(dst, || fs::rename(&part, dst)) {
             let _ = fs::remove_file(&part);
             return s;
@@ -380,9 +427,8 @@ impl Transfer<'_> {
     }
 
     /// Copy bytes, then mtime and permissions, into `part`. `Ok(false)` = cancelled.
-    fn copy_contents(&mut self, src: &Path, part: &Path, meta: &Metadata) -> io::Result<bool> {
+    fn copy_contents(&mut self, src: &Path, mut w: File, meta: &Metadata) -> io::Result<bool> {
         let mut r = File::open(src)?;
-        let mut w = File::create(part)?;
         let mut buf = vec![0; 1 << 20];
         loop {
             if self.h.cancelled() {
@@ -428,13 +474,15 @@ impl Transfer<'_> {
         }
     }
 
-    /// A file/link meets a directory of the same name (or the reverse): report it; Retry acts as Skip.
+    /// A file/link meets a directory of the same name (or the reverse).
     fn clash(&mut self, dst: &Path, size: u64) -> Step {
-        let e = io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "an entry of another type has this name",
-        );
-        match self.h.error(dst, &e) {
+        self.refuse(dst, size, "an entry of another type has this name")
+    }
+
+    /// Report something we will not do; Retry acts as Skip (retrying cannot change it).
+    fn refuse(&mut self, path: &Path, size: u64, why: &str) -> Step {
+        let e = io::Error::other(why.to_string());
+        match self.h.error(path, &e) {
             ErrorChoice::Cancel => Step::Cancel,
             _ => {
                 self.done += size;
@@ -465,20 +513,58 @@ fn info(path: &Path, m: &Metadata) -> FileInfo {
     }
 }
 
-fn part_path(dst: &Path) -> PathBuf {
-    let mut name = dst.file_name().unwrap_or_default().to_os_string();
-    name.push(PART);
+/// Hidden temp name next to `dst`: `.<name>.<pid>.<n>.shagoff-part`.
+fn part_name(dst: &Path, n: u32) -> PathBuf {
+    let mut name = OsString::from(".");
+    name.push(dst.file_name().unwrap_or_default());
+    name.push(format!(".{}.{n}{PART}", std::process::id()));
     dst.with_file_name(name)
 }
 
-/// Canonical parent + own name: resolves `..` and symlinked parents, not the entry itself.
-fn absolute(p: &Path) -> PathBuf {
-    match (
-        p.parent().and_then(|d| d.canonicalize().ok()),
-        p.file_name(),
-    ) {
-        (Some(dir), Some(name)) => dir.join(name),
-        _ => p.to_path_buf(),
+/// Create a part file that did not exist before (O_EXCL), so it can never be the source or a user file.
+fn create_part(dst: &Path) -> io::Result<(PathBuf, File)> {
+    let mut n = 0;
+    loop {
+        let part = part_name(dst, n);
+        match File::options().write(true).create_new(true).open(&part) {
+            Ok(f) => return Ok((part, f)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Where `p` really points, without resolving its own last component: `.`/`..` lexically, then the
+/// longest existing ancestor of the parent canonicalized — a `..` or symlink detour cannot hide a path.
+fn resolve(p: &Path) -> PathBuf {
+    let mut norm = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                norm.pop();
+            }
+            other => norm.push(other),
+        }
+    }
+    let (Some(parent), Some(name)) = (norm.parent(), norm.file_name()) else {
+        return norm;
+    };
+    let mut missing = Vec::new();
+    let mut cur = parent.to_path_buf();
+    loop {
+        if let Ok(mut out) = cur.canonicalize() {
+            out.extend(missing.iter().rev());
+            out.push(name);
+            return out;
+        }
+        match cur.file_name() {
+            Some(n) => {
+                missing.push(n.to_os_string());
+                cur.pop();
+            }
+            None => return norm,
+        }
     }
 }
 
@@ -546,6 +632,13 @@ mod tests {
 
     fn copy(srcs: &[PathBuf], dest: &Path, h: &mut Script) -> Report {
         transfer(Method::Copy, &plan(srcs, dest).unwrap(), h)
+    }
+
+    fn no_part_files(dir: &Path) -> bool {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().contains("shagoff-part"))
     }
 
     fn set_mtime(p: &Path, t: SystemTime) {
@@ -755,7 +848,7 @@ mod tests {
         let r = copy(&[big], &d.path().join("to"), &mut h);
         assert!(r.cancelled);
         assert_eq!(read(&d.path().join("to/big")), "precious");
-        assert!(!d.path().join("to/big.shagoff-part").exists());
+        assert!(no_part_files(&d.path().join("to")));
     }
 
     #[test]
@@ -777,7 +870,7 @@ mod tests {
         let r = copy(&[bad.clone(), good.clone()], &to, &mut h);
         assert_eq!(h.errored, [bad]);
         assert_eq!(read(&to.join("good")), "ok");
-        assert!(!to.join("bad").exists() && !to.join("bad.shagoff-part").exists());
+        assert!(!to.join("bad").exists() && no_part_files(&to));
         assert_eq!(r.completed, [good]);
     }
 
@@ -861,5 +954,128 @@ mod tests {
         let r = delete(&[missing.clone(), file.clone()], true, &mut h);
         assert_eq!(h.errored, [missing]);
         assert_eq!(r.completed, [file]);
+    }
+
+    #[test]
+    fn regression_copy_never_truncates_its_own_source() {
+        // Old scheme: part path of `foo` was `foo.shagoff-part` == the source → source truncated.
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("foo.shagoff-part");
+        write(&src, "payload");
+        let r = copy(
+            std::slice::from_ref(&src),
+            &d.path().join("foo"),
+            &mut Script::default(),
+        );
+        assert_eq!(read(&src), "payload");
+        assert_eq!(read(&d.path().join("foo")), "payload");
+        assert_eq!(r.completed, [src]);
+    }
+
+    #[test]
+    fn regression_user_file_named_like_a_part_is_untouched() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("a/foo"), "new");
+        write(&d.path().join("b/foo.shagoff-part"), "mine");
+        copy(
+            &[d.path().join("a/foo")],
+            &d.path().join("b"),
+            &mut Script::default(),
+        );
+        assert_eq!(read(&d.path().join("b/foo")), "new");
+        assert_eq!(read(&d.path().join("b/foo.shagoff-part")), "mine");
+    }
+
+    #[test]
+    fn regression_sources_with_colliding_part_names_both_survive() {
+        let d = tempfile::tempdir().unwrap();
+        let (foo, part) = (d.path().join("s/foo"), d.path().join("s/foo.shagoff-part"));
+        write(&foo, "one");
+        write(&part, "two");
+        let to = d.path().join("to");
+        fs::create_dir(&to).unwrap();
+        copy(&[foo, part], &to, &mut Script::default());
+        assert_eq!(read(&to.join("foo")), "one");
+        assert_eq!(read(&to.join("foo.shagoff-part")), "two");
+    }
+
+    #[test]
+    fn regression_plan_sees_through_dotdot_and_symlink_detours() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        fs::create_dir(&a).unwrap();
+        symlink(&a, d.path().join("alink")).unwrap();
+        let via_dotdot = d.path().join("nope/../a/new");
+        assert_eq!(
+            plan(std::slice::from_ref(&a), &via_dotdot),
+            Err(PlanError::IntoItself(a.clone()))
+        );
+        let via_link = d.path().join("alink/new/deeper");
+        assert_eq!(
+            plan(std::slice::from_ref(&a), &via_link),
+            Err(PlanError::IntoItself(a))
+        );
+    }
+
+    #[test]
+    fn regression_special_files_are_skipped_not_hung() {
+        let d = tempfile::tempdir().unwrap();
+        let fifo = d.path().join("pipe");
+        let ok = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !ok.is_ok_and(|s| s.success()) {
+            return; // no mkfifo on this system
+        }
+        let to = d.path().join("to");
+        fs::create_dir(&to).unwrap();
+        let mut h = Script {
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        let r = copy(std::slice::from_ref(&fifo), &to, &mut h);
+        assert_eq!(h.errored, [fifo]);
+        assert!(r.completed.is_empty());
+        assert!(!to.join("pipe").exists());
+    }
+
+    #[test]
+    fn regression_merge_keeps_existing_dir_mode() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("src/dir/x"), "x");
+        fs::set_permissions(d.path().join("src/dir"), fs::Permissions::from_mode(0o700)).unwrap();
+        write(&d.path().join("to/dir/keep"), "keep");
+        fs::set_permissions(d.path().join("to/dir"), fs::Permissions::from_mode(0o755)).unwrap();
+        copy(
+            &[d.path().join("src/dir")],
+            &d.path().join("to"),
+            &mut Script::default(),
+        );
+        let mode = fs::metadata(d.path().join("to/dir"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
+
+    #[test]
+    fn rename_pairs_validates_the_new_name() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b, f) = (d.path().join("a"), d.path().join("b"), d.path().join("f"));
+        fs::create_dir(&a).unwrap();
+        fs::create_dir(&b).unwrap();
+        write(&f, "f");
+        for bad in ["", ".", "..", "x/y", "/abs"] {
+            assert_eq!(rename_pairs(&a, bad), Err(PlanError::BadName), "{bad:?}");
+        }
+        assert_eq!(rename_pairs(&a, "a"), Ok(vec![])); // unchanged → nothing to do
+        assert_eq!(rename_pairs(&a, "b"), Err(PlanError::Exists(b.clone())));
+        assert_eq!(rename_pairs(&f, "b"), Err(PlanError::Exists(b))); // file onto dir
+        assert_eq!(rename_pairs(&a, "f"), Err(PlanError::Exists(f.clone()))); // dir onto file
+        write(&d.path().join("g"), "g");
+        // file onto file goes ahead: the engine asks Replace/Skip
+        assert_eq!(
+            rename_pairs(&f, "g"),
+            Ok(vec![(f.clone(), d.path().join("g"))])
+        );
+        assert_eq!(rename_pairs(&f, "h"), Ok(vec![(f, d.path().join("h"))]));
     }
 }

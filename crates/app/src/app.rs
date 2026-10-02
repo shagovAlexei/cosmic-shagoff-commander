@@ -550,22 +550,21 @@ impl App {
             InputOp::Copy => (Method::Copy, OpKind::Copy),
             _ => (Method::Move, OpKind::Move),
         };
-        let (pairs, focus) = if op == InputOp::Rename {
-            // Not `plan`: typing an existing dir name must rename-clash, not move into that dir.
-            let Some(src) = sources.into_iter().next() else {
+        let (planned, focus) = if op == InputOp::Rename {
+            // Not `plan`: an existing dir name must be refused, not moved into or merged with.
+            let Some(src) = sources.first() else {
                 return Task::none();
             };
-            if input.is_empty() || src.file_name().is_some_and(|n| n == input) {
-                return Task::none();
-            }
-            (vec![(src, cwd.join(input))], Some(input.to_string()))
+            (ops::rename_pairs(src, input), Some(input.to_string()))
         } else {
-            match ops::plan(&sources, &cwd.join(input)) {
-                Ok(pairs) => (pairs, None),
-                Err(e) => {
-                    self.panes[side].active_mut().error = Some(plan_error(&e));
-                    return Task::none();
-                }
+            (ops::plan(&sources, &cwd.join(input)), None)
+        };
+        let pairs = match planned {
+            Ok(pairs) if pairs.is_empty() => return Task::none(), // rename to the same name
+            Ok(pairs) => pairs,
+            Err(e) => {
+                self.panes[side].active_mut().error = Some(plan_error(&e));
+                return Task::none();
             }
         };
         self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
@@ -713,6 +712,8 @@ fn plan_error(e: &PlanError) -> String {
     match e {
         PlanError::IntoItself(p) => fl!("plan-into-itself", path = p.display().to_string()),
         PlanError::SameFile(p) => fl!("plan-same-file", path = p.display().to_string()),
+        PlanError::BadName => fl!("rename-bad-name"),
+        PlanError::Exists(p) => fl!("rename-exists", path = p.display().to_string()),
         PlanError::Empty => String::new(),
     }
 }
