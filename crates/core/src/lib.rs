@@ -3,10 +3,12 @@
 
 pub mod drives;
 pub mod format;
+pub mod launch;
 pub mod listing;
 pub mod mask;
 pub mod ops;
 pub mod panel;
+pub mod session;
 pub mod sort;
 pub mod tabs;
 pub mod viewport;
