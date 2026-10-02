@@ -1,4 +1,5 @@
 mod app;
+mod clip;
 mod config;
 mod dialogs;
 mod i18n;
