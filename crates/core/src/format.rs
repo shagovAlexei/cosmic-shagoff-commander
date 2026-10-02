@@ -17,22 +17,27 @@ pub fn size(n: u64) -> String {
     out
 }
 
-/// `1536` → `1.5 K`; binary units, one decimal below 100.
-pub fn human(n: u64) -> String {
-    const UNITS: [&str; 5] = ["K", "M", "G", "T", "P"];
+/// `1536` → `1.5 K` with `units` = [bytes, K, M, G, T, P] and `sep` as decimal separator.
+/// One decimal below 100; rounds first, so 99.96 G is `100 G` and 1023.97 K is `1.0 M`.
+pub fn human(n: u64, units: &[&str; 6], sep: char) -> String {
     if n < 1024 {
-        return format!("{n} B");
+        return format!("{n} {}", units[0]);
     }
-    let mut v = n as f64 / 1024.0;
+    let mut v = n as f64;
     let mut unit = 0;
-    while v >= 1024.0 && unit < UNITS.len() - 1 {
+    loop {
         v /= 1024.0;
         unit += 1;
-    }
-    if v < 100.0 {
-        format!("{v:.1} {}", UNITS[unit])
-    } else {
-        format!("{v:.0} {}", UNITS[unit])
+        let tenths = (v * 10.0).round() / 10.0;
+        let shown = if tenths < 100.0 { tenths } else { v.round() };
+        if shown < 1024.0 || unit == units.len() - 1 {
+            let num = if shown < 100.0 {
+                format!("{shown:.1}").replace('.', &sep.to_string())
+            } else {
+                format!("{shown:.0}")
+            };
+            return format!("{num} {}", units[unit]);
+        }
     }
 }
 
@@ -84,13 +89,29 @@ mod tests {
     use crate::listing::Kind;
     use std::time::{Duration, UNIX_EPOCH};
 
+    const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
+
     #[test]
     fn human_sizes() {
-        assert_eq!(human(0), "0 B");
-        assert_eq!(human(1023), "1023 B");
-        assert_eq!(human(1536), "1.5 K");
-        assert_eq!(human(12_900_000_000), "12.0 G");
-        assert_eq!(human(450 * 1024 * 1024 * 1024), "450 G");
+        let h = |n| human(n, &UNITS, '.');
+        assert_eq!(h(0), "0 B");
+        assert_eq!(h(1023), "1023 B");
+        assert_eq!(h(1536), "1.5 K");
+        assert_eq!(h(12_900_000_000), "12.0 G");
+        assert_eq!(h(450 * 1024 * 1024 * 1024), "450 G");
+    }
+
+    #[test]
+    fn human_uses_given_units_and_separator() {
+        let ru = ["Б", "КБ", "МБ", "ГБ", "ТБ", "ПБ"];
+        assert_eq!(human(13_207_024_435, &ru, ','), "12,3 ГБ");
+    }
+
+    #[test]
+    fn regression_human_rounds_before_choosing_unit() {
+        let h = |n| human(n, &UNITS, '.');
+        assert_eq!(h(107_331_578_920), "100 G"); // 99.96 G, not "100.0 G"
+        assert_eq!(h(1_048_545), "1.0 M"); // 1023.97 K, not "1024 K"
     }
 
     fn entry(name: &str, ext: &str, kind: Kind) -> Entry {

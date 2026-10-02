@@ -111,16 +111,21 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
     }
     bar = bar.push(widget::Space::new().width(Length::Fill));
     if let Some((free, total)) = app.space[side] {
-        bar = bar.push(
-            text(fl!(
-                "disk-free",
-                free = format::human(free),
-                total = format::human(total)
-            ))
-            .size(TEXT),
-        );
+        bar = bar.push(text(fl!("disk-free", free = human(free), total = human(total))).size(TEXT));
     }
     container(bar).padding([2, 6]).into()
+}
+
+/// `12,3 ГБ`: units and decimal separator come from the locale's ftl.
+fn human(n: u64) -> String {
+    let units = fl!("size-units");
+    let units: [&str; 6] = units
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap_or(["B", "KB", "MB", "GB", "TB", "PB"]);
+    let sep = fl!("decimal-sep").chars().next().unwrap_or('.');
+    format::human(n, &units, sep)
 }
 
 /// Shown only with 2+ tabs; the active tab is styled like the cursor row.

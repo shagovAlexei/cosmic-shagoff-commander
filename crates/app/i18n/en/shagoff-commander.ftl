@@ -49,3 +49,5 @@ rename-bad-name = Invalid name: use a plain name without "/"
 rename-exists = Name is taken by a folder: { $path }
 disk-free = { $free } free of { $total }
 drives = Drive
+size-units = B KB MB GB TB PB
+decimal-sep = .

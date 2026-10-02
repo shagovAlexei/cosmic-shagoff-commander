@@ -45,7 +45,26 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
             continue;
         }
         // DirEntry::metadata does not follow symlinks.
-        let Ok(lmeta) = item.metadata() else { continue };
+        let Ok(lmeta) = item.metadata() else {
+            // Dir readable but not searchable (r-- without x): stat fails, readdir's type still works.
+            let Ok(ft) = item.file_type() else { continue };
+            let kind = if ft.is_dir() { Kind::Dir } else { Kind::File };
+            out.push(Entry {
+                ext: if kind == Kind::File {
+                    ext_of(&name)
+                } else {
+                    String::new()
+                },
+                os_name,
+                name,
+                size: 0,
+                mtime: UNIX_EPOCH,
+                kind,
+                is_link: ft.is_symlink(),
+                mode: 0,
+            });
+            continue;
+        };
         let is_link = lmeta.file_type().is_symlink();
         let target = if is_link {
             fs::metadata(item.path()).ok()
@@ -92,6 +111,22 @@ mod tests {
         v.iter()
             .find(|e| e.name == name)
             .unwrap_or_else(|| panic!("{name} not listed"))
+    }
+
+    #[test]
+    fn regression_dir_readable_but_not_searchable_lists_names() {
+        // r-- without x: names are readable, stat on children fails.
+        let d = tempfile::tempdir().unwrap();
+        let locked = d.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("f.txt"), "x").unwrap();
+        fs::create_dir(locked.join("sub")).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o444)).unwrap();
+        let v = scan(&locked, false);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let v = v.unwrap();
+        assert_eq!(find(&v, "f.txt").kind, Kind::File);
+        assert_eq!(find(&v, "sub").kind, Kind::Dir);
     }
 
     fn fixture() -> tempfile::TempDir {

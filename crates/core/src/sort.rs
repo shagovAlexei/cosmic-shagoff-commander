@@ -150,6 +150,28 @@ mod tests {
     }
 
     #[test]
+    fn dirs_on_top_for_every_key_and_direction() {
+        for key in [SortKey::Name, SortKey::Ext, SortKey::Size, SortKey::Date] {
+            for asc in [true, false] {
+                let mut v = vec![
+                    e("z.txt", Kind::File, 1, 1),
+                    e("bdir", Kind::Dir, 0, 9),
+                    e("a.rs", Kind::File, 900, 5),
+                    e("adir", Kind::Dir, 0, 2),
+                ];
+                sort_entries(&mut v, Sort { key, asc });
+                let kinds: Vec<_> = v.iter().map(|e| e.kind).collect();
+                assert_eq!(
+                    kinds,
+                    [Kind::Dir, Kind::Dir, Kind::File, Kind::File],
+                    "{key:?} asc={asc}: {:?}",
+                    names(&v)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn dirs_first_then_name() {
         let mut v = vec![
             e("b.txt", Kind::File, 1, 0),

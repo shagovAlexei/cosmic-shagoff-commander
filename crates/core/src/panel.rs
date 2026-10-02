@@ -61,6 +61,7 @@ impl Panel {
         self.show_hidden
     }
 
+    /// Only the flag: rescan the dir afterwards for the listing to change.
     pub fn set_show_hidden(&mut self, on: bool) {
         self.show_hidden = on;
     }

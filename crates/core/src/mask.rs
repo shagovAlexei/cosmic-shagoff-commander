@@ -1,4 +1,4 @@
-//! TC file mask: `*.rs;*.toml|*.bak` — patterns split by `;`, exclusions after `|`, `*` and `?`, case-insensitive.
+//! TC file mask: `*.rs;*.toml|*.bak` — patterns split by `;` or spaces (`"a b*"` quoted), exclusions after `|`, `*` and `?`, case-insensitive.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mask {
@@ -10,9 +10,9 @@ impl Mask {
     pub fn parse(s: &str) -> Self {
         let (inc, exc) = s.split_once('|').unwrap_or((s, ""));
         let split = |part: &str| -> Vec<String> {
-            part.split(';')
-                .map(|p| p.trim().to_lowercase())
-                .filter(|p| !p.is_empty())
+            tokens(part)
+                .into_iter()
+                .map(|p| p.to_lowercase())
                 // TC: `*.*` means every file, including names without a dot
                 .map(|p| if p == "*.*" { "*".to_string() } else { p })
                 .collect()
@@ -31,6 +31,22 @@ impl Mask {
         let name = name.to_lowercase();
         self.include.iter().any(|p| glob(p, &name)) && !self.exclude.iter().any(|p| glob(p, &name))
     }
+}
+
+/// Patterns split by `;` or whitespace, as in TC; `"..."` keeps spaces inside one pattern.
+fn tokens(s: &str) -> Vec<String> {
+    let (mut out, mut cur, mut quoted) = (Vec::new(), String::new(), false);
+    for c in s.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            ';' => out.push(std::mem::take(&mut cur)),
+            c if c.is_whitespace() && !quoted => out.push(std::mem::take(&mut cur)),
+            c => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.retain(|t| !t.is_empty());
+    out
 }
 
 /// `*` = any run, `?` = one char. Greedy with backtracking to the last `*`.
@@ -63,6 +79,22 @@ mod tests {
 
     fn m(mask: &str, name: &str) -> bool {
         Mask::parse(mask).matches(name)
+    }
+
+    #[test]
+    fn space_separates_patterns_like_tc() {
+        assert!(m("*.rs *.toml", "a.rs"));
+        assert!(m("*.rs *.toml", "Cargo.toml"));
+        assert!(!m("*.rs *.toml", "a.md"));
+        assert!(m("*.rs; *.toml|*.bak tmp*", "a.rs"));
+        assert!(!m("*.* |*.bak tmp*", "tmp1"));
+    }
+
+    #[test]
+    fn quotes_keep_spaces_in_a_pattern() {
+        assert!(m("\"my file*\"", "my file.txt"));
+        assert!(!m("\"my file*\"", "my"));
+        assert!(!m("\"my file*\"", "file.txt"));
     }
 
     #[test]

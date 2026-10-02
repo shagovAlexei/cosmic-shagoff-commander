@@ -50,3 +50,5 @@ rename-bad-name = Недопустимое имя: нужно простое и�
 rename-exists = Имя занято каталогом: { $path }
 disk-free = { $free } свободно из { $total }
 drives = Диск
+size-units = Б КБ МБ ГБ ТБ ПБ
+decimal-sep = ,
