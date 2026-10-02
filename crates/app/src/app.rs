@@ -38,8 +38,8 @@ pub struct Tab {
     pub panel: Panel,
     pub offset: f32,
     pub height: f32,
-    /// Path of the scan in flight; results for any other path are stale.
-    pub(crate) pending: Option<PathBuf>,
+    /// Generation of the scan in flight; any other result is stale.
+    pub(crate) pending: Option<u64>,
     pub error: Option<String>,
 }
 
@@ -121,6 +121,7 @@ pub enum Message {
     Listed {
         side: usize,
         tab: u64,
+        generation: u64,
         path: PathBuf,
         focus: Option<String>,
         result: Result<Vec<Entry>, String>,
@@ -271,6 +272,7 @@ impl App {
             Message::Listed {
                 side,
                 tab,
+                generation,
                 path,
                 focus,
                 result,
@@ -282,7 +284,7 @@ impl App {
                 else {
                     return Task::none(); // tab was closed
                 };
-                if t.pending.as_ref() != Some(&path) {
+                if t.pending != Some(generation) {
                     return Task::none(); // stale: the user has moved on
                 }
                 t.pending = None;
@@ -320,11 +322,11 @@ impl App {
             Message::SelectTab(side, i) => {
                 self.active = side;
                 self.panes[side].select(i);
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
             Message::CloseTabAt(side, i) => {
                 self.panes[side].close(i);
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
             Message::Modifiers(m) => self.mods = m,
             Message::DialogInput(s) => {
@@ -440,8 +442,9 @@ impl App {
         path: PathBuf,
         focus: Option<String>,
     ) -> Task<Message> {
+        let generation = self.next_id();
         let t = &mut self.panes[side].items_mut()[i];
-        t.pending = Some(path.clone());
+        t.pending = Some(generation);
         let tab = t.id;
         let show_hidden = t.panel.show_hidden();
         Task::perform(
@@ -454,6 +457,7 @@ impl App {
                 Message::Listed {
                     side,
                     tab,
+                    generation,
                     path,
                     focus,
                     result,
@@ -556,15 +560,15 @@ impl App {
                     }
                     return Task::none();
                 }
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
             Action::NextTab => {
                 self.panes[side].next();
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
             Action::PrevTab => {
                 self.panes[side].prev();
-                return self.restore_scroll(side);
+                return self.tab_switched(side);
             }
         }
         self.reveal(side, tab)
@@ -816,6 +820,12 @@ impl App {
         }
     }
 
+    /// The newly shown tab was not watched while hidden: restore its scroll and rescan it.
+    fn tab_switched(&mut self, side: usize) -> Task<Message> {
+        let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+        Task::batch([self.restore_scroll(side), self.load(side, cwd, None)])
+    }
+
     /// Scroll the pane's list to the active tab's stored offset.
     fn restore_scroll(&self, side: usize) -> Task<Message> {
         scrollable::scroll_to(
@@ -897,6 +907,53 @@ mod tests {
             .iter()
             .map(|t| t.panel.cwd().to_path_buf())
             .collect()
+    }
+
+    fn entry(name: &str) -> Entry {
+        Entry {
+            name: name.into(),
+            os_name: name.into(),
+            ext: String::new(),
+            size: 0,
+            mtime: std::time::UNIX_EPOCH,
+            kind: shagoff_core::listing::Kind::File,
+            is_link: false,
+            mode: 0o644,
+        }
+    }
+
+    #[test]
+    fn regression_second_scan_of_same_path_wins() {
+        let mut app = app_with(Config::default(), State::default());
+        let (id, cwd) = (
+            app.panes[0].active().id,
+            app.panes[0].active().panel.cwd().to_path_buf(),
+        );
+        let _ = app.load(0, cwd.clone(), None);
+        let first = app.panes[0].active().pending.unwrap();
+        let _ = app.load(0, cwd.clone(), None);
+        let second = app.panes[0].active().pending.unwrap();
+        let listed = |generation, name: &str| Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: cwd.clone(),
+            focus: None,
+            result: Ok(vec![entry(name)]),
+        };
+        let _ = app.update(listed(second, "new"));
+        let _ = app.update(listed(first, "old")); // late, stale
+        let names: Vec<_> = app.panes[0]
+            .active()
+            .panel
+            .entries()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert!(
+            names.contains(&"new".to_string()) && !names.contains(&"old".to_string()),
+            "{names:?}"
+        );
     }
 
     #[test]
