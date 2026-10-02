@@ -104,6 +104,13 @@ pub struct Running {
     focus: Option<String>,
 }
 
+/// Quick search (Alt+letter) or filter (Ctrl+S) field, shown instead of the pane's status line.
+pub struct Search {
+    pub side: usize,
+    pub text: String,
+    pub filter: bool,
+}
+
 pub struct App {
     core: Core,
     pub panes: [Tabs<Tab>; 2],
@@ -118,7 +125,9 @@ pub struct App {
     dialog: Option<Dialog>,
     job: Option<Running>,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
-    input_id: widget::Id,
+    pub(crate) input_id: widget::Id,
+    /// Quick search / filter field, if open.
+    pub search: Option<Search>,
     pub home: PathBuf,
     pub config: Config,
     config_handler: Option<cosmic_config::Config>,
@@ -160,6 +169,12 @@ pub enum Message {
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
     CancelJob,
+    /// A panel key a focused text field captured (F-keys, PgUp/PgDn, Insert, Ctrl+…).
+    FieldKey(Action),
+    /// Text typed into the quick search / filter field.
+    SearchInput(String),
+    /// Enter in that field.
+    SearchSubmit,
     /// The watched dir of this pane's active tab changed.
     Changed(usize),
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
@@ -259,6 +274,7 @@ impl App {
             dialog: None,
             job: None,
             input_id: widget::Id::unique(),
+            search: None,
             home,
             config,
             config_handler: None,
@@ -321,6 +337,30 @@ impl App {
                 if self.job.is_some() {
                     return Task::none(); // panels wait for the running operation
                 }
+                if let Some(s) = &self.search {
+                    let (side, filter, text) = (s.side, s.filter, s.text.clone());
+                    match action {
+                        Action::Up | Action::Down if !filter => {
+                            let p = &self.panes[side].active().panel;
+                            let n = p.entries().len();
+                            let down = action == Action::Down;
+                            let from = if down {
+                                p.cursor() + 1
+                            } else {
+                                p.cursor() + n - 1
+                            };
+                            if let Some(i) = p.find(&text, from, down) {
+                                let t = self.panes[side].active_mut();
+                                t.panel.set_cursor(i);
+                                let tab = t.id;
+                                return self.reveal(side, tab);
+                            }
+                            return Task::none();
+                        }
+                        Action::Up | Action::Down => {} // filter: plain cursor move, field stays
+                        _ => self.search = None,        // any other key closes the field and acts
+                    }
+                }
                 return self.act(self.active, action);
             }
             Message::Listed {
@@ -363,6 +403,7 @@ impl App {
                 }
             }
             Message::Click(side, i) => {
+                self.search = None;
                 self.active = side;
                 let t = self.panes[side].active_mut();
                 t.panel.set_cursor(i);
@@ -373,11 +414,13 @@ impl App {
                 return self.reveal(side, tab); // a half-visible row scrolls fully in
             }
             Message::DoubleClick(side, i) => {
+                self.search = None;
                 self.active = side;
                 self.panes[side].active_mut().panel.set_cursor(i);
                 return self.act(side, Action::Enter);
             }
             Message::Header(side, key) => {
+                self.search = None;
                 self.active = side;
                 return self.act(side, Action::Sort(key));
             }
@@ -399,11 +442,13 @@ impl App {
                 }
             }
             Message::SelectTab(side, i) => {
+                self.search = None;
                 self.active = side;
                 self.panes[side].select(i);
                 return self.tab_switched(side);
             }
             Message::CloseTabAt(side, i) => {
+                self.search = None;
                 self.panes[side].close(i);
                 return self.tab_switched(side);
             }
@@ -422,7 +467,17 @@ impl App {
                     let _ = reply.send(ErrorChoice::Cancel);
                 }
                 Some(_) => {}
-                None => self.cancel_job(),
+                None => {
+                    if let Some(s) = self.search.take() {
+                        if s.filter {
+                            self.panes[s.side].active_mut().panel.set_filter(None);
+                        }
+                    } else if self.job.is_some() {
+                        self.cancel_job();
+                    } else {
+                        self.panes[self.active].active_mut().panel.set_filter(None);
+                    }
+                }
             },
             Message::Op(event) => return self.on_job_event(event),
             Message::Resolve(r) => match self.dialog.take() {
@@ -438,6 +493,39 @@ impl App {
                 other => self.dialog = other,
             },
             Message::CancelJob => self.cancel_job(),
+            Message::SearchInput(text) => {
+                let Some(s) = &self.search else {
+                    return Task::none();
+                };
+                let (side, filter) = (s.side, s.filter);
+                let t = self.panes[side].active_mut();
+                if filter {
+                    t.panel.set_filter(Some(text.clone()));
+                } else if !text.is_empty() {
+                    match t.panel.find(&text, 0, true) {
+                        Some(i) => t.panel.set_cursor(i),
+                        None => return Task::none(), // rejected: the field keeps the old text
+                    }
+                }
+                let tab = t.id;
+                if let Some(s) = &mut self.search {
+                    s.text = text;
+                }
+                return self.reveal(side, tab);
+            }
+            // Only the quick search field forwards keys; a dialog's text field keeps its own.
+            Message::FieldKey(action) => {
+                if self.search.is_some() && self.dialog.is_none() {
+                    return self.handle(Message::Key(action));
+                }
+            }
+            Message::SearchSubmit => {
+                if let Some(s) = self.search.take()
+                    && !s.filter
+                {
+                    return self.act(s.side, Action::Enter);
+                }
+            }
             Message::Changed(side) => {
                 let t = self.panes[side].active();
                 // A change in the dir we are leaving must not cancel the scan of the one we enter.
@@ -447,6 +535,7 @@ impl App {
                 }
             }
             Message::Drive(side, path) => {
+                self.search = None;
                 if self.job.is_none() {
                     self.dialog = None;
                     return self.go_drive(side, path);
@@ -566,6 +655,11 @@ impl App {
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
         // An error stays in the status line until the next action in that pane.
         self.panes[side].active_mut().error = None;
+        match action {
+            Action::QuickSearch(c) => return self.quick_search(side, c),
+            Action::QuickFilter => return self.quick_filter(side),
+            _ => {}
+        }
         if let Some(d) = self.dialog_for(side, action) {
             let focus = matches!(d, Dialog::Mask { .. } | Dialog::Input { .. });
             self.dialog = Some(d);
@@ -653,6 +747,7 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
+            Action::QuickSearch(_) | Action::QuickFilter => {} // handled above
             Action::Copy
             | Action::Move
             | Action::Rename
@@ -961,6 +1056,47 @@ impl App {
         }
     }
 
+    /// Alt+letter: append to an open search (or start one) if the text still matches something.
+    fn quick_search(&mut self, side: usize, c: char) -> Task<Message> {
+        let mut text = match &self.search {
+            Some(s) if s.side == side && !s.filter => s.text.clone(),
+            _ => String::new(),
+        };
+        text.push(c);
+        let Some(i) = self.panes[side].active().panel.find(&text, 0, true) else {
+            return Task::none(); // TC: a letter that finds nothing is not taken
+        };
+        self.search = Some(Search {
+            side,
+            text,
+            filter: false,
+        });
+        self.active = side;
+        let t = self.panes[side].active_mut();
+        t.panel.set_cursor(i);
+        let tab = t.id;
+        Task::batch([
+            widget::text_input::focus(self.input_id.clone()),
+            self.reveal(side, tab),
+        ])
+    }
+
+    fn quick_filter(&mut self, side: usize) -> Task<Message> {
+        let text = self.panes[side]
+            .active()
+            .panel
+            .filter()
+            .unwrap_or_default()
+            .to_string();
+        self.search = Some(Search {
+            side,
+            text,
+            filter: true,
+        });
+        self.active = side;
+        widget::text_input::focus(self.input_id.clone())
+    }
+
     /// Mounts change rarely and procfs never blocks: re-read with every listing.
     fn refresh_mounts(&mut self) {
         if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
@@ -1012,10 +1148,65 @@ fn route_event(
         }) if status == event::Status::Ignored => {
             keymap::action(&key, physical_key, modifiers).map(Message::Key)
         }
+        // A focused text field captures every key but Up/Down/Tab; pass on the ones it has no use for.
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key,
+            modifiers,
+            ..
+        }) if not_for_text(&key, physical_key, modifiers) => {
+            keymap::action(&key, physical_key, modifiers).map(Message::FieldKey)
+        }
         cosmic::iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
             Some(Message::Modifiers(m))
         }
         _ => None,
+    }
+}
+
+/// Keys a text field captures but does not edit with: F-keys, PgUp/PgDn, Insert and Ctrl combos
+/// other than text editing and the clipboard (Ctrl+A/C/V/X/Z, Ctrl+arrows/Backspace/Delete/Home/End).
+fn not_for_text(key: &keyboard::Key, physical: keyboard::key::Physical, mods: Modifiers) -> bool {
+    use keyboard::key::{Code, Named, Physical};
+    match key {
+        keyboard::Key::Named(n) => {
+            let editing = matches!(
+                n,
+                Named::Backspace
+                    | Named::Delete
+                    | Named::Home
+                    | Named::End
+                    | Named::ArrowLeft
+                    | Named::ArrowRight
+                    | Named::Enter
+                    | Named::Escape
+            );
+            matches!(
+                n,
+                Named::F1
+                    | Named::F2
+                    | Named::F3
+                    | Named::F4
+                    | Named::F5
+                    | Named::F6
+                    | Named::F7
+                    | Named::F8
+                    | Named::F9
+                    | Named::F10
+                    | Named::F11
+                    | Named::F12
+                    | Named::PageUp
+                    | Named::PageDown
+                    | Named::Insert
+            ) || (mods.control() && !editing)
+        }
+        _ => {
+            let clipboard = matches!(
+                physical,
+                Physical::Code(Code::KeyA | Code::KeyC | Code::KeyV | Code::KeyX | Code::KeyZ)
+            );
+            mods.control() && !clipboard
+        }
     }
 }
 
@@ -1450,6 +1641,139 @@ mod tests {
         assert_eq!(app.panes[0].active().offset, 200.0);
     }
 
+    /// Pane 0 shows `names` (files) in temp_dir.
+    fn files_app(names: &[&str]) -> App {
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let entries = names.iter().map(|n| entry(n)).collect();
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: std::env::temp_dir(),
+            focus: None,
+            result: Ok(entries),
+            space: None,
+        });
+        app
+    }
+
+    fn cursor_name(app: &App) -> String {
+        app.panes[0].active().panel.current().unwrap().name.clone()
+    }
+
+    #[test]
+    fn alt_letter_jumps_to_first_match() {
+        let mut app = files_app(&["alpha", "beta", "bravo"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        assert_eq!(cursor_name(&app), "beta");
+        assert_eq!(app.search.as_ref().map(|s| s.text.as_str()), Some("b"));
+        let _ = app.update(Message::SearchInput("br".into()));
+        assert_eq!(cursor_name(&app), "bravo");
+    }
+
+    #[test]
+    fn alt_letter_without_match_opens_nothing() {
+        let mut app = files_app(&["alpha"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('z')));
+        assert!(app.search.is_none());
+    }
+
+    #[test]
+    fn search_rejects_letter_without_match() {
+        let mut app = files_app(&["alpha", "beta"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('a')));
+        let _ = app.update(Message::SearchInput("az".into()));
+        assert_eq!(app.search.as_ref().unwrap().text, "a");
+        assert_eq!(cursor_name(&app), "alpha");
+    }
+
+    #[test]
+    fn down_in_search_goes_to_next_match() {
+        let mut app = files_app(&["b1", "x", "b2"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        let _ = app.update(Message::Key(Action::Down));
+        assert_eq!(cursor_name(&app), "b2");
+        let _ = app.update(Message::Key(Action::Down)); // wraps
+        assert_eq!(cursor_name(&app), "b1");
+        assert!(app.search.is_some());
+    }
+
+    #[test]
+    fn other_key_closes_search_and_acts() {
+        let mut app = files_app(&["alpha", "beta"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        let _ = app.update(Message::Key(Action::Copy));
+        assert!(app.search.is_none());
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Copy,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn enter_in_search_opens_the_dir() {
+        let mut app = files_app(&[]);
+        let t = app.panes[0].active();
+        let (id, cwd) = (t.id, t.panel.cwd().to_path_buf());
+        let _ = app.load(0, cwd.clone(), None);
+        let generation = app.panes[0].active().pending.as_ref().unwrap().0;
+        let mut sub = entry("sub");
+        sub.kind = shagoff_core::listing::Kind::Dir;
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: cwd.clone(),
+            focus: None,
+            result: Ok(vec![sub]),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::QuickSearch('s')));
+        let _ = app.update(Message::SearchSubmit);
+        assert!(app.search.is_none());
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(cwd.join("sub")));
+    }
+
+    #[test]
+    fn ctrl_s_filters_enter_keeps_escape_clears() {
+        let mut app = files_app(&["a.rs", "b.md", "c.rs"]);
+        let _ = app.update(Message::Key(Action::QuickFilter));
+        let _ = app.update(Message::SearchInput("*.rs".into()));
+        let shown = |app: &App| app.panes[0].active().panel.entries().len();
+        assert_eq!(shown(&app), 3); // .., a.rs, c.rs
+        let _ = app.update(Message::SearchSubmit);
+        assert!(app.search.is_none());
+        assert_eq!(app.panes[0].active().panel.filter(), Some("*.rs"));
+        let _ = app.update(Message::DialogCancel); // Escape
+        assert_eq!(app.panes[0].active().panel.filter(), None);
+        assert_eq!(shown(&app), 4);
+    }
+
+    #[test]
+    fn escape_closes_search_then_clears_filter() {
+        let mut app = files_app(&["a.rs", "b.md"]);
+        let _ = app.update(Message::Key(Action::QuickFilter));
+        let _ = app.update(Message::SearchInput("a".into()));
+        let _ = app.update(Message::DialogCancel); // in filter field: close + clear
+        assert!(app.search.is_none());
+        assert_eq!(app.panes[0].active().panel.filter(), None);
+
+        let _ = app.update(Message::Key(Action::QuickSearch('a')));
+        let _ = app.update(Message::DialogCancel); // in search field: only close
+        assert!(app.search.is_none());
+        assert_eq!(cursor_name(&app), "a.rs");
+    }
+
     #[test]
     fn ctrl_h_flips_hidden_in_every_tab() {
         let mut app = app_with(Config::default(), State::default());
@@ -1510,6 +1834,72 @@ mod tests {
             repeat: false,
         });
         route_event(event, status, cosmic::iced::window::Id::unique())
+    }
+
+    fn press_with(key: Key, code: Code, mods: Modifiers) -> Option<Message> {
+        let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: Physical::Code(code),
+            location: Location::Standard,
+            modifiers: mods,
+            text: None,
+            repeat: false,
+        });
+        route_event(
+            event,
+            event::Status::Captured,
+            cosmic::iced::window::Id::unique(),
+        )
+    }
+
+    #[test]
+    fn regression_panel_keys_reach_the_app_while_a_field_has_focus() {
+        // A focused text_input captures every key but Up/Down/Tab; F5 from quick search must still work.
+        let f5 = press(Named::F5, Code::F5, event::Status::Captured);
+        assert!(
+            matches!(f5, Some(Message::FieldKey(Action::Copy))),
+            "{f5:?}"
+        );
+        let pgdn = press(Named::PageDown, Code::PageDown, event::Status::Captured);
+        assert!(
+            matches!(pgdn, Some(Message::FieldKey(Action::PageDown))),
+            "{pgdn:?}"
+        );
+        let ctrl_r = press_with(Key::Character("r".into()), Code::KeyR, Modifiers::CTRL);
+        assert!(
+            matches!(ctrl_r, Some(Message::FieldKey(Action::Reload))),
+            "{ctrl_r:?}"
+        );
+    }
+
+    #[test]
+    fn text_editing_keys_stay_in_the_field() {
+        for (named, code) in [
+            (Named::Backspace, Code::Backspace),
+            (Named::Delete, Code::Delete),
+            (Named::Home, Code::Home),
+            (Named::End, Code::End),
+        ] {
+            let msg = press(named, code, event::Status::Captured);
+            assert!(msg.is_none(), "{named:?}: {msg:?}");
+        }
+        let space = press_with(Key::Character(" ".into()), Code::Space, Modifiers::empty());
+        assert!(space.is_none(), "{space:?}");
+        let ctrl_a = press_with(Key::Character("a".into()), Code::KeyA, Modifiers::CTRL);
+        assert!(ctrl_a.is_none(), "{ctrl_a:?}");
+    }
+
+    #[test]
+    fn field_key_acts_only_for_the_search_field() {
+        let mut app = files_app(&["alpha", "beta"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        let _ = app.update(Message::FieldKey(Action::Copy));
+        assert!(app.search.is_none());
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+        // Now a dialog text field has focus: its captured F-keys must not reach the panels.
+        let _ = app.update(Message::FieldKey(Action::Delete));
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
     }
 
     #[test]
