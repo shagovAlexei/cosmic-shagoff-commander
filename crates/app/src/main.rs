@@ -1,5 +1,6 @@
 mod app;
 mod i18n;
+mod keymap;
 
 fn main() -> cosmic::iced::Result {
     simple_logger::SimpleLogger::new()
