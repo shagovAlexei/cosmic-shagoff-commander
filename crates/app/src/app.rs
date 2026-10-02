@@ -169,6 +169,8 @@ pub enum Message {
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
     CancelJob,
+    /// A panel key a focused text field captured (F-keys, PgUp/PgDn, Insert, Ctrl+…).
+    FieldKey(Action),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
     /// Enter in that field.
@@ -510,6 +512,12 @@ impl App {
                     s.text = text;
                 }
                 return self.reveal(side, tab);
+            }
+            // Only the quick search field forwards keys; a dialog's text field keeps its own.
+            Message::FieldKey(action) => {
+                if self.search.is_some() && self.dialog.is_none() {
+                    return self.handle(Message::Key(action));
+                }
             }
             Message::SearchSubmit => {
                 if let Some(s) = self.search.take()
@@ -1140,10 +1148,65 @@ fn route_event(
         }) if status == event::Status::Ignored => {
             keymap::action(&key, physical_key, modifiers).map(Message::Key)
         }
+        // A focused text field captures every key but Up/Down/Tab; pass on the ones it has no use for.
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key,
+            modifiers,
+            ..
+        }) if not_for_text(&key, physical_key, modifiers) => {
+            keymap::action(&key, physical_key, modifiers).map(Message::FieldKey)
+        }
         cosmic::iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
             Some(Message::Modifiers(m))
         }
         _ => None,
+    }
+}
+
+/// Keys a text field captures but does not edit with: F-keys, PgUp/PgDn, Insert and Ctrl combos
+/// other than text editing and the clipboard (Ctrl+A/C/V/X/Z, Ctrl+arrows/Backspace/Delete/Home/End).
+fn not_for_text(key: &keyboard::Key, physical: keyboard::key::Physical, mods: Modifiers) -> bool {
+    use keyboard::key::{Code, Named, Physical};
+    match key {
+        keyboard::Key::Named(n) => {
+            let editing = matches!(
+                n,
+                Named::Backspace
+                    | Named::Delete
+                    | Named::Home
+                    | Named::End
+                    | Named::ArrowLeft
+                    | Named::ArrowRight
+                    | Named::Enter
+                    | Named::Escape
+            );
+            matches!(
+                n,
+                Named::F1
+                    | Named::F2
+                    | Named::F3
+                    | Named::F4
+                    | Named::F5
+                    | Named::F6
+                    | Named::F7
+                    | Named::F8
+                    | Named::F9
+                    | Named::F10
+                    | Named::F11
+                    | Named::F12
+                    | Named::PageUp
+                    | Named::PageDown
+                    | Named::Insert
+            ) || (mods.control() && !editing)
+        }
+        _ => {
+            let clipboard = matches!(
+                physical,
+                Physical::Code(Code::KeyA | Code::KeyC | Code::KeyV | Code::KeyX | Code::KeyZ)
+            );
+            mods.control() && !clipboard
+        }
     }
 }
 
@@ -1771,6 +1834,72 @@ mod tests {
             repeat: false,
         });
         route_event(event, status, cosmic::iced::window::Id::unique())
+    }
+
+    fn press_with(key: Key, code: Code, mods: Modifiers) -> Option<Message> {
+        let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: Physical::Code(code),
+            location: Location::Standard,
+            modifiers: mods,
+            text: None,
+            repeat: false,
+        });
+        route_event(
+            event,
+            event::Status::Captured,
+            cosmic::iced::window::Id::unique(),
+        )
+    }
+
+    #[test]
+    fn regression_panel_keys_reach_the_app_while_a_field_has_focus() {
+        // A focused text_input captures every key but Up/Down/Tab; F5 from quick search must still work.
+        let f5 = press(Named::F5, Code::F5, event::Status::Captured);
+        assert!(
+            matches!(f5, Some(Message::FieldKey(Action::Copy))),
+            "{f5:?}"
+        );
+        let pgdn = press(Named::PageDown, Code::PageDown, event::Status::Captured);
+        assert!(
+            matches!(pgdn, Some(Message::FieldKey(Action::PageDown))),
+            "{pgdn:?}"
+        );
+        let ctrl_r = press_with(Key::Character("r".into()), Code::KeyR, Modifiers::CTRL);
+        assert!(
+            matches!(ctrl_r, Some(Message::FieldKey(Action::Reload))),
+            "{ctrl_r:?}"
+        );
+    }
+
+    #[test]
+    fn text_editing_keys_stay_in_the_field() {
+        for (named, code) in [
+            (Named::Backspace, Code::Backspace),
+            (Named::Delete, Code::Delete),
+            (Named::Home, Code::Home),
+            (Named::End, Code::End),
+        ] {
+            let msg = press(named, code, event::Status::Captured);
+            assert!(msg.is_none(), "{named:?}: {msg:?}");
+        }
+        let space = press_with(Key::Character(" ".into()), Code::Space, Modifiers::empty());
+        assert!(space.is_none(), "{space:?}");
+        let ctrl_a = press_with(Key::Character("a".into()), Code::KeyA, Modifiers::CTRL);
+        assert!(ctrl_a.is_none(), "{ctrl_a:?}");
+    }
+
+    #[test]
+    fn field_key_acts_only_for_the_search_field() {
+        let mut app = files_app(&["alpha", "beta"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        let _ = app.update(Message::FieldKey(Action::Copy));
+        assert!(app.search.is_none());
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+        // Now a dialog text field has focus: its captured F-keys must not reach the panels.
+        let _ = app.update(Message::FieldKey(Action::Delete));
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
     }
 
     #[test]
