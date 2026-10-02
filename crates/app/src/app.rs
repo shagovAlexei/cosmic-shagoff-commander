@@ -226,6 +226,7 @@ impl App {
                 }
             }
             Action::Root => return self.load(side, "/".into(), None),
+            Action::NewTab | Action::CloseTab | Action::NextTab | Action::PrevTab => {}
             Action::Reload => {
                 let cwd = panel.cwd().to_path_buf();
                 return self.load(side, cwd, None);
