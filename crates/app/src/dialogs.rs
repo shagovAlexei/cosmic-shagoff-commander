@@ -49,8 +49,12 @@ pub enum Dialog {
         error: String,
         reply: mpsc::Sender<ErrorChoice>,
     },
-    /// Alt+F1 / Alt+F2.
-    Drives { side: usize, cursor: usize },
+    /// Alt+F1 / Alt+F2, over a copy of the drive list taken when it opened.
+    Drives {
+        side: usize,
+        cursor: usize,
+        drives: Vec<Drive>,
+    },
 }
 
 impl Dialog {
@@ -74,12 +78,7 @@ fn what(paths: &[PathBuf]) -> String {
     }
 }
 
-pub fn view<'a>(
-    d: &'a Dialog,
-    input_id: &widget::Id,
-    tz: &TimeZone,
-    drives: &'a [Drive],
-) -> Element<'a, Message> {
+pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
     let field = |value: &'a str| {
@@ -179,7 +178,11 @@ pub fn view<'a>(
                 )
                 .into()
         }
-        Dialog::Drives { side, cursor } => {
+        Dialog::Drives {
+            side,
+            cursor,
+            drives,
+        } => {
             let mut list = column![].spacing(2);
             for (i, d) in drives.iter().enumerate() {
                 let label = format!("{}   {}", d.label, d.path.display());
@@ -189,7 +192,7 @@ pub fn view<'a>(
                     widget::button::text(label)
                 };
                 list = list.push(
-                    b.on_press(Message::Drive(*side, i))
+                    b.on_press(Message::Drive(*side, d.path.clone()))
                         .width(cosmic::iced::Length::Fill),
                 );
             }

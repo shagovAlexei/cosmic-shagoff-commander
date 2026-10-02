@@ -15,7 +15,7 @@ use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
-use shagoff_core::panel::{PARENT, Panel};
+use shagoff_core::panel::{self, PARENT, Panel};
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
@@ -148,6 +148,8 @@ pub enum Message {
     Header(usize, SortKey),
     /// side, scroll offset y, viewport height (of the active tab)
     Scrolled(usize, f32, f32),
+    /// side, real viewport height of the pane's list (from a sensor: on_scroll misses resizes)
+    Resized(usize, f32),
     SelectTab(usize, usize),
     CloseTabAt(usize, usize),
     Modifiers(Modifiers),
@@ -160,8 +162,8 @@ pub enum Message {
     CancelJob,
     /// The watched dir of this pane's active tab changed.
     Changed(usize),
-    /// Drive button / drive list entry: (side, drive index).
-    Drive(usize, usize),
+    /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
+    Drive(usize, PathBuf),
     Config(Config),
     Exit,
 }
@@ -223,7 +225,7 @@ impl Application for App {
 
     fn dialog(&self) -> Option<Element<'_, Message>> {
         if let Some(d) = &self.dialog {
-            return Some(dialogs::view(d, &self.input_id, &self.tz, &self.drives));
+            return Some(dialogs::view(d, &self.input_id, &self.tz));
         }
         self.job.as_ref().map(dialogs::progress)
     }
@@ -242,6 +244,7 @@ impl App {
         left: Option<PathBuf>,
         home: PathBuf,
     ) -> (Self, Task<Message>) {
+        let home_fallback = home.clone();
         let mut app = Self {
             core,
             panes: [
@@ -264,9 +267,10 @@ impl App {
             drives: Vec::new(),
             space: [None, None],
         };
+        // A file opens its folder; a missing path keeps the saved tab.
         let left = left
             .and_then(|p| p.canonicalize().ok())
-            .filter(|p| p.is_dir());
+            .map(|p| session::existing_dir(&p, &home_fallback));
         for side in 0..2 {
             let (mut paths, active) = session::restore(&state.panes[side], &app.home);
             if side == 0
@@ -289,16 +293,19 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
-                if let Some(Dialog::Drives { side, cursor }) = &mut self.dialog {
+                if let Some(Dialog::Drives {
+                    side,
+                    cursor,
+                    drives,
+                }) = &mut self.dialog
+                {
                     match action {
                         Action::Up => *cursor = cursor.saturating_sub(1),
-                        Action::Down => {
-                            *cursor = (*cursor + 1).min(self.drives.len().saturating_sub(1))
-                        }
+                        Action::Down => *cursor = (*cursor + 1).min(drives.len().saturating_sub(1)),
                         Action::Enter => {
-                            let (side, i) = (*side, *cursor);
+                            let (side, path) = (*side, drives.get(*cursor).map(|d| d.path.clone()));
                             self.dialog = None;
-                            return self.go_drive(side, i);
+                            return path.map_or_else(Task::none, |p| self.go_drive(side, p));
                         }
                         _ => {}
                     }
@@ -346,16 +353,24 @@ impl App {
                         }
                         return self.reveal(side, tab);
                     }
-                    Err(e) => t.error = Some(e),
+                    Err(e) => {
+                        t.error = Some(fl!(
+                            "list-failed",
+                            path = path.display().to_string(),
+                            err = e
+                        ))
+                    }
                 }
             }
             Message::Click(side, i) => {
                 self.active = side;
-                let panel = &mut self.panes[side].active_mut().panel;
-                panel.set_cursor(i);
+                let t = self.panes[side].active_mut();
+                t.panel.set_cursor(i);
                 if self.mods.control() {
-                    panel.toggle_mark();
+                    t.panel.toggle_mark();
                 }
+                let tab = t.id;
+                return self.reveal(side, tab); // a half-visible row scrolls fully in
             }
             Message::DoubleClick(side, i) => {
                 self.active = side;
@@ -367,9 +382,21 @@ impl App {
                 return self.act(side, Action::Sort(key));
             }
             Message::Scrolled(side, offset, height) => {
+                // Wheel / scrollbar: the view moves freely, the cursor stays where it is.
                 let t = self.panes[side].active_mut();
                 t.offset = offset;
                 t.height = height;
+            }
+            Message::Resized(side, height) => {
+                // One list widget per pane: every tab shares its viewport height.
+                let shrunk = height < self.panes[side].active().height;
+                for t in self.panes[side].items_mut() {
+                    t.height = height;
+                }
+                if shrunk {
+                    let tab = self.panes[side].active().id;
+                    return self.reveal(side, tab); // keep the cursor on screen
+                }
             }
             Message::SelectTab(side, i) => {
                 self.active = side;
@@ -419,10 +446,10 @@ impl App {
                     return self.load(side, cwd, None);
                 }
             }
-            Message::Drive(side, i) => {
+            Message::Drive(side, path) => {
                 if self.job.is_none() {
                     self.dialog = None;
-                    return self.go_drive(side, i);
+                    return self.go_drive(side, path);
                 }
             }
             Message::Config(c) => {
@@ -537,6 +564,8 @@ impl App {
     }
 
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
+        // An error stays in the status line until the next action in that pane.
+        self.panes[side].active_mut().error = None;
         if let Some(d) = self.dialog_for(side, action) {
             let focus = matches!(d, Dialog::Mask { .. } | Dialog::Input { .. });
             self.dialog = Some(d);
@@ -549,6 +578,8 @@ impl App {
         let t = self.panes[side].active_mut();
         let page = viewport::page_rows(ROW_H, t.height) as isize;
         let tab = t.id;
+        let target = t.target();
+        let loading = target != t.panel.cwd();
         let panel = &mut t.panel;
         match action {
             Action::SwitchPane => {
@@ -562,6 +593,8 @@ impl App {
             Action::Home => panel.cursor_home(),
             Action::End => panel.cursor_end(),
             Action::Sort(key) => panel.set_sort(key),
+            // The rows on screen belong to the dir being left: entering one would undo the navigation.
+            Action::Enter if loading => {}
             Action::Enter => {
                 if let Some((path, focus)) = panel.enter_path() {
                     return self.load(side, path, focus);
@@ -573,8 +606,9 @@ impl App {
                     t.error = Some(fl!("open-failed", err = err.to_string()));
                 }
             }
+            // From where the tab is going, so quick Backspaces on a slow fs are not lost.
             Action::Parent => {
-                if let Some((path, focus)) = panel.parent_path() {
+                if let Some((path, focus)) = panel::parent_of(&target) {
                     return self.load(side, path, Some(focus));
                 }
             }
@@ -601,8 +635,12 @@ impl App {
                 let file = panel
                     .current()
                     .filter(|e| !e.is_dir() && e.name != PARENT)
-                    .map(|e| panel.cwd().join(&e.os_name));
-                if let Some(file) = file {
+                    .map(|e| (panel.cwd().join(&e.os_name), e.name.clone()));
+                if let Some((file, name)) = file {
+                    if !file.exists() {
+                        t.error = Some(fl!("broken-link", name = name));
+                        return Task::none();
+                    }
                     let argv = if action == Action::View {
                         launch::command(&self.config.viewer, &["xdg-open"], &file)
                     } else {
@@ -637,11 +675,13 @@ impl App {
                 let i = self.panes[side].active_index();
                 if !self.panes[side].close(i) {
                     if self.config.last_tab_close == LastTab::Home {
-                        let home = self
-                            .config
-                            .home_dir
-                            .clone()
-                            .unwrap_or_else(|| self.home.clone());
+                        let home = match &self.config.home_dir {
+                            Some(d) => session::existing_dir(
+                                &session::expand_home(d, &self.home),
+                                &self.home,
+                            ),
+                            None => self.home.clone(),
+                        };
                         return self.load(side, home, None);
                     }
                     return Task::none();
@@ -708,10 +748,12 @@ impl App {
                     paths,
                 })
             }
+            // A copy: mounts are re-read on every listing and must not shift under the cursor.
             Action::Drives(s) => Some(Dialog::Drives {
                 side: s,
                 cursor: drives::containing(&self.drives, self.panes[s].active().panel.cwd())
                     .unwrap_or(0),
+                drives: self.drives.clone(),
             }),
             _ => None,
         }
@@ -750,7 +792,14 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
-            Dialog::Drives { side, cursor } => self.go_drive(side, cursor),
+            Dialog::Drives {
+                side,
+                cursor,
+                drives,
+            } => match drives.get(cursor) {
+                Some(d) => self.go_drive(side, d.path.clone()),
+                None => Task::none(),
+            },
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -775,7 +824,7 @@ impl App {
                 self.load(side, cwd, focus)
             }
             Err(e) => {
-                t.error = Some(e.to_string());
+                t.error = Some(fl!("mkdir-failed", path = name, err = e.to_string()));
                 Task::none()
             }
         }
@@ -919,10 +968,7 @@ impl App {
         }
     }
 
-    fn go_drive(&mut self, side: usize, i: usize) -> Task<Message> {
-        let Some(path) = self.drives.get(i).map(|d| d.path.clone()) else {
-            return Task::none();
-        };
+    fn go_drive(&mut self, side: usize, path: PathBuf) -> Task<Message> {
         self.active = side;
         self.load(side, path, None)
     }
@@ -1204,6 +1250,204 @@ mod tests {
             cwds(&app, 0),
             [PathBuf::from("/"), tmp.path().canonicalize().unwrap()]
         );
+    }
+
+    #[test]
+    fn argv_file_opens_its_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("f.txt");
+        std::fs::write(&file, "x").unwrap();
+        let app = App::build(
+            Core::default(),
+            Config::default(),
+            State::default(),
+            Some(file),
+            "/".into(),
+        )
+        .0;
+        assert_eq!(cwds(&app, 0), [tmp.path().canonicalize().unwrap()]);
+    }
+
+    #[test]
+    fn regression_last_tab_home_dir_with_tilde_or_gone() {
+        let config = Config {
+            last_tab_close: LastTab::Home,
+            home_dir: Some("~/shagoff-no-such-dir".into()),
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let _ = app.update(Message::Key(Action::CloseTab));
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(std::env::temp_dir())); // `~` = app.home, missing dir → parent
+    }
+
+    #[test]
+    fn regression_drive_list_is_fixed_while_dialog_open() {
+        let mut app = app_with(Config::default(), State::default());
+        let drive = |label: &str, path: &str| Drive {
+            label: label.into(),
+            path: path.into(),
+        };
+        app.drives = vec![drive("/", "/"), drive("usr", "/usr"), drive("etc", "/etc")];
+        let _ = app.update(Message::Key(Action::Drives(0))); // cursor on "/" (cwd is temp_dir)
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Down)); // on "etc"
+        app.drives.remove(1); // a stick was pulled: indices shift under the open dialog
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::Enter));
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(PathBuf::from("/etc")));
+    }
+
+    fn pending_path(app: &App) -> Option<PathBuf> {
+        app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone())
+    }
+
+    #[test]
+    fn regression_backspace_while_loading_goes_up_from_the_target() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.load(0, "/usr/share/doc".into(), None); // slow fs: not listed yet
+        let _ = app.update(Message::Key(Action::Parent));
+        assert_eq!(pending_path(&app), Some(PathBuf::from("/usr/share")));
+        let _ = app.update(Message::Key(Action::Parent));
+        assert_eq!(pending_path(&app), Some(PathBuf::from("/usr")));
+    }
+
+    #[test]
+    fn enter_while_loading_is_ignored() {
+        // The rows on screen belong to the dir being left; entering one would undo the navigation.
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(listed_ok(id, generation, &std::env::temp_dir())); // shows ".."
+        let _ = app.load(0, "/usr".into(), None);
+        let _ = app.update(Message::Key(Action::Enter)); // cursor on ".." of the old dir
+        assert_eq!(pending_path(&app), Some(PathBuf::from("/usr")));
+    }
+
+    #[test]
+    fn listing_error_names_the_dir_and_clears_on_next_key() {
+        let mut app = app_with(Config::default(), State::default());
+        let (id, generation) = {
+            let _ = app.load(0, "/root/secret".into(), None);
+            let t = app.panes[0].active();
+            (t.id, t.pending.as_ref().unwrap().0)
+        };
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: "/root/secret".into(),
+            focus: None,
+            result: Err("Permission denied".into()),
+            space: None,
+        });
+        let err = app.panes[0].active().error.clone().unwrap_or_default();
+        assert!(
+            err.contains("/root/secret") && err.contains("Permission denied"),
+            "{err}"
+        );
+        let _ = app.update(Message::Key(Action::Down));
+        assert!(app.panes[0].active().error.is_none());
+    }
+
+    #[test]
+    fn regression_f3_on_broken_symlink_reports_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("nowhere", tmp.path().join("dangling")).unwrap();
+        let config = Config {
+            viewer: vec!["/nonexistent/viewer".into()], // never launch anything from a test
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let _ = app.load(0, tmp.path().into(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let entries = listing::scan(tmp.path(), false).unwrap();
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: tmp.path().into(),
+            focus: Some("dangling".into()),
+            result: Ok(entries),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::View));
+        let err = app.panes[0].active().error.clone().unwrap_or_default();
+        assert_eq!(err, fl!("broken-link", name = "dangling"));
+    }
+
+    /// Pane 0 listing 20 files, viewport `height` px tall, scrolled to the top.
+    fn tall_list(height: f32) -> App {
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let entries = (0..20).map(|i| entry(&format!("f{i:02}"))).collect();
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: std::env::temp_dir(),
+            focus: None,
+            result: Ok(entries),
+            space: None,
+        });
+        let _ = app.update(Message::Resized(0, height));
+        app
+    }
+
+    #[test]
+    fn regression_click_on_half_visible_row_scrolls_it_in() {
+        let mut app = tall_list(100.0); // rows 0..4 full, row 4 cut at 100 px
+        let _ = app.update(Message::Click(0, 4));
+        let t = app.panes[0].active();
+        assert!(t.offset + t.height >= 5.0 * ROW_H, "offset {}", t.offset);
+    }
+
+    #[test]
+    fn regression_shrinking_window_keeps_cursor_visible() {
+        let mut app = tall_list(400.0);
+        let _ = app.update(Message::Click(0, 10));
+        let _ = app.update(Message::Resized(0, 100.0)); // window got smaller
+        let t = app.panes[0].active();
+        assert!(t.offset + t.height >= 11.0 * ROW_H, "offset {}", t.offset);
+    }
+
+    #[test]
+    fn wheel_scroll_never_snaps_back_even_when_it_reports_a_smaller_height() {
+        let mut app = tall_list(400.0);
+        let _ = app.update(Message::Click(0, 10));
+        let _ = app.update(Message::Scrolled(0, 0.0, 100.0));
+        assert_eq!(app.panes[0].active().offset, 0.0);
+    }
+
+    #[test]
+    fn resize_applies_to_every_tab_of_the_pane() {
+        // One scrollable per pane: hidden tabs must not keep a stale height.
+        let mut app = tall_list(400.0);
+        let _ = app.update(Message::Key(Action::NewTab));
+        let _ = app.update(Message::Resized(0, 150.0));
+        assert!(app.panes[0].items().iter().all(|t| t.height == 150.0));
+    }
+
+    #[test]
+    fn wheel_scroll_does_not_drag_the_view_back_to_the_cursor() {
+        let mut app = tall_list(100.0);
+        let _ = app.update(Message::Scrolled(0, 200.0, 100.0)); // user scrolled away
+        assert_eq!(app.panes[0].active().offset, 200.0);
     }
 
     #[test]
