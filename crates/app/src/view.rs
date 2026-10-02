@@ -64,17 +64,35 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .on_show(move |size| Message::Resized(side, size.height))
         .on_resize(move |size| Message::Resized(side, size.height));
 
-    let status: Element<_> = match &p.error {
-        Some(e) => text(e.clone())
+    let status: Element<_> = match (&app.search, &p.error) {
+        (Some(s), _) if s.side == side => {
+            let label = if s.filter {
+                fl!("filter-label")
+            } else {
+                fl!("search-label")
+            };
+            row![
+                text(label).size(TEXT),
+                widget::text_input("", &s.text)
+                    .id(app.input_id.clone())
+                    .on_input(Message::SearchInput)
+                    .on_submit(|_| Message::SearchSubmit)
+                    .size(TEXT)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into()
+        }
+        (_, Some(e)) => text(e.clone())
             .size(TEXT)
             .class(theme::Text::Custom(|t| cosmic::iced::widget::text::Style {
                 color: Some(t.cosmic().destructive_color().into()),
                 ..Default::default()
             }))
             .into(),
-        None => {
+        (_, None) => {
             let (t, m) = (p.panel.totals(), p.panel.marked_totals());
-            text(fl!(
+            let totals = fl!(
                 "status",
                 sel_bytes = format::size(m.bytes),
                 bytes = format::size(t.bytes),
@@ -82,9 +100,12 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
                 files = t.files.to_string(),
                 sel_dirs = m.dirs.to_string(),
                 dirs = t.dirs.to_string()
-            ))
-            .size(TEXT)
-            .into()
+            );
+            let line = match p.panel.filter() {
+                Some(f) => format!("{}  {totals}", fl!("filter-status", pattern = f)),
+                None => totals,
+            };
+            text(line).size(TEXT).into()
         }
     };
 

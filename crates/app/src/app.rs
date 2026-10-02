@@ -104,6 +104,13 @@ pub struct Running {
     focus: Option<String>,
 }
 
+/// Quick search (Alt+letter) or filter (Ctrl+S) field, shown instead of the pane's status line.
+pub struct Search {
+    pub side: usize,
+    pub text: String,
+    pub filter: bool,
+}
+
 pub struct App {
     core: Core,
     pub panes: [Tabs<Tab>; 2],
@@ -118,7 +125,9 @@ pub struct App {
     dialog: Option<Dialog>,
     job: Option<Running>,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
-    input_id: widget::Id,
+    pub(crate) input_id: widget::Id,
+    /// Quick search / filter field, if open.
+    pub search: Option<Search>,
     pub home: PathBuf,
     pub config: Config,
     config_handler: Option<cosmic_config::Config>,
@@ -160,6 +169,10 @@ pub enum Message {
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
     CancelJob,
+    /// Text typed into the quick search / filter field.
+    SearchInput(String),
+    /// Enter in that field.
+    SearchSubmit,
     /// The watched dir of this pane's active tab changed.
     Changed(usize),
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
@@ -259,6 +272,7 @@ impl App {
             dialog: None,
             job: None,
             input_id: widget::Id::unique(),
+            search: None,
             home,
             config,
             config_handler: None,
@@ -321,6 +335,30 @@ impl App {
                 if self.job.is_some() {
                     return Task::none(); // panels wait for the running operation
                 }
+                if let Some(s) = &self.search {
+                    let (side, filter, text) = (s.side, s.filter, s.text.clone());
+                    match action {
+                        Action::Up | Action::Down if !filter => {
+                            let p = &self.panes[side].active().panel;
+                            let n = p.entries().len();
+                            let down = action == Action::Down;
+                            let from = if down {
+                                p.cursor() + 1
+                            } else {
+                                p.cursor() + n - 1
+                            };
+                            if let Some(i) = p.find(&text, from, down) {
+                                let t = self.panes[side].active_mut();
+                                t.panel.set_cursor(i);
+                                let tab = t.id;
+                                return self.reveal(side, tab);
+                            }
+                            return Task::none();
+                        }
+                        Action::Up | Action::Down => {} // filter: plain cursor move, field stays
+                        _ => self.search = None,        // any other key closes the field and acts
+                    }
+                }
                 return self.act(self.active, action);
             }
             Message::Listed {
@@ -363,6 +401,7 @@ impl App {
                 }
             }
             Message::Click(side, i) => {
+                self.search = None;
                 self.active = side;
                 let t = self.panes[side].active_mut();
                 t.panel.set_cursor(i);
@@ -373,11 +412,13 @@ impl App {
                 return self.reveal(side, tab); // a half-visible row scrolls fully in
             }
             Message::DoubleClick(side, i) => {
+                self.search = None;
                 self.active = side;
                 self.panes[side].active_mut().panel.set_cursor(i);
                 return self.act(side, Action::Enter);
             }
             Message::Header(side, key) => {
+                self.search = None;
                 self.active = side;
                 return self.act(side, Action::Sort(key));
             }
@@ -399,11 +440,13 @@ impl App {
                 }
             }
             Message::SelectTab(side, i) => {
+                self.search = None;
                 self.active = side;
                 self.panes[side].select(i);
                 return self.tab_switched(side);
             }
             Message::CloseTabAt(side, i) => {
+                self.search = None;
                 self.panes[side].close(i);
                 return self.tab_switched(side);
             }
@@ -422,7 +465,17 @@ impl App {
                     let _ = reply.send(ErrorChoice::Cancel);
                 }
                 Some(_) => {}
-                None => self.cancel_job(),
+                None => {
+                    if let Some(s) = self.search.take() {
+                        if s.filter {
+                            self.panes[s.side].active_mut().panel.set_filter(None);
+                        }
+                    } else if self.job.is_some() {
+                        self.cancel_job();
+                    } else {
+                        self.panes[self.active].active_mut().panel.set_filter(None);
+                    }
+                }
             },
             Message::Op(event) => return self.on_job_event(event),
             Message::Resolve(r) => match self.dialog.take() {
@@ -438,6 +491,33 @@ impl App {
                 other => self.dialog = other,
             },
             Message::CancelJob => self.cancel_job(),
+            Message::SearchInput(text) => {
+                let Some(s) = &self.search else {
+                    return Task::none();
+                };
+                let (side, filter) = (s.side, s.filter);
+                let t = self.panes[side].active_mut();
+                if filter {
+                    t.panel.set_filter(Some(text.clone()));
+                } else if !text.is_empty() {
+                    match t.panel.find(&text, 0, true) {
+                        Some(i) => t.panel.set_cursor(i),
+                        None => return Task::none(), // rejected: the field keeps the old text
+                    }
+                }
+                let tab = t.id;
+                if let Some(s) = &mut self.search {
+                    s.text = text;
+                }
+                return self.reveal(side, tab);
+            }
+            Message::SearchSubmit => {
+                if let Some(s) = self.search.take()
+                    && !s.filter
+                {
+                    return self.act(s.side, Action::Enter);
+                }
+            }
             Message::Changed(side) => {
                 let t = self.panes[side].active();
                 // A change in the dir we are leaving must not cancel the scan of the one we enter.
@@ -447,6 +527,7 @@ impl App {
                 }
             }
             Message::Drive(side, path) => {
+                self.search = None;
                 if self.job.is_none() {
                     self.dialog = None;
                     return self.go_drive(side, path);
@@ -566,6 +647,11 @@ impl App {
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
         // An error stays in the status line until the next action in that pane.
         self.panes[side].active_mut().error = None;
+        match action {
+            Action::QuickSearch(c) => return self.quick_search(side, c),
+            Action::QuickFilter => return self.quick_filter(side),
+            _ => {}
+        }
         if let Some(d) = self.dialog_for(side, action) {
             let focus = matches!(d, Dialog::Mask { .. } | Dialog::Input { .. });
             self.dialog = Some(d);
@@ -653,7 +739,7 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
-            Action::QuickSearch(_) | Action::QuickFilter => {}
+            Action::QuickSearch(_) | Action::QuickFilter => {} // handled above
             Action::Copy
             | Action::Move
             | Action::Rename
@@ -960,6 +1046,47 @@ impl App {
             }
             None => Task::none(),
         }
+    }
+
+    /// Alt+letter: append to an open search (or start one) if the text still matches something.
+    fn quick_search(&mut self, side: usize, c: char) -> Task<Message> {
+        let mut text = match &self.search {
+            Some(s) if s.side == side && !s.filter => s.text.clone(),
+            _ => String::new(),
+        };
+        text.push(c);
+        let Some(i) = self.panes[side].active().panel.find(&text, 0, true) else {
+            return Task::none(); // TC: a letter that finds nothing is not taken
+        };
+        self.search = Some(Search {
+            side,
+            text,
+            filter: false,
+        });
+        self.active = side;
+        let t = self.panes[side].active_mut();
+        t.panel.set_cursor(i);
+        let tab = t.id;
+        Task::batch([
+            widget::text_input::focus(self.input_id.clone()),
+            self.reveal(side, tab),
+        ])
+    }
+
+    fn quick_filter(&mut self, side: usize) -> Task<Message> {
+        let text = self.panes[side]
+            .active()
+            .panel
+            .filter()
+            .unwrap_or_default()
+            .to_string();
+        self.search = Some(Search {
+            side,
+            text,
+            filter: true,
+        });
+        self.active = side;
+        widget::text_input::focus(self.input_id.clone())
     }
 
     /// Mounts change rarely and procfs never blocks: re-read with every listing.
@@ -1449,6 +1576,139 @@ mod tests {
         let mut app = tall_list(100.0);
         let _ = app.update(Message::Scrolled(0, 200.0, 100.0)); // user scrolled away
         assert_eq!(app.panes[0].active().offset, 200.0);
+    }
+
+    /// Pane 0 shows `names` (files) in temp_dir.
+    fn files_app(names: &[&str]) -> App {
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let entries = names.iter().map(|n| entry(n)).collect();
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: std::env::temp_dir(),
+            focus: None,
+            result: Ok(entries),
+            space: None,
+        });
+        app
+    }
+
+    fn cursor_name(app: &App) -> String {
+        app.panes[0].active().panel.current().unwrap().name.clone()
+    }
+
+    #[test]
+    fn alt_letter_jumps_to_first_match() {
+        let mut app = files_app(&["alpha", "beta", "bravo"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        assert_eq!(cursor_name(&app), "beta");
+        assert_eq!(app.search.as_ref().map(|s| s.text.as_str()), Some("b"));
+        let _ = app.update(Message::SearchInput("br".into()));
+        assert_eq!(cursor_name(&app), "bravo");
+    }
+
+    #[test]
+    fn alt_letter_without_match_opens_nothing() {
+        let mut app = files_app(&["alpha"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('z')));
+        assert!(app.search.is_none());
+    }
+
+    #[test]
+    fn search_rejects_letter_without_match() {
+        let mut app = files_app(&["alpha", "beta"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('a')));
+        let _ = app.update(Message::SearchInput("az".into()));
+        assert_eq!(app.search.as_ref().unwrap().text, "a");
+        assert_eq!(cursor_name(&app), "alpha");
+    }
+
+    #[test]
+    fn down_in_search_goes_to_next_match() {
+        let mut app = files_app(&["b1", "x", "b2"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        let _ = app.update(Message::Key(Action::Down));
+        assert_eq!(cursor_name(&app), "b2");
+        let _ = app.update(Message::Key(Action::Down)); // wraps
+        assert_eq!(cursor_name(&app), "b1");
+        assert!(app.search.is_some());
+    }
+
+    #[test]
+    fn other_key_closes_search_and_acts() {
+        let mut app = files_app(&["alpha", "beta"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        let _ = app.update(Message::Key(Action::Copy));
+        assert!(app.search.is_none());
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Copy,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn enter_in_search_opens_the_dir() {
+        let mut app = files_app(&[]);
+        let t = app.panes[0].active();
+        let (id, cwd) = (t.id, t.panel.cwd().to_path_buf());
+        let _ = app.load(0, cwd.clone(), None);
+        let generation = app.panes[0].active().pending.as_ref().unwrap().0;
+        let mut sub = entry("sub");
+        sub.kind = shagoff_core::listing::Kind::Dir;
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: cwd.clone(),
+            focus: None,
+            result: Ok(vec![sub]),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::QuickSearch('s')));
+        let _ = app.update(Message::SearchSubmit);
+        assert!(app.search.is_none());
+        let pending = app.panes[0]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(cwd.join("sub")));
+    }
+
+    #[test]
+    fn ctrl_s_filters_enter_keeps_escape_clears() {
+        let mut app = files_app(&["a.rs", "b.md", "c.rs"]);
+        let _ = app.update(Message::Key(Action::QuickFilter));
+        let _ = app.update(Message::SearchInput("*.rs".into()));
+        let shown = |app: &App| app.panes[0].active().panel.entries().len();
+        assert_eq!(shown(&app), 3); // .., a.rs, c.rs
+        let _ = app.update(Message::SearchSubmit);
+        assert!(app.search.is_none());
+        assert_eq!(app.panes[0].active().panel.filter(), Some("*.rs"));
+        let _ = app.update(Message::DialogCancel); // Escape
+        assert_eq!(app.panes[0].active().panel.filter(), None);
+        assert_eq!(shown(&app), 4);
+    }
+
+    #[test]
+    fn escape_closes_search_then_clears_filter() {
+        let mut app = files_app(&["a.rs", "b.md"]);
+        let _ = app.update(Message::Key(Action::QuickFilter));
+        let _ = app.update(Message::SearchInput("a".into()));
+        let _ = app.update(Message::DialogCancel); // in filter field: close + clear
+        assert!(app.search.is_none());
+        assert_eq!(app.panes[0].active().panel.filter(), None);
+
+        let _ = app.update(Message::Key(Action::QuickSearch('a')));
+        let _ = app.update(Message::DialogCancel); // in search field: only close
+        assert!(app.search.is_none());
+        assert_eq!(cursor_name(&app), "a.rs");
     }
 
     #[test]
