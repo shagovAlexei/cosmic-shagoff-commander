@@ -42,7 +42,7 @@ The workspace has two crates.
   - `ops/`: `Operation` enum. It runs async on tokio and reports `Progress`, `Conflict(reply_tx)`, `Done` and `Error` over a channel. `controller.rs` and `recursive.rs` are adapted from cosmic-files and decoupled from its `app::Message`.
 - **`crates/app` (`shagoff-commander`)** is the libcosmic UI.
   - `app.rs`: `App { panes: [Pane; 2], active }`.
-  - `pane.rs`: `Pane { tabs: Vec<Tab> }`, where `Tab` = `core::Panel` + scroll state.
+  - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error.
   - `view/`: drive buttons, tabs, path line, column table, status line, F-key bar.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
   - `dialogs.rs`: modal dialogs.
@@ -54,7 +54,7 @@ Data flow: key or button → keymap → `Action` → `App::update`. From there, 
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Implemented so far: `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`); `crates/app` (`app.rs` two panes + background scan with stale-result check, `keymap.rs`, `view.rs` virtualized list). No tabs, marks, operations or config yet. Modules appear phase by phase, so check the tree before assuming one exists.
+Implemented so far: `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with stale-result check, `keymap.rs`, `view.rs` virtualized list). No marks, operations or config yet. Modules appear phase by phase, so check the tree before assuming one exists.
 
 ## Conventions
 
