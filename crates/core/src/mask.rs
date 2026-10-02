@@ -1,0 +1,106 @@
+//! TC file mask: `*.rs;*.toml|*.bak` — patterns split by `;`, exclusions after `|`, `*` and `?`, case-insensitive.
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mask {
+    include: Vec<String>,
+    exclude: Vec<String>,
+}
+
+impl Mask {
+    pub fn parse(s: &str) -> Self {
+        let (inc, exc) = s.split_once('|').unwrap_or((s, ""));
+        let split = |part: &str| -> Vec<String> {
+            part.split(';')
+                .map(|p| p.trim().to_lowercase())
+                .filter(|p| !p.is_empty())
+                // TC: `*.*` means every file, including names without a dot
+                .map(|p| if p == "*.*" { "*".to_string() } else { p })
+                .collect()
+        };
+        let mut include = split(inc);
+        if include.is_empty() {
+            include.push("*".into());
+        }
+        Self {
+            include,
+            exclude: split(exc),
+        }
+    }
+
+    pub fn matches(&self, name: &str) -> bool {
+        let name = name.to_lowercase();
+        self.include.iter().any(|p| glob(p, &name)) && !self.exclude.iter().any(|p| glob(p, &name))
+    }
+}
+
+/// `*` = any run, `?` = one char. Greedy with backtracking to the last `*`.
+fn glob(pattern: &str, name: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let n: Vec<char> = name.chars().collect();
+    let (mut pi, mut ni) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while ni < n.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni]) {
+            pi += 1;
+            ni += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some((pi, ni));
+            pi += 1;
+        } else if let Some((sp, sn)) = star {
+            pi = sp + 1;
+            ni = sn + 1;
+            star = Some((sp, sn + 1));
+        } else {
+            return false;
+        }
+    }
+    p[pi..].iter().all(|&c| c == '*')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn m(mask: &str, name: &str) -> bool {
+        Mask::parse(mask).matches(name)
+    }
+
+    #[test]
+    fn star_and_question() {
+        assert!(m("*.rs", "main.rs"));
+        assert!(!m("*.rs", "main.rsx"));
+        assert!(m("a?c", "abc"));
+        assert!(!m("a?c", "ac"));
+        assert!(m("*", "anything"));
+        assert!(m("a*b*c", "aXXbYYc"));
+        assert!(!m("a*b*c", "aXXbYY"));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        assert!(m("*.RS", "Main.rs"));
+        assert!(m("readme*", "README.md"));
+    }
+
+    #[test]
+    fn several_patterns_and_exclusions() {
+        assert!(m("*.rs;*.toml", "Cargo.toml"));
+        assert!(!m("*.rs;*.toml", "Cargo.lock"));
+        assert!(m("*|*.bak", "a.txt"));
+        assert!(!m("*|*.bak", "a.bak"));
+        assert!(!m("*.rs|test*", "test_main.rs"));
+    }
+
+    #[test]
+    fn star_dot_star_matches_names_without_dot() {
+        assert!(m("*.*", "Makefile"));
+        assert!(m("*.*", "a.b"));
+    }
+
+    #[test]
+    fn empty_mask_means_all() {
+        assert!(m("", "x"));
+        assert!(m("  ", "x"));
+        assert!(m("|*.bak", "x.txt"));
+    }
+}

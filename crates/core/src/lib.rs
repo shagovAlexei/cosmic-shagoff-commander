@@ -3,6 +3,7 @@
 
 pub mod format;
 pub mod listing;
+pub mod mask;
 pub mod panel;
 pub mod sort;
 pub mod tabs;

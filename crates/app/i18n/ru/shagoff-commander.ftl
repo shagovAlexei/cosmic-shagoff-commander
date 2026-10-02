@@ -13,3 +13,7 @@ fkey-mkdir = F7 Каталог
 fkey-delete = F8 Удалить
 fkey-exit = Alt+F4 Выход
 open-failed = Не удалось открыть: { $err }
+select-group = Выделить группу
+unselect-group = Снять выделение
+ok = OK
+cancel = Отмена

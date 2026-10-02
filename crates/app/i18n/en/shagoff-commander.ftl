@@ -13,3 +13,7 @@ fkey-mkdir = F7 NewFolder
 fkey-delete = F8 Delete
 fkey-exit = Alt+F4 Exit
 open-failed = Cannot open: { $err }
+select-group = Select group
+unselect-group = Unselect group
+ok = OK
+cancel = Cancel

@@ -1,5 +1,8 @@
 use crate::listing::{Entry, Kind};
+use crate::mask::Mask;
 use crate::sort::{Sort, SortKey, sort_entries};
+use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -22,6 +25,8 @@ pub struct Panel {
     cursor: usize,
     sort: Sort,
     show_hidden: bool,
+    /// Marked entries by real name, so marks survive re-sorting and rescans.
+    marked: HashSet<OsString>,
 }
 
 impl Panel {
@@ -32,6 +37,7 @@ impl Panel {
             cursor: 0,
             sort: Sort::default(),
             show_hidden: false,
+            marked: HashSet::new(),
         }
     }
 
@@ -71,6 +77,12 @@ impl Panel {
         };
         let old = if same_dir { self.cursor } else { 0 };
         sort_entries(&mut entries, self.sort);
+        if same_dir {
+            let present: HashSet<&OsString> = entries.iter().map(|e| &e.os_name).collect();
+            self.marked.retain(|k| present.contains(k));
+        } else {
+            self.marked.clear();
+        }
         if cwd.parent().is_some() {
             entries.insert(0, parent_entry());
         }
@@ -112,17 +124,67 @@ impl Panel {
 
     pub fn totals(&self) -> Totals {
         let start = usize::from(self.parent_row());
-        self.entries[start..]
+        sum(self.entries[start..].iter())
+    }
+
+    pub fn is_marked(&self, e: &Entry) -> bool {
+        self.marked.contains(&e.os_name)
+    }
+
+    /// Space: flip the mark of the row under the cursor (never `..`).
+    pub fn toggle_mark(&mut self) {
+        let Some(e) = self.current() else { return };
+        if e.name == PARENT {
+            return;
+        }
+        let key = e.os_name.clone();
+        if !self.marked.remove(&key) {
+            self.marked.insert(key);
+        }
+    }
+
+    /// Insert / Shift+↓ (+1), Shift+↑ (−1).
+    pub fn toggle_mark_and_move(&mut self, delta: isize) {
+        self.toggle_mark();
+        self.move_cursor(delta);
+    }
+
+    /// Num+ / Num−: files only.
+    pub fn mark_by_mask(&mut self, mask: &Mask, on: bool) {
+        for e in self
+            .entries
             .iter()
-            .fold(Totals::default(), |mut t, e| {
-                if e.is_dir() {
-                    t.dirs += 1;
-                } else {
-                    t.files += 1;
-                    t.bytes += e.size;
-                }
-                t
-            })
+            .filter(|e| !e.is_dir() && mask.matches(&e.name))
+        {
+            if on {
+                self.marked.insert(e.os_name.clone());
+            } else {
+                self.marked.remove(&e.os_name);
+            }
+        }
+    }
+
+    /// Num*: files only.
+    pub fn invert(&mut self) {
+        for e in self.entries.iter().filter(|e| !e.is_dir()) {
+            if !self.marked.remove(&e.os_name) {
+                self.marked.insert(e.os_name.clone());
+            }
+        }
+    }
+
+    /// Ctrl+A / Ctrl+Num−: everything except `..`.
+    pub fn mark_all(&mut self, on: bool) {
+        self.marked.clear();
+        if on {
+            let start = usize::from(self.parent_row());
+            self.marked
+                .extend(self.entries[start..].iter().map(|e| e.os_name.clone()));
+        }
+    }
+
+    pub fn marked_totals(&self) -> Totals {
+        sum(self.entries.iter().filter(|e| self.is_marked(e)))
     }
 
     pub fn current(&self) -> Option<&Entry> {
@@ -152,6 +214,18 @@ impl Panel {
     fn parent_row(&self) -> bool {
         self.entries.first().is_some_and(|e| e.name == PARENT)
     }
+}
+
+fn sum<'a>(entries: impl Iterator<Item = &'a Entry>) -> Totals {
+    entries.fold(Totals::default(), |mut t, e| {
+        if e.is_dir() {
+            t.dirs += 1;
+        } else {
+            t.files += 1;
+            t.bytes += e.size;
+        }
+        t
+    })
 }
 
 fn parent_entry() -> Entry {
@@ -353,6 +427,102 @@ mod tests {
             }
         );
         assert_eq!(loaded("/", vec![]).totals(), Totals::default());
+    }
+
+    fn marked_names(p: &Panel) -> Vec<&str> {
+        p.entries()
+            .iter()
+            .filter(|e| p.is_marked(e))
+            .map(|e| e.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn parent_row_is_never_marked() {
+        let mut p = loaded("/x", vec![f("a", 1)]);
+        p.toggle_mark(); // cursor on ".."
+        p.mark_all(true);
+        assert_eq!(marked_names(&p), ["a"]);
+    }
+
+    #[test]
+    fn insert_marks_and_moves_down_shift_up_moves_up() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1), f("c", 1)]);
+        p.set_cursor(1);
+        p.toggle_mark_and_move(1);
+        assert_eq!(p.current().unwrap().name, "b");
+        p.toggle_mark_and_move(1);
+        assert_eq!(marked_names(&p), ["a", "b"]);
+        p.toggle_mark_and_move(-1); // toggles "c", back to "b"
+        assert_eq!(p.current().unwrap().name, "b");
+        assert_eq!(marked_names(&p), ["a", "b", "c"]);
+        p.toggle_mark(); // Space: unmark "b", cursor stays
+        assert_eq!(marked_names(&p), ["a", "c"]);
+        assert_eq!(p.current().unwrap().name, "b");
+    }
+
+    #[test]
+    fn marks_survive_sort() {
+        let mut p = loaded("/x", vec![f("a", 3), f("b", 1)]);
+        p.set_cursor(1);
+        p.toggle_mark();
+        p.set_sort(SortKey::Size);
+        assert_eq!(marked_names(&p), ["a"]);
+    }
+
+    #[test]
+    fn rescan_prunes_vanished_marks() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1)]);
+        p.mark_all(true);
+        p.set_listing(PathBuf::from("/x"), vec![f("b", 1), f("c", 1)], None);
+        assert_eq!(marked_names(&p), ["b"]);
+        // "a" coming back later must not be resurrected as marked
+        p.set_listing(PathBuf::from("/x"), vec![f("a", 1), f("b", 1)], None);
+        assert_eq!(marked_names(&p), ["b"]);
+    }
+
+    #[test]
+    fn new_dir_clears_marks() {
+        let mut p = loaded("/x", vec![f("a", 1)]);
+        p.mark_all(true);
+        p.set_listing(PathBuf::from("/y"), vec![f("a", 1)], None);
+        assert!(marked_names(&p).is_empty());
+    }
+
+    #[test]
+    fn mask_and_invert_touch_files_only() {
+        let mut p = loaded("/x", vec![d("src.rs"), f("a.rs", 1), f("b.txt", 1)]);
+        p.mark_by_mask(&Mask::parse("*.rs"), true);
+        assert_eq!(marked_names(&p), ["a.rs"]);
+        p.invert();
+        assert_eq!(marked_names(&p), ["b.txt"]);
+        p.mark_by_mask(&Mask::parse("*"), false);
+        assert!(marked_names(&p).is_empty());
+    }
+
+    #[test]
+    fn mark_all_includes_dirs() {
+        let mut p = loaded("/x", vec![d("sub"), f("a", 1)]);
+        p.mark_all(true);
+        assert_eq!(marked_names(&p), ["sub", "a"]);
+        p.mark_all(false);
+        assert!(marked_names(&p).is_empty());
+    }
+
+    #[test]
+    fn marked_totals_count_only_marked() {
+        let mut p = loaded("/x", vec![d("sub"), f("a", 1000), f("b", 24)]);
+        p.set_cursor(1);
+        p.toggle_mark_and_move(1); // sub
+        p.toggle_mark(); // a
+        assert_eq!(
+            p.marked_totals(),
+            Totals {
+                bytes: 1000,
+                files: 1,
+                dirs: 1
+            }
+        );
     }
 
     #[test]

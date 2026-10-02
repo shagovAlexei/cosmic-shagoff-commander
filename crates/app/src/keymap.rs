@@ -21,6 +21,15 @@ pub enum Action {
     CloseTab,
     NextTab,
     PrevTab,
+    Mark,
+    MarkDown,
+    MarkUp,
+    SelectGroup,
+    UnselectGroup,
+    Invert,
+    SelectAll,
+    UnselectAll,
+    Cancel,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -46,15 +55,24 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F4, true, false) => Action::Sort(SortKey::Ext),
             (Named::F5, true, false) => Action::Sort(SortKey::Date),
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
+            (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
+            (Named::ArrowUp, false, true) => Action::MarkUp,
+            (Named::Escape, false, false) => Action::Cancel,
             _ => return None,
         });
     }
-    // Letter shortcuts by physical key so they work in any layout.
+    // Letters, Space and numpad by physical key so they work in any layout.
     match (physical, ctrl, shift) {
         (Physical::Code(Code::KeyR), true, false) => Some(Action::Reload),
         (Physical::Code(Code::Backslash), true, false) => Some(Action::Root),
         (Physical::Code(Code::KeyT), true, false) => Some(Action::NewTab),
         (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
+        (Physical::Code(Code::Space), false, false) => Some(Action::Mark),
+        (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
+        (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
+        (Physical::Code(Code::NumpadMultiply), false, false) => Some(Action::Invert),
+        (Physical::Code(Code::NumpadAdd | Code::KeyA), true, false) => Some(Action::SelectAll),
+        (Physical::Code(Code::NumpadSubtract), true, false) => Some(Action::UnselectAll),
         _ => None,
     }
 }
@@ -127,14 +145,47 @@ mod tests {
         const ALT: Modifiers = Modifiers::ALT;
         assert_eq!(named(Named::Tab, SHIFT), None);
         assert_eq!(named(Named::Enter, ALT), None);
-        assert_eq!(named(Named::ArrowDown, SHIFT), None);
+        assert_eq!(named(Named::PageDown, SHIFT), None);
         assert_eq!(named(Named::F3, CTRL.union(ALT)), None);
         assert_eq!(chr("R", Code::KeyR, CTRL.union(SHIFT)), None);
     }
 
     #[test]
+    fn marking_keys() {
+        const SHIFT: Modifiers = Modifiers::SHIFT;
+        assert_eq!(named(Named::Insert, NONE), Some(Action::MarkDown));
+        assert_eq!(chr(" ", Code::Space, NONE), Some(Action::Mark));
+        assert_eq!(named(Named::ArrowDown, SHIFT), Some(Action::MarkDown));
+        assert_eq!(named(Named::ArrowUp, SHIFT), Some(Action::MarkUp));
+        assert_eq!(named(Named::Escape, NONE), Some(Action::Cancel));
+    }
+
+    #[test]
+    fn numpad_marking() {
+        assert_eq!(chr("+", Code::NumpadAdd, NONE), Some(Action::SelectGroup));
+        assert_eq!(
+            chr("-", Code::NumpadSubtract, NONE),
+            Some(Action::UnselectGroup)
+        );
+        assert_eq!(chr("*", Code::NumpadMultiply, NONE), Some(Action::Invert));
+        assert_eq!(chr("+", Code::NumpadAdd, CTRL), Some(Action::SelectAll));
+        assert_eq!(
+            chr("-", Code::NumpadSubtract, CTRL),
+            Some(Action::UnselectAll)
+        );
+        assert_eq!(chr("a", Code::KeyA, CTRL), Some(Action::SelectAll));
+        assert_eq!(chr("ф", Code::KeyA, CTRL), Some(Action::SelectAll)); // Russian layout
+    }
+
+    #[test]
+    fn main_keyboard_plus_is_not_numpad() {
+        assert_eq!(chr("+", Code::Equal, Modifiers::SHIFT), None);
+        assert_eq!(chr("-", Code::Minus, NONE), None);
+    }
+
+    #[test]
     fn unbound_combinations() {
         assert_eq!(named(Named::ArrowUp, CTRL), None);
-        assert_eq!(named(Named::Escape, NONE), None);
+        assert_eq!(named(Named::F12, NONE), None);
     }
 }

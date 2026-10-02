@@ -54,7 +54,7 @@ Data flow: key or button → keymap → `Action` → `App::update`. From there, 
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Implemented so far: `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with stale-result check, `keymap.rs`, `view.rs` virtualized list). No marks, operations or config yet. Modules appear phase by phase, so check the tree before assuming one exists.
+Implemented so far: `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with stale-result check, `keymap.rs`, `view.rs` virtualized list). Marks (Insert/Space/Num±*/Ctrl+A, mask dialog) are in; no file operations or config yet. Modules appear phase by phase, so check the tree before assuming one exists.
 
 ## Conventions
 
