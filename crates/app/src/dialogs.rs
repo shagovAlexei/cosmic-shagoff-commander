@@ -2,12 +2,17 @@
 
 use crate::app::{Message, OpKind, Running};
 use crate::fl;
+use cosmic::iced::Length;
+use cosmic::iced::widget::text::Wrapping;
 use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
 use shagoff_core::format::{self, TimeZone};
+use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputOp {
@@ -55,6 +60,53 @@ pub enum Dialog {
         cursor: usize,
         items: Vec<ListItem>,
     },
+    /// Ctrl+M: files snapshot at open (panel order) and the form. Boxed: the form is large.
+    MultiRename(Box<MultiRename>),
+}
+
+pub struct MultiRename {
+    pub side: usize,
+    pub dir: PathBuf,
+    pub files: Vec<(String, SystemTime)>,
+    /// Names in `dir` that are not being renamed.
+    pub taken: HashSet<String>,
+    /// The entry under the cursor at open, if it is being renamed: the cursor follows it.
+    pub current: Option<String>,
+    /// Masks, find/replace and case; the counter comes from the text fields below.
+    pub rule: Rule,
+    pub start: String,
+    pub step: String,
+    pub digits: String,
+}
+
+impl MultiRename {
+    /// Counter fields that don't parse fall back to the defaults.
+    pub fn rule(&self) -> Rule {
+        let d = Counter::default();
+        Rule {
+            counter: Counter {
+                start: self.start.trim().parse().unwrap_or(d.start),
+                step: self.step.trim().parse().unwrap_or(d.step),
+                digits: self.digits.trim().parse().unwrap_or(d.digits),
+            },
+            ..self.rule.clone()
+        }
+    }
+
+    pub fn rows(&self, tz: &TimeZone) -> Vec<Row> {
+        multirename::preview(&self.rule(), &self.files, &self.taken, tz)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MrField {
+    Name,
+    Ext,
+    Find,
+    Replace,
+    Start,
+    Step,
+    Digits,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +130,14 @@ impl Dialog {
             Dialog::Mask { input, .. } | Dialog::Input { input, .. } => Some(input),
             _ => None,
         }
+    }
+}
+
+fn problem(p: Problem) -> String {
+    match p {
+        Problem::BadName => fl!("mr-bad-name"),
+        Problem::Duplicate => fl!("mr-duplicate"),
+        Problem::Exists => fl!("mr-exists"),
     }
 }
 
@@ -223,6 +283,97 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             widget::dialog()
                 .title(title)
                 .control(list)
+                .secondary_action(cancel)
+                .into()
+        }
+        Dialog::MultiRename(m) => {
+            let edit = |label: String, value: &'a str, f: MrField| {
+                column![
+                    widget::text::caption(label),
+                    widget::text_input("", value)
+                        .on_input(move |s| Message::MrInput(f, s))
+                        .on_submit(|_| Message::DialogSubmit),
+                ]
+                .spacing(2)
+            };
+            let name = column![
+                widget::text::caption(fl!("mr-name")),
+                widget::text_input("", &m.rule.name)
+                    .id(input_id.clone())
+                    .on_input(|s| Message::MrInput(MrField::Name, s))
+                    .on_submit(|_| Message::DialogSubmit),
+            ]
+            .spacing(2);
+            let case = |label: String, c: Case| {
+                let b = if m.rule.case == c {
+                    widget::button::suggested(label)
+                } else {
+                    widget::button::standard(label)
+                };
+                b.on_press(Message::MrCase(c))
+            };
+            let mut table = column![
+                row![
+                    widget::text::heading(fl!("mr-old")).width(Length::FillPortion(1)),
+                    widget::text::heading(fl!("mr-new")).width(Length::FillPortion(1)),
+                ]
+                .spacing(16)
+            ]
+            .spacing(2);
+            let rows = m.rows(tz);
+            for r in &rows {
+                let new = match r.problem {
+                    None => r.new.clone(),
+                    Some(p) => format!("⚠ {}  ({})", r.new, problem(p)),
+                };
+                // Long names have no spaces to break at: wrap by glyph instead of overlapping.
+                table = table.push(
+                    row![
+                        widget::text(r.old.clone())
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .width(Length::FillPortion(1)),
+                        widget::text(new)
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .width(Length::FillPortion(1)),
+                    ]
+                    .spacing(16),
+                );
+            }
+            let ok = rows.iter().all(|r| r.problem.is_none());
+            widget::dialog()
+                .title(fl!("multi-rename"))
+                // Wider than the default 570 px: two columns of file names.
+                .width(Length::Fill)
+                .max_width(1100.0)
+                .control(
+                    column![
+                        row![name, edit(fl!("mr-ext"), &m.rule.ext, MrField::Ext)].spacing(8),
+                        row![
+                            edit(fl!("mr-find"), &m.rule.find, MrField::Find),
+                            edit(fl!("mr-replace"), &m.rule.replace, MrField::Replace),
+                        ]
+                        .spacing(8),
+                        row![
+                            edit(fl!("mr-start"), &m.start, MrField::Start),
+                            edit(fl!("mr-step"), &m.step, MrField::Step),
+                            edit(fl!("mr-digits"), &m.digits, MrField::Digits),
+                        ]
+                        .spacing(8),
+                        row![
+                            case(fl!("mr-case-keep"), Case::Keep),
+                            case(fl!("mr-case-upper"), Case::Upper),
+                            case(fl!("mr-case-lower"), Case::Lower),
+                            case(fl!("mr-case-title"), Case::Title),
+                        ]
+                        .spacing(8),
+                        widget::scrollable(table).height(Length::Fixed(300.0)),
+                    ]
+                    .spacing(12),
+                )
+                .primary_action(
+                    widget::button::suggested(fl!("rename"))
+                        .on_press_maybe(ok.then_some(Message::DialogSubmit)),
+                )
                 .secondary_action(cancel)
                 .into()
         }

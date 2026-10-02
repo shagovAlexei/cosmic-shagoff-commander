@@ -54,7 +54,7 @@ Data flow: key or button → keymap → `Action` → `App::update`. From there, 
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Implemented so far (MVP done): `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `ops`, `drives`, `session`, `launch`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with a generation check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). `config.rs` and `watcher.rs` are in; drive buttons, F3/F4 and Alt+F1/F2 too. Modules appear phase by phase, so check the tree before assuming one exists.
+Implemented so far (MVP done): `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `multirename`, `ops`, `drives`, `session`, `launch`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with a generation check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). `config.rs` and `watcher.rs` are in; drive buttons, F3/F4 and Alt+F1/F2 too. Modules appear phase by phase, so check the tree before assuming one exists.
 
 ## Conventions
 

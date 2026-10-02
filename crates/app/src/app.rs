@@ -1,6 +1,6 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State};
-use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind};
+use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind, MrField};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -17,16 +17,19 @@ use shagoff_core::history::History;
 use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
+use shagoff_core::multirename::{self, Case, Rule};
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
 use shagoff_core::panel::{self, PARENT, Panel};
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::SystemTime;
 
 pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
 /// Fixed row height of the file list; the viewport math depends on it.
@@ -171,6 +174,8 @@ pub enum Message {
     DialogInput(String),
     DialogSubmit,
     DialogCancel,
+    MrInput(MrField, String),
+    MrCase(Case),
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -344,6 +349,10 @@ impl App {
                     if action == Action::Enter && matches!(d, Dialog::ConfirmDelete { .. }) {
                         return self.submit_dialog();
                     }
+                    // Tab is not taken by text fields; walk the multi-rename form with it.
+                    if action == Action::SwitchPane && matches!(d, Dialog::MultiRename(_)) {
+                        return cosmic::iced::widget::operation::focus_next();
+                    }
                     return Task::none();
                 }
                 if self.job.is_some() {
@@ -474,6 +483,24 @@ impl App {
             Message::DialogInput(s) => {
                 if let Some(input) = self.dialog.as_mut().and_then(Dialog::input_mut) {
                     *input = s;
+                }
+            }
+            Message::MrInput(field, s) => {
+                if let Some(Dialog::MultiRename(m)) = &mut self.dialog {
+                    *match field {
+                        MrField::Name => &mut m.rule.name,
+                        MrField::Ext => &mut m.rule.ext,
+                        MrField::Find => &mut m.rule.find,
+                        MrField::Replace => &mut m.rule.replace,
+                        MrField::Start => &mut m.start,
+                        MrField::Step => &mut m.step,
+                        MrField::Digits => &mut m.digits,
+                    } = s;
+                }
+            }
+            Message::MrCase(c) => {
+                if let Some(Dialog::MultiRename(m)) = &mut self.dialog {
+                    m.rule.case = c;
                 }
             }
             Message::DialogSubmit => return self.submit_dialog(),
@@ -694,7 +721,10 @@ impl App {
             _ => {}
         }
         if let Some(d) = self.dialog_for(side, action) {
-            let focus = matches!(d, Dialog::Mask { .. } | Dialog::Input { .. });
+            let focus = matches!(
+                d,
+                Dialog::Mask { .. } | Dialog::Input { .. } | Dialog::MultiRename(_)
+            );
             self.dialog = Some(d);
             return if focus {
                 widget::text_input::focus(self.input_id.clone())
@@ -815,6 +845,7 @@ impl App {
             Action::Copy
             | Action::Move
             | Action::Rename
+            | Action::MultiRename
             | Action::Mkdir
             | Action::Delete
             | Action::DeletePermanent => {}
@@ -943,6 +974,47 @@ impl App {
                     })
                     .collect(),
             }),
+            Action::MultiRename => {
+                let wanted: HashSet<PathBuf> = panel.targets().into_iter().collect();
+                // A non-UTF-8 name can't round-trip through the text masks; leave it out.
+                let files: Vec<(String, SystemTime)> = panel
+                    .entries()
+                    .iter()
+                    .filter(|e| {
+                        e.os_name.to_str().is_some()
+                            && wanted.contains(&panel.cwd().join(&e.os_name))
+                    })
+                    .map(|e| (e.name.clone(), e.mtime))
+                    .collect();
+                if files.is_empty() {
+                    return None;
+                }
+                let dir = panel.cwd().to_path_buf();
+                // Hidden files count too, even when not shown; fall back to the listing.
+                let taken = multirename::other_names(&dir, &files).unwrap_or_else(|_| {
+                    panel
+                        .entries()
+                        .iter()
+                        .filter(|e| e.name != PARENT && !files.iter().any(|(n, _)| *n == e.name))
+                        .map(|e| e.name.clone())
+                        .collect()
+                });
+                let current = panel
+                    .current()
+                    .filter(|e| files.iter().any(|(n, _)| *n == e.name))
+                    .map(|e| e.name.clone());
+                Some(Dialog::MultiRename(Box::new(dialogs::MultiRename {
+                    side,
+                    dir,
+                    files,
+                    taken,
+                    current,
+                    rule: Rule::default(),
+                    start: "1".into(),
+                    step: "1".into(),
+                    digits: "1".into(),
+                })))
+            }
             _ => None,
         }
     }
@@ -980,6 +1052,27 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
+            Dialog::MultiRename(m) => {
+                let rows = m.rows(&self.tz);
+                if rows.iter().any(|r| r.problem.is_some()) {
+                    self.dialog = Some(Dialog::MultiRename(m)); // Enter does nothing until fixed
+                    return Task::none();
+                }
+                let pairs = multirename::plan(&m.dir, &rows);
+                if pairs.is_empty() {
+                    return Task::none();
+                }
+                let focus = m
+                    .current
+                    .as_ref()
+                    .and_then(|c| rows.iter().find(|r| &r.old == c))
+                    .map(|r| r.new.clone());
+                let job = Job::Transfer {
+                    method: Method::Rename,
+                    pairs,
+                };
+                self.start_job(m.side, OpKind::Move, job, focus)
+            }
             d @ Dialog::List { .. } => {
                 let i = match &d {
                     Dialog::List { cursor, .. } => *cursor,
@@ -1401,6 +1494,7 @@ mod tests {
     use cosmic::iced::keyboard::key::{Code, Named, Physical};
     use cosmic::iced::keyboard::{Key, Location};
     use shagoff_core::drives::Drive;
+    use shagoff_core::multirename::Case;
     use shagoff_core::session::PaneState;
 
     fn app_with(config: Config, state: State) -> App {
@@ -2338,5 +2432,95 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(copied.exists(), "pasted into the dir being left");
+    }
+
+    /// tmp/{a.txt, b.txt, c.txt}; pane 0 shows it with a.txt and b.txt marked (cursor on c.txt).
+    fn mr_setup() -> (tempfile::TempDir, App) {
+        let tmp = tempfile::tempdir().unwrap();
+        for n in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(tmp.path().join(n), n).unwrap();
+        }
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        for a in [Action::Down, Action::MarkDown, Action::MarkDown] {
+            let _ = app.update(Message::Key(a));
+        }
+        let _ = app.update(Message::Key(Action::MultiRename));
+        (tmp, app)
+    }
+
+    fn mr(app: &App) -> &dialogs::MultiRename {
+        match &app.dialog {
+            Some(Dialog::MultiRename(m)) => m,
+            other => panic!("no multi-rename dialog: {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn ctrl_m_opens_dialog_with_marked_files() {
+        let (_tmp, app) = mr_setup();
+        let m = mr(&app);
+        let names: Vec<&str> = m.files.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["a.txt", "b.txt"]);
+        assert!(m.taken.contains("c.txt") && !m.taken.contains("a.txt"));
+        assert_eq!(m.current, None); // cursor is on c.txt, which is not renamed
+    }
+
+    #[test]
+    fn mr_input_changes_preview() {
+        let (_tmp, mut app) = mr_setup();
+        let _ = app.update(Message::MrInput(dialogs::MrField::Name, "x[C]".into()));
+        let _ = app.update(Message::MrInput(dialogs::MrField::Digits, "2".into()));
+        let rows = mr(&app).rows(&TimeZone::UTC);
+        let new: Vec<&str> = rows.iter().map(|r| r.new.as_str()).collect();
+        assert_eq!(new, ["x01.txt", "x02.txt"]);
+        let _ = app.update(Message::MrCase(Case::Upper));
+        assert_eq!(mr(&app).rows(&TimeZone::UTC)[0].new, "X01.TXT");
+    }
+
+    #[test]
+    fn mr_submit_with_problem_keeps_dialog() {
+        let (_tmp, mut app) = mr_setup();
+        let _ = app.update(Message::MrInput(dialogs::MrField::Name, "c".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(matches!(app.dialog, Some(Dialog::MultiRename(_))));
+        assert!(app.job.is_none());
+    }
+
+    #[test]
+    fn mr_submit_starts_move() {
+        let (_tmp, mut app) = mr_setup();
+        let _ = app.update(Message::MrInput(dialogs::MrField::Name, "x[C]".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Move));
+    }
+
+    #[test]
+    fn mr_unchanged_names_just_close() {
+        let (_tmp, mut app) = mr_setup();
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.dialog.is_none() && app.job.is_none());
+    }
+
+    #[test]
+    fn mr_nothing_to_rename_opens_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path()); // only ".."
+        let _ = app.update(Message::Key(Action::MultiRename));
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn mr_skips_non_utf8_names() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(std::ffi::OsStr::from_bytes(b"bad\xff")), "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down)); // cursor on the bad name
+        let _ = app.update(Message::Key(Action::MultiRename));
+        assert!(app.dialog.is_none());
     }
 }
