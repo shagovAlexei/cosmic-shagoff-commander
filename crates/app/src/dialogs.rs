@@ -4,7 +4,6 @@ use crate::app::{Message, OpKind, Running};
 use crate::fl;
 use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
-use shagoff_core::drives::Drive;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
 use std::path::PathBuf;
@@ -49,12 +48,28 @@ pub enum Dialog {
         error: String,
         reply: mpsc::Sender<ErrorChoice>,
     },
-    /// Alt+F1 / Alt+F2, over a copy of the drive list taken when it opened.
-    Drives {
+    /// Alt+F1/F2, Alt+↓, Ctrl+D: a snapshot taken when the list opened.
+    List {
+        kind: ListKind,
         side: usize,
         cursor: usize,
-        drives: Vec<Drive>,
+        items: Vec<ListItem>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(dead_code, reason = "History/Hotlist arrive in the next commits")]
+pub enum ListKind {
+    Drives,
+    History,
+    Hotlist,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListItem {
+    pub label: String,
+    /// Empty for the hotlist's "add current dir" row.
+    pub path: PathBuf,
 }
 
 impl Dialog {
@@ -178,26 +193,36 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 )
                 .into()
         }
-        Dialog::Drives {
-            side,
+        Dialog::List {
+            kind,
             cursor,
-            drives,
+            items,
+            ..
         } => {
             let mut list = column![].spacing(2);
-            for (i, d) in drives.iter().enumerate() {
-                let label = format!("{}   {}", d.label, d.path.display());
+            for (i, item) in items.iter().enumerate() {
+                let label = if item.path.as_os_str().is_empty() {
+                    item.label.clone()
+                } else {
+                    format!("{}   {}", item.label, item.path.display())
+                };
                 let b = if i == *cursor {
                     widget::button::suggested(label)
                 } else {
                     widget::button::text(label)
                 };
                 list = list.push(
-                    b.on_press(Message::Drive(*side, d.path.clone()))
+                    b.on_press(Message::ListPick(i))
                         .width(cosmic::iced::Length::Fill),
                 );
             }
+            let title = match kind {
+                ListKind::Drives => fl!("drives"),
+                ListKind::History => fl!("history"),
+                ListKind::Hotlist => fl!("hotlist"),
+            };
             widget::dialog()
-                .title(fl!("drives"))
+                .title(title)
                 .control(list)
                 .secondary_action(cancel)
                 .into()

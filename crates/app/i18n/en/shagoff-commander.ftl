@@ -57,3 +57,5 @@ mkdir-failed = Cannot create { $path }: { $err }
 search-label = Search:
 filter-label = Filter:
 filter-status = Filter: { $pattern } ·
+history = History
+hotlist = Hotlist

@@ -1,5 +1,5 @@
 use crate::config::{self, Config, LastTab, State};
-use crate::dialogs::{self, Dialog, InputOp};
+use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -171,6 +171,8 @@ pub enum Message {
     CancelJob,
     /// A panel key a focused text field captured (F-keys, PgUp/PgDn, Insert, Ctrl+…).
     FieldKey(Action),
+    /// Click on entry i of the open list dialog.
+    ListPick(usize),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
     /// Enter in that field.
@@ -309,19 +311,13 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
-                if let Some(Dialog::Drives {
-                    side,
-                    cursor,
-                    drives,
-                }) = &mut self.dialog
-                {
+                if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
                     match action {
                         Action::Up => *cursor = cursor.saturating_sub(1),
-                        Action::Down => *cursor = (*cursor + 1).min(drives.len().saturating_sub(1)),
+                        Action::Down => *cursor = (*cursor + 1).min(items.len().saturating_sub(1)),
                         Action::Enter => {
-                            let (side, path) = (*side, drives.get(*cursor).map(|d| d.path.clone()));
-                            self.dialog = None;
-                            return path.map_or_else(Task::none, |p| self.go_drive(side, p));
+                            let i = *cursor;
+                            return self.pick(i);
                         }
                         _ => {}
                     }
@@ -514,6 +510,7 @@ impl App {
                 return self.reveal(side, tab);
             }
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
+            Message::ListPick(i) => return self.pick(i),
             Message::FieldKey(action) => {
                 if self.search.is_some() && self.dialog.is_none() {
                     return self.handle(Message::Key(action));
@@ -538,7 +535,7 @@ impl App {
                 self.search = None;
                 if self.job.is_none() {
                     self.dialog = None;
-                    return self.go_drive(side, path);
+                    return self.go_to(side, path);
                 }
             }
             Message::Config(c) => {
@@ -849,11 +846,19 @@ impl App {
                 })
             }
             // A copy: mounts are re-read on every listing and must not shift under the cursor.
-            Action::Drives(s) => Some(Dialog::Drives {
+            Action::Drives(s) => Some(Dialog::List {
+                kind: ListKind::Drives,
                 side: s,
                 cursor: drives::containing(&self.drives, self.panes[s].active().panel.cwd())
                     .unwrap_or(0),
-                drives: self.drives.clone(),
+                items: self
+                    .drives
+                    .iter()
+                    .map(|d| ListItem {
+                        label: d.label.clone(),
+                        path: d.path.clone(),
+                    })
+                    .collect(),
             }),
             _ => None,
         }
@@ -892,14 +897,14 @@ impl App {
                 permanent,
                 paths,
             } => self.start_delete(side, permanent, paths),
-            Dialog::Drives {
-                side,
-                cursor,
-                drives,
-            } => match drives.get(cursor) {
-                Some(d) => self.go_drive(side, d.path.clone()),
-                None => Task::none(),
-            },
+            d @ Dialog::List { .. } => {
+                let i = match &d {
+                    Dialog::List { cursor, .. } => *cursor,
+                    _ => 0,
+                };
+                self.dialog = Some(d);
+                self.pick(i)
+            }
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -1109,7 +1114,18 @@ impl App {
         }
     }
 
-    fn go_drive(&mut self, side: usize, path: PathBuf) -> Task<Message> {
+    /// Enter / click on entry `i` of the open list.
+    fn pick(&mut self, i: usize) -> Task<Message> {
+        let Some(Dialog::List { side, items, .. }) = self.dialog.take() else {
+            return Task::none();
+        };
+        match items.get(i) {
+            Some(item) => self.go_to(side, item.path.clone()),
+            None => Task::none(),
+        }
+    }
+
+    fn go_to(&mut self, side: usize, path: PathBuf) -> Task<Message> {
         self.active = side;
         self.load(side, path, None)
     }
@@ -1243,6 +1259,7 @@ fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::config::{Config, LastTab, State};
+    use crate::dialogs::ListKind;
     use cosmic::iced::keyboard::key::{Code, Named, Physical};
     use cosmic::iced::keyboard::{Key, Location};
     use shagoff_core::drives::Drive;
@@ -1283,13 +1300,20 @@ mod tests {
             },
         ];
         let _ = app.update(Message::Key(Action::Drives(1)));
-        assert!(matches!(app.dialog, Some(Dialog::Drives { side: 1, .. })));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::List {
+                kind: ListKind::Drives,
+                side: 1,
+                ..
+            })
+        ));
         let _ = app.update(Message::Key(Action::Up));
         let _ = app.update(Message::Key(Action::Up)); // clamped at 0
-        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 0, .. })));
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 0, .. })));
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::Down)); // clamped at 1
-        assert!(matches!(app.dialog, Some(Dialog::Drives { cursor: 1, .. })));
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 1, .. })));
         app.panes[1].active_mut().pending = None;
         let _ = app.update(Message::Key(Action::Enter));
         assert!(app.dialog.is_none());
@@ -1777,6 +1801,31 @@ mod tests {
         let _ = app.update(Message::DialogCancel); // in search field: only close
         assert!(app.search.is_none());
         assert_eq!(cursor_name(&app), "a.rs");
+    }
+
+    #[test]
+    fn clicking_a_list_entry_opens_it() {
+        let mut app = app_with(Config::default(), State::default());
+        app.drives = vec![
+            Drive {
+                label: "/".into(),
+                path: "/".into(),
+            },
+            Drive {
+                label: "etc".into(),
+                path: "/etc".into(),
+            },
+        ];
+        let _ = app.update(Message::Key(Action::Drives(1)));
+        app.panes[1].active_mut().pending = None;
+        let _ = app.update(Message::ListPick(1));
+        assert!(app.dialog.is_none());
+        let pending = app.panes[1]
+            .active()
+            .pending
+            .as_ref()
+            .map(|(_, p)| p.clone());
+        assert_eq!(pending, Some(PathBuf::from("/etc")));
     }
 
     #[test]

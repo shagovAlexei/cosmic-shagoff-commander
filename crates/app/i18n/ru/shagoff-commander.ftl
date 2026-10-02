@@ -58,3 +58,5 @@ mkdir-failed = Не удалось создать { $path }: { $err }
 search-label = Поиск:
 filter-label = Фильтр:
 filter-status = Фильтр: { $pattern } ·
+history = История
+hotlist = Избранное
