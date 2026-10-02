@@ -1,5 +1,6 @@
 use crate::listing::{Entry, Kind};
 use crate::mask::Mask;
+use crate::quicksearch;
 use crate::sort::{Sort, SortKey, sort_entries};
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -27,6 +28,10 @@ pub struct Panel {
     show_hidden: bool,
     /// Marked entries by real name, so marks survive re-sorting and rescans.
     marked: HashSet<OsString>,
+    /// Full sorted listing without `..`; `entries` is `..` + the part of it the filter lets through.
+    all: Vec<Entry>,
+    /// Quick filter (Ctrl+S); `None` = show everything.
+    filter: Option<String>,
 }
 
 impl Panel {
@@ -38,6 +43,8 @@ impl Panel {
             sort: Sort::default(),
             show_hidden: false,
             marked: HashSet::new(),
+            all: Vec::new(),
+            filter: None,
         }
     }
 
@@ -78,16 +85,32 @@ impl Panel {
         };
         let old = if same_dir { self.cursor } else { 0 };
         sort_entries(&mut entries, self.sort);
-        if same_dir {
-            let present: HashSet<&OsString> = entries.iter().map(|e| &e.os_name).collect();
-            self.marked.retain(|k| present.contains(k));
-        } else {
+        if !same_dir {
             self.marked.clear();
-        }
-        if cwd.parent().is_some() {
-            entries.insert(0, parent_entry());
+            self.filter = None;
         }
         self.cwd = cwd;
+        self.all = entries;
+        self.rebuild(keep, old);
+    }
+
+    /// Recompute the visible rows from `all` and the filter; drop marks that are no longer visible;
+    /// put the cursor on `keep` if visible, else on `old`, clamped.
+    fn rebuild(&mut self, keep: Option<String>, old: usize) {
+        let mut entries: Vec<Entry> = match &self.filter {
+            Some(f) => self
+                .all
+                .iter()
+                .filter(|e| quicksearch::matches(f, &e.name))
+                .cloned()
+                .collect(),
+            None => self.all.clone(),
+        };
+        if self.cwd.parent().is_some() {
+            entries.insert(0, parent_entry());
+        }
+        let visible: HashSet<&OsString> = entries.iter().map(|e| &e.os_name).collect();
+        self.marked.retain(|k| visible.contains(k));
         self.entries = entries;
         self.cursor = keep.and_then(|n| self.index_of(&n)).unwrap_or(old);
         self.move_cursor(0); // clamp
@@ -111,11 +134,9 @@ impl Panel {
         let asc = self.sort.key != key || !self.sort.asc;
         self.sort = Sort { key, asc };
         let name = self.current().map(|e| e.name.clone());
-        let start = usize::from(self.parent_row());
-        sort_entries(&mut self.entries[start..], self.sort);
-        if let Some(i) = name.and_then(|n| self.index_of(&n)) {
-            self.cursor = i;
-        }
+        sort_entries(&mut self.all, self.sort);
+        let old = self.cursor;
+        self.rebuild(name, old);
     }
 
     pub fn set_cursor(&mut self, i: usize) {
@@ -230,6 +251,33 @@ impl Panel {
         e.is_dir().then(|| (self.cwd.join(&e.os_name), None))
     }
 
+    /// First row matching `pattern` at `from` (taken modulo the row count), then walking forward
+    /// or backward with wrap-around; `None` if nothing matches.
+    pub fn find(&self, pattern: &str, from: usize, forward: bool) -> Option<usize> {
+        let n = self.entries.len();
+        (0..n)
+            .map(|k| {
+                if forward {
+                    (from + k) % n
+                } else {
+                    (from % n + n - k) % n
+                }
+            })
+            .find(|&i| quicksearch::matches(pattern, &self.entries[i].name))
+    }
+
+    pub fn filter(&self) -> Option<&str> {
+        self.filter.as_deref()
+    }
+
+    /// Show only `..` and rows matching `pattern` (`None` or empty = all). The cursor stays on the
+    /// same name if still visible; marks on hidden rows are dropped so operations never touch them.
+    pub fn set_filter(&mut self, pattern: Option<String>) {
+        self.filter = pattern.filter(|p| !p.is_empty());
+        let keep = self.current().map(|e| e.name.clone());
+        self.rebuild(keep, 0);
+    }
+
     fn index_of(&self, name: &str) -> Option<usize> {
         self.entries.iter().position(|e| e.name == name)
     }
@@ -301,6 +349,96 @@ mod tests {
         let mut p = Panel::new(PathBuf::from(cwd));
         p.set_listing(PathBuf::from(cwd), entries, None);
         p
+    }
+
+    fn three() -> Panel {
+        loaded(
+            "/x",
+            vec![d("docs"), f("data.txt", 1), f("readme", 2), f("dump", 3)],
+        )
+        // sorted: .., docs, data.txt, dump, readme
+    }
+
+    #[test]
+    fn find_first_from_top_skips_parent() {
+        let p = three();
+        assert_eq!(names(&p), ["..", "docs", "data.txt", "dump", "readme"]);
+        assert_eq!(p.find("d", 0, true), Some(1)); // docs
+        assert_eq!(p.find("zzz", 0, true), None);
+    }
+
+    #[test]
+    fn find_next_and_prev_wrap() {
+        let p = three();
+        assert_eq!(p.find("d", 2, true), Some(2)); // from is inclusive
+        assert_eq!(p.find("d", 4, true), Some(1)); // wraps past readme to docs
+        assert_eq!(p.find("d", 0, false), Some(3)); // backward from .. wraps to dump
+        assert_eq!(p.find("d", 7, true), Some(2)); // from modulo len (7 % 5 = 2)
+    }
+
+    #[test]
+    fn filter_shows_parent_and_matches_only() {
+        let mut p = three();
+        p.set_filter(Some("d".into()));
+        assert_eq!(names(&p), ["..", "docs", "data.txt", "dump"]);
+        assert_eq!(p.filter(), Some("d"));
+        p.set_filter(None);
+        assert_eq!(names(&p), ["..", "docs", "data.txt", "dump", "readme"]);
+        assert_eq!(p.filter(), None);
+    }
+
+    #[test]
+    fn filter_keeps_cursor_on_same_name_or_clamps() {
+        let mut p = three();
+        p.set_cursor(3); // dump
+        p.set_filter(Some("du".into()));
+        assert_eq!(p.current().unwrap().name, "dump");
+        p.set_cursor(1);
+        p.set_filter(Some("zzz".into()));
+        assert_eq!(names(&p), [".."]);
+        assert_eq!(p.cursor(), 0);
+    }
+
+    #[test]
+    fn filter_drops_marks_of_hidden_entries() {
+        let mut p = three();
+        p.mark_all(true);
+        p.set_filter(Some("da".into()));
+        p.set_filter(None);
+        let marked: Vec<_> = p
+            .entries()
+            .iter()
+            .filter(|e| p.is_marked(e))
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(marked, ["data.txt"]);
+    }
+
+    #[test]
+    fn filter_survives_rescan_and_drops_on_new_dir() {
+        let mut p = three();
+        p.set_filter(Some("d".into()));
+        p.set_listing(
+            "/x".into(),
+            vec![d("docs"), f("dart", 1), f("zeta", 1)],
+            None,
+        );
+        assert_eq!(names(&p), ["..", "docs", "dart"]);
+        assert_eq!(p.filter(), Some("d"));
+        p.set_listing("/y".into(), vec![f("a", 1), f("b", 1)], None);
+        assert_eq!(names(&p), ["..", "a", "b"]);
+        assert_eq!(p.filter(), None);
+    }
+
+    #[test]
+    fn sort_with_filter_keeps_both_lists_sorted() {
+        let mut p = three();
+        p.set_filter(Some("d".into()));
+        p.set_sort(SortKey::Size);
+        p.set_sort(SortKey::Size); // descending
+        assert_eq!(names(&p), ["..", "docs", "dump", "data.txt"]);
+        p.set_filter(None);
+        assert_eq!(names(&p), ["..", "docs", "dump", "readme", "data.txt"]);
     }
 
     #[test]
