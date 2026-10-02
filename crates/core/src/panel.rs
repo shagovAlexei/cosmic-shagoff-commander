@@ -135,6 +135,7 @@ fn parent_entry() -> Entry {
         mtime: UNIX_EPOCH,
         kind: Kind::Dir,
         is_link: false,
+        mode: 0,
     }
 }
 
@@ -152,6 +153,7 @@ mod tests {
             mtime: UNIX_EPOCH,
             kind: Kind::File,
             is_link: false,
+            mode: 0,
         }
     }
     fn d(name: &str) -> Entry {

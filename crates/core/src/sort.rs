@@ -104,6 +104,7 @@ mod tests {
             mtime: UNIX_EPOCH + Duration::from_secs(secs),
             kind,
             is_link: false,
+            mode: 0,
         }
     }
 
