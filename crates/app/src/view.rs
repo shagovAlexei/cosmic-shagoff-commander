@@ -196,15 +196,14 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
 }
 
 pub fn fkey_bar() -> Element<'static, Message> {
-    let disabled = |label: String| button::standard(label).width(Length::Fill);
     let key = |label: String, action| {
         button::standard(label)
             .on_press(Message::Key(action))
             .width(Length::Fill)
     };
     row![
-        disabled(fl!("fkey-view")),
-        disabled(fl!("fkey-edit")),
+        key(fl!("fkey-view"), Action::View),
+        key(fl!("fkey-edit"), Action::Edit),
         key(fl!("fkey-copy"), Action::Copy),
         key(fl!("fkey-move"), Action::Move),
         key(fl!("fkey-mkdir"), Action::Mkdir),

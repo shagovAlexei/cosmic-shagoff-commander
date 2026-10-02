@@ -10,6 +10,7 @@ use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
 use shagoff_core::format::TimeZone;
+use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
@@ -18,6 +19,7 @@ use shagoff_core::session::{self, PaneState};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -499,7 +501,7 @@ impl App {
                 }
                 let file = panel.current().map(|e| panel.cwd().join(&e.os_name));
                 if let Some(file) = file
-                    && let Err(err) = open_detached(&file)
+                    && let Err(err) = spawn_detached(&launch::command(&[], &["xdg-open"], &file))
                 {
                     t.error = Some(fl!("open-failed", err = err.to_string()));
                 }
@@ -528,7 +530,23 @@ impl App {
                 }
                 return self.apply_hidden();
             }
-            Action::View | Action::Edit | Action::Drives(_) => {}
+            Action::View | Action::Edit => {
+                let file = panel
+                    .current()
+                    .filter(|e| !e.is_dir() && e.name != PARENT)
+                    .map(|e| panel.cwd().join(&e.os_name));
+                if let Some(file) = file {
+                    let argv = if action == Action::View {
+                        launch::command(&self.config.viewer, &["xdg-open"], &file)
+                    } else {
+                        launch::command(&self.config.editor, &["cosmic-edit"], &file)
+                    };
+                    if let Err(err) = spawn_detached(&argv) {
+                        t.error = Some(fl!("open-failed", err = err.to_string()));
+                    }
+                }
+            }
+            Action::Drives(_) => {}
             Action::Copy
             | Action::Move
             | Action::Rename
@@ -882,9 +900,10 @@ fn dir_input(dir: &Path) -> String {
     if s.ends_with('/') { s } else { s + "/" }
 }
 
-/// `xdg-open` without blocking the UI or leaving a zombie.
-fn open_detached(path: &std::path::Path) -> std::io::Result<()> {
-    let mut child = std::process::Command::new("xdg-open").arg(path).spawn()?;
+/// Run `argv` without blocking the UI or leaving a zombie.
+fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
+    let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
+    let mut child = std::process::Command::new(prog).args(args).spawn()?;
     std::thread::spawn(move || child.wait());
     Ok(())
 }
@@ -907,6 +926,15 @@ mod tests {
             .iter()
             .map(|t| t.panel.cwd().to_path_buf())
             .collect()
+    }
+
+    #[test]
+    fn spawn_detached_reports_missing_program() {
+        let argv = [
+            std::ffi::OsString::from("/nonexistent/shagoff-test-prog"),
+            "x".into(),
+        ];
+        assert!(spawn_detached(&argv).is_err());
     }
 
     fn entry(name: &str) -> Entry {
