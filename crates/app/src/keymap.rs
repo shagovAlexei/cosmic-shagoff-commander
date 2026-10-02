@@ -29,19 +29,31 @@ pub enum Action {
     Invert,
     SelectAll,
     UnselectAll,
-    Cancel,
     Copy,
     Move,
     Rename,
     Mkdir,
     Delete,
     DeletePermanent,
+    View,
+    Edit,
+    ToggleHidden,
+    /// Alt+F1 / Alt+F2: drive list for pane 0 / 1.
+    Drives(usize),
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
     use cosmic::iced::keyboard::key::{Code, Named};
-    if mods.alt() || mods.logo() {
+    if mods.logo() {
         return None;
+    }
+    if mods.alt() {
+        // Alt+F1/F2 only; other Alt combos belong to the compositor and future menus.
+        return match key {
+            Key::Named(Named::F1) if mods == Modifiers::ALT => Some(Action::Drives(0)),
+            Key::Named(Named::F2) if mods == Modifiers::ALT => Some(Action::Drives(1)),
+            _ => None,
+        };
     }
     let (ctrl, shift) = (mods.control(), mods.shift());
     if let Key::Named(n) = key {
@@ -63,7 +75,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
             (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
             (Named::ArrowUp, false, true) => Action::MarkUp,
-            (Named::Escape, false, false) => Action::Cancel,
+            (Named::F3, false, false) => Action::View,
+            (Named::F4, false, false) => Action::Edit,
             (Named::F5, false, false) => Action::Copy,
             (Named::F6, false, false) => Action::Move,
             (Named::F6, false, true) | (Named::F2, false, false) => Action::Rename,
@@ -79,6 +92,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::Backslash), true, false) => Some(Action::Root),
         (Physical::Code(Code::KeyT), true, false) => Some(Action::NewTab),
         (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
+        (Physical::Code(Code::KeyH), true, false) => Some(Action::ToggleHidden),
         (Physical::Code(Code::Space), false, false) => Some(Action::Mark),
         (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
         (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
@@ -128,7 +142,6 @@ mod tests {
         assert_eq!(named(Named::F4, CTRL), Some(Action::Sort(SortKey::Ext)));
         assert_eq!(named(Named::F5, CTRL), Some(Action::Sort(SortKey::Date)));
         assert_eq!(named(Named::F6, CTRL), Some(Action::Sort(SortKey::Size)));
-        assert_eq!(named(Named::F3, NONE), None); // F3 = view, phase 6
     }
 
     #[test]
@@ -169,7 +182,6 @@ mod tests {
         assert_eq!(chr(" ", Code::Space, NONE), Some(Action::Mark));
         assert_eq!(named(Named::ArrowDown, SHIFT), Some(Action::MarkDown));
         assert_eq!(named(Named::ArrowUp, SHIFT), Some(Action::MarkUp));
-        assert_eq!(named(Named::Escape, NONE), Some(Action::Cancel));
     }
 
     #[test]
@@ -213,5 +225,33 @@ mod tests {
     fn unbound_combinations() {
         assert_eq!(named(Named::ArrowUp, CTRL), None);
         assert_eq!(named(Named::F12, NONE), None);
+    }
+
+    const ALT: Modifiers = Modifiers::ALT;
+
+    #[test]
+    fn view_edit_hidden() {
+        assert_eq!(named(Named::F3, NONE), Some(Action::View));
+        assert_eq!(named(Named::F4, NONE), Some(Action::Edit));
+        assert_eq!(chr("h", Code::KeyH, CTRL), Some(Action::ToggleHidden));
+        assert_eq!(chr("р", Code::KeyH, CTRL), Some(Action::ToggleHidden));
+        assert_eq!(chr("h", Code::KeyH, NONE), None);
+    }
+
+    #[test]
+    fn alt_only_f1_f2() {
+        assert_eq!(named(Named::F1, ALT), Some(Action::Drives(0)));
+        assert_eq!(named(Named::F2, ALT), Some(Action::Drives(1)));
+        assert_eq!(named(Named::F1, ALT | Modifiers::SHIFT), None);
+        assert_eq!(named(Named::Enter, ALT), None);
+        assert_eq!(named(Named::F4, ALT), None); // Alt+F4 stays with the compositor
+        assert_eq!(chr("a", Code::KeyA, ALT), None);
+        assert_eq!(named(Named::F1, Modifiers::LOGO), None);
+    }
+
+    #[test]
+    fn escape_is_not_a_panel_key() {
+        // Escape is routed to DialogCancel by app::route_event before the keymap.
+        assert_eq!(named(Named::Escape, NONE), None);
     }
 }

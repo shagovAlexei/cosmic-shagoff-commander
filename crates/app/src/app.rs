@@ -386,7 +386,7 @@ impl App {
             Action::Invert => panel.invert(),
             Action::SelectAll => panel.mark_all(true),
             Action::UnselectAll => panel.mark_all(false),
-            Action::Cancel => {}
+            Action::View | Action::Edit | Action::ToggleHidden | Action::Drives(_) => {}
             Action::Copy
             | Action::Move
             | Action::Rename
