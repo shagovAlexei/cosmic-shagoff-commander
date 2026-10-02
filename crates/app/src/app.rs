@@ -148,6 +148,8 @@ pub enum Message {
     Header(usize, SortKey),
     /// side, scroll offset y, viewport height (of the active tab)
     Scrolled(usize, f32, f32),
+    /// side, real viewport height of the pane's list (from a sensor: on_scroll misses resizes)
+    Resized(usize, f32),
     SelectTab(usize, usize),
     CloseTabAt(usize, usize),
     Modifiers(Modifiers),
@@ -380,14 +382,20 @@ impl App {
                 return self.act(side, Action::Sort(key));
             }
             Message::Scrolled(side, offset, height) => {
+                // Wheel / scrollbar: the view moves freely, the cursor stays where it is.
                 let t = self.panes[side].active_mut();
-                // Only a shrinking viewport pulls the cursor back in; a wheel scroll stays free.
-                let shrunk = height < t.height;
                 t.offset = offset;
                 t.height = height;
+            }
+            Message::Resized(side, height) => {
+                // One list widget per pane: every tab shares its viewport height.
+                let shrunk = height < self.panes[side].active().height;
+                for t in self.panes[side].items_mut() {
+                    t.height = height;
+                }
                 if shrunk {
-                    let tab = t.id;
-                    return self.reveal(side, tab);
+                    let tab = self.panes[side].active().id;
+                    return self.reveal(side, tab); // keep the cursor on screen
                 }
             }
             Message::SelectTab(side, i) => {
@@ -1397,7 +1405,7 @@ mod tests {
             result: Ok(entries),
             space: None,
         });
-        let _ = app.update(Message::Scrolled(0, 0.0, height));
+        let _ = app.update(Message::Resized(0, height));
         app
     }
 
@@ -1413,9 +1421,26 @@ mod tests {
     fn regression_shrinking_window_keeps_cursor_visible() {
         let mut app = tall_list(400.0);
         let _ = app.update(Message::Click(0, 10));
-        let _ = app.update(Message::Scrolled(0, 0.0, 100.0)); // window got smaller
+        let _ = app.update(Message::Resized(0, 100.0)); // window got smaller
         let t = app.panes[0].active();
         assert!(t.offset + t.height >= 11.0 * ROW_H, "offset {}", t.offset);
+    }
+
+    #[test]
+    fn wheel_scroll_never_snaps_back_even_when_it_reports_a_smaller_height() {
+        let mut app = tall_list(400.0);
+        let _ = app.update(Message::Click(0, 10));
+        let _ = app.update(Message::Scrolled(0, 0.0, 100.0));
+        assert_eq!(app.panes[0].active().offset, 0.0);
+    }
+
+    #[test]
+    fn resize_applies_to_every_tab_of_the_pane() {
+        // One scrollable per pane: hidden tabs must not keep a stale height.
+        let mut app = tall_list(400.0);
+        let _ = app.update(Message::Key(Action::NewTab));
+        let _ = app.update(Message::Resized(0, 150.0));
+        assert!(app.panes[0].items().iter().all(|t| t.height == 150.0));
     }
 
     #[test]

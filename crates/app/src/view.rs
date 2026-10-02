@@ -59,6 +59,10 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .id(app.scroll_ids[side].clone())
         .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
         .height(Length::Fill);
+    // on_scroll misses window resizes: the sensor reports the list's real height.
+    let list = cosmic::iced::widget::sensor(list)
+        .on_show(move |size| Message::Resized(side, size.height))
+        .on_resize(move |size| Message::Resized(side, size.height));
 
     let status: Element<_> = match &p.error {
         Some(e) => text(e.clone())
