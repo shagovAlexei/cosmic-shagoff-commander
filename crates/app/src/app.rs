@@ -1,3 +1,4 @@
+use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State};
 use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind};
 use crate::fl;
@@ -9,6 +10,7 @@ use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
+use shagoff_core::clipboard::Kind as ClipKind;
 use shagoff_core::drives::{self, Drive};
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::history::History;
@@ -179,6 +181,8 @@ pub enum Message {
     ListPick(usize),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
+    /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
+    Pasted(Option<(ClipKind, Vec<PathBuf>)>),
     /// Enter in that field.
     SearchSubmit,
     /// The watched dir of this pane's active tab changed.
@@ -494,6 +498,21 @@ impl App {
                 }
             },
             Message::Op(event) => return self.on_job_event(event),
+            Message::Pasted(Some((kind, paths)))
+                if !paths.is_empty() && self.job.is_none() && self.dialog.is_none() =>
+            {
+                let op = match kind {
+                    ClipKind::Copy => InputOp::Copy,
+                    ClipKind::Cut => InputOp::Move,
+                };
+                // "": `cwd.join("")` ends with `/`, so `plan` always puts the files inside cwd.
+                let task = self.start_transfer(op, self.active, paths, "");
+                if kind == ClipKind::Cut && self.job.is_some() {
+                    return Task::batch([clip::clear(), task]);
+                }
+                return task;
+            }
+            Message::Pasted(_) => {}
             Message::Resolve(r) => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(r);
@@ -781,6 +800,18 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::HistoryList | Action::Hotlist => {}
+            Action::ClipCopy | Action::ClipCut => {
+                let paths = panel.targets();
+                if !paths.is_empty() {
+                    let kind = if action == Action::ClipCut {
+                        ClipKind::Cut
+                    } else {
+                        ClipKind::Copy
+                    };
+                    return clip::put(kind, &paths);
+                }
+            }
+            Action::ClipPaste => return clip::take(),
             Action::Copy
             | Action::Move
             | Action::Rename
@@ -995,7 +1026,8 @@ impl App {
         sources: Vec<PathBuf>,
         input: &str,
     ) -> Task<Message> {
-        let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+        // While a navigation is in flight the rows still show the dir being left; aim at where the tab is going.
+        let cwd = self.panes[side].active().target();
         let (method, kind) = match op {
             InputOp::Copy => (Method::Copy, OpKind::Copy),
             _ => (Method::Move, OpKind::Move),
@@ -2217,5 +2249,94 @@ mod tests {
         assert!(msg.is_none(), "{msg:?}");
         let msg = press(Named::ArrowDown, Code::ArrowDown, event::Status::Ignored);
         assert!(matches!(msg, Some(Message::Key(Action::Down))), "{msg:?}");
+    }
+
+    /// Point the active tab of `side` at `dir` and deliver its listing.
+    fn listed_at(app: &mut App, side: usize, dir: &Path) {
+        let _ = app.load(side, dir.into(), None);
+        let t = app.panes[side].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: dir.into(),
+            focus: None,
+            result: Ok(listing::scan(dir, false).unwrap()),
+            space: None,
+        });
+    }
+
+    /// tmp/src/a (file) and tmp/dst/ (empty); pane 0 shows dst.
+    fn paste_setup() -> (tempfile::TempDir, App, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a"), "x").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, &dst);
+        (tmp, app, src.join("a"))
+    }
+
+    #[test]
+    fn paste_copy_starts_copy_into_active_cwd() {
+        let (_tmp, mut app, a) = paste_setup();
+        let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![a]))));
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Copy));
+    }
+
+    #[test]
+    fn paste_cut_starts_move() {
+        let (_tmp, mut app, a) = paste_setup();
+        let _ = app.update(Message::Pasted(Some((ClipKind::Cut, vec![a]))));
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Move));
+    }
+
+    #[test]
+    fn paste_nothing_or_empty_does_nothing() {
+        let (_tmp, mut app, _) = paste_setup();
+        let _ = app.update(Message::Pasted(None));
+        let _ = app.update(Message::Pasted(Some((ClipKind::Copy, Vec::new()))));
+        assert!(app.job.is_none());
+        assert!(app.panes[0].active().error.is_none());
+    }
+
+    #[test]
+    fn paste_into_source_dir_reports_same_file() {
+        let (_tmp, mut app, a) = paste_setup();
+        listed_at(&mut app, 0, a.parent().unwrap());
+        let _ = app.update(Message::Pasted(Some((ClipKind::Cut, vec![a.clone()]))));
+        assert!(app.job.is_none());
+        assert_eq!(
+            app.panes[0].active().error.as_deref(),
+            Some(fl!("plan-same-file", path = a.display().to_string()).as_str())
+        );
+    }
+
+    #[test]
+    fn paste_ignored_while_dialog_open() {
+        let (_tmp, mut app, a) = paste_setup();
+        let _ = app.update(Message::Key(Action::Mkdir)); // opens the F7 dialog
+        assert!(app.dialog.is_some());
+        let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![a]))));
+        assert!(app.job.is_none());
+    }
+
+    #[test]
+    fn regression_paste_during_navigation_lands_in_target() {
+        let (tmp, mut app, a) = paste_setup();
+        let next = tmp.path().join("next");
+        std::fs::create_dir(&next).unwrap();
+        let _ = app.load(0, next.clone(), None); // scan still pending: rows show dst
+        let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![a]))));
+        assert!(app.job.is_some());
+        let copied = next.join("a");
+        for _ in 0..200 {
+            if copied.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(copied.exists(), "pasted into the dir being left");
     }
 }

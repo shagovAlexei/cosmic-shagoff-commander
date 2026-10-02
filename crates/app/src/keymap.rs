@@ -53,6 +53,10 @@ pub enum Action {
     Hotlist,
     /// Ctrl+U: swap the two panels.
     SwapPanes,
+    /// Ctrl+C / Ctrl+X: put the targets on the system clipboard; Ctrl+V: paste files from it.
+    ClipCopy,
+    ClipCut,
+    ClipPaste,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -119,6 +123,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyS), true, false) => Some(Action::QuickFilter),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
+        (Physical::Code(Code::KeyC), true, false) => Some(Action::ClipCopy),
+        (Physical::Code(Code::KeyX), true, false) => Some(Action::ClipCut),
+        (Physical::Code(Code::KeyV), true, false) => Some(Action::ClipPaste),
         (Physical::Code(Code::Space), false, false) => Some(Action::Mark),
         (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
         (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
@@ -177,6 +184,17 @@ mod tests {
         assert_eq!(chr("\\", Code::Backslash, CTRL), Some(Action::Root));
         assert_eq!(chr("ё", Code::Backslash, CTRL), Some(Action::Root));
         assert_eq!(chr("r", Code::KeyR, NONE), None);
+    }
+
+    #[test]
+    fn ctrl_c_x_v_clipboard() {
+        assert_eq!(chr("c", Code::KeyC, CTRL), Some(Action::ClipCopy));
+        assert_eq!(chr("с", Code::KeyC, CTRL), Some(Action::ClipCopy)); // Russian layout
+        assert_eq!(chr("x", Code::KeyX, CTRL), Some(Action::ClipCut));
+        assert_eq!(chr("ч", Code::KeyX, CTRL), Some(Action::ClipCut));
+        assert_eq!(chr("v", Code::KeyV, CTRL), Some(Action::ClipPaste));
+        assert_eq!(chr("м", Code::KeyV, CTRL), Some(Action::ClipPaste));
+        assert_eq!(chr("c", Code::KeyC, NONE), None);
     }
 
     #[test]

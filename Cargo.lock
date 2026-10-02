@@ -4294,6 +4294,7 @@ dependencies = [
  "serde",
  "tempfile",
  "trash",
+ "url",
 ]
 
 [[package]]

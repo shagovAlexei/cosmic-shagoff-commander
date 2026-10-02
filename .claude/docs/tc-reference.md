@@ -85,7 +85,7 @@
 | Alt+F7 | Поиск файлов | backlog | |
 | Ctrl+M | Групповое переименование | backlog | |
 | Alt+Enter | Свойства | backlog | |
-| Ctrl+C / Ctrl+X / Ctrl+V | Буфер обмена (совместимо с cosmic-files) | backlog | |
+| Ctrl+C / Ctrl+X / Ctrl+V | Буфер обмена (совместимо с cosmic-files) | 09 | Вставка сразу, без диалога; после вставки вырезанного буфер очищается |
 
 ### Вид
 
