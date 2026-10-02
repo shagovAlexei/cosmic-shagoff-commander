@@ -4287,6 +4287,7 @@ name = "shagoff-core"
 version = "0.1.0"
 dependencies = [
  "jiff",
+ "rustix 1.1.5",
  "tempfile",
  "trash",
 ]
