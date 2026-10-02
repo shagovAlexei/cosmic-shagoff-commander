@@ -4,6 +4,7 @@
 pub mod format;
 pub mod listing;
 pub mod mask;
+pub mod ops;
 pub mod panel;
 pub mod sort;
 pub mod tabs;
