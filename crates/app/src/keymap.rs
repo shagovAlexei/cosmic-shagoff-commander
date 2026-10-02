@@ -1,5 +1,4 @@
 //! TC key bindings → `Action`. One table; the F-key buttons dispatch the same actions.
-#![allow(dead_code)]
 
 use cosmic::iced::keyboard::{Key, Modifiers, key::Physical};
 use shagoff_core::sort::SortKey;

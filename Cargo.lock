@@ -4244,6 +4244,7 @@ dependencies = [
  "rust-embed",
  "shagoff-core",
  "simple_logger",
+ "tokio",
 ]
 
 [[package]]
