@@ -1,4 +1,5 @@
 mod app;
+mod dialogs;
 mod i18n;
 mod keymap;
 mod view;

@@ -17,3 +17,14 @@ select-group = Select group
 unselect-group = Unselect group
 ok = OK
 cancel = Cancel
+copy-to = Copy { $what } to:
+move-to = Move { $what } to:
+n-files = { $n ->
+    [one] { $n } file
+   *[other] { $n } files
+}
+mkdir = New folder
+rename = Rename
+delete-trash = Move { $what } to trash?
+delete-permanent = Delete { $what } permanently? This cannot be undone.
+delete = Delete

@@ -17,3 +17,15 @@ select-group = Выделить группу
 unselect-group = Снять выделение
 ok = OK
 cancel = Отмена
+copy-to = Копировать { $what } в:
+move-to = Переместить { $what } в:
+n-files = { $n ->
+    [one] { $n } файл
+    [few] { $n } файла
+   *[many] { $n } файлов
+}
+mkdir = Новый каталог
+rename = Переименовать
+delete-trash = Удалить { $what } в корзину?
+delete-permanent = Удалить { $what } безвозвратно? Это нельзя отменить.
+delete = Удалить

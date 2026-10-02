@@ -1,3 +1,4 @@
+use crate::dialogs::{self, Dialog, InputOp};
 use crate::fl;
 use crate::keymap::{self, Action};
 use cosmic::app::{Core, Task};
@@ -8,11 +9,11 @@ use cosmic::{Application, Element, widget};
 use shagoff_core::format::TimeZone;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
-use shagoff_core::panel::Panel;
+use shagoff_core::panel::{PARENT, Panel};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
 /// Fixed row height of the file list; the viewport math depends on it.
@@ -65,13 +66,6 @@ impl Tab {
     }
 }
 
-/// Num+ / Num− dialog: mask input for the pane that was active when it opened.
-pub struct MaskDialog {
-    side: usize,
-    select: bool,
-    input: String,
-}
-
 pub struct App {
     core: Core,
     pub panes: [Tabs<Tab>; 2],
@@ -83,8 +77,9 @@ pub struct App {
     next_id: u64,
     /// Current keyboard modifiers, for Ctrl+click.
     mods: Modifiers,
-    mask_dialog: Option<MaskDialog>,
-    mask_input_id: widget::Id,
+    dialog: Option<Dialog>,
+    /// Id of the dialog text field (one field at a time), for focusing it on open.
+    input_id: widget::Id,
 }
 
 #[derive(Debug, Clone)]
@@ -105,9 +100,9 @@ pub enum Message {
     SelectTab(usize, usize),
     CloseTabAt(usize, usize),
     Modifiers(Modifiers),
-    MaskInput(String),
-    MaskSubmit,
-    MaskCancel,
+    DialogInput(String),
+    DialogSubmit,
+    DialogCancel,
     Exit,
 }
 
@@ -146,8 +141,8 @@ impl Application for App {
             tz: TimeZone::system(),
             next_id: 2,
             mods: Modifiers::empty(),
-            mask_dialog: None,
-            mask_input_id: widget::Id::unique(),
+            dialog: None,
+            input_id: widget::Id::unique(),
         };
         let task = Task::batch([app.load(0, left, None), app.load(1, home, None)]);
         (app, task)
@@ -156,10 +151,10 @@ impl Application for App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action) => {
-                if self.mask_dialog.is_some() {
-                    // The dialog is modal: only Escape reaches us; panels must not move.
-                    if action == Action::Cancel {
-                        self.mask_dialog = None;
+                if let Some(d) = &self.dialog {
+                    // Modal: panels must not move. Enter confirms a dialog without a text field.
+                    if action == Action::Enter && matches!(d, Dialog::ConfirmDelete { .. }) {
+                        return self.submit_dialog();
                     }
                     return Task::none();
                 }
@@ -224,20 +219,13 @@ impl Application for App {
                 return self.restore_scroll(side);
             }
             Message::Modifiers(m) => self.mods = m,
-            Message::MaskInput(s) => {
-                if let Some(d) = &mut self.mask_dialog {
-                    d.input = s;
+            Message::DialogInput(s) => {
+                if let Some(input) = self.dialog.as_mut().and_then(Dialog::input_mut) {
+                    *input = s;
                 }
             }
-            Message::MaskSubmit => {
-                if let Some(d) = self.mask_dialog.take() {
-                    self.panes[d.side]
-                        .active_mut()
-                        .panel
-                        .mark_by_mask(&Mask::parse(&d.input), d.select);
-                }
-            }
-            Message::MaskCancel => self.mask_dialog = None,
+            Message::DialogSubmit => return self.submit_dialog(),
+            Message::DialogCancel => self.dialog = None,
             Message::Exit => return cosmic::iced::exit(),
         }
         Task::none()
@@ -252,27 +240,9 @@ impl Application for App {
     }
 
     fn dialog(&self) -> Option<Element<'_, Message>> {
-        let d = self.mask_dialog.as_ref()?;
-        let title = if d.select {
-            fl!("select-group")
-        } else {
-            fl!("unselect-group")
-        };
-        Some(
-            widget::dialog()
-                .title(title)
-                .control(
-                    widget::text_input("", d.input.as_str())
-                        .id(self.mask_input_id.clone())
-                        .on_input(Message::MaskInput)
-                        .on_submit(|_| Message::MaskSubmit),
-                )
-                .primary_action(widget::button::suggested(fl!("ok")).on_press(Message::MaskSubmit))
-                .secondary_action(
-                    widget::button::standard(fl!("cancel")).on_press(Message::MaskCancel),
-                )
-                .into(),
-        )
+        self.dialog
+            .as_ref()
+            .map(|d| dialogs::view(d, &self.input_id))
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {
@@ -312,6 +282,15 @@ impl App {
     }
 
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
+        if let Some(d) = self.dialog_for(side, action) {
+            let focus = matches!(d, Dialog::Mask { .. } | Dialog::Input { .. });
+            self.dialog = Some(d);
+            return if focus {
+                widget::text_input::focus(self.input_id.clone())
+            } else {
+                Task::none()
+            };
+        }
         let t = self.panes[side].active_mut();
         let page = viewport::page_rows(ROW_H, t.height) as isize;
         let tab = t.id;
@@ -358,14 +337,8 @@ impl App {
             | Action::Mkdir
             | Action::Delete
             | Action::DeletePermanent => {}
-            Action::SelectGroup | Action::UnselectGroup => {
-                self.mask_dialog = Some(MaskDialog {
-                    side,
-                    select: action == Action::SelectGroup,
-                    input: "*".into(),
-                });
-                return widget::text_input::focus(self.mask_input_id.clone());
-            }
+            // Opened by `dialog_for` above.
+            Action::SelectGroup | Action::UnselectGroup => {}
             Action::Reload => {
                 let cwd = panel.cwd().to_path_buf();
                 return self.load(side, cwd, None);
@@ -391,6 +364,136 @@ impl App {
             }
         }
         self.reveal(side, tab)
+    }
+
+    /// The dialog an action opens, if any (nothing when there is nothing to act on).
+    fn dialog_for(&self, side: usize, action: Action) -> Option<Dialog> {
+        let panel = &self.panes[side].active().panel;
+        let input = |op, sources, input| Dialog::Input {
+            op,
+            side,
+            sources,
+            input,
+        };
+        match action {
+            Action::SelectGroup | Action::UnselectGroup => Some(Dialog::Mask {
+                side,
+                select: action == Action::SelectGroup,
+                input: "*".into(),
+            }),
+            Action::Copy | Action::Move => {
+                let sources = panel.targets();
+                if sources.is_empty() {
+                    return None;
+                }
+                let op = if action == Action::Copy {
+                    InputOp::Copy
+                } else {
+                    InputOp::Move
+                };
+                Some(input(
+                    op,
+                    sources,
+                    dir_input(self.panes[1 - side].active().panel.cwd()),
+                ))
+            }
+            Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
+            Action::Rename => {
+                let e = panel.current().filter(|e| e.name != PARENT)?;
+                Some(input(
+                    InputOp::Rename,
+                    vec![panel.cwd().join(&e.os_name)],
+                    e.name.clone(),
+                ))
+            }
+            Action::Delete | Action::DeletePermanent => {
+                let paths = panel.targets();
+                (!paths.is_empty()).then_some(Dialog::ConfirmDelete {
+                    side,
+                    permanent: action == Action::DeletePermanent,
+                    paths,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn submit_dialog(&mut self) -> Task<Message> {
+        let Some(d) = self.dialog.take() else {
+            return Task::none();
+        };
+        match d {
+            Dialog::Mask {
+                side,
+                select,
+                input,
+            } => {
+                self.panes[side]
+                    .active_mut()
+                    .panel
+                    .mark_by_mask(&Mask::parse(&input), select);
+                Task::none()
+            }
+            Dialog::Input {
+                op: InputOp::Mkdir,
+                side,
+                input,
+                ..
+            } => self.mkdir(side, input.trim()),
+            Dialog::Input {
+                op,
+                side,
+                sources,
+                input,
+            } => self.start_transfer(op, side, sources, input.trim()),
+            Dialog::ConfirmDelete {
+                side,
+                permanent,
+                paths,
+            } => self.start_delete(side, permanent, paths),
+        }
+    }
+
+    /// F7: create (possibly nested) dirs, then put the cursor on the first created component.
+    fn mkdir(&mut self, side: usize, name: &str) -> Task<Message> {
+        if name.is_empty() {
+            return Task::none();
+        }
+        let t = self.panes[side].active_mut();
+        let cwd = t.panel.cwd().to_path_buf();
+        match std::fs::create_dir_all(cwd.join(name)) {
+            Ok(()) => {
+                let focus = match Path::new(name).components().next() {
+                    Some(Component::Normal(first)) => Some(first.to_string_lossy().into_owned()),
+                    _ => None,
+                };
+                self.load(side, cwd, focus)
+            }
+            Err(e) => {
+                t.error = Some(e.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    // ponytail: stubs until the job runner lands (next task).
+    fn start_transfer(
+        &mut self,
+        _op: InputOp,
+        _side: usize,
+        _sources: Vec<PathBuf>,
+        _input: &str,
+    ) -> Task<Message> {
+        Task::none()
+    }
+
+    fn start_delete(
+        &mut self,
+        _side: usize,
+        _permanent: bool,
+        _paths: Vec<PathBuf>,
+    ) -> Task<Message> {
+        Task::none()
     }
 
     /// Keep tab `tab`'s cursor row fully visible. An inactive tab only gets its offset updated;
@@ -441,7 +544,7 @@ fn route_event(
             key: keyboard::Key::Named(keyboard::key::Named::Escape),
             modifiers,
             ..
-        }) if modifiers.is_empty() => Some(Message::MaskCancel),
+        }) if modifiers.is_empty() => Some(Message::DialogCancel),
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -455,6 +558,12 @@ fn route_event(
         }
         _ => None,
     }
+}
+
+/// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").
+fn dir_input(dir: &Path) -> String {
+    let s = dir.display().to_string();
+    if s.ends_with('/') { s } else { s + "/" }
 }
 
 /// `xdg-open` without blocking the UI or leaving a zombie.
@@ -487,7 +596,7 @@ mod tests {
     fn escape_closes_dialog_even_when_text_input_captured_it() {
         // libcosmic's text_input captures Escape (to unfocus itself); the dialog must still close.
         let msg = press(Named::Escape, Code::Escape, event::Status::Captured);
-        assert!(matches!(msg, Some(Message::MaskCancel)), "{msg:?}");
+        assert!(matches!(msg, Some(Message::DialogCancel)), "{msg:?}");
     }
 
     #[test]
