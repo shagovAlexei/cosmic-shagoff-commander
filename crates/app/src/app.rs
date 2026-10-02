@@ -362,11 +362,13 @@ impl App {
             }
             Message::Click(side, i) => {
                 self.active = side;
-                let panel = &mut self.panes[side].active_mut().panel;
-                panel.set_cursor(i);
+                let t = self.panes[side].active_mut();
+                t.panel.set_cursor(i);
                 if self.mods.control() {
-                    panel.toggle_mark();
+                    t.panel.toggle_mark();
                 }
+                let tab = t.id;
+                return self.reveal(side, tab); // a half-visible row scrolls fully in
             }
             Message::DoubleClick(side, i) => {
                 self.active = side;
@@ -379,8 +381,14 @@ impl App {
             }
             Message::Scrolled(side, offset, height) => {
                 let t = self.panes[side].active_mut();
+                // Only a shrinking viewport pulls the cursor back in; a wheel scroll stays free.
+                let shrunk = height < t.height;
                 t.offset = offset;
                 t.height = height;
+                if shrunk {
+                    let tab = t.id;
+                    return self.reveal(side, tab);
+                }
             }
             Message::SelectTab(side, i) => {
                 self.active = side;
@@ -1372,6 +1380,49 @@ mod tests {
         let _ = app.update(Message::Key(Action::View));
         let err = app.panes[0].active().error.clone().unwrap_or_default();
         assert_eq!(err, fl!("broken-link", name = "dangling"));
+    }
+
+    /// Pane 0 listing 20 files, viewport `height` px tall, scrolled to the top.
+    fn tall_list(height: f32) -> App {
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let entries = (0..20).map(|i| entry(&format!("f{i:02}"))).collect();
+        let _ = app.update(Message::Listed {
+            side: 0,
+            tab: id,
+            generation,
+            path: std::env::temp_dir(),
+            focus: None,
+            result: Ok(entries),
+            space: None,
+        });
+        let _ = app.update(Message::Scrolled(0, 0.0, height));
+        app
+    }
+
+    #[test]
+    fn regression_click_on_half_visible_row_scrolls_it_in() {
+        let mut app = tall_list(100.0); // rows 0..4 full, row 4 cut at 100 px
+        let _ = app.update(Message::Click(0, 4));
+        let t = app.panes[0].active();
+        assert!(t.offset + t.height >= 5.0 * ROW_H, "offset {}", t.offset);
+    }
+
+    #[test]
+    fn regression_shrinking_window_keeps_cursor_visible() {
+        let mut app = tall_list(400.0);
+        let _ = app.update(Message::Click(0, 10));
+        let _ = app.update(Message::Scrolled(0, 0.0, 100.0)); // window got smaller
+        let t = app.panes[0].active();
+        assert!(t.offset + t.height >= 11.0 * ROW_H, "offset {}", t.offset);
+    }
+
+    #[test]
+    fn wheel_scroll_does_not_drag_the_view_back_to_the_cursor() {
+        let mut app = tall_list(100.0);
+        let _ = app.update(Message::Scrolled(0, 200.0, 100.0)); // user scrolled away
+        assert_eq!(app.panes[0].active().offset, 200.0);
     }
 
     #[test]

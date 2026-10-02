@@ -136,7 +136,9 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
     if sources.is_empty() {
         return Err(PlanError::Empty);
     }
-    let into_dir = dest.is_dir() || sources.len() > 1;
+    // TC: a trailing `/` means "into this dir", even when it does not exist yet.
+    let slash = dest.as_os_str().as_encoded_bytes().ends_with(b"/");
+    let into_dir = slash || dest.is_dir() || sources.len() > 1;
     let mut pairs = Vec::with_capacity(sources.len());
     for src in sources {
         let dst = match (into_dir, src.file_name()) {
@@ -699,6 +701,23 @@ mod tests {
             Err(PlanError::SameFile(a.clone()))
         );
         assert_eq!(plan(&[], d.path()), Err(PlanError::Empty));
+    }
+
+    #[test]
+    fn regression_trailing_slash_means_into_a_new_dir() {
+        // TC: `newdir/` as the target of one file creates the dir and copies into it.
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        write(&a, "hello");
+        let mut dest = d.path().join("newdir").into_os_string();
+        dest.push("/");
+        let r = copy(
+            std::slice::from_ref(&a),
+            Path::new(&dest),
+            &mut Script::default(),
+        );
+        assert_eq!(r.completed, [a]);
+        assert_eq!(read(&d.path().join("newdir/a")), "hello");
     }
 
     #[test]
