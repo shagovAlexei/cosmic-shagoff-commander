@@ -267,3 +267,9 @@ help-lister-step = Следующий / предыдущий файл
 help-lister-find = Поиск
 help-lister-again = Найти следующее / предыдущее
 help-lister-close = Закрыть
+
+# Запись в архив
+repacking = Обновление архива
+archive-update-title = Файл изменён
+archive-update = { $entry } сохранён в редакторе. Обновить его в архиве { $archive }?
+archive-update-ok = Обновить архив

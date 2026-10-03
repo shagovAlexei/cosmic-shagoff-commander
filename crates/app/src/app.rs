@@ -26,6 +26,7 @@ use shagoff_core::mount;
 use shagoff_core::multirename::{self, Case, Rule};
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
 use shagoff_core::panel::{self, PARENT, Panel};
+use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
@@ -110,6 +111,8 @@ pub enum OpKind {
     Unpack,
     Extract,
     Sync,
+    /// Rewriting an archive (a change inside one).
+    Repack,
 }
 
 /// A file operation in progress (the progress dialog's data).
@@ -128,8 +131,33 @@ pub struct Running {
 
 enum Open {
     Run(Vec<OsString>),
+    /// F4 in an archive: run the editor, then watch the file to offer packing it back.
+    Edit {
+        argv: Vec<OsString>,
+        archive: PathBuf,
+        entry: PathBuf,
+    },
     /// In the viewer, under this name.
     Lister(String),
+}
+
+/// What to do with a file extracted from an archive.
+enum How {
+    /// Program from the config (empty → the default).
+    Run(Vec<String>, &'static [&'static str]),
+    /// F4: the editor, and watch the file.
+    Edit(Vec<String>),
+    Lister,
+}
+
+/// A file extracted for F4 from an archive: a newer mtime offers to put it back.
+pub struct Edited {
+    pub file: PathBuf,
+    pub archive: PathBuf,
+    /// Its path inside the archive.
+    pub entry: PathBuf,
+    /// Last mtime seen (asked about or extracted).
+    pub mtime: SystemTime,
 }
 
 /// Quick search (Alt+letter) or filter (Ctrl+S) field, shown instead of the pane's status line.
@@ -177,6 +205,8 @@ pub struct App {
     pub owners: shagoff_core::owners::Owners,
     /// F3 viewer, shown in place of the panels.
     pub(crate) lister: Option<Box<Lister>>,
+    /// Files from archives open in the editor (F4).
+    pub(crate) edited: Vec<Edited>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -294,6 +324,8 @@ pub enum Message {
     /// Next (true) / previous file of the pane.
     ListerStep(bool),
     ListerClose,
+    /// Every 2 s while files from archives are in the editor: look for saved changes.
+    EditTick,
     Exit,
 }
 
@@ -347,6 +379,12 @@ impl Application for App {
                 .watch_config::<Config>(APP_ID)
                 .map(|u| Message::Config(u.config)),
         ];
+        if !self.edited.is_empty() {
+            subs.push(
+                cosmic::iced::time::every(std::time::Duration::from_secs(2))
+                    .map(|_| Message::EditTick),
+            );
+        }
         if self.job.is_none() {
             // Paused during file operations: finish_job rescans both panes anyway.
             for side in 0..2 {
@@ -424,6 +462,7 @@ impl App {
             status: None,
             owners: shagoff_core::owners::Owners::load(),
             lister: None,
+            edited: Vec::new(),
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -832,6 +871,24 @@ impl App {
             }
             Message::ListerStep(forward) => return self.lister_step(forward),
             Message::ListerClose => self.lister = None,
+            Message::EditTick => {
+                if self.dialog.is_some() || self.job.is_some() {
+                    return Task::none(); // asked on a later tick
+                }
+                for e in &mut self.edited {
+                    if let Ok(m) = std::fs::metadata(&e.file).and_then(|m| m.modified())
+                        && m != e.mtime
+                    {
+                        e.mtime = m;
+                        self.dialog = Some(Dialog::UpdateArchive {
+                            file: e.file.clone(),
+                            archive: e.archive.clone(),
+                            entry: e.entry.clone(),
+                        });
+                        break;
+                    }
+                }
+            }
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(Resolution::Cancel);
@@ -1214,7 +1271,7 @@ impl App {
                                 arc,
                                 inner,
                                 os_name,
-                                Some((&[], &["xdg-open"])),
+                                How::Run(Vec::new(), &["xdg-open"]),
                             );
                         }
                         // Not inside one already: archives inside archives open as files.
@@ -1266,15 +1323,12 @@ impl App {
                     .filter(|e| !e.is_dir() && e.name != PARENT)
                     .map(|e| e.os_name.clone());
                 if let (Some(os_name), Some((arc, inner))) = (current, archive::split_path(&cwd)) {
-                    // Edit is refused by `read_only` before getting here.
-                    let viewer = self.config.viewer.clone();
-                    return self.open_from_archive(
-                        side,
-                        arc,
-                        inner,
-                        os_name,
-                        Some((&viewer, &["xdg-open"])),
-                    );
+                    let how = if action == Action::Edit {
+                        How::Edit(self.config.editor.clone())
+                    } else {
+                        How::Run(self.config.viewer.clone(), &["xdg-open"])
+                    };
+                    return self.open_from_archive(side, arc, inner, os_name, how);
                 }
                 let t = self.panes[side].active_mut();
                 let panel = &t.panel;
@@ -1357,7 +1411,7 @@ impl App {
                 let paths = panel.targets();
                 let cwd = panel.cwd().to_path_buf();
                 let dest = self.panes[1 - side].active().target();
-                return self.start_extract(side, &cwd, &paths, dest);
+                return self.start_extract(side, &cwd, &paths, dest, false);
             }
             Action::ClipCopy | Action::ClipCut => {
                 let paths = panel.targets();
@@ -1465,9 +1519,11 @@ impl App {
             }
             Action::Delete | Action::DeletePermanent => {
                 let paths = panel.targets();
+                // An archive has no trash: deleting from one is always for good (TC too).
+                let in_archive = archive::split_path(panel.cwd()).is_some();
                 (!paths.is_empty()).then_some(Dialog::ConfirmDelete {
                     side,
-                    permanent: action == Action::DeletePermanent,
+                    permanent: action == Action::DeletePermanent || in_archive,
                     paths,
                 })
             }
@@ -1773,6 +1829,18 @@ impl App {
                 self.dialog = Some(d);
                 self.pick(i)
             }
+            Dialog::UpdateArchive {
+                file,
+                archive,
+                entry,
+            } => {
+                let job = Job::Repack {
+                    archive,
+                    change: Change::Replace { entry, file },
+                    move_sources: false,
+                };
+                self.start_job(self.active, OpKind::Repack, job, None)
+            }
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -1788,14 +1856,20 @@ impl App {
         }
         let t = self.panes[side].active_mut();
         let cwd = t.panel.cwd().to_path_buf();
+        let first = || match Path::new(name).components().next() {
+            Some(Component::Normal(first)) => Some(first.to_string_lossy().into_owned()),
+            _ => None,
+        };
+        if let Some((archive, inner)) = archive::split_path(&cwd) {
+            let job = Job::Repack {
+                archive,
+                change: Change::Mkdir(inner.join(name)),
+                move_sources: false,
+            };
+            return self.start_job(side, OpKind::Repack, job, first());
+        }
         match std::fs::create_dir_all(cwd.join(name)) {
-            Ok(()) => {
-                let focus = match Path::new(name).components().next() {
-                    Some(Component::Normal(first)) => Some(first.to_string_lossy().into_owned()),
-                    _ => None,
-                };
-                self.load(side, cwd, focus)
-            }
+            Ok(()) => self.load(side, cwd, first()),
             Err(e) => {
                 self.say(
                     StatusKind::Error,
@@ -1816,20 +1890,51 @@ impl App {
     ) -> Task<Message> {
         // While a navigation is in flight the rows still show the dir being left; aim at where the tab is going.
         let cwd = self.panes[side].active().target();
-        if op != InputOp::Rename && into_archive(&cwd.join(input)) {
-            self.say(StatusKind::Error, fl!("archive-read-only"));
-            return Task::none();
-        }
         // From the rows' own dir: right after Enter on an archive they still show the dir left.
         let from = sources
             .first()
             .and_then(|p| p.parent())
             .map(Path::to_path_buf);
-        if let Some(from) = from
-            && op == InputOp::Copy
-            && archive::split_path(&from).is_some()
-        {
-            return self.start_extract(side, &from, &sources, cwd.join(input));
+        let from_archive = from.as_deref().and_then(archive::split_path);
+        let target = cwd.join(input);
+        let to_archive = (op != InputOp::Rename)
+            .then(|| archive::split_path(&target))
+            .flatten();
+        match (from_archive, to_archive) {
+            (Some(_), Some(_)) => {
+                self.say(StatusKind::Error, fl!("archive-read-only"));
+                return Task::none();
+            }
+            (Some((archive, inner)), None) if op == InputOp::Rename => {
+                let Some(name) = sources.first().and_then(|p| p.file_name()) else {
+                    return Task::none();
+                };
+                if input.is_empty() || Path::new(name) == Path::new(input) {
+                    return Task::none();
+                }
+                let job = Job::Repack {
+                    archive,
+                    change: Change::Rename {
+                        from: inner.join(name),
+                        to: inner.join(input),
+                    },
+                    move_sources: false,
+                };
+                return self.start_job(side, OpKind::Repack, job, Some(input.to_string()));
+            }
+            (Some(_), None) => {
+                let from = from.unwrap_or_default();
+                return self.start_extract(side, &from, &sources, target, op == InputOp::Move);
+            }
+            (None, Some((archive, inner))) => {
+                let job = Job::Repack {
+                    archive,
+                    change: Change::Add { sources, inner },
+                    move_sources: op == InputOp::Move,
+                };
+                return self.start_job(side, OpKind::Repack, job, None);
+            }
+            (None, None) => {}
         }
         let (method, kind) = match op {
             InputOp::Copy => (Method::Copy, OpKind::Copy),
@@ -2047,6 +2152,8 @@ impl App {
         cwd: &Path,
         paths: &[PathBuf],
         dest: PathBuf,
+        // F6: delete from the archive what came out.
+        move_after: bool,
     ) -> Task<Message> {
         let Some((archive, inner)) = archive::split_path(cwd) else {
             return Task::none();
@@ -2059,6 +2166,15 @@ impl App {
             .filter_map(|p| p.file_name())
             .map(PathBuf::from)
             .collect();
+        if move_after {
+            let job = Job::ExtractMove {
+                archive,
+                inner,
+                names,
+                dest,
+            };
+            return self.start_job(side, OpKind::Move, job, None);
+        }
         let job = Job::Extract {
             archive,
             inner,
@@ -2075,8 +2191,7 @@ impl App {
         archive: PathBuf,
         inner: PathBuf,
         name: OsString,
-        // `None`: in the viewer.
-        prog: Option<(&[String], &[&str])>,
+        how: How,
     ) -> Task<Message> {
         let dir = match archive::fresh_temp_dir(&archive::temp_root()) {
             Ok(d) => d,
@@ -2086,9 +2201,14 @@ impl App {
             }
         };
         let file = dir.join(&name);
-        let open = match prog {
-            Some((prog, default)) => Open::Run(launch::command(prog, default, &file)),
-            None => Open::Lister(name.to_string_lossy().into_owned()),
+        let open = match how {
+            How::Run(prog, default) => Open::Run(launch::command(&prog, default, &file)),
+            How::Edit(prog) => Open::Edit {
+                argv: launch::command(&prog, &["cosmic-edit"], &file),
+                archive: archive.clone(),
+                entry: inner.join(&name),
+            },
+            How::Lister => Open::Lister(name.to_string_lossy().into_owned()),
         };
         let job = Job::Extract {
             archive,
@@ -2112,7 +2232,7 @@ impl App {
         };
         let (os_name, name) = (e.os_name.clone(), e.name.clone());
         if let Some((arc, inner)) = archive::split_path(&cwd) {
-            return self.open_from_archive(side, arc, inner, os_name, None);
+            return self.open_from_archive(side, arc, inner, os_name, How::Lister);
         }
         let file = cwd.join(&os_name);
         if !file.exists() {
@@ -2223,25 +2343,32 @@ impl App {
     /// Actions that would change an archive (this panel inside one, or the other one as target).
     fn read_only(&self, side: usize, action: Action) -> bool {
         let inside = |s: usize| archive::split_path(&self.panes[s].active().target()).is_some();
+        // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
-            Action::Edit
-            | Action::Rename
-            | Action::MultiRename
-            | Action::Mkdir
-            | Action::Delete
-            | Action::DeletePermanent
-            | Action::ClipCut
-            | Action::ClipPaste => inside(side),
-            Action::Move | Action::Pack | Action::Unpack | Action::SyncDirs => {
-                inside(side) || inside(1 - side)
-            }
-            Action::Copy => inside(1 - side),
-            Action::ClipCopy => inside(side) && inside(1 - side),
+            Action::MultiRename | Action::ClipCut | Action::ClipPaste => inside(side),
+            Action::Pack | Action::Unpack | Action::SyncDirs => inside(side) || inside(1 - side),
+            Action::Copy | Action::Move | Action::ClipCopy => inside(side) && inside(1 - side),
             _ => false,
         }
     }
 
     fn start_delete(&mut self, side: usize, permanent: bool, paths: Vec<PathBuf>) -> Task<Message> {
+        let dir = paths
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+        if let Some((archive, _)) = dir.and_then(|d| archive::split_path(&d)) {
+            let entries = paths
+                .iter()
+                .filter_map(|p| p.strip_prefix(&archive).ok().map(Path::to_path_buf))
+                .collect();
+            let job = Job::Repack {
+                archive,
+                change: Change::Delete(entries),
+                move_sources: false,
+            };
+            return self.start_job(side, OpKind::Repack, job, None);
+        }
         self.start_job(side, OpKind::Delete, Job::Delete { paths, permanent }, None)
     }
 
@@ -2315,6 +2442,26 @@ impl App {
                         self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
                     }
                 }
+                Open::Edit {
+                    argv,
+                    archive,
+                    entry,
+                } => match spawn_detached(&argv) {
+                    Ok(()) => {
+                        let mtime = std::fs::metadata(&file)
+                            .and_then(|m| m.modified())
+                            .unwrap_or(SystemTime::UNIX_EPOCH);
+                        self.edited.push(Edited {
+                            file,
+                            archive,
+                            entry,
+                            mtime,
+                        });
+                    }
+                    Err(err) => {
+                        self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()))
+                    }
+                },
                 Open::Lister(name) => view = self.open_lister(side, file, name),
             }
         }
@@ -4160,13 +4307,78 @@ mod tests {
     }
 
     #[test]
-    fn f8_inside_archive_is_read_only() {
+    fn f8_inside_archive_asks_permanent_then_repacks() {
         let (_tmp, mut app, a) = zip_setup();
         listed_at(&mut app, 0, &a);
         let _ = app.update(Message::Key(Action::Down));
-        let _ = app.update(Message::Key(Action::Delete));
-        assert!(app.dialog.is_none() && app.job.is_none());
-        assert!(app.msg().is_some());
+        let _ = app.update(Message::Key(Action::Delete)); // F8, not Shift+F8: still no trash
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ConfirmDelete {
+                permanent: true,
+                ..
+            })
+        ));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+    }
+
+    #[test]
+    fn f7_and_rename_inside_archive_repack() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::Mkdir));
+        let _ = app.update(Message::DialogInput("new".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+        app.job = None;
+        let _ = app.update(Message::Key(Action::End)); // top.txt
+        let _ = app.update(Message::Key(Action::Rename));
+        let _ = app.update(Message::DialogInput("renamed.txt".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+    }
+
+    #[test]
+    fn f6_out_of_archive_moves() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::End));
+        let _ = app.update(Message::Key(Action::Move));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Move));
+    }
+
+    #[test]
+    fn ctrl_m_inside_archive_stays_read_only() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::End));
+        let _ = app.update(Message::Key(Action::MultiRename));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.msg(), Some(fl!("archive-read-only").as_str()));
+    }
+
+    #[test]
+    fn edited_file_from_archive_asks_once_per_change() {
+        let (tmp, mut app, a) = zip_setup();
+        let file = tmp.path().join("out/top.txt");
+        std::fs::write(&file, "x").unwrap();
+        app.edited.push(Edited {
+            file: file.clone(),
+            archive: a,
+            entry: "top.txt".into(),
+            mtime: std::time::UNIX_EPOCH, // "changed since extraction"
+        });
+        let _ = app.update(Message::EditTick);
+        assert!(matches!(app.dialog, Some(Dialog::UpdateArchive { .. })));
+        let _ = app.update(Message::DialogCancel);
+        let _ = app.update(Message::EditTick);
+        assert!(app.dialog.is_none()); // the same change is not asked again
+        app.edited[0].mtime = std::time::UNIX_EPOCH;
+        let _ = app.update(Message::EditTick);
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
     }
 
     #[test]
@@ -4181,15 +4393,16 @@ mod tests {
     }
 
     #[test]
-    fn f5_into_archive_panel_is_read_only() {
+    fn f5_into_archive_panel_repacks() {
         let (tmp, mut app, a) = zip_setup();
         std::fs::write(tmp.path().join("out/x"), "1").unwrap();
         listed_at(&mut app, 0, &tmp.path().join("out"));
         listed_at(&mut app, 1, &a);
         let _ = app.update(Message::Key(Action::Down)); // x
         let _ = app.update(Message::Key(Action::Copy));
-        assert!(app.dialog.is_none() && app.job.is_none());
-        assert!(app.msg().is_some());
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
     }
 
     #[test]

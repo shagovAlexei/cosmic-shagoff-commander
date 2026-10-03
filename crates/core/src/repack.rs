@@ -152,8 +152,13 @@ fn apply(
         }
         Change::Mkdir(d) => {
             let p = inside(d);
+            // Nested names ("a/b") as F7 allows outside; an existing one is an error.
             retry(h, &archive.join(d), || {
-                fs::create_dir(p.as_ref().ok_or_else(bad)?)
+                let p = p.as_ref().ok_or_else(bad)?;
+                if fs::symlink_metadata(p).is_ok() {
+                    return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+                }
+                fs::create_dir_all(p)
             })?;
             Ok(vec![archive.to_path_buf()])
         }
@@ -462,6 +467,15 @@ mod tests {
             );
             assert!(no_leftovers(d.path()), "after {n}");
         }
+    }
+
+    #[test]
+    fn mkdir_nested() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let r = modify(&a, &Change::Mkdir("x/y".into()), &mut Script::default());
+        assert_eq!(r.completed, std::slice::from_ref(&a));
+        assert!(contents(&a).contains(&"x/y/".to_string()));
     }
 
     #[test]
