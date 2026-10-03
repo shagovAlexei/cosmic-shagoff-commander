@@ -8,6 +8,8 @@ use std::io::{Read, Write};
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// A volume with a unix device that udisks can mount.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +29,64 @@ pub enum Error {
     /// Any other question (unknown host key, …): its text.
     Question(String),
     Failed(String),
+    /// Stopped by the user (Esc while connecting).
+    Cancelled,
+}
+
+/// Ctrl+F remembers this many addresses.
+pub const MAX_SAVED: usize = 20;
+
+/// `url` as typed, minus a password in it (`sftp://bob:pw@host` → `sftp://bob@host`): addresses
+/// are saved in the plain-text config. By hand, not by URL parsing: a password with `#`, `/` or
+/// `?` breaks parsing, and that must not let it through. `None`: no `scheme://` but something
+/// that may hold a password — not saved at all.
+pub fn without_password(url: &str) -> Option<String> {
+    let url = url.trim();
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return (!url.contains('@')).then(|| url.to_string());
+    };
+    // The user part ends at the last '@' (a password may contain '/', '#', '?', even '@').
+    let Some(at) = rest.rfind('@') else {
+        return Some(url.to_string());
+    };
+    let user = &rest[..at];
+    let user = user.split_once(':').map_or(user, |(u, _)| u);
+    Some(format!("{scheme}://{user}{}", &rest[at..]))
+}
+
+/// The saved addresses after connecting to `url`: it goes first (once), at most `MAX_SAVED`.
+pub fn remember(saved: &[String], url: &str) -> Vec<String> {
+    let Some(url) = without_password(url) else {
+        return saved.to_vec();
+    };
+    std::iter::once(url.clone())
+        .chain(saved.iter().filter(|s| **s != url).cloned())
+        .take(MAX_SAVED)
+        .collect()
+}
+
+/// (name, address) of what `gio list -a standard::display-name,standard::target-uri network:///`
+/// lists (Windows network, servers announced on the LAN); entries without an address are left out.
+pub fn network(gio_list: &str) -> Vec<(String, String)> {
+    gio_list
+        .lines()
+        .filter_map(|l| {
+            let attr = |key: &str| {
+                l.split('\t')
+                    .find_map(|f| f.strip_prefix(key))
+                    .map(str::to_string)
+            };
+            let uri = attr("standard::target-uri=")?;
+            let name = attr("standard::display-name=").unwrap_or_else(|| uri.clone());
+            Some((name, uri))
+        })
+        .collect()
+}
+
+/// Browse the local network (gvfs `network:///`).
+pub fn browse() -> Result<Vec<(String, String)>, Error> {
+    let attrs = "standard::display-name,standard::target-uri";
+    talk(gio(["list", "-a", attrs, "network:///"]), "").map(|s| network(&s))
 }
 
 /// Volumes with a unix device and `can_mount=1`, from `gio mount -li`.
@@ -168,10 +228,21 @@ pub fn answer(prompt: &str, password: &str, asked: &mut bool) -> Result<String, 
 }
 
 /// Run `cmd`, answering its prompts; stdout on success.
-// ponytail: no timeout or cancel; an unreachable host waits for ssh/gvfs's own timeout (the UI
-// stays usable, "Connecting…" stays in the status line). Kill after N s if that bites.
-fn talk(mut cmd: Command, password: &str) -> Result<String, Error> {
+fn talk(cmd: Command, password: &str) -> Result<String, Error> {
+    talk_until(cmd, password, None)
+}
+
+/// `talk` that kills the command when `cancel` is set (an unreachable host would otherwise wait
+/// for ssh / gvfs's own timeout).
+fn talk_until(
+    mut cmd: Command,
+    password: &str,
+    cancel: Option<&Arc<AtomicBool>>,
+) -> Result<String, Error> {
     let failed = |e: std::io::Error| Error::Failed(e.to_string());
+    // Its own process group: cancel kills it and anything it started (a child holding the pipes
+    // open would keep the read below waiting).
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -185,6 +256,22 @@ fn talk(mut cmd: Command, password: &str) -> Result<String, Error> {
         let _ = stderr.read_to_string(&mut s);
         s
     });
+    // Killing the group ends the blocking read below (EOF).
+    let done = Arc::new(AtomicBool::new(false));
+    let group = rustix::process::Pid::from_raw(child.id() as i32);
+    if let (Some(c), Some(group)) = (cancel, group) {
+        let (c, done) = (c.clone(), done.clone());
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                if c.load(Ordering::Relaxed) {
+                    let _ =
+                        rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+    }
     // `since`: output after our last reply (a prompt answered with echo gets no newline).
     let (mut out, mut since, mut buf, mut asked) = (Vec::new(), 0, [0; 4096], false);
     let aborted = loop {
@@ -213,12 +300,17 @@ fn talk(mut cmd: Command, password: &str) -> Result<String, Error> {
         }
     };
     drop(stdin);
+    done.store(true, Ordering::Relaxed);
     if let Some(e) = aborted {
         let _ = child.kill();
         let _ = child.wait();
         return Err(e);
     }
     let status = child.wait().map_err(failed)?;
+    // Esc right after it succeeded: the mount is there, report it as done.
+    if !status.success() && cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        return Err(Error::Cancelled);
+    }
     let errors = errors.join().unwrap_or_default();
     let out = String::from_utf8_lossy(&out).into_owned();
     if status.success() {
@@ -263,9 +355,12 @@ pub fn mount_device(device: &str) -> Result<PathBuf, Error> {
 }
 
 /// Mount a network location (`sftp://user@host/dir`, `smb://…`); its local (FUSE) path.
-pub fn connect(url: &str, password: &str) -> Result<PathBuf, Error> {
+pub fn connect(url: &str, password: &str, cancel: &Arc<AtomicBool>) -> Result<PathBuf, Error> {
     // "Already mounted" is an error to gio but fine for us: the local path decides.
-    let mounted = talk(gio(["mount", url]), password);
+    let mounted = talk_until(gio(["mount", url]), password, Some(cancel));
+    if mounted == Err(Error::Cancelled) {
+        return Err(Error::Cancelled);
+    }
     match talk(gio(["info", url]), "")
         .ok()
         .and_then(|s| local_path(&s))
@@ -471,5 +566,69 @@ Mount(0): nas -> sftp://nas/
             talk(sh("printf 'Password: '; read p"), ""),
             Err(Error::NeedPassword)
         );
+    }
+
+    #[test]
+    fn remember_puts_last_first_without_password() {
+        let saved = vec![
+            "smb://nas/share".to_string(),
+            "sftp://bob@host/".to_string(),
+        ];
+        assert_eq!(
+            remember(&saved, "sftp://bob:s3cret@host/"),
+            ["sftp://bob@host/", "smb://nas/share"]
+        );
+        let many: Vec<String> = (0..30).map(|i| format!("ftp://h{i}/")).collect();
+        let r = remember(&many, "ftp://new/");
+        assert_eq!((r.len(), r[0].as_str()), (MAX_SAVED, "ftp://new/"));
+        assert_eq!(without_password("not a url").as_deref(), Some("not a url"));
+    }
+
+    #[test]
+    fn regression_password_never_saved() {
+        // Characters that break URL parsing must not let the password through.
+        for (typed, saved) in [
+            ("sftp://bob:p#ss@host/", Some("sftp://bob@host/")),
+            ("sftp://bob:p/ss@host/dir", Some("sftp://bob@host/dir")),
+            (
+                "smb://DOM;bob:pw@nas/share",
+                Some("smb://DOM;bob@nas/share"),
+            ),
+            ("ftp://Host", Some("ftp://Host")), // kept as typed, not normalised
+            ("bob:pw@host", None),              // no scheme: not saved at all
+        ] {
+            assert_eq!(without_password(typed).as_deref(), saved, "{typed}");
+        }
+        assert!(remember(&[], "bob:pw@host").is_empty());
+    }
+
+    #[test]
+    fn network_listing() {
+        // Shape of `gio list -a standard::display-name,standard::target-uri network:///`.
+        let out = "smb-root\t0\t(directory)\tstandard::display-name=Windows Network\tstandard::target-uri=smb:///\n\
+                   dnssd-domain-nas\t0\t(shortcut)\tstandard::display-name=nas\tstandard::target-uri=sftp://nas.local:22/\n\
+                   nothing\t0\t(directory)\tstandard::display-name=No target\n";
+        assert_eq!(
+            network(out),
+            [
+                ("Windows Network".to_string(), "smb:///".to_string()),
+                ("nas".to_string(), "sftp://nas.local:22/".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn talk_can_be_cancelled() {
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let t = std::time::Instant::now();
+        // "; true" makes sh fork: `sleep` is a grandchild holding the pipes, killed with the group.
+        let r = talk_until(sh("sleep 30; true"), "", Some(&cancel));
+        assert_eq!(r, Err(Error::Cancelled));
+        assert!(t.elapsed() < std::time::Duration::from_secs(5));
     }
 }

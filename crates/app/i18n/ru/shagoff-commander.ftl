@@ -302,3 +302,11 @@ diff-save = Сохранить
 diff-saved = Сохранено
 diff-unsaved = Не сохранено
 diff-unsaved-close = Не сохранено: ещё раз Esc — закрыть без сохранения
+
+# Сеть, дополнения
+connect-saved = Сохранённые
+connect-browse = Обзор сети
+connect-browsing = Поиск…
+connect-none-found = В сети ничего не найдено
+connect-cancelled = Подключение отменено
+connect-busy = Подключение уже идёт: Esc — отменить

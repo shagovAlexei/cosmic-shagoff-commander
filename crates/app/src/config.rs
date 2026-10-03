@@ -75,6 +75,8 @@ pub struct Config {
     pub show_fkeys: bool,
     /// F3 opens the built-in viewer; off: runs `viewer`.
     pub internal_viewer: bool,
+    /// Ctrl+F: addresses connected to, last first, without passwords.
+    pub connections: Vec<String>,
 }
 
 /// A favourite dir (Ctrl+D).
@@ -98,6 +100,7 @@ impl Default for Config {
             app_theme: AppTheme::System,
             show_fkeys: true,
             internal_viewer: true,
+            connections: Vec::new(),
         }
     }
 }

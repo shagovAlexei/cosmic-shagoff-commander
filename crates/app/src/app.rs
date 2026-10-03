@@ -211,6 +211,8 @@ pub struct App {
     pub(crate) lister: Option<Box<Lister>>,
     /// Files from archives open in the editor (F4).
     pub(crate) edited: Vec<Edited>,
+    /// Ctrl+F in progress: (address, cancel flag set by Esc).
+    pub(crate) connecting: Option<(String, Arc<AtomicBool>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -323,6 +325,15 @@ pub enum Message {
     /// (unmounted drive root, result).
     Unmounted(PathBuf, Result<(), mount::Error>),
     Config(Config),
+    /// Ctrl+F finished: (side, address, mount result).
+    Connected(usize, String, Result<PathBuf, mount::Error>),
+    /// Ctrl+F: a saved or found address into the field.
+    ConnectPick(String),
+    /// Ctrl+F: forget this saved address.
+    ConnectForget(String),
+    ConnectBrowse,
+    /// What "Browse network" found.
+    Browsed(Result<Vec<(String, String)>, mount::Error>),
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
     ListerKey(ListerKey),
@@ -477,6 +488,7 @@ impl App {
             owners: shagoff_core::owners::Owners::load(),
             lister: None,
             edited: Vec::new(),
+            connecting: None,
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -1027,6 +1039,8 @@ impl App {
                         } else {
                             self.lister = None;
                         }
+                    } else if let Some((_, cancel)) = &self.connecting {
+                        cancel.store(true, Ordering::Relaxed);
                     } else {
                         self.panes[self.active].active_mut().panel.set_filter(None);
                     }
@@ -1149,7 +1163,61 @@ impl App {
                         self.clear_busy();
                         return self.go_to(side, path);
                     }
+                    Err(mount::Error::Cancelled) => {
+                        self.status = None; // the Busy "Connecting…"
+                        self.say(StatusKind::Info, fl!("connect-cancelled"));
+                    }
                     Err(e) => self.say(StatusKind::Error, mount_error(&e)),
+                }
+            }
+            // Ctrl+F's result: remembered on success, then as any mount.
+            Message::Connected(side, url, result) => {
+                if self.connecting.as_ref().is_some_and(|(u, _)| *u == url) {
+                    self.connecting = None;
+                }
+                if result.is_ok() {
+                    let list = mount::remember(&self.config.connections, &url);
+                    if let Some(Dialog::Connect { saved, .. }) = &mut self.dialog {
+                        saved.clone_from(&list);
+                    }
+                    self.save_connections(list);
+                }
+                return self.handle(Message::Mounted(side, result));
+            }
+            Message::ConnectPick(u) => {
+                if let Some(Dialog::Connect { url, .. }) = &mut self.dialog {
+                    *url = u;
+                }
+                return widget::text_input::focus(self.input_id.clone());
+            }
+            // By value: the config may have changed since the dialog opened.
+            Message::ConnectForget(url) => {
+                let mut list = self.config.connections.clone();
+                list.retain(|u| *u != url);
+                if let Some(Dialog::Connect { saved, .. }) = &mut self.dialog {
+                    saved.clone_from(&list);
+                }
+                self.save_connections(list);
+            }
+            Message::ConnectBrowse => {
+                if let Some(Dialog::Connect { browsing, .. }) = &mut self.dialog {
+                    *browsing = true;
+                    return blocking(mount::browse, Message::Browsed);
+                }
+            }
+            Message::Browsed(r) => {
+                if let Some(Dialog::Connect {
+                    found, browsing, ..
+                }) = &mut self.dialog
+                {
+                    *browsing = false;
+                    match r {
+                        Ok(list) if list.is_empty() => {
+                            self.say(StatusKind::Info, fl!("connect-none-found"))
+                        }
+                        Ok(list) => *found = list,
+                        Err(e) => self.say(StatusKind::Error, mount_error(&e)),
+                    }
                 }
             }
             Message::Unmounted(root, result) => {
@@ -1718,6 +1786,9 @@ impl App {
                 side,
                 url: "sftp://".into(),
                 password: String::new(),
+                saved: self.config.connections.clone(),
+                found: Vec::new(),
+                browsing: false,
             }),
             Action::MultiRename => {
                 let wanted: HashSet<PathBuf> = panel.targets().into_iter().collect();
@@ -1942,15 +2013,24 @@ impl App {
                 side,
                 url,
                 password,
+                ..
             } => {
                 let url = url.trim().to_string();
                 if url.is_empty() {
                     return Task::none();
                 }
+                // One at a time: Esc must be able to stop the one running.
+                if self.connecting.is_some() {
+                    self.say(StatusKind::Info, fl!("connect-busy"));
+                    return Task::none();
+                }
                 self.say(StatusKind::Busy, fl!("connecting"));
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.connecting = Some((url.clone(), cancel.clone()));
+                let address = url.clone();
                 blocking(
-                    move || mount::connect(&url, &password),
-                    move |r| Message::Mounted(side, r),
+                    move || mount::connect(&url, &password, &cancel),
+                    move |r| Message::Connected(side, address, r),
                 )
             }
             Dialog::Unpack {
@@ -3018,6 +3098,17 @@ impl App {
         }
     }
 
+    fn save_connections(&mut self, list: Vec<String>) {
+        match &self.config_handler {
+            Some(h) => {
+                if let Err(e) = self.config.set_connections(h, list) {
+                    log::warn!("config: {e}");
+                }
+            }
+            None => self.config.connections = list,
+        }
+    }
+
     /// Delete on hotlist entry `i`: drop it, save, refresh the open list in place.
     fn hotlist_remove(&mut self, i: usize) -> Task<Message> {
         let mut list = self.config.hotlist.clone();
@@ -3197,6 +3288,7 @@ fn mount_error(e: &mount::Error) -> String {
         mount::Error::WrongPassword => fl!("mount-wrong-password"),
         mount::Error::Question(q) => fl!("mount-question", text = q.replace('\n', " ")),
         mount::Error::Failed(s) => s.clone(),
+        mount::Error::Cancelled => fl!("connect-cancelled"),
     }
 }
 
@@ -5583,6 +5675,68 @@ mod tests {
             let _ = app.update(Message::DialogSubmit);
             assert!(app.dialog.is_none());
             assert_eq!(app.msg(), Some(fl!("connecting").as_str()));
+        }
+
+        #[test]
+        fn connect_remembers_the_address_and_esc_cancels() {
+            let mut app = app_with(Config::default(), State::default());
+            app.panes[0].active_mut().pending = None;
+            let _ = app.update(Message::Key(Action::Connect));
+            let _ = app.update(Message::DialogInput("sftp://bob:pw@nas/".into()));
+            let _ = app.update(Message::DialogSubmit); // the gio task is never run in tests
+            // A drive mounted meanwhile (Alt+F1) is not the address.
+            let _ = app.update(Message::Mounted(0, Ok(PathBuf::from("/media/stick"))));
+            assert!(app.config.connections.is_empty());
+            let url = "sftp://bob:pw@nas/".to_string();
+            let _ = app.update(Message::Connected(0, url, Ok(PathBuf::from("/run/gvfs/x"))));
+            assert_eq!(app.config.connections, ["sftp://bob@nas/"]);
+            // Saved addresses are offered; picking one fills the field.
+            let _ = app.update(Message::Key(Action::Connect));
+            let Some(Dialog::Connect { saved, .. }) = &app.dialog else {
+                panic!("no dialog")
+            };
+            assert_eq!(saved, &["sftp://bob@nas/"]);
+            let _ = app.update(Message::ConnectPick("smb://x/".into()));
+            assert!(matches!(&app.dialog, Some(Dialog::Connect { url, .. }) if url == "smb://x/"));
+            // Esc while connecting stops it.
+            let _ = app.update(Message::DialogSubmit);
+            let flag = app.connecting.as_ref().unwrap().1.clone();
+            // A second one meanwhile is refused (its flag would replace this one).
+            let _ = app.update(Message::Key(Action::Connect));
+            let _ = app.update(Message::DialogSubmit);
+            assert_eq!(app.msg(), Some(fl!("connect-busy").as_str()));
+            assert!(Arc::ptr_eq(&flag, &app.connecting.as_ref().unwrap().1));
+            let _ = app.update(Message::DialogCancel);
+            assert!(flag.load(Ordering::Relaxed));
+            let gone = Err(MountError::Cancelled);
+            let _ = app.update(Message::Connected(0, "smb://x/".into(), gone));
+            assert_eq!(app.msg(), Some(fl!("connect-cancelled").as_str()));
+            assert_eq!(app.config.connections, ["sftp://bob@nas/"]); // not remembered
+            assert!(app.connecting.is_none());
+        }
+
+        #[test]
+        fn connect_forget_and_browse_results() {
+            let config = Config {
+                connections: vec!["smb://a/".into(), "smb://b/".into()],
+                ..Config::default()
+            };
+            let mut app = app_with(config, State::default());
+            let _ = app.update(Message::Key(Action::Connect));
+            let _ = app.update(Message::ConnectForget("smb://a/".into()));
+            assert_eq!(app.config.connections, ["smb://b/"]);
+            let found = vec![("nas".to_string(), "sftp://nas.local/".to_string())];
+            let _ = app.update(Message::Browsed(Ok(found.clone())));
+            let Some(Dialog::Connect {
+                saved, found: f, ..
+            }) = &app.dialog
+            else {
+                panic!("no dialog")
+            };
+            assert_eq!(
+                (saved.as_slice(), f),
+                (&["smb://b/".to_string()][..], &found)
+            );
         }
 
         #[test]

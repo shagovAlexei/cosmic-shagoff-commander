@@ -301,3 +301,11 @@ diff-save = Save
 diff-saved = Saved
 diff-unsaved = Not saved
 diff-unsaved-close = Not saved: Esc again closes without saving
+
+# Network, more
+connect-saved = Saved
+connect-browse = Browse network
+connect-browsing = Looking…
+connect-none-found = Nothing found on the network
+connect-cancelled = Connecting cancelled
+connect-busy = Already connecting: Esc stops it
