@@ -160,6 +160,9 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
     let input = |value: &'a str, placeholder: &'static str, f: fn(String) -> Setting| {
         widget::text_input(placeholder, value)
             .on_input(move |s| Message::Setting(f(s)))
+            // Without on_tab, Tab leaves the field focused but read-only and no longer capturing
+            // keys: Backspace / Delete would reach the panels (go up, delete).
+            .on_tab(Message::FocusNext)
             .width(Length::Fixed(200.0))
     };
     widget::column::with_children(vec![

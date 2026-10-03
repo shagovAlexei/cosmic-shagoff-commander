@@ -30,10 +30,16 @@ impl AppTheme {
     pub fn theme(self) -> cosmic::Theme {
         match self {
             AppTheme::System => cosmic::theme::system_preference(),
-            AppTheme::Light => cosmic::Theme::light(),
-            AppTheme::Dark => cosmic::Theme::dark(),
+            // The user's COSMIC palette (accent…), pinned to light / dark.
+            AppTheme::Light => pinned(cosmic::theme::system_light(), false),
+            AppTheme::Dark => pinned(cosmic::theme::system_dark(), true),
         }
     }
+}
+
+fn pinned(mut t: cosmic::Theme, dark: bool) -> cosmic::Theme {
+    t.theme_type.prefer_dark(Some(dark));
+    t
 }
 
 /// Interface languages we ship; `""` in the config = the system's.

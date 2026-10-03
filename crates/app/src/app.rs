@@ -239,6 +239,8 @@ pub enum Message {
     Drive(usize, PathBuf),
     CloseDrawer,
     Setting(Setting),
+    /// Tab in a settings field.
+    FocusNext,
     /// A link in the about drawer.
     OpenUrl(String),
     /// Ctrl+F dialog: the password field.
@@ -878,6 +880,7 @@ impl App {
             }
             Message::Config(c) => return self.apply_config(c),
             Message::CloseDrawer => self.set_drawer(None),
+            Message::FocusNext => return cosmic::iced::widget::operation::focus_next(),
             Message::Setting(s) => return self.set(s),
             Message::OpenUrl(url) => {
                 if let Err(e) = spawn_detached(&["xdg-open".into(), url.into()]) {
