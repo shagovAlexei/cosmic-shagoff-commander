@@ -324,3 +324,6 @@
 | `regression_copy_block_uses_the_rows_shown` | Перенос пересчитывал сравнение и мог взять не тот блок, что на экране | 25 |
 | `regression_save_keeps_links_and_refuses_what_it_should` | «Сохранить» заменял ссылку файлом, затирал изменения с диска, писал файл только для чтения | 25 |
 | `regression_password_never_saved` | Пароль с `#`, `/` или `?` ломал разбор адреса, и адрес сохранялся вместе с паролем | 26 |
+| `regression_viewer_letters_start_the_line_when_no_viewer` | Командная строка: первая буква `n p q 1 3 4` терялась (её брали клавиши просмотра F3 при закрытом просмотре) | 27 |
+| `regression_double_click_and_quick_search_open_not_run` | Двойной клик / Enter быстрого поиска выполняли набранную команду вместо открытия | 27 |
+| `regression_terminal_line_with_a_comment_keeps_the_shell` | Shift+Enter: `#` в команде закрывал терминал сразу | 27 |

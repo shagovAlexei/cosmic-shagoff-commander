@@ -113,7 +113,8 @@ pub fn argv(line: &str, dir: &Path, terminal: Option<&[String]>) -> Vec<String> 
         term
     };
     let dir = quote(&dir.display().to_string());
-    let keep = format!("cd {dir} && {line}; exec \"${{SHELL:-sh}}\"");
+    // Lines, not `;`: a `#` in the command must not comment out the shell that keeps it open.
+    let keep = format!("cd {dir} || exit\n{line}\nexec \"${{SHELL:-sh}}\"");
     term.iter()
         .cloned()
         .chain(["sh".into(), "-c".into(), keep])
@@ -214,7 +215,7 @@ mod tests {
                 "-e",
                 "sh",
                 "-c",
-                "cd '/my dir' && make; exec \"${SHELL:-sh}\""
+                "cd '/my dir' || exit\nmake\nexec \"${SHELL:-sh}\""
             ]
         );
         assert_eq!(argv("x", dir, Some(&[]))[..3], ["cosmic-term", "-e", "sh"]);

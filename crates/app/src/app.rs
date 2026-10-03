@@ -346,6 +346,8 @@ pub enum Message {
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
     ListerKey(ListerKey),
+    /// A viewer letter key typed in the panel: the viewer's when it is open, else the command line's.
+    Letter(ListerKey, char),
     /// x, y scroll offset, viewport height.
     ListerScrolled(f32, f32, f32),
     ListerResized(f32),
@@ -620,6 +622,11 @@ impl App {
                         Action::Up | Action::Down => {} // filter: plain cursor move, field stays
                         _ => self.search = None,        // any other key closes the field and acts
                     }
+                }
+                // Only the Enter key runs a typed line (the field lost focus to a click); a double
+                // click or quick search's Enter opens the entry.
+                if action == Action::Enter && self.cmd_ready() && !self.cmdline.trim().is_empty() {
+                    return self.cmd_run(false);
                 }
                 return self.act(self.active, action);
             }
@@ -965,6 +972,13 @@ impl App {
                 };
             }
             Message::ListerKey(_) => {}
+            Message::Letter(k, c) => {
+                return self.handle(if self.lister.is_some() {
+                    Message::ListerKey(k)
+                } else {
+                    Message::CmdType(c)
+                });
+            }
             Message::ListerScrolled(x, y, h) => {
                 if let Some(l) = &mut self.lister {
                     (l.offset, l.height) = ((x, y), h);
@@ -1053,7 +1067,7 @@ impl App {
                         }
                     } else if let Some((_, cancel)) = &self.connecting {
                         cancel.store(true, Ordering::Relaxed);
-                    } else if !self.cmdline.is_empty() {
+                    } else if self.config.show_cmdline && !self.cmdline.is_empty() {
                         self.cmdline.clear();
                     } else {
                         self.panes[self.active].active_mut().panel.set_filter(None);
@@ -3204,7 +3218,6 @@ impl App {
         }
         let panel = &self.panes[side].active().panel;
         let word = match action {
-            Action::Enter if !self.cmdline.trim().is_empty() => return Some(self.cmd_run(false)),
             Action::Mark if !self.cmdline.is_empty() => {
                 self.cmdline.push(' ');
                 None
@@ -3336,8 +3349,14 @@ fn route_event(
             ..
         }) if status == event::Status::Ignored => keymap::action(&key, physical_key, modifiers)
             .map(Message::Key)
-            .or_else(|| keymap::lister_key(&key, physical_key, modifiers).map(Message::ListerKey))
-            .or_else(|| typed_char(&key, modifiers).map(Message::CmdType)),
+            .or_else(|| {
+                let c = typed_char(&key, modifiers);
+                match (keymap::lister_key(&key, physical_key, modifiers), c) {
+                    (Some(k), Some(c)) => Some(Message::Letter(k, c)),
+                    (Some(k), None) => Some(Message::ListerKey(k)),
+                    (None, c) => c.map(Message::CmdType),
+                }
+            }),
         // A focused text field captures every key but Up/Down/Tab; pass on the ones it has no use for.
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
@@ -3414,7 +3433,10 @@ fn typed_char(key: &keyboard::Key, mods: Modifiers) -> Option<char> {
     };
     let mut chars = s.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) if !c.is_control() && !(mods.control() || mods.alt() || mods.logo()) => {
+        // Space is a panel key (marking); Shift+Space must not start the line with a blank.
+        (Some(c), None)
+            if !c.is_control() && c != ' ' && !(mods.control() || mods.alt() || mods.logo()) =>
+        {
             Some(c)
         }
         _ => None,
@@ -4512,7 +4534,7 @@ mod tests {
             cosmic::iced::window::Id::unique(),
         );
         assert!(
-            matches!(free, Some(Message::ListerKey(ListerKey::Next))),
+            matches!(free, Some(Message::Letter(ListerKey::Next, 'n'))),
             "{free:?}"
         );
         // Typed into the search field: stays text.
@@ -6109,6 +6131,79 @@ mod tests {
             assert_eq!(app.cmdline, "ls");
             let _ = app.update(Message::ListPick(0));
             assert_eq!(app.cmdline, "ls"); // no dialog: nothing picked
+        }
+
+        #[test]
+        fn regression_viewer_letters_start_the_line_when_no_viewer() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut app = at(tmp.path());
+            for (k, code) in [
+                ("n", Code::KeyN),
+                ("т", Code::KeyN),
+                ("p", Code::KeyP),
+                ("1", Code::Digit1),
+            ] {
+                if let Some(m) = typed(k, code, Modifiers::empty()) {
+                    let _ = app.update(m);
+                }
+            }
+            assert_eq!(app.cmdline, "nтp1");
+        }
+
+        #[test]
+        fn regression_double_click_and_quick_search_open_not_run() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir(tmp.path().join("sub")).unwrap();
+            std::fs::create_dir(tmp.path().join("sub/in")).unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::CmdInput("cd /".into()));
+            let _ = app.update(Message::DoubleClick(0, 1));
+            assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+            listed_at(&mut app, 0, &tmp.path().join("sub"));
+            let _ = app.update(Message::Key(Action::QuickSearch('i')));
+            let _ = app.update(Message::SearchSubmit);
+            assert_eq!(app.panes[0].active().target(), tmp.path().join("sub/in"));
+            assert_eq!(app.cmdline, "cd /");
+        }
+
+        #[test]
+        fn regression_terminal_line_with_a_comment_keeps_the_shell() {
+            let argv = shagoff_core::cmdline::argv("ls # x", Path::new("/d"), Some(&[]));
+            assert!(argv[4].ends_with("\nexec \"${SHELL:-sh}\""), "{argv:?}");
+        }
+
+        #[test]
+        fn shift_space_does_not_start_the_line_with_a_space() {
+            let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Character(" ".into()),
+                modified_key: Key::Character(" ".into()),
+                physical_key: Physical::Code(Code::Space),
+                location: Location::Standard,
+                modifiers: Modifiers::SHIFT,
+                text: None,
+                repeat: false,
+            });
+            let m = route_event(
+                event,
+                event::Status::Ignored,
+                cosmic::iced::window::Id::unique(),
+            );
+            let mut app = app_with(Config::default(), State::default());
+            if let Some(m) = m {
+                let _ = app.update(m);
+            }
+            assert_eq!(app.cmdline, "");
+        }
+
+        #[test]
+        fn escape_with_a_hidden_line_clears_the_filter() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::CmdInput("x".into()));
+            app.config.show_cmdline = false;
+            app.panes[0].active_mut().panel.set_filter(Some("a".into()));
+            let _ = app.update(Message::DialogCancel);
+            assert_eq!(app.panes[0].active().panel.filter(), None);
         }
 
         #[test]
