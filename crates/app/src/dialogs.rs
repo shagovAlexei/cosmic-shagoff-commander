@@ -13,6 +13,7 @@ use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
 use shagoff_core::sync::{self, Dir, State};
 use std::collections::HashSet;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
@@ -109,6 +110,21 @@ pub struct DiffDlg {
     pub offset: f32,
     /// Width of each side, from its longest line: `Fill` inside a two-way scrollable lays out at 0.
     pub widths: (f32, f32),
+    pub opts: diff::Opts,
+    /// Changed by copying blocks, not saved yet (left, right).
+    pub dirty: (bool, bool),
+    /// Esc / Cancel was pressed once with unsaved changes: the next one closes without saving.
+    pub confirm_close: bool,
+    /// Size and mtime of both files when read: saving refuses if they changed since.
+    pub stamps: Option<[diff::Stamp; 2]>,
+    /// A block copy is computing: (to the right, the texts before it).
+    pub copying: Option<(bool, Arc<(String, String)>)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffOpt {
+    Space,
+    Case,
 }
 
 /// Diff rows have one fixed height, so a block's scroll offset is `row * DIFF_ROW_H`.
@@ -798,13 +814,21 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                             .font(cosmic::font::mono())
                             .wrapping(Wrapping::None)
                     };
-                    let half = |c: &Option<(usize, String)>, w: f32| {
-                        let content = match c {
-                            Some((n, s)) => row![
+                    // `mid`: the bytes that differ from the other side (changed lines).
+                    let half = |c: &Option<(usize, String)>, w: f32, mid: Option<Range<usize>>| {
+                        let content = match (c, mid) {
+                            (Some((n, s)), Some(m)) => row![
+                                mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W)),
+                                mono(expand(&s[..m.start])),
+                                widget::container(mono(expand(&s[m.clone()])))
+                                    .class(diff_style(diff::Kind::Changed)),
+                                mono(expand(&s[m.end..])),
+                            ],
+                            (Some((n, s)), None) => row![
                                 mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W)),
                                 mono(expand(s)),
                             ],
-                            None => row![],
+                            (None, _) => row![],
                         };
                         widget::container(content)
                             .width(Length::Fixed(w))
@@ -820,9 +844,16 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                             .height(Length::Fixed(first as f32 * DIFF_ROW_H)),
                     );
                     for r in &t.rows[first..last] {
+                        let (ml, mr) = match (&r.left, &r.right) {
+                            (Some((_, a)), Some((_, b))) if r.kind == diff::Kind::Changed => {
+                                let (x, y) = diff::inline(a, b);
+                                (Some(x), Some(y))
+                            }
+                            _ => (None, None),
+                        };
                         list = list.push(
                             widget::container(
-                                row![half(&r.left, wl), half(&r.right, wr)].spacing(8),
+                                row![half(&r.left, wl, ml), half(&r.right, wr, mr)].spacing(8),
                             )
                             .height(Length::Fixed(DIFF_ROW_H))
                             .class(diff_style(r.kind)),
@@ -850,14 +881,40 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 }
             };
             let nav = !d.blocks().is_empty();
-            let buttons = row![
+            let dirty = d.dirty.0 || d.dirty.1;
+            let status = match (dirty, d.confirm_close) {
+                (true, true) => format!("{status}   {}", fl!("diff-unsaved-close")),
+                (true, false) => format!("{status}   {}", fl!("diff-unsaved")),
+                _ => status,
+            };
+            let buttons = widget::flex_row(vec![
                 widget::button::standard(fl!("diff-prev"))
-                    .on_press_maybe(nav.then_some(Message::DiffPrev)),
+                    .on_press_maybe(nav.then_some(Message::DiffPrev))
+                    .into(),
                 widget::button::standard(fl!("diff-next"))
-                    .on_press_maybe(nav.then_some(Message::DiffNext)),
-                cancel,
-            ]
+                    .on_press_maybe(nav.then_some(Message::DiffNext))
+                    .into(),
+                widget::button::standard(fl!("diff-copy-right"))
+                    .on_press_maybe(nav.then_some(Message::DiffCopy(true)))
+                    .into(),
+                widget::button::standard(fl!("diff-copy-left"))
+                    .on_press_maybe(nav.then_some(Message::DiffCopy(false)))
+                    .into(),
+                widget::button::suggested(fl!("diff-save"))
+                    .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave))
+                    .into(),
+                cancel.into(),
+            ])
             .spacing(8);
+            let opts = row![
+                widget::checkbox(d.opts.ignore_space)
+                    .label(fl!("diff-ignore-space"))
+                    .on_toggle(|_| Message::DiffOpt(DiffOpt::Space)),
+                widget::checkbox(d.opts.ignore_case)
+                    .label(fl!("diff-ignore-case"))
+                    .on_toggle(|_| Message::DiffOpt(DiffOpt::Case)),
+            ]
+            .spacing(16);
             widget::dialog()
                 .title(fl!("diff-title"))
                 .width(Length::Fill)
@@ -874,6 +931,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                         ]
                         .spacing(8),
                         // All buttons above the text: a short window clips the dialog's bottom row.
+                        opts,
                         buttons,
                         widget::text(status),
                         widget::scrollable(list)
