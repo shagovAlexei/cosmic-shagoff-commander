@@ -16,6 +16,7 @@ memchr = "2"
 rustix = { version = "1", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 sevenz-rust2 = "0.23"
+similar = { version = "2", default-features = false, features = ["text"] }
 tar = "0.4"
 trash = "5"
 url = "2"

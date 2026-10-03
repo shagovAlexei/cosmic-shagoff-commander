@@ -67,6 +67,8 @@ pub enum Action {
     CompareLists,
     /// Ctrl+Shift+S: synchronize the two panels' dirs.
     SyncDirs,
+    /// Ctrl+Shift+D: compare two files by content.
+    CompareFiles,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -138,6 +140,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyH), true, false) => Some(Action::ToggleHidden),
         (Physical::Code(Code::KeyS), true, false) => Some(Action::QuickFilter),
         (Physical::Code(Code::KeyS), true, true) => Some(Action::SyncDirs),
+        (Physical::Code(Code::KeyD), true, true) => Some(Action::CompareFiles),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
         (Physical::Code(Code::KeyC), true, false) => Some(Action::ClipCopy),
@@ -385,5 +388,15 @@ mod tests {
             Modifiers::CTRL | Modifiers::SHIFT,
         );
         assert_eq!(s, Some(Action::SyncDirs));
+    }
+
+    #[test]
+    fn ctrl_shift_d_compares_files() {
+        let d = action(
+            &Key::Character("D".into()),
+            Physical::Code(Code::KeyD),
+            Modifiers::CTRL | Modifiers::SHIFT,
+        );
+        assert_eq!(d, Some(Action::CompareFiles));
     }
 }

@@ -110,3 +110,14 @@ sync-run = Synchronize
 sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
 syncing = Synchronizing
 compare-identical = The directories are identical
+diff-title = Compare by content
+diff-running = Comparing…
+diff-same = The files are identical
+diff-count = Difference { $i } of { $n }
+diff-binary-same = Binary files, identical
+diff-binary-differ = Binary files, different
+diff-next = Next difference
+diff-prev = Previous
+diff-pick-two = Select two files: two marked in one panel, or one under the cursor in each
+diff-eol = The text is identical; line endings or the final newline differ
+diff-in-archive = Files inside an archive can't be compared: copy them out first (F5)
