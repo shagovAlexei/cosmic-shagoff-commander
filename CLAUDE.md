@@ -39,6 +39,7 @@ The workspace has two crates.
 - **`crates/core` (`shagoff-core`)** has no libcosmic dependency. All logic lives here and is unit-tested.
   - `panel.rs`: `Panel { cwd, entries, cursor, marked, sort, show_hidden }` plus pure functions (cursor moves, Insert/Space marking, mask marking, invert, sort, `targets()`).
   - `listing.rs`: `scan()` on `std::fs`. `..` comes first, then folders, then files.
+  - `archive.rs`: pack/unpack zip, tar.*, 7z through the same `Handler`. Unpack goes into a hidden `.shagoff-unpack.<pid>.<n>` in the destination (entry paths checked by `safe_path`, never through a symlink), then `ops::transfer(Move)`; pack writes a part file and renames without replacing.
   - `ops.rs`: our own synchronous engine (`plan`, `transfer`, `delete`) driven through a `Handler` trait — not cosmic-files' (that one needs compio; see the phase 5 spec). Writes go to a hidden `.<name>.<pid>.<n>.shagoff-part` (created with O_EXCL) then `rename`; a moved source is deleted only after its copy succeeded; symlinks are never followed.
 - **`crates/app` (`shagoff-commander`)** is the libcosmic UI.
   - `app.rs`: `App { panes: [Pane; 2], active }`.
@@ -54,7 +55,7 @@ Data flow: key or button → keymap → `Action` → `App::update`. From there, 
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Implemented so far (MVP done): `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `multirename`, `ops`, `drives`, `session`, `launch`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with a generation check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). `config.rs` and `watcher.rs` are in; drive buttons, F3/F4 and Alt+F1/F2 too. Modules appear phase by phase, so check the tree before assuming one exists.
+Implemented so far (MVP done): `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `multirename`, `ops`, `archive`, `drives`, `session`, `launch`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with a generation check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). `config.rs` and `watcher.rs` are in; drive buttons, F3/F4 and Alt+F1/F2 too. Modules appear phase by phase, so check the tree before assuming one exists.
 
 ## Conventions
 
