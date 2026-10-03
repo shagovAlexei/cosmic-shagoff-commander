@@ -27,6 +27,8 @@ pub struct Config {
     pub home_dir: Option<PathBuf>,
     /// Ctrl+D favourites, in menu order.
     pub hotlist: Vec<HotEntry>,
+    /// Alt+F5: last chosen format, by extension ("zip", "tar.gz", …); unknown → zip.
+    pub pack_format: String,
 }
 
 /// A favourite dir (Ctrl+D).
@@ -45,6 +47,7 @@ impl Default for Config {
             last_tab_close: LastTab::Nothing,
             home_dir: None,
             hotlist: Vec::new(),
+            pack_format: "zip".into(),
         }
     }
 }

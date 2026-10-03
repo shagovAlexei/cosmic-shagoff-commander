@@ -1,6 +1,7 @@
 //! UI-free core of Shagoff Commander: panel state, directory listing, file operations.
 //! Must not depend on libcosmic so everything here stays unit-testable.
 
+pub mod archive;
 pub mod clipboard;
 pub mod drives;
 pub mod format;

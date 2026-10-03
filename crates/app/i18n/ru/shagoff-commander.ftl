@@ -79,3 +79,13 @@ mr-new = Станет
 mr-bad-name = недопустимое имя
 mr-duplicate = имя повторяется
 mr-exists = имя занято
+
+pack = Упаковать
+unpack = Распаковать
+pack-to = Упаковать { $what } в
+unpack-to = Распаковать { $what } в
+pack-move = Переместить в архив (удалить исходные)
+pack-separate = Отдельный архив для каждого файла
+unpack-own-dir = Каждый архив — в свою папку
+packing = Упаковка
+unpacking = Распаковка

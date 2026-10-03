@@ -1,6 +1,6 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State};
-use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind, MrField};
+use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind, MrField, Toggle};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -10,6 +10,7 @@ use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
+use shagoff_core::archive::{self, Format};
 use shagoff_core::clipboard::Kind as ClipKind;
 use shagoff_core::drives::{self, Drive};
 use shagoff_core::format::{self, TimeZone};
@@ -100,6 +101,8 @@ pub enum OpKind {
     Copy,
     Move,
     Delete,
+    Pack,
+    Unpack,
 }
 
 /// A file operation in progress (the progress dialog's data).
@@ -176,6 +179,10 @@ pub enum Message {
     DialogCancel,
     MrInput(MrField, String),
     MrCase(Case),
+    /// Pack dialog: format button.
+    PackFormat(Format),
+    /// Pack / unpack dialog checkboxes.
+    Toggle(Toggle),
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -503,6 +510,19 @@ impl App {
                     m.rule.case = c;
                 }
             }
+            Message::PackFormat(f) => {
+                if let Some(Dialog::Pack(p)) = &mut self.dialog {
+                    p.format = f;
+                    p.path = archive::with_format(&p.path, f);
+                }
+                self.save_pack_format(f);
+            }
+            Message::Toggle(t) => match (&mut self.dialog, t) {
+                (Some(Dialog::Pack(p)), Toggle::MoveAfter) => p.move_after = !p.move_after,
+                (Some(Dialog::Pack(p)), Toggle::Separate) => p.separate = !p.separate,
+                (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
+                _ => {}
+            },
             Message::DialogSubmit => return self.submit_dialog(),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -723,7 +743,11 @@ impl App {
         if let Some(d) = self.dialog_for(side, action) {
             let focus = matches!(
                 d,
-                Dialog::Mask { .. } | Dialog::Input { .. } | Dialog::MultiRename(_)
+                Dialog::Mask { .. }
+                    | Dialog::Input { .. }
+                    | Dialog::MultiRename(_)
+                    | Dialog::Pack(_)
+                    | Dialog::Unpack { .. }
             );
             self.dialog = Some(d);
             return if focus {
@@ -846,6 +870,8 @@ impl App {
             | Action::Move
             | Action::Rename
             | Action::MultiRename
+            | Action::Pack
+            | Action::Unpack
             | Action::Mkdir
             | Action::Delete
             | Action::DeletePermanent => {}
@@ -1015,6 +1041,41 @@ impl App {
                     digits: "1".into(),
                 })))
             }
+            Action::Pack => {
+                let sources = panel.targets();
+                if sources.is_empty() {
+                    return None;
+                }
+                let format = Format::from_ext(&self.config.pack_format).unwrap_or(Format::Zip);
+                let base = panel.cwd().to_path_buf();
+                let name = archive::archive_name(&sources, &base, format);
+                let path = self.panes[1 - side].active().panel.cwd().join(name);
+                Some(Dialog::Pack(Box::new(dialogs::Pack {
+                    side,
+                    sources,
+                    base,
+                    path: path.display().to_string(),
+                    format,
+                    move_after: false,
+                    separate: false,
+                })))
+            }
+            Action::Unpack => {
+                let archives: Vec<PathBuf> = panel
+                    .targets()
+                    .into_iter()
+                    .filter(|p| {
+                        p.file_name()
+                            .is_some_and(|n| Format::detect(&n.to_string_lossy()).is_some())
+                    })
+                    .collect();
+                (!archives.is_empty()).then(|| Dialog::Unpack {
+                    side,
+                    archives,
+                    path: dir_input(self.panes[1 - side].active().panel.cwd()),
+                    own_dir: false,
+                })
+            }
             _ => None,
         }
     }
@@ -1072,6 +1133,39 @@ impl App {
                     pairs,
                 };
                 self.start_job(m.side, OpKind::Move, job, focus)
+            }
+            Dialog::Pack(p) => {
+                let cwd = self.panes[p.side].active().target();
+                let path = cwd.join(p.path.trim());
+                let groups = archive::groups(&p.sources, &p.base, &path, p.format, p.separate);
+                // Cursor on the new archive when it lands in this panel.
+                let focus = match groups.as_slice() {
+                    [(_, a)] if a.parent() == Some(cwd.as_path()) => {
+                        a.file_name().map(|n| n.to_string_lossy().into_owned())
+                    }
+                    _ => None,
+                };
+                let job = Job::Pack {
+                    format: p.format,
+                    base: p.base,
+                    groups,
+                    move_after: p.move_after,
+                };
+                self.start_job(p.side, OpKind::Pack, job, focus)
+            }
+            Dialog::Unpack {
+                side,
+                archives,
+                path,
+                own_dir,
+            } => {
+                let dest = self.panes[side].active().target().join(path.trim());
+                let job = Job::Unpack {
+                    archives,
+                    dest,
+                    own_dir,
+                };
+                self.start_job(side, OpKind::Unpack, job, None)
             }
             d @ Dialog::List { .. } => {
                 let i = match &d {
@@ -1330,6 +1424,18 @@ impl App {
         .collect()
     }
 
+    fn save_pack_format(&mut self, f: Format) {
+        let v = f.ext().to_string();
+        match &self.config_handler {
+            Some(h) => {
+                if let Err(e) = self.config.set_pack_format(h, v) {
+                    log::warn!("config: {e}");
+                }
+            }
+            None => self.config.pack_format = v,
+        }
+    }
+
     fn save_hotlist(&mut self, list: Vec<HotEntry>) {
         match &self.config_handler {
             Some(h) => {
@@ -1493,6 +1599,7 @@ mod tests {
     use crate::dialogs::ListKind;
     use cosmic::iced::keyboard::key::{Code, Named, Physical};
     use cosmic::iced::keyboard::{Key, Location};
+    use shagoff_core::archive::Format;
     use shagoff_core::drives::Drive;
     use shagoff_core::multirename::Case;
     use shagoff_core::session::PaneState;
@@ -2522,5 +2629,77 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down)); // cursor on the bad name
         let _ = app.update(Message::Key(Action::MultiRename));
         assert!(app.dialog.is_none());
+    }
+
+    fn pack_setup() -> (tempfile::TempDir, App) {
+        let tmp = tempfile::tempdir().unwrap();
+        let (l, r) = (tmp.path().join("l"), tmp.path().join("r"));
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("readme.txt"), "x").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, &l);
+        listed_at(&mut app, 1, &r);
+        let _ = app.update(Message::Key(Action::Down)); // cursor on readme.txt
+        (tmp, app)
+    }
+
+    #[test]
+    fn alt_f5_opens_pack_dialog_with_default_name() {
+        let (tmp, mut app) = pack_setup();
+        let _ = app.update(Message::Key(Action::Pack));
+        let Some(Dialog::Pack(p)) = &app.dialog else {
+            panic!("no pack dialog")
+        };
+        assert_eq!(PathBuf::from(&p.path), tmp.path().join("r/readme.zip"));
+        assert_eq!(p.format, Format::Zip);
+    }
+
+    #[test]
+    fn pack_format_change_swaps_extension_and_is_remembered() {
+        let (tmp, mut app) = pack_setup();
+        let _ = app.update(Message::Key(Action::Pack));
+        let _ = app.update(Message::PackFormat(Format::TarXz));
+        let Some(Dialog::Pack(p)) = &app.dialog else {
+            panic!()
+        };
+        assert_eq!(PathBuf::from(&p.path), tmp.path().join("r/readme.tar.xz"));
+        assert_eq!(app.config.pack_format, "tar.xz");
+    }
+
+    #[test]
+    fn pack_submit_starts_job() {
+        let (_tmp, mut app) = pack_setup();
+        let _ = app.update(Message::Key(Action::Pack));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Pack));
+    }
+
+    #[test]
+    fn alt_f9_without_archives_does_nothing() {
+        let (_tmp, mut app) = pack_setup();
+        let _ = app.update(Message::Key(Action::Unpack));
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn alt_f9_on_archive_opens_dialog_then_unpacks() {
+        let (tmp, mut app) = pack_setup();
+        std::fs::write(tmp.path().join("l/a.zip"), "").unwrap();
+        listed_at(&mut app, 0, &tmp.path().join("l"));
+        let _ = app.update(Message::Key(Action::Home));
+        let _ = app.update(Message::Key(Action::Down)); // ".." → a.zip (sorted before readme.txt)
+        let _ = app.update(Message::Key(Action::Unpack));
+        assert!(
+            matches!(&app.dialog, Some(Dialog::Unpack { archives, .. }) if archives.len() == 1)
+        );
+        let _ = app.update(Message::Toggle(dialogs::Toggle::OwnDir));
+        assert!(matches!(
+            &app.dialog,
+            Some(Dialog::Unpack { own_dir: true, .. })
+        ));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Unpack));
     }
 }

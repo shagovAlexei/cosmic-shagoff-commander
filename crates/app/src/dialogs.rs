@@ -6,6 +6,7 @@ use cosmic::iced::Length;
 use cosmic::iced::widget::text::Wrapping;
 use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
+use shagoff_core::archive::Format;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
@@ -62,6 +63,33 @@ pub enum Dialog {
     },
     /// Ctrl+M: files snapshot at open (panel order) and the form. Boxed: the form is large.
     MultiRename(Box<MultiRename>),
+    /// Alt+F5. Boxed: the form is large.
+    Pack(Box<Pack>),
+    /// Alt+F9: the archives among the targets at open.
+    Unpack {
+        side: usize,
+        archives: Vec<PathBuf>,
+        path: String,
+        own_dir: bool,
+    },
+}
+
+pub struct Pack {
+    pub side: usize,
+    pub sources: Vec<PathBuf>,
+    /// The panel dir: names inside the archive are relative to it.
+    pub base: PathBuf,
+    pub path: String,
+    pub format: Format,
+    pub move_after: bool,
+    pub separate: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Toggle {
+    MoveAfter,
+    Separate,
+    OwnDir,
 }
 
 pub struct MultiRename {
@@ -128,6 +156,8 @@ impl Dialog {
     pub fn input_mut(&mut self) -> Option<&mut String> {
         match self {
             Dialog::Mask { input, .. } | Dialog::Input { input, .. } => Some(input),
+            Dialog::Pack(p) => Some(&mut p.path),
+            Dialog::Unpack { path, .. } => Some(path),
             _ => None,
         }
     }
@@ -377,6 +407,60 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .secondary_action(cancel)
                 .into()
         }
+        Dialog::Pack(p) => {
+            let format = |f: Format| {
+                let b = if p.format == f {
+                    widget::button::suggested(f.ext())
+                } else {
+                    widget::button::standard(f.ext())
+                };
+                b.on_press(Message::PackFormat(f))
+            };
+            let formats = Format::PACK
+                .into_iter()
+                .fold(row![].spacing(8), |r, f| r.push(format(f)));
+            widget::dialog()
+                .title(fl!("pack-to", what = what(&p.sources)))
+                .control(
+                    column![
+                        field(&p.path),
+                        formats,
+                        widget::checkbox(p.move_after)
+                            .label(fl!("pack-move"))
+                            .on_toggle(|_| Message::Toggle(Toggle::MoveAfter)),
+                        widget::checkbox(p.separate)
+                            .label(fl!("pack-separate"))
+                            .on_toggle(|_| Message::Toggle(Toggle::Separate)),
+                    ]
+                    .spacing(12),
+                )
+                .primary_action(
+                    widget::button::suggested(fl!("pack")).on_press(Message::DialogSubmit),
+                )
+                .secondary_action(cancel)
+                .into()
+        }
+        Dialog::Unpack {
+            archives,
+            path,
+            own_dir,
+            ..
+        } => widget::dialog()
+            .title(fl!("unpack-to", what = what(archives)))
+            .control(
+                column![
+                    field(path),
+                    widget::checkbox(*own_dir)
+                        .label(fl!("unpack-own-dir"))
+                        .on_toggle(|_| Message::Toggle(Toggle::OwnDir)),
+                ]
+                .spacing(12),
+            )
+            .primary_action(
+                widget::button::suggested(fl!("unpack")).on_press(Message::DialogSubmit),
+            )
+            .secondary_action(cancel)
+            .into(),
         Dialog::Error { path, error, .. } => widget::dialog()
             .title(fl!("op-error"))
             .body(format!("{}\n{error}", path.display()))
@@ -402,6 +486,8 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
         OpKind::Copy => fl!("copying"),
         OpKind::Move => fl!("moving"),
         OpKind::Delete => fl!("deleting"),
+        OpKind::Pack => fl!("packing"),
+        OpKind::Unpack => fl!("unpacking"),
     };
     let counts = match job.kind {
         OpKind::Delete => fl!(

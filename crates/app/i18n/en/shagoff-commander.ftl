@@ -78,3 +78,13 @@ mr-new = New name
 mr-bad-name = invalid name
 mr-duplicate = same name twice
 mr-exists = name is taken
+
+pack = Pack
+unpack = Unpack
+pack-to = Pack { $what } to
+unpack-to = Unpack { $what } to
+pack-move = Move to archive (delete the originals)
+pack-separate = A separate archive for each file
+unpack-own-dir = Each archive into its own folder
+packing = Packing
+unpacking = Unpacking
