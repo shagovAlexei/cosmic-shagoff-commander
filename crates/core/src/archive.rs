@@ -256,6 +256,13 @@ impl Stage<'_> {
             return Err(Stop::Cancel);
         }
         let Some(rel) = safe_path(name) else {
+            // "./" or "/": the archive's own root (`tar -C dir -cf x.tar .`), nothing to create.
+            let root_only = name
+                .components()
+                .all(|c| matches!(c, Component::RootDir | Component::CurDir));
+            if root_only && !name.as_os_str().is_empty() {
+                return Ok(());
+            }
             return self.refuse(name, "unsafe path in archive");
         };
         if !self.parents(&rel)? {
@@ -301,38 +308,49 @@ impl Stage<'_> {
                 }
             }
             Kind::File(size) => {
-                let mut w = File::options().write(true).create_new(true).open(&dst)?;
-                let mut buf = vec![0; 256 << 10];
-                let mut written = 0u64;
-                loop {
-                    if self.h.cancelled() {
-                        return Err(Stop::Cancel);
-                    }
-                    let n = match data.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => n,
-                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                        Err(e) => {
-                            let _ = fs::remove_file(&dst); // never leave a half-written file
-                            return Err(e.into());
-                        }
-                    };
-                    io::Write::write_all(&mut w, &buf[..n])?;
-                    written += n as u64;
-                    self.h.progress(self.pos.get(), self.total, &self.archive);
-                }
-                if size.is_some_and(|s| s != written) {
-                    let _ = fs::remove_file(&dst);
-                    return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
-                }
-                if let Some(m) = mode {
-                    w.set_permissions(Permissions::from_mode(m & 0o777))?;
-                }
-                if let Some(t) = mtime {
-                    w.set_modified(t)?;
+                if let Err(e) = self.write_file(&dst, size, mode, mtime, data) {
+                    let _ = fs::remove_file(&dst); // never leave a half-written file
+                    return Err(e);
                 }
             }
             Kind::Dir => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn write_file(
+        &mut self,
+        dst: &Path,
+        size: Option<u64>,
+        mode: Option<u32>,
+        mtime: Option<SystemTime>,
+        data: &mut dyn Read,
+    ) -> Result<(), Stop> {
+        let mut w = File::options().write(true).create_new(true).open(dst)?;
+        let mut buf = vec![0; 256 << 10];
+        let mut written = 0u64;
+        loop {
+            if self.h.cancelled() {
+                return Err(Stop::Cancel);
+            }
+            let n = match data.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            };
+            io::Write::write_all(&mut w, &buf[..n])?;
+            written += n as u64;
+            self.h.progress(self.pos.get(), self.total, &self.archive);
+        }
+        if size.is_some_and(|s| s != written) {
+            return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+        }
+        if let Some(m) = mode {
+            w.set_permissions(Permissions::from_mode(m & 0o777))?;
+        }
+        if let Some(t) = mtime {
+            w.set_modified(t)?;
         }
         Ok(())
     }
@@ -552,7 +570,11 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
             continue;
         };
         let root = if own_dir {
-            staging.join(stem(&name))
+            // A stem like ".." ("...tar") must not climb out of staging: use the whole name then.
+            match safe_path(Path::new(stem(&name))) {
+                Some(s) if s.components().count() == 1 => staging.join(s),
+                _ => staging.join(&name),
+            }
         } else {
             staging.clone()
         };
@@ -724,7 +746,10 @@ impl Packer {
                 io::copy(r, z)?;
                 Ok(())
             }
-            Packer::Tar(b) => b.append_data(&mut tar_header(m), rel, r.take(m.len())),
+            Packer::Tar(b) => {
+                let exact = Exact { r, left: m.len() };
+                b.append_data(&mut tar_header(m), rel, exact)
+            }
             Packer::SevenZ(w) => {
                 w.push_archive_entry(sz_entry(utf8(rel)?, m, false), Some(r))
                     .map_err(io::Error::other)?;
@@ -814,6 +839,28 @@ fn to_zip_time(t: SystemTime) -> zip::DateTime {
         .unwrap_or_default()
 }
 
+/// Exactly `left` bytes: tar has written the size into the header already, so a file that
+/// shrank since must fail (tar would pad it silently) and one that grew is cut.
+struct Exact<R> {
+    r: R,
+    left: u64,
+}
+
+impl<R: Read> Read for Exact<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.left == 0 || buf.is_empty() {
+            return Ok(0);
+        }
+        let max = buf.len().min(self.left.try_into().unwrap_or(usize::MAX));
+        let n = self.r.read(&mut buf[..max])?;
+        if n == 0 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        self.left -= n as u64;
+        Ok(n)
+    }
+}
+
 /// Counts bytes into the progress bar and stops reading on cancel.
 struct Progress<'a> {
     r: File,
@@ -891,8 +938,12 @@ pub fn pack(
     let mut policy: Option<Resolution> = None;
     for (sources, dest) in groups {
         match pack_one(f, base, sources, dest, &mut policy, h) {
-            Packed::Done { skipped: false } => report.completed.extend(sources.iter().cloned()),
-            Packed::Done { skipped: true } | Packed::Dropped => {}
+            // An archive inside a source dir would be deleted with it by "move to archive".
+            Packed::Done { skipped: false } if !inside_any(dest, sources) => {
+                report.completed.extend(sources.iter().cloned())
+            }
+            Packed::Done { .. } => {}
+            Packed::Dropped => {}
             Packed::Cancel => {
                 report.cancelled = true;
                 break;
@@ -900,6 +951,23 @@ pub fn pack(
         }
     }
     report
+}
+
+/// `dest` lies inside one of the source dirs (symlinks resolved).
+fn inside_any(dest: &Path, sources: &[PathBuf]) -> bool {
+    let Some(dir) = dest.parent().and_then(|p| fs::canonicalize(p).ok()) else {
+        return false;
+    };
+    sources.iter().any(|s| {
+        fs::symlink_metadata(s).is_ok_and(|m| m.is_dir())
+            && fs::canonicalize(s).is_ok_and(|s| dir.starts_with(s))
+    })
+}
+
+/// `dest` already exists and is one of the sources: replacing it would destroy what is packed.
+fn is_a_source(dest: &Path, sources: &[PathBuf]) -> bool {
+    let id = |p: &Path| fs::symlink_metadata(p).ok().map(|m| (m.dev(), m.ino()));
+    id(dest).is_some_and(|d| sources.iter().any(|s| id(s) == Some(d)))
 }
 
 fn pack_one(
@@ -910,6 +978,16 @@ fn pack_one(
     policy: &mut Option<Resolution>,
     h: &mut dyn Handler,
 ) -> Packed {
+    if is_a_source(dest, sources) {
+        let e = io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the archive would replace a file being packed",
+        );
+        return match h.error(dest, &e) {
+            ErrorChoice::Cancel => Packed::Cancel,
+            _ => Packed::Dropped,
+        };
+    }
     loop {
         let (part, w) = match attempt(h, dest, || {
             if let Some(dir) = dest.parent() {
@@ -1680,5 +1758,92 @@ mod tests {
         );
         assert!(r.cancelled);
         assert_eq!(names(d.path()), ["f"]);
+    }
+
+    #[test]
+    fn regression_archive_inside_source_is_not_completed() {
+        // "Move to archive" deletes `completed`: it must never take the new archive with it.
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("f"), "x").unwrap();
+        let g = [(vec![src.clone()], src.join("src.zip"))];
+        let r = pack(Format::Zip, d.path(), &g, &mut Script::default());
+        assert!(r.completed.is_empty());
+        assert!(src.join("src.zip").exists());
+    }
+
+    #[test]
+    fn regression_dotdot_stem_stays_in_staging() {
+        let d = tempfile::tempdir().unwrap();
+        let out = d.path().join("out");
+        fs::create_dir(&out).unwrap();
+        fs::write(out.join("f"), "old").unwrap();
+        let a = d.path().join("...tar"); // stem ".."
+        evil_tar(&a, &[("f", tar::EntryType::Regular, "", b"new")]);
+        unpack(&[a], &out, true, &mut Script::default());
+        assert_eq!(fs::read_to_string(out.join("f")).unwrap(), "old");
+        assert_eq!(fs::read_to_string(out.join("...tar/f")).unwrap(), "new");
+    }
+
+    #[test]
+    fn regression_dot_slash_root_entry_is_not_an_error() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.tar");
+        evil_tar(
+            &a,
+            &[
+                ("./", tar::EntryType::Directory, "", b""),
+                ("./f", tar::EntryType::Regular, "", b"x"),
+            ],
+        );
+        let mut h = Script::default();
+        let r = unpack(
+            std::slice::from_ref(&a),
+            &d.path().join("out"),
+            false,
+            &mut h,
+        );
+        assert!(h.errored.is_empty(), "{:?}", h.errored);
+        assert_eq!(r.completed, [a]);
+    }
+
+    #[test]
+    fn regression_pack_onto_one_of_its_sources_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        fs::write(&a, "precious").unwrap();
+        let mut h = Script {
+            conflicts: vec![Resolution::Replace],
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        let r = pack(
+            Format::Zip,
+            d.path(),
+            &[(vec![a.clone()], a.clone())],
+            &mut h,
+        );
+        assert_eq!(fs::read_to_string(&a).unwrap(), "precious");
+        assert!(r.completed.is_empty());
+        assert_eq!(h.errored, [a]);
+    }
+
+    #[test]
+    fn regression_short_source_is_an_error_not_a_padded_entry() {
+        // A file that shrank between the walk and the read: tar would pad silently.
+        let mut r = Exact {
+            r: &b"abc"[..],
+            left: 5,
+        };
+        let e = io::copy(&mut r, &mut io::sink()).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+        let mut r = Exact {
+            r: &b"abcdef"[..],
+            left: 3,
+        }; // grew: only the recorded size
+        let mut v = Vec::new();
+        io::copy(&mut r, &mut v).unwrap();
+        assert_eq!(v, b"abc");
     }
 }

@@ -142,3 +142,8 @@
 | `regression_recent_starts_with_the_current_entry_after_back` | После Alt+← список Alt+↓ начинался не с текущего каталога | 08 |
 | `regression_paste_during_navigation_lands_in_target` | Ctrl+V сразу после Enter на папке вставлял в покидаемый каталог | 09 |
 | `regression_rename_method_never_replaces_or_merges` | Ctrl+M: шаг цепочки после пропущенного спрашивал «Заменить?» про файл из той же пачки (и сливал папки) | 10 |
+| `regression_archive_inside_source_is_not_completed` | «Переместить в архив» с архивом внутри исходной папки удаляло и папку, и новый архив | 11 |
+| `regression_dotdot_stem_stays_in_staging` | Архив `...tar` с «в свою папку» писал прямо в цель и заменял файлы без вопроса | 11 |
+| `regression_dot_slash_root_entry_is_not_an_error` | Запись `./` (tar -C dir .) давала ошибку «небезопасный путь» | 11 |
+| `regression_pack_onto_one_of_its_sources_is_refused` | Упаковка `a.zip` в `a.zip` заменяла файл пустым архивом | 11 |
+| `regression_short_source_is_an_error_not_a_padded_entry` | Файл, уменьшившийся во время упаковки в tar, молча дополнялся нулями | 11 |
