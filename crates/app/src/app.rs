@@ -3786,6 +3786,9 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::CompareFiles));
         assert!(app.dialog.is_none());
-        assert_eq!(app.panes[0].active().error.as_deref(), Some(fl!("diff-in-archive").as_str()));
+        assert_eq!(
+            app.panes[0].active().error.as_deref(),
+            Some(fl!("diff-in-archive").as_str())
+        );
     }
 }
