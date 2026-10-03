@@ -2,6 +2,7 @@ mod app;
 mod clip;
 mod config;
 mod dialogs;
+mod find;
 mod i18n;
 mod jobs;
 mod keymap;

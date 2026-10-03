@@ -12,7 +12,8 @@ use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +73,45 @@ pub enum Dialog {
         path: String,
         own_dir: bool,
     },
+    /// Alt+F7. Boxed: the form and results are large.
+    Find(Box<Find>),
+}
+
+/// Rows kept and shown; the search still counts everything.
+pub const FIND_SHOWN: usize = 1000;
+
+pub struct Find {
+    pub side: usize,
+    pub mask: String,
+    pub dir: String,
+    pub text: String,
+    pub case_sensitive: bool,
+    /// The first `FIND_SHOWN` matches.
+    pub results: Vec<PathBuf>,
+    pub total: usize,
+    /// Dir being searched (progress line).
+    pub current: String,
+    pub cursor: usize,
+    /// Events of other searches are dropped.
+    pub id: u64,
+    /// Set while a search runs.
+    pub stop: Option<Arc<AtomicBool>>,
+}
+
+/// Closing the dialog in any way stops its search.
+impl Drop for Find {
+    fn drop(&mut self) {
+        if let Some(s) = &self.stop {
+            s.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FindField {
+    Mask,
+    Dir,
+    Text,
 }
 
 pub struct Pack {
@@ -461,6 +501,69 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             )
             .secondary_action(cancel)
             .into(),
+        Dialog::Find(f) => {
+            let edit = |label: String, value: &'a str, field: FindField| {
+                let input = widget::text_input("", value)
+                    .on_input(move |s| Message::FindInput(field, s))
+                    .on_submit(|_| Message::FindStart);
+                let input = if field == FindField::Mask {
+                    input.id(input_id.clone())
+                } else {
+                    input
+                };
+                column![widget::text::caption(label), input].spacing(2)
+            };
+            let mut list = column![].spacing(2);
+            for (i, p) in f.results.iter().enumerate() {
+                let label = p.display().to_string();
+                let b = if i == f.cursor {
+                    widget::button::suggested(label)
+                } else {
+                    widget::button::text(label)
+                };
+                list = list.push(b.on_press(Message::FindPick(i)).width(Length::Fill));
+            }
+            let more = f.total.saturating_sub(f.results.len());
+            if more > 0 {
+                list = list.push(widget::text(fl!("find-more", n = more)));
+            }
+            let status = match &f.stop {
+                Some(_) => format!("{}   {}", fl!("find-count", n = f.total), f.current),
+                None => fl!("find-count", n = f.total),
+            };
+            let run = match &f.stop {
+                Some(_) => widget::button::standard(fl!("find-stop")).on_press(Message::FindStop),
+                None => widget::button::suggested(fl!("find-start")).on_press(Message::FindStart),
+            };
+            widget::dialog()
+                .title(fl!("find-files"))
+                .width(Length::Fill)
+                .max_width(1100.0)
+                .control(
+                    column![
+                        row![
+                            edit(fl!("find-mask"), &f.mask, FindField::Mask),
+                            edit(fl!("find-in"), &f.dir, FindField::Dir),
+                        ]
+                        .spacing(8),
+                        edit(fl!("find-text"), &f.text, FindField::Text),
+                        widget::checkbox(f.case_sensitive)
+                            .label(fl!("find-case"))
+                            .on_toggle(|_| Message::FindCase),
+                        widget::text(status).wrapping(Wrapping::WordOrGlyph),
+                        widget::scrollable(list).height(Length::Fixed(300.0)),
+                    ]
+                    .spacing(12),
+                )
+                .primary_action(run)
+                .secondary_action(cancel)
+                .tertiary_action(
+                    widget::button::standard(fl!("find-go")).on_press_maybe(
+                        (!f.results.is_empty()).then_some(Message::FindPick(f.cursor)),
+                    ),
+                )
+                .into()
+        }
         Dialog::Error { path, error, .. } => widget::dialog()
             .title(fl!("op-error"))
             .body(format!("{}\n{error}", path.display()))

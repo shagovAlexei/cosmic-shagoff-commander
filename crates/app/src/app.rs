@@ -1,6 +1,6 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State};
-use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind, MrField, Toggle};
+use crate::dialogs::{self, Dialog, FindField, InputOp, ListItem, ListKind, MrField, Toggle};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -186,6 +186,13 @@ pub enum Message {
     PackFormat(Format),
     /// Pack / unpack dialog checkboxes.
     Toggle(Toggle),
+    FindInput(FindField, String),
+    FindCase,
+    FindStart,
+    FindStop,
+    Find(crate::find::FindEvent),
+    /// Go to result i of the find dialog.
+    FindPick(usize),
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -351,6 +358,21 @@ impl App {
                             let i = *cursor;
                             return self.pick(i);
                         }
+                        _ => {}
+                    }
+                    return Task::none();
+                }
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    match action {
+                        Action::Up => f.cursor = f.cursor.saturating_sub(1),
+                        Action::Down => {
+                            f.cursor = (f.cursor + 1).min(f.results.len().saturating_sub(1));
+                        }
+                        Action::Enter => {
+                            let i = f.cursor;
+                            return self.find_pick(i);
+                        }
+                        Action::SwitchPane => return cosmic::iced::widget::operation::focus_next(),
                         _ => {}
                     }
                     return Task::none();
@@ -527,6 +549,30 @@ impl App {
                 (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
                 _ => {}
             },
+            Message::FindInput(field, s) => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    *match field {
+                        FindField::Mask => &mut f.mask,
+                        FindField::Dir => &mut f.dir,
+                        FindField::Text => &mut f.text,
+                    } = s;
+                }
+            }
+            Message::FindCase => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.case_sensitive = !f.case_sensitive;
+                }
+            }
+            Message::FindStart => return self.start_find(),
+            Message::FindStop => {
+                if let Some(Dialog::Find(f)) = &self.dialog
+                    && let Some(s) = &f.stop
+                {
+                    s.store(true, Ordering::Relaxed);
+                }
+            }
+            Message::Find(e) => self.on_find_event(e),
+            Message::FindPick(i) => return self.find_pick(i),
             Message::DialogSubmit => return self.submit_dialog(),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -760,6 +806,7 @@ impl App {
                     | Dialog::MultiRename(_)
                     | Dialog::Pack(_)
                     | Dialog::Unpack { .. }
+                    | Dialog::Find(_)
             );
             self.dialog = Some(d);
             return if focus {
@@ -933,6 +980,7 @@ impl App {
             | Action::MultiRename
             | Action::Pack
             | Action::Unpack
+            | Action::FindFiles
             | Action::Mkdir
             | Action::Delete
             | Action::DeletePermanent => {}
@@ -1121,6 +1169,27 @@ impl App {
                     separate: false,
                 })))
             }
+            Action::FindFiles => {
+                // Inside an archive: search where the archive lies.
+                let cwd = panel.cwd();
+                let dir = match archive::split_path(cwd) {
+                    Some((a, _)) => a.parent().map_or(cwd.to_path_buf(), Path::to_path_buf),
+                    None => cwd.to_path_buf(),
+                };
+                Some(Dialog::Find(Box::new(dialogs::Find {
+                    side,
+                    mask: "*".into(),
+                    dir: dir.display().to_string(),
+                    text: String::new(),
+                    case_sensitive: false,
+                    results: Vec::new(),
+                    total: 0,
+                    current: String::new(),
+                    cursor: 0,
+                    id: 0, // set by each search start
+                    stop: None,
+                })))
+            }
             Action::Unpack => {
                 let archives: Vec<PathBuf> = panel
                     .targets()
@@ -1236,6 +1305,10 @@ impl App {
                 };
                 self.start_job(side, OpKind::Unpack, job, None)
             }
+            d @ Dialog::Find(_) => {
+                self.dialog = Some(d);
+                self.start_find()
+            }
             d @ Dialog::List { .. } => {
                 let i = match &d {
                     Dialog::List { cursor, .. } => *cursor,
@@ -1321,6 +1394,69 @@ impl App {
             }
         };
         self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
+    }
+
+    /// (Re)start the search of the open find dialog; the previous one is stopped.
+    fn start_find(&mut self) -> Task<Message> {
+        let id = self.next_id();
+        let Some(Dialog::Find(f)) = &self.dialog else {
+            return Task::none();
+        };
+        let side = f.side;
+        let root = self.panes[side].active().target().join(f.dir.trim());
+        let text = f.text.trim().to_string();
+        let q = shagoff_core::search::Query {
+            mask: Mask::parse(&f.mask),
+            text: (!text.is_empty()).then_some(text),
+            case_sensitive: f.case_sensitive,
+            hidden: self.panes[side].active().panel.show_hidden(),
+        };
+        let (stop, events) = crate::find::spawn(id, root, q);
+        if let Some(Dialog::Find(f)) = &mut self.dialog {
+            if let Some(old) = f.stop.replace(stop) {
+                old.store(true, Ordering::Relaxed);
+            }
+            (f.id, f.cursor, f.total) = (id, 0, 0);
+            f.results.clear();
+        }
+        Task::run(events, |e| cosmic::Action::App(Message::Find(e)))
+    }
+
+    fn on_find_event(&mut self, e: crate::find::FindEvent) {
+        use crate::find::FindEvent;
+        let Some(Dialog::Find(f)) = &mut self.dialog else {
+            return;
+        };
+        match e {
+            FindEvent::Found(id, paths) if id == f.id => {
+                f.total += paths.len();
+                let room = dialogs::FIND_SHOWN.saturating_sub(f.results.len());
+                f.results.extend(paths.into_iter().take(room));
+            }
+            FindEvent::Dir(id, d) if id == f.id => f.current = d.display().to_string(),
+            FindEvent::Done(id) if id == f.id => {
+                f.stop = None;
+                f.current.clear();
+            }
+            _ => {} // a previous search
+        }
+    }
+
+    /// Result i: its dir in the dialog's panel, cursor on it (also for a found dir, as in TC).
+    fn find_pick(&mut self, i: usize) -> Task<Message> {
+        let Some(Dialog::Find(f)) = &self.dialog else {
+            return Task::none();
+        };
+        let (side, Some(path)) = (f.side, f.results.get(i).cloned()) else {
+            return Task::none();
+        };
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Task::none();
+        };
+        let (dir, name) = (dir.to_path_buf(), name.to_string_lossy().into_owned());
+        self.dialog = None; // stops the search (Drop)
+        self.active = side;
+        self.load(side, dir, Some(name))
     }
 
     /// Copy `paths` (inside the archive dir `cwd`) out into the real dir `dest`.
@@ -2994,5 +3130,61 @@ mod tests {
         let _ = app.update(Message::Key(Action::Copy));
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Copy));
+    }
+
+    fn find_dialog(app: &mut App) -> &mut dialogs::Find {
+        match &mut app.dialog {
+            Some(Dialog::Find(f)) => f,
+            _ => panic!("no find dialog"),
+        }
+    }
+
+    #[test]
+    fn alt_f7_opens_find_with_panel_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let f = find_dialog(&mut app);
+        assert_eq!(PathBuf::from(&f.dir), tmp.path());
+        assert_eq!(f.mask, "*");
+    }
+
+    #[test]
+    fn found_appends_results_and_stale_events_are_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id,
+            vec!["/a".into(), "/b".into()],
+        )));
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id + 1,
+            vec!["/stale".into()],
+        )));
+        let f = find_dialog(&mut app);
+        assert_eq!(f.results, [PathBuf::from("/a"), PathBuf::from("/b")]);
+        assert_eq!(f.total, 2);
+    }
+
+    #[test]
+    fn pick_goes_to_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub/x.txt"), "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id,
+            vec![tmp.path().join("sub/x.txt")],
+        )));
+        let _ = app.update(Message::Key(Action::Enter));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
     }
 }
