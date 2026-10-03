@@ -1009,7 +1009,7 @@ impl App {
                 // A change in the dir we are leaving must not cancel the scan of the one we enter.
                 if self.job.is_none() && t.target() == t.panel.cwd() {
                     let cwd = t.target();
-                    return self.load(side, cwd, None);
+                    return self.reload(side, cwd, None);
                 }
             }
             Message::Drive(side, path) => {
@@ -1150,7 +1150,14 @@ impl App {
     }
 
     /// Scan `path` for the active tab of `side` in the background; the result lands in `Message::Listed`.
+    /// Go to `path` in the active tab (leaves search results).
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
+        self.panes[side].active_mut().results = None;
+        self.reload(side, path, focus)
+    }
+
+    /// Read the active tab's dir again (search results stay: they are re-checked).
+    fn reload(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
         let i = self.panes[side].active_index();
         self.load_tab(side, i, path, focus)
     }
@@ -1205,6 +1212,13 @@ impl App {
             .is_some_and(|s| s.kind != StatusKind::Busy)
         {
             self.status = None;
+        }
+        // Names there are paths: Ctrl+M would move files between dirs, Shift+F2 compares by name.
+        if matches!(action, Action::MultiRename | Action::CompareLists)
+            && (0..2).any(|s| self.panes[s].active().results.is_some())
+        {
+            self.say(StatusKind::Error, fl!("results-unsupported"));
+            return Task::none();
         }
         // Backspace / ".." in search results: back to the dir that was searched.
         let t = self.panes[side].active_mut();
@@ -1481,7 +1495,7 @@ impl App {
             Action::SelectGroup | Action::UnselectGroup => {}
             Action::Reload => {
                 let cwd = panel.cwd().to_path_buf();
-                return self.load(side, cwd, None);
+                return self.reload(side, cwd, None);
             }
             Action::NewTab => {
                 let id = self.next_id();
@@ -1690,6 +1704,7 @@ impl App {
                     max_size: String::new(),
                     days: String::new(),
                     error: None,
+                    root: None,
                     results: Vec::new(),
                     total: 0,
                     current: String::new(),
@@ -1920,7 +1935,7 @@ impl App {
             return self.start_job(side, OpKind::Repack, job, first());
         }
         match std::fs::create_dir_all(cwd.join(name)) {
-            Ok(()) => self.load(side, cwd, first()),
+            Ok(()) => self.reload(side, cwd, first()),
             Err(e) => {
                 self.say(
                     StatusKind::Error,
@@ -2154,6 +2169,7 @@ impl App {
             case_sensitive: f.case_sensitive,
         };
         let root = self.panes[side].active().target().join(f.dir.trim());
+        let root_searched = root.clone();
         let text = f.text.trim().to_string();
         let q = match find_query(f, text) {
             Ok(q) => shagoff_core::search::Query {
@@ -2174,6 +2190,7 @@ impl App {
             }
             (f.id, f.cursor, f.total, f.in_list) = (id, 0, 0, false);
             f.error = None;
+            f.root = Some(root_searched);
             f.results.clear();
         }
         Task::run(events, |e| cosmic::Action::App(Message::Find(e)))
@@ -2204,12 +2221,15 @@ impl App {
             return Task::none();
         };
         let side = f.side;
-        let root = self.panes[side].active().target().join(f.dir.trim());
+        // The dir that was searched, not the field as edited since.
+        let Some(root) = f.root.clone() else {
+            return Task::none();
+        };
         let paths = Arc::new(f.results.clone());
         self.dialog = None; // stops the search
         self.active = side;
         self.panes[side].active_mut().results = Some((root.clone(), paths));
-        self.load(side, root, None)
+        self.reload(side, root, None)
     }
 
     /// Result i: its dir in the dialog's panel, cursor on it (also for a found dir, as in TC).
@@ -2556,8 +2576,8 @@ impl App {
         let here = self.panes[side].active().panel.cwd().to_path_buf();
         let there = self.panes[1 - side].active().panel.cwd().to_path_buf();
         Task::batch([
-            self.load(side, here, job.focus),
-            self.load(1 - side, there, None),
+            self.reload(side, here, job.focus),
+            self.reload(1 - side, there, None),
             view,
         ])
     }
@@ -2879,7 +2899,7 @@ impl App {
     /// The newly shown tab was not watched while hidden: restore its scroll and rescan it.
     fn tab_switched(&mut self, side: usize) -> Task<Message> {
         let dir = self.panes[side].active().target();
-        Task::batch([self.restore_scroll(side), self.load(side, dir, None)])
+        Task::batch([self.restore_scroll(side), self.reload(side, dir, None)])
     }
 
     /// Scroll the pane's list to the active tab's stored offset.
@@ -3038,9 +3058,6 @@ fn mount_error(e: &mount::Error) -> String {
     }
 }
 
-/// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").
-/// A typed target that lies inside an archive (`a.zip/x`). The archive file itself is not: packing
-/// or copying onto an existing `a.zip` asks to replace it, as for any file.
 /// A dir's entries, or the search results fed to the panel (re-read: deleted ones drop out).
 fn read_listing(
     path: &Path,
@@ -3066,6 +3083,15 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
     };
     let kb = |n: Option<u64>| n.map(|n| n.saturating_mul(1024));
     let days = number(&f.days, fl!("find-days"))?;
+    let (min, max) = (
+        kb(number(&f.min_size, fl!("find-min-size"))?),
+        kb(number(&f.max_size, fl!("find-max-size"))?),
+    );
+    if let (Some(a), Some(b)) = (min, max)
+        && a > b
+    {
+        return Err(fl!("find-bad-range"));
+    }
     let regex = match (f.regex, text.is_empty()) {
         (true, false) => Some(
             shagoff_core::search::regex(&text, f.case_sensitive)
@@ -3078,18 +3104,25 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
         text: (regex.is_none() && !text.is_empty()).then_some(text),
         case_sensitive: f.case_sensitive,
         regex,
-        min_size: kb(number(&f.min_size, fl!("find-min-size"))?),
-        max_size: kb(number(&f.max_size, fl!("find-max-size"))?),
-        newer_than: days
-            .map(|d| SystemTime::now() - std::time::Duration::from_secs(d.saturating_mul(86400))),
+        min_size: min,
+        max_size: max,
+        // Huge day counts reach before 1970: from the start of time then (no overflow panic).
+        newer_than: days.map(|d| {
+            SystemTime::now()
+                .checked_sub(std::time::Duration::from_secs(d.saturating_mul(86400)))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        }),
         ..Default::default()
     })
 }
 
+/// A typed target that lies inside an archive (`a.zip/x`). The archive file itself is not: packing
+/// or copying onto an existing `a.zip` asks to replace it, as for any file.
 fn into_archive(p: &Path) -> bool {
     archive::split_path(p).is_some_and(|(_, inner)| !inner.as_os_str().is_empty())
 }
 
+/// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").
 fn dir_input(dir: &Path) -> String {
     let s = dir.display().to_string();
     if s.ends_with('/') { s } else { s + "/" }
@@ -4639,6 +4672,86 @@ mod tests {
         let t = app.panes[0].active();
         assert!(t.results.is_none());
         assert_eq!(t.pending.as_ref().map(|p| p.1.clone()), Some(root));
+    }
+
+    /// Pane 0 shows `tmp` as search results holding `sub/a.rs`.
+    fn results_app() -> (tempfile::TempDir, App) {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let a = tmp.path().join("sub/a.rs");
+        std::fs::write(&a, "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let root = tmp.path().to_path_buf();
+        app.panes[0].active_mut().results = Some((root.clone(), Arc::new(vec![a.clone()])));
+        let _ = app.reload(0, root.clone(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: root.clone(),
+            focus: None,
+            result: Ok(listing::entries(&[a], &root)),
+            space: None,
+        });
+        (tmp, app)
+    }
+
+    #[test]
+    fn regression_feed_uses_the_dir_searched_not_the_edited_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindStart);
+        let id = find_dialog(&mut app).id;
+        let f = tmp.path().join("f");
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, vec![f])));
+        let _ = app.update(Message::FindInput(FindField::Dir, "/typo".into()));
+        let _ = app.update(Message::FindFeed);
+        let root = app.panes[0].active().results.clone().unwrap().0;
+        assert_eq!(root, tmp.path());
+    }
+
+    #[test]
+    fn regression_huge_days_does_not_panic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindInput(
+            FindField::Days,
+            "99999999999999999".into(),
+        ));
+        let _ = app.update(Message::FindStart);
+        assert!(find_dialog(&mut app).stop.is_some());
+        // Bounds the wrong way round: said, not silently nothing.
+        let _ = app.update(Message::FindInput(FindField::MinSize, "10".into()));
+        let _ = app.update(Message::FindInput(FindField::MaxSize, "5".into()));
+        let _ = app.update(Message::FindStart);
+        assert!(find_dialog(&mut app).error.is_some());
+    }
+
+    #[test]
+    fn results_refuse_multi_rename_and_compare_lists() {
+        let (_tmp, mut app) = results_app();
+        for a in [Action::MultiRename, Action::CompareLists] {
+            let _ = app.update(Message::Key(a));
+            assert!(app.dialog.is_none(), "{a:?}");
+            assert_eq!(
+                app.msg(),
+                Some(fl!("results-unsupported").as_str()),
+                "{a:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn regression_going_to_the_searched_dir_leaves_results() {
+        let (tmp, mut app) = results_app();
+        let _ = app.update(Message::Drive(0, tmp.path().to_path_buf()));
+        assert!(app.panes[0].active().results.is_none());
     }
 
     #[test]

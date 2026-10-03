@@ -270,3 +270,7 @@
 | `regression_symlinked_archive_stays_a_link` | Архив-ссылка заменялся обычным файлом, настоящий архив не менялся | 21 |
 | `regression_zip_names_in_a_legacy_encoding_are_kept` | Имена cp866 в zip без флага UTF-8 навсегда портились при перезаписи | 21 |
 | `regression_f6_of_the_archive_into_itself_is_refused` | F6 архива в самого себя удалял архив | 21 |
+| `regression_regex_anchors_are_per_line_across_chunks` | `^` / `$` в регулярном выражении срабатывали на границах кусков большого файла | 22 |
+| `regression_feed_uses_the_dir_searched_not_the_edited_field` | «В панель» брал каталог из исправленного поля «Где»: F7/F5/Alt+F5 писали не туда | 22 |
+| `regression_huge_days_does_not_panic` | Огромное «не старше, дней» роняло программу | 22 |
+| `regression_going_to_the_searched_dir_leaves_results` | Переход в каталог поиска (диск, Ctrl+\, история) оставлял результаты | 22 |

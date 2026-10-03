@@ -284,3 +284,5 @@ find-feed = В панель
 find-bad-number = { $field }: «{ $value }» — не целое число
 find-bad-regex = Регулярное выражение: { $err }
 find-results = Результаты поиска: { $dir }
+find-bad-range = «Размер от» больше, чем «до»
+results-unsupported = В результатах поиска недоступно

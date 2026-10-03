@@ -137,7 +137,12 @@ pub fn entries(paths: &[std::path::PathBuf], root: &Path) -> Vec<Entry> {
                 .unwrap_or(p)
                 .to_string_lossy()
                 .into_owned();
-            Some(from_meta(p, p.as_os_str().to_owned(), name, &lmeta))
+            let mut e = from_meta(p, p.as_os_str().to_owned(), name, &lmeta);
+            // From the file's own name: "conf.d/Makefile" has none.
+            if !e.is_dir() {
+                e.ext = ext_of(&p.file_name()?.to_string_lossy());
+            }
+            Some(e)
         })
         .collect()
 }
@@ -299,5 +304,10 @@ mod tests {
         );
         assert_eq!(d.path().join(&e[0].os_name), f);
         assert!(e[1].is_dir());
+        // The extension comes from the file's own name, not from a dotted dir above it.
+        fs::create_dir(d.path().join("conf.d")).unwrap();
+        let mk = d.path().join("conf.d/Makefile");
+        fs::write(&mk, "").unwrap();
+        assert_eq!(entries(&[mk], d.path())[0].ext, "");
     }
 }

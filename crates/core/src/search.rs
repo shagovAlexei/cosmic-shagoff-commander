@@ -56,6 +56,9 @@ impl Query {
         let Ok(m) = fs::metadata(path) else {
             return false;
         };
+        if sized && m.is_dir() {
+            return false; // a symlink to a dir
+        }
         self.min_size.is_none_or(|n| m.len() >= n)
             && self.max_size.is_none_or(|n| m.len() <= n)
             && self
@@ -68,6 +71,8 @@ impl Query {
 pub fn regex(text: &str, case_sensitive: bool) -> Result<regex::bytes::Regex, String> {
     regex::bytes::RegexBuilder::new(text)
         .case_insensitive(!case_sensitive)
+        // `^` / `$` per line: the file is searched in windows, never as one haystack.
+        .multi_line(true)
         .build()
         .map_err(|e| e.to_string())
 }
@@ -188,8 +193,10 @@ fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
     }
 }
 
-/// A regex over the file in chunks. A match longer than `REGEX_OVERLAP` that crosses a chunk
-/// boundary is missed.
+/// A regex over the file in windows of whole lines (so `^` / `$` mean line starts and ends,
+/// not window edges); each window keeps up to `REGEX_OVERLAP` bytes of the previous one, from a
+/// line start. A match longer than that crossing a window edge is missed, and a line longer than
+/// `CHUNK` is searched in pieces.
 // ponytail: fixed overlap; stream the regex (regex-automata) if long multi-line matches matter.
 const REGEX_OVERLAP: usize = 4096;
 
@@ -197,23 +204,31 @@ fn regex_until(path: &Path, re: &regex::bytes::Regex, stop: &AtomicBool) -> bool
     let Ok(mut f) = File::open(path) else {
         return false;
     };
-    let mut buf: Vec<u8> = Vec::with_capacity(CHUNK + REGEX_OVERLAP);
+    let mut buf: Vec<u8> = Vec::with_capacity(2 * CHUNK);
     let mut chunk = vec![0; CHUNK];
     loop {
         if stop.load(Ordering::Relaxed) {
             return false;
         }
         let n = match f.read(&mut chunk) {
-            Ok(0) => return false,
+            Ok(0) => return re.is_match(&buf), // the last line, without its newline
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(_) => return false,
         };
         buf.extend_from_slice(&chunk[..n]);
-        if re.is_match(&buf) {
+        let end = match memchr::memrchr(b'\n', &buf) {
+            Some(i) => i + 1,
+            None if buf.len() > CHUNK => buf.len(),
+            None => continue, // the line goes on: wait for its end
+        };
+        if re.is_match(&buf[..end]) {
             return true;
         }
-        let cut = buf.len().saturating_sub(REGEX_OVERLAP);
+        let mut cut = end.saturating_sub(REGEX_OVERLAP);
+        if let Some(i) = memchr::memchr(b'\n', &buf[cut..end]) {
+            cut += i + 1;
+        }
         buf.drain(..cut);
     }
 }
@@ -473,5 +488,34 @@ mod tests {
         query.regex = Some(regex("мир$", true).unwrap());
         assert!(run(d.path(), &query).is_empty());
         assert!(regex("(", false).is_err());
+    }
+
+    #[test]
+    fn regression_regex_anchors_are_per_line_across_chunks() {
+        let d = tempfile::tempdir().unwrap();
+        // A chunk ends right after "мир" in the middle of a line: `мир$` must not match there.
+        let mut a = "x".repeat(CHUNK - "мир".len()).into_bytes();
+        a.extend("мирок\n".as_bytes());
+        fs::write(d.path().join("a"), &a).unwrap();
+        // After the overlap is cut, the window starts mid-line at "foo": `^foo` must not match.
+        let mut b = "y".repeat(CHUNK - REGEX_OVERLAP).into_bytes();
+        b.extend(format!("foo{}\n", "y".repeat(5000)).as_bytes());
+        fs::write(d.path().join("b"), &b).unwrap();
+        fs::write(d.path().join("c"), "first\nfoo here\nend мир\nlast").unwrap();
+        let mut query = q("*", None, false, false);
+        query.regex = Some(regex("мир$", false).unwrap());
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["c"]);
+        query.regex = Some(regex("^foo", false).unwrap());
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["c"]);
+    }
+
+    #[test]
+    fn size_filter_skips_symlinked_dirs() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("dir")).unwrap();
+        symlink(d.path().join("dir"), d.path().join("ln")).unwrap();
+        let mut query = q("*", None, false, false);
+        query.min_size = Some(0);
+        assert!(run(d.path(), &query).is_empty());
     }
 }

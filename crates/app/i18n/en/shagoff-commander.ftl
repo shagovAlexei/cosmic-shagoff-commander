@@ -283,3 +283,5 @@ find-feed = To panel
 find-bad-number = { $field }: "{ $value }" is not a whole number
 find-bad-regex = Regular expression: { $err }
 find-results = Search results: { $dir }
+find-bad-range = Size from is larger than size up to
+results-unsupported = Not available in search results

@@ -238,6 +238,8 @@ pub struct Find {
     pub days: String,
     /// Why the search did not start (a bad filter or regex).
     pub error: Option<String>,
+    /// The dir the last search ran in ("To panel" lists it there).
+    pub root: Option<PathBuf>,
     /// Every match; the list shows the first `FIND_SHOWN`, "To panel" takes them all.
     pub results: Vec<PathBuf>,
     pub total: usize,
