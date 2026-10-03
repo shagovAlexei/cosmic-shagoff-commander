@@ -14,7 +14,8 @@ use std::process::{Command, Stdio};
 pub struct Volume {
     pub name: String,
     pub device: String,
-    pub mount: Option<PathBuf>,
+    /// The mount's URI: `file:///media/…` for disks, `mtp://…` / `gphoto2://…` for gvfs ones.
+    pub mount: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,7 +61,7 @@ pub fn volumes(gio_list: &str) -> Vec<Volume> {
             } else if t == "can_mount=1" {
                 *can = true;
             } else if t.starts_with("Mount(") {
-                v.mount = t.split_once(" -> file://").map(|(_, u)| uri_path(u));
+                v.mount = t.split_once(" -> ").map(|(_, u)| u.to_string());
             }
         }
     }
@@ -68,7 +69,11 @@ pub fn volumes(gio_list: &str) -> Vec<Volume> {
     out
 }
 
-/// The path of a `file://` URI (already without the scheme): `%XX` decoded.
+/// The path of a `file://` URI, `%XX` decoded; `None` for other schemes.
+pub fn file_path(uri: &str) -> Option<PathBuf> {
+    uri.strip_prefix("file://").map(uri_path)
+}
+
 fn uri_path(s: &str) -> PathBuf {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -122,6 +127,19 @@ pub fn gvfs_drives(root: &Path) -> Vec<Drive> {
         .collect()
 }
 
+/// Drives Ctrl+Shift+F may unmount: removable media and gvfs mounts. A fixed partition (`/home`)
+/// would make udisks ask for the admin password.
+pub fn removable(root: &Path, gvfs: Option<&Path>) -> bool {
+    root.starts_with("/media")
+        || root.starts_with("/run/media")
+        || gvfs.is_some_and(|g| root.starts_with(g) && root != g)
+}
+
+/// Where gvfs shows network mounts: `$XDG_RUNTIME_DIR/gvfs`.
+pub fn gvfs_root() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR").map(|r| PathBuf::from(r).join("gvfs"))
+}
+
 /// `local path: /run/user/1000/gvfs/…` from `gio info`.
 pub fn local_path(gio_info: &str) -> Option<PathBuf> {
     gio_info
@@ -150,6 +168,8 @@ pub fn answer(prompt: &str, password: &str, asked: &mut bool) -> Result<String, 
 }
 
 /// Run `cmd`, answering its prompts; stdout on success.
+// ponytail: no timeout or cancel; an unreachable host waits for ssh/gvfs's own timeout (the UI
+// stays usable, "Connecting…" stays in the status line). Kill after N s if that bites.
 fn talk(mut cmd: Command, password: &str) -> Result<String, Error> {
     let failed = |e: std::io::Error| Error::Failed(e.to_string());
     let mut child = cmd
@@ -231,11 +251,15 @@ pub fn list() -> Result<Vec<Volume>, Error> {
 /// Mount a partition by device; its mount point.
 pub fn mount_device(device: &str) -> Result<PathBuf, Error> {
     talk(gio(["mount", "-d", device]), "")?;
-    list()?
+    let uri = list()?
         .into_iter()
         .find(|v| v.device == device)
-        .and_then(|v| v.mount)
-        .ok_or_else(|| Error::Failed(format!("{device}: no mount point")))
+        .and_then(|v| v.mount);
+    // A gvfs mount (phone) has no file:// URI: its FUSE path comes from `gio info`.
+    let path = uri
+        .as_deref()
+        .and_then(|u| file_path(u).or_else(|| local_path(&talk(gio(["info", u]), "").ok()?)));
+    path.ok_or_else(|| Error::Failed(format!("{device}: no mount point")))
 }
 
 /// Mount a network location (`sftp://user@host/dir`, `smb://…`); its local (FUSE) path.
@@ -300,6 +324,7 @@ Volume(0): Phone
   ids:
    unix-device: '/dev/bus/usb/003/004'
   can_mount=1
+  Mount(0): Phone -> mtp://Xiaomi_123/
 Volume(1): cdda
   can_mount=1
 Mount(0): nas -> sftp://nas/
@@ -308,16 +333,17 @@ Mount(0): nas -> sftp://nas/
     #[test]
     fn volumes_mounted_and_not() {
         let v = volumes(LIST);
-        let got: Vec<(&str, &str, Option<&Path>)> = v
+        let got: Vec<(&str, &str, Option<&str>)> = v
             .iter()
             .map(|v| (v.name.as_str(), v.device.as_str(), v.mount.as_deref()))
             .collect();
         assert_eq!(
             got,
             [
-                ("sys", "/dev/nvme0n1p3", Some(Path::new("/media/shag/sys"))),
+                ("sys", "/dev/nvme0n1p3", Some("file:///media/shag/sys")),
                 ("MY STICK", "/dev/sda1", None),
-                ("Phone", "/dev/bus/usb/003/004", None),
+                // MTP / gphoto2 mounts are gvfs URIs, not file:// (review: "mounted" read as failed)
+                ("Phone", "/dev/bus/usb/003/004", Some("mtp://Xiaomi_123/")),
             ]
         );
     }
@@ -326,10 +352,23 @@ Mount(0): nas -> sftp://nas/
     fn volumes_percent_decoded() {
         let list = "Volume(0): My Disk\n  unix-device: '/dev/sdb1'\n  can_mount=1\n  \
                     Mount(0): My Disk -> file:///media/shag/My%20Disk\n";
-        assert_eq!(
-            volumes(list)[0].mount.as_deref(),
-            Some(Path::new("/media/shag/My Disk"))
-        );
+        let uri = volumes(list)[0].mount.clone().unwrap();
+        assert_eq!(file_path(&uri), Some(PathBuf::from("/media/shag/My Disk")));
+        assert_eq!(file_path("mtp://Xiaomi_123/"), None);
+    }
+
+    #[test]
+    fn removable_only_media_and_gvfs() {
+        let root = Path::new("/run/user/1000/gvfs");
+        let gvfs = Some(root);
+        assert!(removable(Path::new("/media/shag/STICK"), gvfs));
+        assert!(removable(Path::new("/run/media/shag/STICK"), gvfs));
+        assert!(removable(&root.join("sftp:host=nas"), gvfs));
+        assert!(!removable(&root.join("sftp:host=nas"), None));
+        // A fixed partition: udisks would pop an admin password dialog (review).
+        assert!(!removable(Path::new("/home"), gvfs));
+        assert!(!removable(Path::new("/"), gvfs));
+        assert!(!removable(root, gvfs));
     }
 
     #[test]

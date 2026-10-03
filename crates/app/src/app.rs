@@ -802,12 +802,19 @@ impl App {
                 }) = &mut self.dialog
                     && *s == side
                 {
-                    items.extend(vols.into_iter().filter(|v| v.mount.is_none()).map(|v| {
-                        ListItem {
-                            label: v.name,
-                            path: v.device.into(),
-                            mount: true,
-                        }
+                    let fresh: Vec<_> = vols
+                        .into_iter()
+                        .filter(|v| v.mount.is_none())
+                        .filter(|v| {
+                            !items
+                                .iter()
+                                .any(|i| i.path.as_os_str() == v.device.as_str())
+                        })
+                        .collect();
+                    items.extend(fresh.into_iter().map(|v| ListItem {
+                        label: v.name,
+                        path: v.device.into(),
+                        mount: true,
                     }));
                 }
             }
@@ -2082,18 +2089,24 @@ impl App {
         if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
             self.drives = drives::parse(&m, &self.home);
         }
-        if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
-            self.drives
-                .extend(mount::gvfs_drives(&Path::new(&rt).join("gvfs")));
+        if let Some(gvfs) = mount::gvfs_root() {
+            self.drives.extend(mount::gvfs_drives(&gvfs));
         }
     }
 
-    /// Ctrl+Shift+F: unmount the drive holding the active panel; never `/` or `~` (drives 0, 1).
+    /// Ctrl+Shift+F: unmount the removable or network drive holding the active panel. Not while a
+    /// job runs: it may be copying from or to that drive.
     fn disconnect(&mut self, side: usize) -> Task<Message> {
         let cwd = self.panes[side].active().target();
-        let Some(i) = drives::containing(&self.drives, &cwd).filter(|&i| i >= 2) else {
+        let gvfs = mount::gvfs_root();
+        let Some(i) = drives::containing(&self.drives, &cwd)
+            .filter(|&i| mount::removable(&self.drives[i].path, gvfs.as_deref()))
+        else {
             return Task::none();
         };
+        if self.job.is_some() {
+            return Task::none();
+        }
         let root = self.drives[i].path.clone();
         self.panes[side].active_mut().error = Some(fl!("unmounting"));
         let r = root.clone();
@@ -3958,7 +3971,7 @@ mod tests {
             Volume {
                 name: name.into(),
                 device: device.into(),
-                mount: mount.map(PathBuf::from),
+                mount: mount.map(String::from),
             }
         }
 
@@ -3975,13 +3988,16 @@ mod tests {
             app.drives = vec![drive("/", "/"), drive("~", "/tmp")];
             let _ = app.update(Message::Key(Action::Drives(0)));
             let vols = vec![
-                volume("sys", "/dev/nvme0n1p3", Some("/media/sys")),
+                volume("sys", "/dev/nvme0n1p3", Some("file:///media/sys")),
                 volume("STICK", "/dev/sda1", None),
             ];
             let _ = app.update(Message::Volumes(1, vols.clone())); // the other side's list
             assert_eq!(list_len(&app), 2);
-            let _ = app.update(Message::Volumes(0, vols));
+            let _ = app.update(Message::Volumes(0, vols.clone()));
             assert_eq!(list_len(&app), 3); // only the unmounted one
+            // Alt+F1, Esc, Alt+F1 before gio answered: two replies for one list (review).
+            let _ = app.update(Message::Volumes(0, vols));
+            assert_eq!(list_len(&app), 3);
             let Some(Dialog::List { items, .. }) = &app.dialog else {
                 panic!("no list")
             };
@@ -4044,18 +4060,20 @@ mod tests {
         }
 
         #[test]
-        fn disconnect_refuses_root_and_home() {
+        fn disconnect_refuses_root_home_and_fixed_partitions() {
             let mut app = app_with(Config::default(), State::default());
             let cwd = app.panes[0].active().panel.cwd().to_path_buf();
             app.drives = vec![drive("/", "/"), drive("~", cwd.to_str().unwrap())];
             let _ = app.update(Message::Key(Action::Disconnect));
             assert_eq!(app.panes[0].active().error, None);
-            app.drives.push(drive("stick", cwd.to_str().unwrap()));
+            // A partition outside /media (like /home): udisks would ask for the admin password.
+            app.drives = vec![
+                drive("/", "/"),
+                drive("~", "/x"),
+                drive("tmp", cwd.to_str().unwrap()),
+            ];
             let _ = app.update(Message::Key(Action::Disconnect));
-            assert_eq!(
-                app.panes[0].active().error.as_deref(),
-                Some(fl!("unmounting").as_str())
-            );
+            assert_eq!(app.panes[0].active().error, None);
         }
 
         #[test]
