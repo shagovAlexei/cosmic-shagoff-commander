@@ -781,6 +781,46 @@ pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<E
     Ok(kids.into_values().collect())
 }
 
+/// Where files opened from archives (Enter, F3) are extracted: per-user, outside the panels.
+pub fn temp_root() -> PathBuf {
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(d) if !d.is_empty() => PathBuf::from(d).join("shagoff-commander"),
+        _ => std::env::temp_dir().join(format!(
+            "shagoff-commander-{}",
+            rustix::process::getuid().as_raw()
+        )),
+    }
+}
+
+/// A new empty `<root>/<pid>/<n>`: same-named files opened one after another never mix.
+pub fn fresh_temp_dir(root: &Path) -> io::Result<PathBuf> {
+    let mine = root.join(std::process::id().to_string());
+    fs::create_dir_all(&mine)?;
+    let mut n = 0u32;
+    loop {
+        let p = mine.join(n.to_string());
+        match fs::create_dir(&p) {
+            Ok(()) => return Ok(p),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// At startup: remove `<root>/<pid>` left by processes that are gone (crashed, killed).
+pub fn clean_temp(root: &Path) {
+    let Ok(rd) = fs::read_dir(root) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
+        if !Path::new("/proc").join(pid.to_string()).exists() {
+            let _ = fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 /// Hidden `.shagoff-unpack.<pid>.<n>` in `dest`, created fresh so it is never a user dir.
 fn make_staging(dest: &Path) -> io::Result<PathBuf> {
     let mut n = 0u32;
@@ -2402,5 +2442,30 @@ mod tests {
         assert!(!outside.join("pwned").exists());
         assert_eq!(names(&out), ["sel"]);
         assert_eq!(fs::read_to_string(out.join("sel/ok")).unwrap(), "1");
+    }
+
+    #[test]
+    fn fresh_temp_dirs_differ() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (
+            fresh_temp_dir(d.path()).unwrap(),
+            fresh_temp_dir(d.path()).unwrap(),
+        );
+        assert_ne!(a, b);
+        assert!(a.is_dir() && b.is_dir());
+        assert!(a.starts_with(d.path().join(std::process::id().to_string())));
+    }
+
+    #[test]
+    fn clean_temp_removes_dead_pids_only() {
+        let d = tempfile::tempdir().unwrap();
+        let mine = fresh_temp_dir(d.path()).unwrap();
+        let dead = d.path().join("999999999/0");
+        fs::create_dir_all(&dead).unwrap();
+        fs::create_dir_all(d.path().join("not-a-pid")).unwrap();
+        clean_temp(d.path());
+        assert!(mine.is_dir());
+        assert!(!d.path().join("999999999").exists());
+        assert!(d.path().join("not-a-pid").exists());
     }
 }
