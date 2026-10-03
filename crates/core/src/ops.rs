@@ -521,7 +521,7 @@ impl Transfer<'_> {
 }
 
 /// `rename` that fails with `AlreadyExists` instead of replacing `dst`.
-fn rename_noreplace(src: &Path, dst: &Path) -> io::Result<()> {
+pub(crate) fn rename_noreplace(src: &Path, dst: &Path) -> io::Result<()> {
     use rustix::fs::{CWD, RenameFlags, renameat_with};
     use rustix::io::Errno;
     match renameat_with(CWD, src, CWD, dst, RenameFlags::NOREPLACE) {
@@ -553,7 +553,7 @@ fn part_name(dst: &Path, n: u32) -> PathBuf {
 }
 
 /// Create a part file that did not exist before (O_EXCL), so it can never be the source or a user file.
-fn create_part(dst: &Path) -> io::Result<(PathBuf, File)> {
+pub(crate) fn create_part(dst: &Path) -> io::Result<(PathBuf, File)> {
     let mut n = 0;
     loop {
         let part = part_name(dst, n);
