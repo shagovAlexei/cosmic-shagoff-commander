@@ -36,8 +36,24 @@ impl Entry {
 
 /// Lists `path` without `..`. Unreadable items are skipped; only failing to read the dir itself is an error.
 pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
+    let dir = match fs::read_dir(path) {
+        Ok(d) => d,
+        // "/x/a.zip/docs": a path through an archive file is listed from the archive.
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::NotADirectory | io::ErrorKind::NotFound
+            ) =>
+        {
+            return match crate::archive::split_path(path) {
+                Some((archive, inner)) => crate::archive::list(&archive, &inner, show_hidden),
+                None => Err(e),
+            };
+        }
+        Err(e) => return Err(e),
+    };
     let mut out = Vec::new();
-    for item in fs::read_dir(path)? {
+    for item in dir {
         let Ok(item) = item else { continue };
         let os_name = item.file_name();
         let name = os_name.to_string_lossy().into_owned();
@@ -95,7 +111,7 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
     Ok(out)
 }
 
-fn ext_of(name: &str) -> String {
+pub(crate) fn ext_of(name: &str) -> String {
     match name.rfind('.') {
         Some(i) if i > 0 => name[i + 1..].to_string(),
         _ => String::new(),
@@ -206,5 +222,21 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert!(v[0].name.starts_with("bad"));
         assert_eq!(v[0].os_name, OsStr::from_bytes(b"bad\xffname"));
+    }
+
+    #[test]
+    fn scan_inside_archive() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        z.start_file("d/f.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        z.write_all(b"x").unwrap();
+        z.finish().unwrap();
+        let v = scan(&a.join("d"), false).unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].name, "f.txt");
+        assert!(scan(&d.path().join("missing"), false).is_err());
     }
 }

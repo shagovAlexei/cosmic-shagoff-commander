@@ -88,3 +88,5 @@ pack-separate = A separate archive for each file
 unpack-own-dir = Each archive into its own folder
 packing = Packing
 unpacking = Unpacking
+archive-read-only = The archive is read-only
+extracting = Extracting

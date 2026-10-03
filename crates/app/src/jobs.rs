@@ -29,6 +29,13 @@ pub enum Job {
         dest: PathBuf,
         own_dir: bool,
     },
+    /// F5 / Ctrl+C / Enter in an archive panel: `names` of the dir `inner` into `dest`.
+    Extract {
+        archive: PathBuf,
+        inner: PathBuf,
+        names: Vec<PathBuf>,
+        dest: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +140,12 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
                 dest,
                 own_dir,
             } => archive::unpack(&archives, &dest, own_dir, &mut h),
+            Job::Extract {
+                archive,
+                inner,
+                names,
+                dest,
+            } => archive::extract(&archive, &inner, &names, &dest, &mut h),
         };
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });

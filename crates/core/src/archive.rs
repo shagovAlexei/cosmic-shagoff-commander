@@ -157,12 +157,14 @@ pub fn safe_path(entry: &Path) -> Option<PathBuf> {
     (!out.as_os_str().is_empty()).then_some(out)
 }
 
+use crate::listing::{Entry, Kind as EntryKind};
 use crate::ops::{self, ErrorChoice, Handler, Method, Report};
 use std::cell::Cell;
 use std::fs::{self, File, Permissions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Why work on the current archive stopped.
@@ -241,6 +243,24 @@ struct Stage<'a> {
     skipped: bool,
     /// Applied after all entries: writing into a dir changes its mtime, a `r-x` mode blocks writing.
     dirs: Vec<(PathBuf, Option<u32>, Option<SystemTime>)>,
+    /// Extract: only entries under `inner/<name>`, written relative to `inner`.
+    select: Option<&'a Select>,
+}
+
+/// F5 from an archive panel: the chosen entries of the dir `inner`.
+struct Select {
+    inner: PathBuf,
+    names: Vec<PathBuf>,
+}
+
+impl Select {
+    fn pick(&self, rel: &Path) -> Option<PathBuf> {
+        let r = rel.strip_prefix(&self.inner).ok()?;
+        self.names
+            .iter()
+            .any(|n| r.starts_with(n))
+            .then(|| r.to_path_buf())
+    }
 }
 
 impl Stage<'_> {
@@ -264,6 +284,13 @@ impl Stage<'_> {
                 return Ok(());
             }
             return self.refuse(name, "unsafe path in archive");
+        };
+        let rel = match self.select {
+            None => rel,
+            Some(sel) => match sel.pick(&rel) {
+                Some(r) => r,
+                None => return Ok(()), // not chosen
+            },
         };
         if !self.parents(&rel)? {
             return self.refuse(name, "path goes through a link in the archive");
@@ -293,6 +320,10 @@ impl Stage<'_> {
             Kind::Symlink(target) => symlink(target, &dst)?,
             Kind::Hardlink(target) => {
                 let src = safe_path(&target)
+                    .and_then(|t| match self.select {
+                        None => Some(t),
+                        Some(sel) => sel.pick(&t),
+                    })
                     .filter(|t| self.parents(t).unwrap_or(false))
                     .map(|t| self.root.join(t));
                 match src.and_then(|s| {
@@ -534,6 +565,269 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
     }
 }
 
+/// Formats that open as folders (single-stream .gz etc. are plain files).
+impl Format {
+    pub fn is_tree(self) -> bool {
+        !matches!(self, Format::Gz | Format::Bz2 | Format::Xz | Format::Zst)
+    }
+}
+
+/// One entry of an archive's table of contents (no data).
+#[derive(Clone, Debug)]
+struct Item {
+    path: PathBuf,
+    dir: bool,
+    link: bool,
+    size: u64,
+    mtime: SystemTime,
+    mode: Option<u32>,
+}
+
+fn read_index(f: Format, archive: &Path) -> io::Result<Vec<Item>> {
+    let mut out = Vec::new();
+    let mut push = |name: &Path,
+                    dir: bool,
+                    link: bool,
+                    size: u64,
+                    mtime: Option<SystemTime>,
+                    mode: Option<u32>| {
+        if let Some(path) = safe_path(name) {
+            let mtime = mtime.unwrap_or(UNIX_EPOCH);
+            out.push(Item {
+                path,
+                dir,
+                link,
+                size,
+                mtime,
+                mode,
+            });
+        }
+    };
+    let file = File::open(archive)?;
+    match f {
+        Format::Zip => {
+            let mut z = zip::ZipArchive::new(file)?;
+            for i in 0..z.len() {
+                let e = z.by_index_raw(i)?;
+                let mtime = e.last_modified().and_then(from_zip_time);
+                push(
+                    Path::new(e.name()),
+                    e.is_dir(),
+                    e.is_symlink(),
+                    e.size(),
+                    mtime,
+                    e.unix_mode(),
+                );
+            }
+        }
+        Format::SevenZ => {
+            let a = sevenz_rust2::Archive::read(
+                &mut io::BufReader::new(file),
+                &sevenz_rust2::Password::empty(),
+            )
+            .map_err(io::Error::other)?;
+            for e in &a.files {
+                if e.is_anti_item() {
+                    continue;
+                }
+                let attrs = e.windows_attributes();
+                let mode = (e.has_windows_attributes && attrs & UNIX_EXTENSION != 0)
+                    .then_some(attrs >> 16);
+                let link = mode.is_some_and(|m| m & S_IFMT == S_IFLNK);
+                let mtime = e
+                    .has_last_modified_date
+                    .then(|| e.last_modified_date().into());
+                push(
+                    Path::new(e.name()),
+                    e.is_directory(),
+                    link,
+                    e.size(),
+                    mtime,
+                    mode,
+                );
+            }
+        }
+        Format::Gz | Format::Bz2 | Format::Xz | Format::Zst => {
+            return Err(io::Error::from(io::ErrorKind::NotADirectory));
+        }
+        _ => {
+            let r: Box<dyn Read> = match f {
+                Format::TarGz => Box::new(flate2::read::MultiGzDecoder::new(file)),
+                Format::TarBz2 => Box::new(bzip2::read::MultiBzDecoder::new(file)),
+                Format::TarXz => Box::new(liblzma::read::XzDecoder::new_multi_decoder(file)),
+                Format::TarZst => Box::new(zstd::stream::read::Decoder::new(file)?),
+                _ => Box::new(file),
+            };
+            let mut a = tar::Archive::new(r);
+            for e in a.entries()? {
+                let e = e?;
+                let h = e.header();
+                let t = h.entry_type();
+                if !(t.is_dir() || t.is_file() || t.is_symlink() || t.is_hard_link()) {
+                    continue;
+                }
+                let mtime = h.mtime().ok().map(|s| UNIX_EPOCH + Duration::from_secs(s));
+                push(
+                    &e.path()?,
+                    t.is_dir(),
+                    t.is_symlink(),
+                    e.size(),
+                    mtime,
+                    h.mode().ok(),
+                );
+            }
+        }
+    }
+    Ok(out)
+}
+
+type Index = Arc<Vec<Item>>;
+
+/// The last archive listed: browsing a big tar.gz must not decompress it on every step.
+static INDEX: Mutex<Option<(PathBuf, u64, SystemTime, Index)>> = Mutex::new(None);
+
+fn index(archive: &Path) -> io::Result<Index> {
+    let m = fs::metadata(archive)?;
+    let (size, mtime) = (m.len(), m.modified().unwrap_or(UNIX_EPOCH));
+    let mut cache = INDEX.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((p, s, t, i)) = cache.as_ref()
+        && p == archive
+        && *s == size
+        && *t == mtime
+    {
+        return Ok(i.clone());
+    }
+    let name = archive
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let f = Format::detect(&name).ok_or_else(|| io::Error::from(io::ErrorKind::NotADirectory))?;
+    let i: Index = Arc::new(read_index(f, archive)?);
+    *cache = Some((archive.to_path_buf(), size, mtime, i.clone()));
+    Ok(i)
+}
+
+/// "/x/a.zip/docs" → ("/x/a.zip", "docs"). `None` if `p` is a real dir or no ancestor (up to the
+/// first real dir) is a regular file with a tree format.
+pub fn split_path(p: &Path) -> Option<(PathBuf, PathBuf)> {
+    // Rebuilt from components: "a.zip/" with its trailing slash fails `metadata` (ENOTDIR).
+    let p: PathBuf = p.components().collect();
+    let p = p.as_path();
+    for a in p.ancestors() {
+        let Ok(m) = fs::metadata(a) else { continue };
+        if m.is_dir() {
+            return None;
+        }
+        let name = a.file_name()?.to_string_lossy();
+        return Format::detect(&name)
+            .filter(|f| m.is_file() && f.is_tree())
+            .and_then(|_| Some((a.to_path_buf(), p.strip_prefix(a).ok()?.to_path_buf())));
+    }
+    None
+}
+
+/// Direct children of `inner` inside `archive`, as listing entries (no ".."). Dirs that have no
+/// entry of their own (`a/b/f` without `a/`) are synthesized.
+pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
+    let items = index(archive)?;
+    let mut found = inner.as_os_str().is_empty();
+    let mut kids: std::collections::BTreeMap<std::ffi::OsString, Entry> = Default::default();
+    for it in items.iter() {
+        if it.path == inner {
+            if !it.dir {
+                return Err(io::ErrorKind::NotADirectory.into());
+            }
+            found = true;
+            continue;
+        }
+        let Ok(rest) = it.path.strip_prefix(inner) else {
+            continue;
+        };
+        let mut parts = rest.components();
+        let Some(first) = parts.next() else { continue };
+        found = true;
+        let os_name = first.as_os_str().to_os_string();
+        let name = os_name.to_string_lossy().into_owned();
+        if !show_hidden && name.starts_with('.') {
+            continue;
+        }
+        let own = parts.next().is_none();
+        let dir = !own || it.dir;
+        let entry = Entry {
+            ext: if dir {
+                String::new()
+            } else {
+                crate::listing::ext_of(&name)
+            },
+            os_name: os_name.clone(),
+            name,
+            size: if dir { 0 } else { it.size },
+            mtime: it.mtime,
+            kind: if dir { EntryKind::Dir } else { EntryKind::File },
+            is_link: own && it.link,
+            mode: it
+                .mode
+                .map_or(if dir { 0o755 } else { 0o644 }, |m| m & 0o7777),
+        };
+        match kids.get_mut(&os_name) {
+            // An implicit dir takes the newest mtime inside; an own entry replaces it.
+            Some(old) if !own => old.mtime = old.mtime.max(it.mtime),
+            Some(old) => *old = entry,
+            None => {
+                kids.insert(os_name, entry);
+            }
+        }
+    }
+    if !found {
+        return Err(io::ErrorKind::NotFound.into());
+    }
+    Ok(kids.into_values().collect())
+}
+
+/// Where files opened from archives (Enter, F3) are extracted: the user's cache dir, on disk —
+/// `$XDG_RUNTIME_DIR` is a small RAM tmpfs that other session services need.
+pub fn temp_root() -> PathBuf {
+    let home = std::env::home_dir().unwrap_or_else(std::env::temp_dir);
+    temp_root_in(std::env::var_os("XDG_CACHE_HOME"), &home)
+}
+
+fn temp_root_in(cache: Option<std::ffi::OsString>, home: &Path) -> PathBuf {
+    match cache {
+        Some(c) if !c.is_empty() => PathBuf::from(c),
+        _ => home.join(".cache"),
+    }
+    .join("shagoff-commander")
+}
+
+/// A new empty `<root>/<pid>/<n>`: same-named files opened one after another never mix.
+pub fn fresh_temp_dir(root: &Path) -> io::Result<PathBuf> {
+    let mine = root.join(std::process::id().to_string());
+    fs::create_dir_all(&mine)?;
+    let mut n = 0u32;
+    loop {
+        let p = mine.join(n.to_string());
+        match fs::create_dir(&p) {
+            Ok(()) => return Ok(p),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// At startup: remove `<root>/<pid>` left by processes that are gone (crashed, killed).
+pub fn clean_temp(root: &Path) {
+    let Ok(rd) = fs::read_dir(root) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
+        if !Path::new("/proc").join(pid.to_string()).exists() {
+            let _ = fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 /// Hidden `.shagoff-unpack.<pid>.<n>` in `dest`, created fresh so it is never a user dir.
 fn make_staging(dest: &Path) -> io::Result<PathBuf> {
     let mut n = 0u32;
@@ -547,9 +841,64 @@ fn make_staging(dest: &Path) -> io::Result<PathBuf> {
     }
 }
 
+/// One archive to read in a `run`.
+struct Unit {
+    archive: PathBuf,
+    /// Subdir of staging for "each archive into its own folder".
+    sub: Option<PathBuf>,
+    select: Option<Select>,
+    /// Reported as `completed` when the archive was read without skips.
+    done: Vec<PathBuf>,
+}
+
 /// Alt+F9: every archive into one staging dir in `dest` (`staging/<stem>` with `own_dir`), then one
 /// `transfer(Move)` puts the top-level entries in place. `completed` = archives unpacked without skips.
 pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Handler) -> Report {
+    let units: Vec<Unit> = archives
+        .iter()
+        .map(|a| {
+            let name = a
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            // A stem like ".." ("...tar") must not climb out of staging: use the whole name then.
+            let sub = own_dir.then(|| match safe_path(Path::new(stem(&name))) {
+                Some(s) if s.components().count() == 1 => s,
+                _ => PathBuf::from(&name),
+            });
+            Unit {
+                archive: a.clone(),
+                sub,
+                select: None,
+                done: vec![a.clone()],
+            }
+        })
+        .collect();
+    run(&units, dest, h)
+}
+
+/// F5 / Ctrl+C / Enter in an archive panel: `names` (relative to the dir `inner`) into `dest`.
+/// `completed` = their paths through the archive (`archive/inner/name`) when nothing was skipped.
+pub fn extract(
+    archive: &Path,
+    inner: &Path,
+    names: &[PathBuf],
+    dest: &Path,
+    h: &mut dyn Handler,
+) -> Report {
+    let unit = Unit {
+        archive: archive.to_path_buf(),
+        sub: None,
+        select: Some(Select {
+            inner: inner.to_path_buf(),
+            names: names.to_vec(),
+        }),
+        done: names.iter().map(|n| archive.join(inner).join(n)).collect(),
+    };
+    run(std::slice::from_ref(&unit), dest, h)
+}
+
+fn run(units: &[Unit], dest: &Path, h: &mut dyn Handler) -> Report {
     let mut report = Report::default();
     let staging = match attempt(h, dest, || {
         fs::create_dir_all(dest)?;
@@ -561,7 +910,8 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
             return report;
         }
     };
-    'archives: for a in archives {
+    'archives: for u in units {
+        let a = &u.archive;
         let name = a
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -569,14 +919,9 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
         let Some(f) = Format::detect(&name) else {
             continue;
         };
-        let root = if own_dir {
-            // A stem like ".." ("...tar") must not climb out of staging: use the whole name then.
-            match safe_path(Path::new(stem(&name))) {
-                Some(s) if s.components().count() == 1 => staging.join(s),
-                _ => staging.join(&name),
-            }
-        } else {
-            staging.clone()
+        let root = match &u.sub {
+            Some(sub) => staging.join(sub),
+            None => staging.clone(),
         };
         loop {
             let pos = Rc::new(Cell::new(0));
@@ -589,6 +934,7 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
                     total: 0,
                     skipped: false,
                     dirs: Vec::new(),
+                    select: u.select.as_ref(),
                 };
                 let result = File::open(a).map_err(Stop::from).and_then(|file| {
                     st.total = file.metadata()?.len();
@@ -601,7 +947,7 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
             match result {
                 Ok(()) => {
                     if !skipped {
-                        report.completed.push(a.clone());
+                        report.completed.extend(u.done.iter().cloned());
                     }
                     break;
                 }
@@ -1845,5 +2191,315 @@ mod tests {
         let mut v = Vec::new();
         io::copy(&mut r, &mut v).unwrap();
         assert_eq!(v, b"abc");
+    }
+
+    /// zip with `docs/a.txt`, `docs/img/p.png`, `.hidden`, `top.txt` — no explicit dir entries.
+    fn zip_fixture(path: &Path) {
+        use std::io::Write;
+        let mut z = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        for (n, d) in [
+            ("docs/a.txt", "aa"),
+            ("docs/img/p.png", "png"),
+            (".hidden", "h"),
+            ("top.txt", "t"),
+        ] {
+            z.start_file(n, o).unwrap();
+            z.write_all(d.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    }
+
+    fn listed(v: &[crate::listing::Entry]) -> Vec<(String, bool)> {
+        let mut out: Vec<_> = v.iter().map(|e| (e.name.clone(), e.is_dir())).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn split_path_real_dir_is_none() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(split_path(d.path()), None);
+    }
+
+    #[test]
+    fn split_path_root_and_deep() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        zip_fixture(&a);
+        assert_eq!(split_path(&a), Some((a.clone(), PathBuf::new())));
+        assert_eq!(
+            split_path(&a.join("docs/img")),
+            Some((a.clone(), "docs/img".into()))
+        );
+    }
+
+    #[test]
+    fn split_path_missing_dir_is_none() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(split_path(&d.path().join("gone/deeper")), None);
+    }
+
+    #[test]
+    fn split_path_non_archive_file_is_none() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("notes.txt"), "x").unwrap();
+        fs::write(d.path().join("fake.zip"), "not a zip").unwrap();
+        assert_eq!(split_path(&d.path().join("notes.txt/x")), None);
+        // A file named like an archive is still taken as one; listing it then fails.
+        assert!(split_path(&d.path().join("fake.zip/x")).is_some());
+        assert!(list(&d.path().join("fake.zip"), Path::new(""), true).is_err());
+    }
+
+    #[test]
+    fn list_zip_tar_7z_with_implicit_dirs() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        assert_eq!(
+            listed(&list(&z, Path::new(""), true).unwrap()),
+            [
+                (".hidden".into(), false),
+                ("docs".into(), true),
+                ("top.txt".into(), false)
+            ]
+        );
+        let inner = list(&z, Path::new("docs"), true).unwrap();
+        assert_eq!(
+            listed(&inner),
+            [("a.txt".into(), false), ("img".into(), true)]
+        );
+        let a = inner.iter().find(|e| e.name == "a.txt").unwrap();
+        assert_eq!((a.size, a.ext.as_str()), (2, "txt"));
+        // tar.gz and 7z made by our own packer from a real tree.
+        let src = d.path().join("src");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("sub/f"), "123").unwrap();
+        for f in [Format::TarGz, Format::SevenZ] {
+            let a = d.path().join(format!("t.{}", f.ext()));
+            pack(
+                f,
+                d.path(),
+                &[(vec![src.clone()], a.clone())],
+                &mut Script::default(),
+            );
+            assert_eq!(
+                listed(&list(&a, Path::new(""), true).unwrap()),
+                [("src".into(), true)],
+                "{f:?}"
+            );
+            let sub = list(&a, Path::new("src/sub"), true).unwrap();
+            assert_eq!(listed(&sub), [("f".into(), false)], "{f:?}");
+            assert_eq!(sub[0].size, 3, "{f:?}");
+        }
+    }
+
+    #[test]
+    fn list_hides_dot_files() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let names = listed(&list(&z, Path::new(""), false).unwrap());
+        assert!(names.iter().all(|(n, _)| n != ".hidden"));
+    }
+
+    #[test]
+    fn list_missing_inner_is_not_found() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        assert_eq!(
+            list(&z, Path::new("nope"), true).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            list(&z, Path::new("top.txt"), true).unwrap_err().kind(),
+            io::ErrorKind::NotADirectory
+        );
+    }
+
+    #[test]
+    fn list_sees_rewritten_archive() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        assert_eq!(list(&z, Path::new(""), true).unwrap().len(), 3);
+        let mut w = zip::ZipWriter::new(fs::File::create(&z).unwrap());
+        w.start_file("only.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        w.write_all(b"longer content so the size differs").unwrap();
+        w.finish().unwrap();
+        assert_eq!(
+            listed(&list(&z, Path::new(""), true).unwrap()),
+            [("only.txt".into(), false)]
+        );
+    }
+
+    fn ex(a: &Path, inner: &str, names: &[&str], dest: &Path, h: &mut Script) -> Report {
+        let names: Vec<PathBuf> = names.iter().map(PathBuf::from).collect();
+        extract(a, Path::new(inner), &names, dest, h)
+    }
+
+    #[test]
+    fn extract_one_file() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        let r = ex(&z, "docs", &["a.txt"], &out, &mut Script::default());
+        assert_eq!(names(&out), ["a.txt"]);
+        assert_eq!(fs::read_to_string(out.join("a.txt")).unwrap(), "aa");
+        assert_eq!(r.completed, [z.join("docs/a.txt")]);
+    }
+
+    #[test]
+    fn extract_dir_subtree() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        ex(&z, "", &["docs"], &out, &mut Script::default());
+        assert_eq!(names(&out), ["docs"]);
+        assert_eq!(
+            fs::read_to_string(out.join("docs/img/p.png")).unwrap(),
+            "png"
+        );
+    }
+
+    #[test]
+    fn extract_two_names() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        ex(
+            &z,
+            "",
+            &["top.txt", ".hidden"],
+            &out,
+            &mut Script::default(),
+        );
+        assert_eq!(names(&out), [".hidden", "top.txt"]);
+    }
+
+    #[test]
+    fn extract_conflict_skip() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        fs::create_dir(&out).unwrap();
+        fs::write(out.join("top.txt"), "mine").unwrap();
+        let mut h = Script {
+            conflicts: vec![Resolution::Skip],
+            ..Default::default()
+        };
+        ex(&z, "", &["top.txt"], &out, &mut h);
+        assert_eq!(fs::read_to_string(out.join("top.txt")).unwrap(), "mine");
+        assert_eq!(names(&out), ["top.txt"]);
+    }
+
+    #[test]
+    fn extract_cancel_leaves_no_staging() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        let r = ex(
+            &z,
+            "",
+            &["docs"],
+            &out,
+            &mut Script {
+                cancel: true,
+                ..Default::default()
+            },
+        );
+        assert!(r.cancelled);
+        assert!(names(&out).is_empty());
+    }
+
+    #[test]
+    fn extract_selected_evil_entry_stays_inside() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = d.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        let a = d.path().join("e.tar");
+        evil_tar(
+            &a,
+            &[
+                (
+                    "sel/ln",
+                    tar::EntryType::Symlink,
+                    outside.to_str().unwrap(),
+                    b"",
+                ),
+                ("sel/ln/pwned", tar::EntryType::Regular, "", b"x"),
+                ("sel/ok", tar::EntryType::Regular, "", b"1"),
+                ("other", tar::EntryType::Regular, "", b"2"),
+            ],
+        );
+        let out = d.path().join("out");
+        let mut h = Script {
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        ex(&a, "", &["sel"], &out, &mut h);
+        assert!(!outside.join("pwned").exists());
+        assert_eq!(names(&out), ["sel"]);
+        assert_eq!(fs::read_to_string(out.join("sel/ok")).unwrap(), "1");
+    }
+
+    #[test]
+    fn fresh_temp_dirs_differ() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (
+            fresh_temp_dir(d.path()).unwrap(),
+            fresh_temp_dir(d.path()).unwrap(),
+        );
+        assert_ne!(a, b);
+        assert!(a.is_dir() && b.is_dir());
+        assert!(a.starts_with(d.path().join(std::process::id().to_string())));
+    }
+
+    #[test]
+    fn clean_temp_removes_dead_pids_only() {
+        let d = tempfile::tempdir().unwrap();
+        let mine = fresh_temp_dir(d.path()).unwrap();
+        let dead = d.path().join("999999999/0");
+        fs::create_dir_all(&dead).unwrap();
+        fs::create_dir_all(d.path().join("not-a-pid")).unwrap();
+        clean_temp(d.path());
+        assert!(mine.is_dir());
+        assert!(!d.path().join("999999999").exists());
+        assert!(d.path().join("not-a-pid").exists());
+    }
+
+    #[test]
+    fn regression_split_path_trailing_slash() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        zip_fixture(&a);
+        let slashed = PathBuf::from(format!("{}/", a.display()));
+        assert_eq!(split_path(&slashed), Some((a.clone(), PathBuf::new())));
+        assert_eq!(crate::listing::scan(&slashed, true).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn temp_root_is_on_disk_not_in_the_runtime_tmpfs() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            temp_root_in(Some("/c".into()), home),
+            Path::new("/c/shagoff-commander")
+        );
+        assert_eq!(
+            temp_root_in(None, home),
+            Path::new("/home/u/.cache/shagoff-commander")
+        );
+        assert_eq!(
+            temp_root_in(Some("".into()), home),
+            Path::new("/home/u/.cache/shagoff-commander")
+        );
     }
 }

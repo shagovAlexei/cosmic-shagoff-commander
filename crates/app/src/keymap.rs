@@ -102,6 +102,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::End, false, false) => Action::End,
             (Named::Enter, false, false) => Action::Enter,
             (Named::Backspace, false, false) | (Named::PageUp, true, false) => Action::Parent,
+            // TC: Ctrl+PgDn enters the dir or archive under the cursor.
+            (Named::PageDown, true, false) => Action::Enter,
             (Named::F3, true, false) => Action::Sort(SortKey::Name),
             (Named::F4, true, false) => Action::Sort(SortKey::Ext),
             (Named::F5, true, false) => Action::Sort(SortKey::Date),
@@ -350,5 +352,10 @@ mod tests {
         assert_eq!(named(Named::F5, ALT), Some(Action::Pack));
         assert_eq!(named(Named::F9, ALT), Some(Action::Unpack));
         assert_eq!(named(Named::F5, ALT | Modifiers::SHIFT), None);
+    }
+
+    #[test]
+    fn ctrl_pgdn_enters() {
+        assert_eq!(named(Named::PageDown, Modifiers::CTRL), Some(Action::Enter));
     }
 }

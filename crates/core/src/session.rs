@@ -21,7 +21,7 @@ pub fn expand_home(path: &Path, home: &Path) -> PathBuf {
 // ponytail: `is_dir` blocks on a dead network mount at startup; restore in spawn_blocking if that bites.
 pub fn existing_dir(path: &Path, fallback: &Path) -> PathBuf {
     path.ancestors()
-        .find(|p| p.is_absolute() && p.is_dir())
+        .find(|p| p.is_absolute() && (p.is_dir() || crate::archive::split_path(p).is_some()))
         .map(Path::to_path_buf)
         .unwrap_or_else(|| fallback.to_path_buf())
 }
@@ -107,5 +107,21 @@ mod tests {
             [tmp.path().to_path_buf(), tmp.path().into(), "/fb".into()]
         );
         assert_eq!(active, 2);
+    }
+
+    #[test]
+    fn existing_dir_inside_archive() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&a).unwrap());
+        z.start_file("d/f", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        z.write_all(b"x").unwrap();
+        z.finish().unwrap();
+        let fb = Path::new("/");
+        assert_eq!(existing_dir(&a.join("d"), fb), a.join("d"));
+        std::fs::remove_file(&a).unwrap();
+        assert_eq!(existing_dir(&a.join("d"), fb), d.path());
     }
 }
