@@ -195,6 +195,11 @@ impl Panel {
         }
     }
 
+    /// Shift+F2: exactly these names marked (never `..`).
+    pub fn mark_names(&mut self, names: &[OsString]) {
+        self.marked = names.iter().filter(|n| *n != PARENT).cloned().collect();
+    }
+
     /// Ctrl+A / Ctrl+Num−: everything except `..`.
     pub fn mark_all(&mut self, on: bool) {
         self.marked.clear();
@@ -357,6 +362,21 @@ mod tests {
             vec![d("docs"), f("data.txt", 1), f("readme", 2), f("dump", 3)],
         )
         // sorted: .., docs, data.txt, dump, readme
+    }
+
+    #[test]
+    fn mark_names_replaces_marks() {
+        let mut p = loaded("/x", vec![f("a", 1), f("b", 1)]);
+        p.set_cursor(1);
+        p.toggle_mark();
+        p.mark_names(&["b".into(), "..".into()]);
+        let marked: Vec<&str> = p
+            .entries()
+            .iter()
+            .filter(|e| p.is_marked(e))
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(marked, ["b"]);
     }
 
     #[test]
