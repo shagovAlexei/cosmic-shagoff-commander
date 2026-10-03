@@ -115,6 +115,10 @@ pub struct DiffDlg {
     pub dirty: (bool, bool),
     /// Esc / Cancel was pressed once with unsaved changes: the next one closes without saving.
     pub confirm_close: bool,
+    /// Size and mtime of both files when read: saving refuses if they changed since.
+    pub stamps: Option<[diff::Stamp; 2]>,
+    /// A block copy is computing: (to the right, the texts before it).
+    pub copying: Option<(bool, Arc<(String, String)>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -897,7 +901,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     .on_press_maybe(nav.then_some(Message::DiffCopy(false)))
                     .into(),
                 widget::button::suggested(fl!("diff-save"))
-                    .on_press_maybe(dirty.then_some(Message::DiffSave))
+                    .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave))
                     .into(),
                 cancel.into(),
             ])

@@ -833,6 +833,19 @@ impl App {
                 {
                     if let Ok(shagoff_core::diff::Outcome::Text(t)) = out.as_ref() {
                         d.widths = dialogs::DiffDlg::measure(t);
+                        if t.stamps.is_some() {
+                            d.stamps = t.stamps; // read from disk now
+                        }
+                        // A copied block makes its side unsaved only if it changed the text.
+                        if let Some((to_right, before)) = d.copying.take()
+                            && t.src != before
+                        {
+                            if to_right {
+                                d.dirty.1 = true;
+                            } else {
+                                d.dirty.0 = true;
+                            }
+                        }
                     }
                     d.result = Some(out);
                     // A re-compare (options, a copied block) stays near where it was.
@@ -846,27 +859,26 @@ impl App {
                 }
             }
             Message::DiffOpt(o) => {
-                if let Some(Dialog::Diff(d)) = &mut self.dialog {
+                // Not while a compare runs: it may hold a copied block this would drop.
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && let Some(shown) = d.result.clone().filter(|_| d.text().is_some())
+                {
                     match o {
                         dialogs::DiffOpt::Space => d.opts.ignore_space ^= true,
                         dialogs::DiffOpt::Case => d.opts.ignore_case ^= true,
                     }
-                    let src = d.text().map(|t| t.src.clone());
-                    return self.start_diff_with(src, None);
+                    return self.start_diff_with(Some(shown), None);
                 }
             }
             Message::DiffCopy(to_right) => {
                 if let Some(Dialog::Diff(d)) = &mut self.dialog
                     && let Some(src) = d.text().map(|t| t.src.clone())
+                    && let Some(shown) = d.result.clone()
                 {
-                    if to_right {
-                        d.dirty.1 = true;
-                    } else {
-                        d.dirty.0 = true;
-                    }
+                    d.copying = Some((to_right, src));
                     d.confirm_close = false;
                     let block = d.block;
-                    return self.start_diff_with(Some(src), Some((block, to_right)));
+                    return self.start_diff_with(Some(shown), Some((block, to_right)));
                 }
             }
             Message::DiffSave => {
@@ -874,17 +886,29 @@ impl App {
                     && let Some(src) = d.text().map(|t| t.src.clone())
                 {
                     let mut failed = None;
-                    for (dirty, path, text) in [
+                    let stamps = d.stamps.map_or([None, None], |s| s.map(Some));
+                    let mut new = d.stamps;
+                    for (i, (dirty, path, text)) in [
                         (&mut d.dirty.0, &d.left, &src.0),
                         (&mut d.dirty.1, &d.right, &src.1),
-                    ] {
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
                         if *dirty {
-                            match shagoff_core::diff::save(path, text) {
-                                Ok(()) => *dirty = false,
+                            match shagoff_core::diff::save(path, text, stamps[i]) {
+                                Ok(()) => {
+                                    *dirty = false;
+                                    // Saved by us: the next save checks against this.
+                                    if let (Some(n), Ok(m)) = (&mut new, std::fs::metadata(path)) {
+                                        n[i] = shagoff_core::diff::stamp_of(&m);
+                                    }
+                                }
                                 Err(e) => failed = Some(format!("{}: {e}", path.display())),
                             }
                         }
                     }
+                    d.stamps = new;
                     d.confirm_close = false;
                     match failed {
                         Some(e) => self.say(StatusKind::Error, e),
@@ -1797,6 +1821,8 @@ impl App {
                     opts: Default::default(),
                     dirty: (false, false),
                     confirm_close: false,
+                    stamps: None,
+                    copying: None,
                 })))
             }
             Action::SyncDirs => Some(Dialog::Sync(Box::new(dialogs::SyncDlg {
@@ -2150,7 +2176,7 @@ impl App {
     /// or after copying block `copy.0` (`copy.1`: left → right).
     fn start_diff_with(
         &mut self,
-        src: Option<Arc<(String, String)>>,
+        shown: Option<Arc<Result<shagoff_core::diff::Outcome, String>>>,
         copy: Option<(usize, bool)>,
     ) -> Task<Message> {
         use shagoff_core::diff;
@@ -2165,12 +2191,12 @@ impl App {
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
-                    let Some(src) = src else {
+                    let Some(Ok(diff::Outcome::Text(t))) = shown.as_deref() else {
                         return diff::compare_with(&a, &b, o).map_err(|e| e.to_string());
                     };
-                    let (mut l, mut r) = (src.0.clone(), src.1.clone());
+                    let (mut l, mut r) = (t.src.0.clone(), t.src.1.clone());
                     if let Some((block, to_right)) = copy
-                        && let Some(new) = diff::copy_block(&l, &r, o, block, to_right)
+                        && let Some(new) = diff::copy_block(t, block, to_right)
                     {
                         if to_right {
                             r = new;
@@ -5280,14 +5306,15 @@ mod tests {
         let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nold\ny\n", 100);
         let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
         let _ = app.update(Message::DiffCopy(true)); // block 0, left → right
-        assert_eq!(diff_dlg(&mut app).dirty, (false, true));
         let _ = app.update(Message::DiffSave); // still copying: nothing to save yet
         assert_eq!(std::fs::read_to_string(&r).unwrap(), "x\nold\ny\n");
         // What the background copy delivers.
         let id = diff_dlg(&mut app).id;
         let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nNEW\ny\n", 100);
+        let _ = app.update(Message::DiffOpt(dialogs::DiffOpt::Case)); // ignored while copying
+        assert!(!diff_dlg(&mut app).opts.ignore_case);
         let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
-        assert_eq!(diff_dlg(&mut app).dirty, (false, true)); // still unsaved
+        assert_eq!(diff_dlg(&mut app).dirty, (false, true)); // changed, unsaved
         let _ = app.update(Message::DialogCancel);
         assert!(app.dialog.is_some()); // first Esc only warns
         let _ = app.update(Message::DiffSave);

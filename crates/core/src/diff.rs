@@ -38,6 +38,8 @@ pub struct Text {
     pub eol_differs: bool,
     /// The two texts compared (for re-comparing with other options and copying blocks).
     pub src: Arc<(String, String)>,
+    /// The files as read (`compare`); `None` for texts compared in memory.
+    pub stamps: Option<[Stamp; 2]>,
 }
 
 /// What counts as equal.
@@ -92,6 +94,8 @@ pub fn compare(a: &Path, b: &Path) -> io::Result<Outcome> {
 
 /// `compare` with lines compared by `o`.
 pub fn compare_with(a: &Path, b: &Path, o: Opts) -> io::Result<Outcome> {
+    // Before reading: a change after this is caught when saving.
+    let stamps = [stamp_of(&fs::metadata(a)?), stamp_of(&fs::metadata(b)?)];
     let head = |p: &Path| -> io::Result<(Vec<u8>, u64)> {
         // A fifo would block `open` forever, a device never ends: regular files only.
         let m = fs::metadata(p)?;
@@ -116,7 +120,11 @@ pub fn compare_with(a: &Path, b: &Path, o: Opts) -> io::Result<Outcome> {
         String::from_utf8(fs::read(a)?),
         String::from_utf8(fs::read(b)?),
     ) {
-        (Ok(ta), Ok(tb)) => Ok(Outcome::Text(rows_with(&ta, &tb, ROWS_LIMIT, o))),
+        (Ok(ta), Ok(tb)) => {
+            let mut t = rows_with(&ta, &tb, ROWS_LIMIT, o);
+            t.stamps = Some(stamps);
+            Ok(Outcome::Text(t))
+        }
         _ => Ok(Outcome::Binary {
             same: la == lb && same_bytes(a, b)?,
         }),
@@ -159,6 +167,7 @@ pub fn rows_with(a: &str, b: &str, limit: usize, o: Opts) -> Text {
         total: 0,
         eol_differs: false,
         src: Arc::new((a.to_string(), b.to_string())),
+        stamps: None,
     };
     let mut last_same = true;
     let mut push = |t: &mut Text, kind: Kind, l: Option<usize>, r: Option<usize>| {
@@ -242,16 +251,43 @@ pub fn inline(a: &str, b: &str) -> (std::ops::Range<usize>, std::ops::Range<usiz
     (p..a.len() - q, p..b.len() - q)
 }
 
-/// Copy difference block `block` to the other side (`to_right`: left → right): the target's
-/// lines of that block are replaced by the source's. The new target text, keeping its line
-/// endings (CRLF / LF) and whether it ends with one. `None`: no such block.
-pub fn copy_block(a: &str, b: &str, o: Opts, block: usize, to_right: bool) -> Option<String> {
-    let t = rows_with(a, b, usize::MAX, o);
+/// Size and mtime of a file when it was read: saving checks nothing changed it since.
+pub type Stamp = (u64, std::time::SystemTime);
+
+pub fn stamp_of(m: &fs::Metadata) -> Stamp {
+    (m.len(), m.modified().unwrap_or(std::time::UNIX_EPOCH))
+}
+
+/// A text split into lines with their own endings ("\r\n", "\n", or "" for an open last line).
+fn split_eol(text: &str) -> Vec<(&str, &str)> {
+    text.split_inclusive('\n')
+        .map(|l| match l.strip_suffix("\r\n") {
+            Some(t) => (t, "\r\n"),
+            None => match l.strip_suffix('\n') {
+                Some(t) => (t, "\n"),
+                None => (l, ""),
+            },
+        })
+        .collect()
+}
+
+/// Copy difference block `block` of the shown `t` to the other side (`to_right`: left → right):
+/// the target's lines of that block are replaced by the source's. Uses the rows on screen (not a
+/// new diff: one cut short by the deadline may align differently). Every other line keeps its
+/// bytes; the copied lines take the ending of the line they replace (or sit next to), and an open
+/// last line stays open. `None`: no such block, or it runs past the rows kept.
+pub fn copy_block(t: &Text, block: usize, to_right: bool) -> Option<String> {
     let start = *t.blocks.get(block)?;
-    let end = t.rows[start..]
+    let end = t
+        .rows
+        .get(start..)?
         .iter()
-        .position(|r| r.kind == Kind::Same)
-        .map_or(t.rows.len(), |k| start + k);
+        .position(|r| r.kind == Kind::Same);
+    let end = match end {
+        Some(k) => start + k,
+        None if t.rows.len() == t.total => t.rows.len(),
+        None => return None, // the block goes on past the rows kept
+    };
     let side = |r: &Row| {
         if to_right {
             (r.left.clone(), r.right.clone())
@@ -259,7 +295,11 @@ pub fn copy_block(a: &str, b: &str, o: Opts, block: usize, to_right: bool) -> Op
             (r.right.clone(), r.left.clone())
         }
     };
-    let (src_text, dst_text) = if to_right { (a, b) } else { (b, a) };
+    let (src_text, dst_text) = if to_right {
+        (&t.src.0, &t.src.1)
+    } else {
+        (&t.src.1, &t.src.0)
+    };
     let block_rows = &t.rows[start..end];
     let src: Vec<String> = block_rows
         .iter()
@@ -289,37 +329,63 @@ pub fn copy_block(a: &str, b: &str, o: Opts, block: usize, to_right: bool) -> Op
             (at, at)
         }
     };
-    let dst: Vec<&str> = dst_text.lines().collect();
-    let style = if dst_text.is_empty() {
-        src_text
-    } else {
-        dst_text
+    let dst = split_eol(dst_text);
+    let first_eol = || {
+        let any = dst.iter().map(|x| x.1).find(|e| !e.is_empty());
+        any.unwrap_or(if src_text.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        })
     };
-    let eol = if style.contains("\r\n") { "\r\n" } else { "\n" };
-    let lines: Vec<&str> = dst[..r0]
-        .iter()
-        .copied()
-        .chain(src.iter().map(String::as_str))
-        .chain(dst[r1..].iter().copied())
-        .collect();
-    let mut out = lines.join(eol);
-    if style.ends_with('\n') && !out.is_empty() {
-        out.push_str(eol);
+    // The ending of the line replaced or inserted before, else of the one before it.
+    let eol = [dst.get(r0), r0.checked_sub(1).and_then(|i| dst.get(i))]
+        .into_iter()
+        .flatten()
+        .map(|x| x.1)
+        .find(|e| !e.is_empty())
+        .unwrap_or_else(first_eol);
+    let open_end =
+        dst.last().is_some_and(|x| x.1.is_empty()) || (dst.is_empty() && !src_text.ends_with('\n'));
+    let mut lines: Vec<(&str, &str)> = dst[..r0].to_vec();
+    lines.extend(src.iter().map(|l| (l.as_str(), eol)));
+    lines.extend_from_slice(&dst[r1..]);
+    // Only the last line may lack an ending, and only if the file's did.
+    let n = lines.len();
+    for (i, l) in lines.iter_mut().enumerate() {
+        if i + 1 == n && open_end {
+            l.1 = "";
+        } else if l.1.is_empty() {
+            l.1 = eol;
+        }
     }
-    Some(out)
+    Some(lines.iter().flat_map(|(t, e)| [*t, *e]).collect())
 }
 
-/// Write `text` to `path` through a part file and a rename (a crash never leaves half a file),
-/// keeping the file's permissions.
-pub fn save(path: &Path, text: &str) -> io::Result<()> {
+/// Write `text` to the file `path` names (through a symlink: the link stays) via a part file and
+/// a rename (a crash never leaves half a file), keeping its permissions. Refused when the file
+/// is read-only, has other hard links (they would keep the old text), or changed since `read`.
+pub fn save(path: &Path, text: &str, read: Option<Stamp>) -> io::Result<()> {
     use std::io::Write;
-    let perms = fs::metadata(path)?.permissions();
-    let (part, mut f) = crate::ops::create_part(path)?;
+    use std::os::unix::fs::MetadataExt;
+    let refuse = |why: &str| Err(io::Error::other(why.to_string()));
+    let path = fs::canonicalize(path)?;
+    let m = fs::metadata(&path)?;
+    if m.permissions().readonly() {
+        return refuse("the file is read-only");
+    }
+    if m.nlink() > 1 {
+        return refuse("the file has other hard links");
+    }
+    if read.is_some_and(|r| r != stamp_of(&m)) {
+        return refuse("the file changed on disk since it was compared; compare again");
+    }
+    let (part, mut f) = crate::ops::create_part(&path)?;
     let done = f
         .write_all(text.as_bytes())
         .and_then(|()| f.sync_all())
-        .and_then(|()| fs::set_permissions(&part, perms))
-        .and_then(|()| fs::rename(&part, path));
+        .and_then(|()| fs::set_permissions(&part, m.permissions()))
+        .and_then(|()| fs::rename(&part, &path));
     if done.is_err() {
         let _ = fs::remove_file(&part);
     }
@@ -491,26 +557,75 @@ mod tests {
         assert_eq!(inline("aa", "aaa"), (2..2, 2..3)); // prefix and suffix never overlap
     }
 
+    fn copy(a: &str, b: &str, block: usize, to_right: bool) -> Option<String> {
+        copy_block(&rows(a, b, usize::MAX), block, to_right)
+    }
+
     #[test]
     fn copy_block_both_ways() {
         let (a, b) = ("x\n1\n2\ny\nz\n", "x\nA\ny\nz\nw\n");
-        let o = Opts::default();
         // Block 0 (1,2 vs A) left → right.
-        assert_eq!(copy_block(a, b, o, 0, true).unwrap(), "x\n1\n2\ny\nz\nw\n");
+        assert_eq!(copy(a, b, 0, true).unwrap(), "x\n1\n2\ny\nz\nw\n");
         // Block 1 (w only on the right) right → left: inserted at the end.
-        assert_eq!(copy_block(a, b, o, 1, false).unwrap(), "x\n1\n2\ny\nz\nw\n");
+        assert_eq!(copy(a, b, 1, false).unwrap(), "x\n1\n2\ny\nz\nw\n");
         // left → right of a right-only block deletes it there.
-        assert_eq!(copy_block(a, b, o, 1, true).unwrap(), "x\nA\ny\nz\n");
-        assert_eq!(copy_block(a, b, o, 5, true), None);
+        assert_eq!(copy(a, b, 1, true).unwrap(), "x\nA\ny\nz\n");
+        assert_eq!(copy(a, b, 5, true), None);
     }
 
     #[test]
     fn copy_block_keeps_the_targets_line_endings() {
-        let (a, b) = ("a\nB\nc\n", "a\r\nb\r\nc");
         assert_eq!(
-            copy_block(a, b, Opts::default(), 0, true).unwrap(),
+            copy("a\nB\nc\n", "a\r\nb\r\nc", 0, true).unwrap(),
             "a\r\nB\r\nc"
         );
+        // Inserted after an open last line: that line gets an end, the file stays open.
+        assert_eq!(copy("a\nb\nc\n", "a\nb", 0, true).unwrap(), "a\nb\nc");
+    }
+
+    #[test]
+    fn regression_copy_block_leaves_other_lines_byte_for_byte() {
+        // Mixed endings: only the copied line changes; y and z keep their LF.
+        assert_eq!(
+            copy("x\nNEW\ny\nz\n", "x\r\nold\ny\nz\n", 0, true).unwrap(),
+            "x\r\nNEW\ny\nz\n"
+        );
+    }
+
+    #[test]
+    fn regression_copy_block_uses_the_rows_shown() {
+        // A block running past the rows kept for the view is not copied (its end is unknown).
+        let a: String = (0..50).map(|i| format!("{i}\n")).collect();
+        let b: String = (0..50).map(|i| format!("x{i}\n")).collect();
+        assert_eq!(copy_block(&rows(&a, &b, 10), 0, true), None);
+    }
+
+    #[test]
+    fn regression_save_keeps_links_and_refuses_what_it_should() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("real");
+        fs::write(&real, "old").unwrap();
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let stamp = |p: &Path| Some(stamp_of(&fs::metadata(p).unwrap()));
+        save(&link, "new", stamp(&real)).unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+        // Changed on disk since it was read: refused, the other edit survives.
+        let read = stamp(&real);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&real, "theirs, longer").unwrap();
+        assert!(save(&real, "mine", read).is_err());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "theirs, longer");
+        // Read-only: refused.
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o444)).unwrap();
+        assert!(save(&real, "x", stamp(&real)).is_err());
     }
 
     #[test]
@@ -520,7 +635,7 @@ mod tests {
         let f = d.path().join("f.sh");
         fs::write(&f, "old").unwrap();
         fs::set_permissions(&f, fs::Permissions::from_mode(0o751)).unwrap();
-        save(&f, "new").unwrap();
+        save(&f, "new", Some(stamp_of(&fs::metadata(&f).unwrap()))).unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap(), "new");
         assert_eq!(
             fs::metadata(&f).unwrap().permissions().mode() & 0o777,

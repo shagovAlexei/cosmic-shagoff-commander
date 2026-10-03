@@ -304,3 +304,6 @@
 | `regression_mirror_unreadable_left_deletes_nothing` | Зеркало: нечитаемый каталог слева — всё справа под ним помечалось к удалению | 23 |
 | `regression_mirror_with_missing_left_root_deletes_nothing` | Зеркало: пропавший левый каталог (вынули флешку) — всё справа к удалению | 23 |
 | `regression_editing_the_mask_drops_rows_and_confirmation` | Маска, изменённая без Enter, оставляла старые строки и подтверждение удаления | 23 |
+| `regression_copy_block_leaves_other_lines_byte_for_byte` | Перенос блока переписывал концы строк во всём файле со смешанными CRLF/LF | 25 |
+| `regression_copy_block_uses_the_rows_shown` | Перенос пересчитывал сравнение и мог взять не тот блок, что на экране | 25 |
+| `regression_save_keeps_links_and_refuses_what_it_should` | «Сохранить» заменял ссылку файлом, затирал изменения с диска, писал файл только для чтения | 25 |
