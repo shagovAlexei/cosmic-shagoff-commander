@@ -1,6 +1,6 @@
 //! TC layout: per pane a path line, column headers, a virtualized file list and a status line.
 
-use crate::app::{App, Message, ROW_H, Tab};
+use crate::app::{App, Message, ROW_H, StatusKind, Tab};
 use crate::fl;
 use crate::keymap::Action;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
@@ -251,6 +251,62 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
         .size(TEXT)
         .wrapping(Wrapping::None)
         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
+}
+
+/// F-key buttons (unless turned off) and the window status bar.
+pub fn footer(app: &App) -> Element<'_, Message> {
+    let mut col = column![];
+    if app.config.show_fkeys {
+        col = col.push(fkey_bar());
+    }
+    col.push(status_bar(app)).into()
+}
+
+/// Left: the last message; right: the entry under the active panel's cursor.
+fn status_bar(app: &App) -> Element<'_, Message> {
+    let msg: Element<_> = match &app.status {
+        Some(s) => {
+            let class = match s.kind {
+                StatusKind::Info => theme::Text::Default,
+                StatusKind::Busy => theme::Text::Accent,
+                StatusKind::Error => theme::Text::Custom(destructive),
+            };
+            text(s.text.as_str())
+                .size(TEXT)
+                .class(class)
+                .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                .into()
+        }
+        None => widget::Space::new().into(),
+    };
+    let p = &app.panes[app.active].active().panel;
+    let details = p
+        .current()
+        .map(|e| format::details(e, &app.tz, &app.owners))
+        .unwrap_or_default();
+    // Both sides bounded: a long file name must not squeeze the message out.
+    row![
+        container(msg).width(Length::FillPortion(2)).clip(true),
+        container(
+            text(details)
+                .size(TEXT)
+                .wrapping(Wrapping::None)
+                .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
+        )
+        .width(Length::FillPortion(3))
+        .align_x(Alignment::End)
+        .clip(true),
+    ]
+    .spacing(16)
+    .padding([2, 8])
+    .into()
+}
+
+fn destructive(t: &cosmic::Theme) -> cosmic::iced::widget::text::Style {
+    cosmic::iced::widget::text::Style {
+        color: Some(t.cosmic().destructive_text_color().into()),
+        ..Default::default()
+    }
 }
 
 pub fn fkey_bar() -> Element<'static, Message> {

@@ -77,6 +77,31 @@ pub fn display_name(e: &Entry) -> String {
     }
 }
 
+/// Status bar: `name → target   1 204 567   02.10.2026 13:49   rwxr-xr-x (755)   user:group`.
+/// Empty for `..`; no size for dirs; no owner for archive entries.
+pub fn details(e: &Entry, tz: &TimeZone, owners: &crate::owners::Owners) -> String {
+    if e.name == crate::panel::PARENT {
+        return String::new();
+    }
+    // stat failed (dir readable but not searchable): nothing but the name is known.
+    if e.mode == 0 && e.owner.is_none() {
+        return e.name.clone();
+    }
+    let mut parts = vec![match &e.target {
+        Some(t) => format!("{} → {}", e.name, t.display()),
+        None => e.name.clone(),
+    }];
+    if !e.is_dir() {
+        parts.push(size(e.size));
+    }
+    parts.push(date(e.mtime, tz));
+    parts.push(format!("{} ({:o})", perms(e.mode), e.mode & 0o7777));
+    if let Some((uid, gid)) = e.owner {
+        parts.push(owners.name(uid, gid));
+    }
+    parts.join("   ")
+}
+
 /// Tab title: the last path component, `/` for the root.
 pub fn dir_title(p: &std::path::Path) -> String {
     p.file_name()
@@ -124,6 +149,8 @@ mod tests {
             kind,
             is_link: false,
             mode: 0,
+            owner: None,
+            target: None,
         }
     }
 
@@ -169,5 +196,44 @@ mod tests {
         assert_eq!(display_name(&entry("a.tar.gz", "gz", Kind::File)), "a.tar");
         assert_eq!(display_name(&entry(".bashrc", "", Kind::File)), ".bashrc");
         assert_eq!(display_name(&entry("noext", "", Kind::File)), "noext");
+    }
+
+    fn full(name: &str, kind: Kind) -> Entry {
+        Entry {
+            name: name.into(),
+            os_name: name.into(),
+            ext: String::new(),
+            size: 1204567,
+            mtime: UNIX_EPOCH + Duration::from_secs(86_400),
+            kind,
+            is_link: false,
+            mode: 0o100755,
+            owner: Some((0, 0)),
+            target: None,
+        }
+    }
+
+    #[test]
+    fn details_line() {
+        let tz = TimeZone::UTC;
+        let o = crate::owners::Owners::default();
+        assert_eq!(
+            details(&full("a.sh", Kind::File), &tz, &o),
+            "a.sh   1 204 567   02.01.1970 00:00   rwxr-xr-x (755)   0:0"
+        );
+        let mut d = full("docs", Kind::Dir);
+        d.owner = None; // inside an archive
+        assert_eq!(
+            details(&d, &tz, &o),
+            "docs   02.01.1970 00:00   rwxr-xr-x (755)"
+        );
+        let mut l = full("lib", Kind::File);
+        l.is_link = true;
+        l.target = Some("/usr/lib/x".into());
+        assert!(details(&l, &tz, &o).starts_with("lib → /usr/lib/x   1 204 567"));
+        assert_eq!(details(&full("..", Kind::Dir), &tz, &o), "");
+        let mut unreadable = full("secret", Kind::File); // stat failed (dir r-- without x)
+        (unreadable.mode, unreadable.owner) = (0, None);
+        assert_eq!(details(&unreadable, &tz, &o), "secret");
     }
 }

@@ -1,4 +1,4 @@
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::{
     ffi::OsString,
     fs, io,
@@ -26,6 +26,10 @@ pub struct Entry {
     pub is_link: bool,
     /// Unix permission bits (of the link target for symlinks).
     pub mode: u32,
+    /// (uid, gid) of the entry itself; `None` inside archives or when stat failed.
+    pub owner: Option<(u32, u32)>,
+    /// Where a symlink points (as written in the link).
+    pub target: Option<std::path::PathBuf>,
 }
 
 impl Entry {
@@ -78,6 +82,8 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
                 kind,
                 is_link: ft.is_symlink(),
                 mode: 0,
+                owner: None,
+                target: None,
             });
             continue;
         };
@@ -106,6 +112,8 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
             kind,
             is_link,
             mode: meta.permissions().mode(),
+            owner: Some((meta.uid(), meta.gid())), // same metadata as size / mode
+            target: is_link.then(|| fs::read_link(item.path()).ok()).flatten(),
         });
     }
     Ok(out)
@@ -238,5 +246,18 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].name, "f.txt");
         assert!(scan(&d.path().join("missing"), false).is_err());
+    }
+
+    #[test]
+    fn scan_reads_owner_and_link_target() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("f"), "x").unwrap();
+        std::os::unix::fs::symlink("f", d.path().join("l")).unwrap();
+        let e = scan(d.path(), false).unwrap();
+        let get = |n: &str| e.iter().find(|e| e.name == n).unwrap().clone();
+        let me = std::fs::metadata(d.path()).unwrap();
+        assert_eq!(get("f").owner, Some((me.uid(), me.gid())));
+        assert_eq!(get("f").target, None);
+        assert_eq!(get("l").target, Some("f".into()));
     }
 }

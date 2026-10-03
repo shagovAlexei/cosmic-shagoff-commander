@@ -768,6 +768,8 @@ pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<E
             mode: it
                 .mode
                 .map_or(if dir { 0o755 } else { 0o644 }, |m| m & 0o7777),
+            owner: None,
+            target: None,
         };
         match kids.get_mut(&os_name) {
             // An implicit dir takes the newest mtime inside; an own entry replaces it.
