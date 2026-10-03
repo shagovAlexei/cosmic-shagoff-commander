@@ -164,7 +164,7 @@ pub struct Edited {
     pub mtime: SystemTime,
 }
 
-/// Quick search (Alt+letter) or filter (Ctrl+S) field, shown instead of the pane's status line.
+/// Quick search (Alt+letter) or filter (Ctrl+S) field, shown in the pane's half of the status line.
 pub struct Search {
     pub side: usize,
     pub text: String,
@@ -203,7 +203,7 @@ pub struct App {
     pub drives: Vec<Drive>,
     /// (free, total) bytes of each pane's current disk.
     pub space: [Option<(u64, u64)>; 2],
-    /// Window status bar: the last message.
+    /// Status line: the last message (in the active pane's half).
     pub status: Option<Status>,
     /// User / group names for the status bar.
     pub owners: shagoff_core::owners::Owners,

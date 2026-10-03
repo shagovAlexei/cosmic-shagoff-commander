@@ -1,4 +1,5 @@
-//! TC layout: per pane a path line, column headers, a virtualized file list and a status line.
+//! TC layout: per pane a path line, column headers and a virtualized file list; one status line
+//! (each pane's half) and the F-keys in the footer.
 
 use crate::app::{App, Message, ROW_H, StatusKind, Tab};
 use crate::fl;
@@ -214,7 +215,6 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
 }
 
-/// F-key buttons (unless turned off) and the window status bar.
 /// A pane's part of the status line: quick search / filter field, read error, or totals.
 fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
     let p = app.panes[side].active();
@@ -239,6 +239,8 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
         }
         (_, Some(e)) => text(e.clone())
             .size(TEXT)
+            .wrapping(Wrapping::None)
+            .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
             .class(theme::Text::Custom(|t| cosmic::iced::widget::text::Style {
                 color: Some(t.cosmic().destructive_color().into()),
                 ..Default::default()
@@ -279,7 +281,14 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         let totals = container(pane_status(app, side))
             .width(Length::FillPortion(3))
             .clip(true);
-        let line = if side == app.active {
+        // Nothing to show (no message, cursor on ".."): the totals take the whole half.
+        let extra = app.status.is_some()
+            || app.panes[side]
+                .active()
+                .panel
+                .current()
+                .is_some_and(|e| e.name != shagoff_core::panel::PARENT);
+        let line = if side == app.active && extra {
             row![
                 totals,
                 container(window_status(app))
