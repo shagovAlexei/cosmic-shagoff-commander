@@ -177,3 +177,6 @@
 | `regression_pending_matches_flush_on_a_tick` | Alt+F7: найденный файл не показывался, пока не найдётся следующий | 13 |
 | `regression_deep_tree_does_not_overflow_the_stack` | Поиск в очень глубоком дереве ронял отладочную сборку (рекурсия) | 13 |
 | `regression_shrinking_lowercase_across_chunk_boundary` | Поиск без учёта регистра пропускал текст на границе кусков, если строчная форма короче | 13 |
+| `regression_symlink_vs_file_has_no_arrow` | Синхронизация: симлинк против файла получал стрелку и заменял файл ссылкой | 14 |
+| `regression_sync_asks_when_target_changed_since_compare` | Синхронизация заменяла без вопроса файл, изменившийся после сравнения (или невиданный: флешка без учёта регистра) | 14 |
+| `regression_slack_is_two_seconds_not_three` | Допуск даты 2 с на деле был меньше 3 с | 14 |

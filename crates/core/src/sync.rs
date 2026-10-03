@@ -2,12 +2,13 @@
 
 use crate::listing::Entry;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -33,6 +34,8 @@ pub struct Info {
     pub size: u64,
     pub mtime: SystemTime,
     pub dir: bool,
+    /// A symlink (never followed): its "size" is the target path's length.
+    pub link: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,14 +57,15 @@ pub struct Options {
     pub hidden: bool,
 }
 
-/// FAT and zip keep 2-second times: closer than this is the same time.
-const SLACK: u64 = 2;
+/// FAT and zip keep 2-second times: this close is the same time.
+const SLACK: Duration = Duration::from_secs(2);
 
-fn secs_apart(a: SystemTime, b: SystemTime) -> u64 {
-    match a.duration_since(b) {
-        Ok(d) => d.as_secs(),
-        Err(e) => e.duration().as_secs(),
-    }
+fn same_time(a: SystemTime, b: SystemTime) -> bool {
+    let d = match a.duration_since(b) {
+        Ok(d) => d,
+        Err(e) => e.duration(),
+    };
+    d <= SLACK
 }
 
 pub fn default_dir(s: State) -> Dir {
@@ -94,6 +98,7 @@ fn list(dir: &Path, hidden: bool) -> BTreeMap<OsString, Info> {
                     size: if m.is_dir() { 0 } else { m.len() },
                     mtime: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
                     dir: m.is_dir(),
+                    link: ft.is_symlink(),
                 };
                 (e.file_name(), info)
             })
@@ -124,7 +129,8 @@ fn walk(left: &Path, right: &Path, rel: &Path, o: &Options, stop: &AtomicBool, o
             }
             (Some(_), None) => State::LeftOnly,
             (None, Some(_)) => State::RightOnly,
-            (Some(a), Some(b)) if a.dir != b.dir => State::Differ,
+            // Different kinds (file / dir / symlink): no side is "newer", never an arrow.
+            (Some(a), Some(b)) if a.dir != b.dir || a.link != b.link => State::Differ,
             (Some(a), Some(b)) => files(&left.join(&path), &right.join(&path), a, b, o),
             (None, None) => continue,
         };
@@ -148,7 +154,7 @@ fn files(lp: &Path, rp: &Path, a: Info, b: Info, o: &Options) -> State {
             State::Differ
         };
     }
-    let same_date = secs_apart(a.mtime, b.mtime) <= SLACK;
+    let same_date = same_time(a.mtime, b.mtime);
     if same_size && same_date {
         return if !o.content || bytes() {
             State::Same
@@ -199,6 +205,21 @@ pub fn plan(left: &Path, right: &Path, rows: &[Row]) -> (Pairs, Pairs) {
     (to_r, to_l)
 }
 
+/// What compare saw at each copy target (size, mtime): a target that changed since, or was not
+/// there, must not be replaced without asking.
+pub fn expected(left: &Path, right: &Path, rows: &[Row]) -> HashMap<PathBuf, (u64, SystemTime)> {
+    rows.iter()
+        .filter_map(|row| {
+            let (target, info) = match row.dir {
+                Dir::ToRight => (right.join(&row.rel), row.right?),
+                Dir::ToLeft => (left.join(&row.rel), row.left?),
+                Dir::None => return None,
+            };
+            Some((target, (info.size, info.mtime)))
+        })
+        .collect()
+}
+
 /// Shift+F2: files to mark on each side — missing opposite, newer, or same date with another size.
 pub fn compare_lists(left: &[Entry], right: &[Entry]) -> (Vec<OsString>, Vec<OsString>) {
     let files = |v: &[Entry]| -> BTreeMap<OsString, (u64, SystemTime)> {
@@ -212,7 +233,7 @@ pub fn compare_lists(left: &[Entry], right: &[Entry]) -> (Vec<OsString>, Vec<OsS
     for (name, &(ls, lt)) in &l {
         match r.get(name) {
             None => ml.push(name.clone()),
-            Some(&(rs, rt)) if secs_apart(lt, rt) <= SLACK => {
+            Some(&(rs, rt)) if same_time(lt, rt) => {
                 if ls != rs {
                     ml.push(name.clone());
                     mr.push(name.clone());
@@ -461,5 +482,42 @@ mod tests {
         let (ml, mr) = compare_lists(&left, &right);
         assert_eq!(ml, ["a", "only", "size"].map(OsString::from));
         assert_eq!(mr, ["ronly", "size"].map(OsString::from));
+    }
+
+    #[test]
+    fn regression_symlink_vs_file_has_no_arrow() {
+        let (_d, l, r) = pair();
+        std::os::unix::fs::symlink("nowhere", l.join("s")).unwrap();
+        put(&r.join("s"), "important data here", 1000);
+        let rows = compare(&l, &r, &opts(), &AtomicBool::new(false));
+        assert_eq!((rows[0].state, rows[0].dir), (State::Differ, Dir::None));
+    }
+
+    #[test]
+    fn regression_slack_is_two_seconds_not_three() {
+        let (_d, l, r) = pair();
+        put(&l.join("a"), "1", 1000);
+        put(&r.join("a"), "1", 1000);
+        let t = SystemTime::UNIX_EPOCH + Duration::from_millis(1_002_900);
+        fs::File::options()
+            .write(true)
+            .open(l.join("a"))
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        assert_eq!(states(&l, &r, &opts()), [("a".into(), State::LeftNewer)]);
+    }
+
+    #[test]
+    fn expected_targets_are_what_compare_saw() {
+        let (_d, l, r) = pair();
+        put(&l.join("a"), "new", 2000);
+        put(&r.join("a"), "old", 1000);
+        put(&l.join("only"), "1", 1000);
+        let rows = compare(&l, &r, &opts(), &AtomicBool::new(false));
+        let seen = expected(&l, &r, &rows);
+        let a = seen.get(&r.join("a")).copied().unwrap();
+        assert_eq!(a.0, 3);
+        assert!(!seen.contains_key(&r.join("only"))); // absent at compare time
     }
 }

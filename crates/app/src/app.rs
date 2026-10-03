@@ -614,6 +614,10 @@ impl App {
                         SyncOpt::ShowSame => &mut s.show_same,
                     };
                     *flag = !*flag;
+                    // The rows must match the options they are synced with.
+                    if o != SyncOpt::ShowSame {
+                        return self.start_compare();
+                    }
                 }
             }
             Message::SyncCompare => return self.start_compare(),
@@ -1535,9 +1539,15 @@ impl App {
         if to_right.is_empty() && to_left.is_empty() {
             return Task::none();
         }
+        let seen = shagoff_core::sync::expected(&s.left, &s.right, &s.rows);
         let side = s.side;
         self.dialog = None;
-        self.start_job(side, OpKind::Sync, Job::Sync { to_right, to_left }, None)
+        let job = Job::Sync {
+            to_right,
+            to_left,
+            seen,
+        };
+        self.start_job(side, OpKind::Sync, job, None)
     }
 
     /// (Re)start the search of the open find dialog; the previous one is stopped.
