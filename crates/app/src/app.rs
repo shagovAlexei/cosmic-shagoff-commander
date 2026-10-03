@@ -531,20 +531,28 @@ impl App {
             .map(|p| session::existing_dir(&p, &home_fallback));
         for side in 0..2 {
             let (mut paths, active) = session::restore(&state.panes[side], &app.home);
-            if side == 0
-                && let Some(l) = &left
-            {
-                paths[active] = l.clone();
-            }
+            let saved = &state.panes[side];
+            let locked = |i: usize| saved.locked.get(i).copied().unwrap_or(false);
+            // A locked tab keeps its dir: the path opens in a new tab next to it.
+            let extra = match &left {
+                Some(l) if side == 0 && locked(active) => Some(l.clone()),
+                Some(l) if side == 0 => {
+                    paths[active] = l.clone();
+                    None
+                }
+                _ => None,
+            };
             let mut tabs = Tabs::new(app.new_tab(paths[0].clone()));
             for p in &paths[1..] {
                 tabs.open_after(app.new_tab(p.clone()));
             }
             tabs.select(active);
-            let saved = &state.panes[side];
             for (i, t) in tabs.items_mut().iter_mut().enumerate() {
-                t.locked = saved.locked.get(i).copied().unwrap_or(false);
+                t.locked = locked(i);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
+            }
+            if let Some(l) = extra {
+                tabs.open_after(app.new_tab(l));
             }
             app.panes[side] = tabs;
         }
@@ -1401,14 +1409,20 @@ impl App {
     /// Go to `path` in the active tab (leaves search results).
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
         // A locked tab keeps its dir: going elsewhere happens in a new tab next to it (TC).
-        let t = self.panes[side].active();
-        if t.locked && path != t.panel.cwd() {
+        if path != self.panes[side].active().panel.cwd() {
+            self.leave_locked(side);
+        }
+        self.panes[side].active_mut().results = None;
+        self.reload(side, path, focus)
+    }
+
+    /// A locked tab keeps its dir: what would move it happens in an unlocked copy opened next to it.
+    fn leave_locked(&mut self, side: usize) {
+        if self.panes[side].active().locked {
             let id = self.next_id();
             let copy = self.panes[side].active().duplicate(id);
             self.panes[side].open_after(copy);
         }
-        self.panes[side].active_mut().results = None;
-        self.reload(side, path, focus)
     }
 
     /// Read the active tab's dir again (search results stay: they are re-checked).
@@ -1683,14 +1697,19 @@ impl App {
             | Action::TabRename => {} // handled above
             Action::Connect => {} // always a dialog
             Action::HistoryBack | Action::HistoryForward => {
-                let history = &mut self.panes[side].active_mut().history;
-                let step = if action == Action::HistoryBack {
-                    history.back()
-                } else {
-                    history.forward()
+                let step = |h: &mut History| {
+                    if action == Action::HistoryBack {
+                        h.back()
+                    } else {
+                        h.forward()
+                    }
                 };
-                if let Some(path) = step {
-                    return self.load(side, path, None);
+                // Stepped in the copy a locked tab opens, so the locked one keeps its place.
+                if step(&mut self.panes[side].active().history.clone()).is_some() {
+                    self.leave_locked(side);
+                    if let Some(path) = step(&mut self.panes[side].active_mut().history) {
+                        return self.load(side, path, None);
+                    }
                 }
             }
             // Reached only when `dialog_for` found no pair of files.
@@ -1795,6 +1814,10 @@ impl App {
             Action::TabLock => {
                 let t = self.panes[side].active_mut();
                 t.locked = !t.locked;
+                // A scan into another dir would still land and move it.
+                if t.locked && t.target() != t.panel.cwd() {
+                    t.pending = None;
+                }
                 return Task::none();
             }
             Action::CloseOtherTabs => {
@@ -2612,6 +2635,7 @@ impl App {
         let paths = Arc::new(f.results.clone());
         self.dialog = None; // stops the search
         self.active = side;
+        self.leave_locked(side);
         self.panes[side].active_mut().results = Some((root.clone(), paths));
         self.reload(side, root, None)
     }
@@ -6477,6 +6501,79 @@ mod tests {
             let ids: Vec<u64> = app.panes[0].items().iter().map(|t| t.id).collect();
             assert_eq!(ids, [locked, active]);
             assert_eq!(app.panes[0].active().id, active);
+        }
+
+        #[test]
+        fn regression_find_feed_leaves_a_locked_tab_alone() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::TabLock);
+            key(&mut app, Action::FindFiles);
+            let _ = app.update(Message::FindStart);
+            let id = find_dialog(&mut app).id;
+            let found = vec![tmp.path().join("f")];
+            let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, found)));
+            let _ = app.update(Message::FindFeed);
+            assert_eq!(app.panes[0].items().len(), 2);
+            assert!(app.panes[0].items()[0].results.is_none());
+            assert!(app.panes[0].active().results.is_some());
+        }
+
+        #[test]
+        fn regression_scan_in_flight_does_not_move_a_tab_locked_meanwhile() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::Enter); // into `a`, not listed yet
+            key(&mut app, Action::TabLock);
+            let t = app.panes[0].active();
+            assert!(t.pending.is_none());
+            assert_eq!(t.target(), tmp.path());
+        }
+
+        #[test]
+        fn regression_history_step_keeps_the_locked_tabs_place() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::Enter);
+            listed_at(&mut app, 0, &tmp.path().join("a"));
+            key(&mut app, Action::TabLock);
+            key(&mut app, Action::HistoryBack);
+            assert_eq!(app.panes[0].items().len(), 2);
+            assert_eq!(app.panes[0].active().target(), tmp.path());
+            let locked = &app.panes[0].items()[0];
+            assert_eq!(
+                locked.history.clone().back(),
+                Some(tmp.path().to_path_buf())
+            );
+        }
+
+        #[test]
+        fn regression_startup_path_does_not_repoint_a_locked_tab() {
+            let tmp = tempfile::tempdir().unwrap();
+            let state = State {
+                panes: [
+                    PaneState {
+                        tabs: vec!["/".into()],
+                        active: 0,
+                        locked: vec![true],
+                        ..PaneState::default()
+                    },
+                    PaneState::default(),
+                ],
+                ..State::default()
+            };
+            let app = App::build(
+                Core::default(),
+                Config::default(),
+                state,
+                Some(tmp.path().into()),
+                "/".into(),
+            )
+            .0;
+            let tabs: Vec<PathBuf> = app.panes[0].items().iter().map(Tab::target).collect();
+            assert_eq!(
+                tabs,
+                [PathBuf::from("/"), tmp.path().canonicalize().unwrap()]
+            );
+            assert!(app.panes[0].items()[0].locked);
+            assert_eq!(app.panes[0].active_index(), 1);
         }
 
         #[test]

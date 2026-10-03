@@ -335,3 +335,7 @@
 | `regression_viewer_letters_start_the_line_when_no_viewer` | Командная строка: первая буква `n p q 1 3 4` терялась (её брали клавиши просмотра F3 при закрытом просмотре) | 27 |
 | `regression_double_click_and_quick_search_open_not_run` | Двойной клик / Enter быстрого поиска выполняли набранную команду вместо открытия | 27 |
 | `regression_terminal_line_with_a_comment_keeps_the_shell` | Shift+Enter: `#` в команде закрывал терминал сразу | 27 |
+| `regression_find_feed_leaves_a_locked_tab_alone` | Alt+F7 «В панель» уводил закреплённую вкладку в результаты поиска | 28 |
+| `regression_scan_in_flight_does_not_move_a_tab_locked_meanwhile` | Вкладка, закреплённая во время чтения нового каталога, всё равно уходила в него | 28 |
+| `regression_history_step_keeps_the_locked_tabs_place` | Alt+← в закреплённой вкладке сдвигал её собственную историю | 28 |
+| `regression_startup_path_does_not_repoint_a_locked_tab` | Путь из командной строки при запуске заменял каталог закреплённой вкладки | 28 |
