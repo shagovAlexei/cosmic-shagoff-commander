@@ -110,3 +110,4 @@ sync-compare = Сравнить
 sync-run = Синхронизировать
 sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
 syncing = Синхронизация
+compare-identical = Каталоги одинаковые

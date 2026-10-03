@@ -1033,6 +1033,10 @@ impl App {
                     self.panes[0].active().panel.entries(),
                     self.panes[1].active().panel.entries(),
                 );
+                // Nothing to mark must not look like a key that did nothing.
+                if l.is_empty() && r.is_empty() {
+                    self.panes[side].active_mut().error = Some(fl!("compare-identical"));
+                }
                 self.panes[0].active_mut().panel.mark_names(&l);
                 self.panes[1].active_mut().panel.mark_names(&r);
                 return Task::none();
@@ -3538,5 +3542,23 @@ mod tests {
         );
         let _ = app.update(msg.unwrap());
         assert_eq!(marked(&app, 0), ["a", "only_l"]);
+    }
+
+    #[test]
+    fn shift_f2_on_identical_dirs_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (l, r) = (tmp.path().join("l"), tmp.path().join("r"));
+        for d in [&l, &r] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("f"), "x").unwrap();
+            let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+            std::fs::File::options().write(true).open(d.join("f")).unwrap().set_modified(t).unwrap();
+        }
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, &l);
+        listed_at(&mut app, 1, &r);
+        let _ = app.update(Message::Key(Action::CompareLists));
+        assert!(marked(&app, 0).is_empty() && marked(&app, 1).is_empty());
+        assert!(app.panes[0].active().error.is_some()); // "identical" note in the status line
     }
 }

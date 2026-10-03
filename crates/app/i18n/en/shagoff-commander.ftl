@@ -109,3 +109,4 @@ sync-compare = Compare
 sync-run = Synchronize
 sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
 syncing = Synchronizing
+compare-identical = The directories are identical
