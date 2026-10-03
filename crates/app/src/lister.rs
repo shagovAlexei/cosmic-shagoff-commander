@@ -235,13 +235,18 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
             ),
         },
     };
-    let bar = row::with_children(vec![
+    // Name and info on their own line, buttons wrapping below: one row did not fit a narrow window.
+    let title = row::with_children(vec![
         widget::text::heading(l.name.clone())
             .wrapping(Wrapping::WordOrGlyph)
             .width(Length::Fill)
             .into(),
         widget::text::body(info).into(),
-        row::with_children(modes).spacing(4).into(),
+    ])
+    .spacing(8)
+    .align_y(cosmic::iced::Alignment::Center);
+    let mut buttons = modes;
+    buttons.extend([
         widget::button::standard(fl!("lister-find"))
             .on_press(Message::ListerSearch)
             .into(),
@@ -254,9 +259,12 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
         widget::button::standard(fl!("lister-close"))
             .on_press(Message::ListerClose)
             .into(),
+    ]);
+    let bar = column::with_children(vec![
+        title.into(),
+        widget::flex_row(buttons).spacing(4).into(),
     ])
-    .spacing(8)
-    .align_y(cosmic::iced::Alignment::Center);
+    .spacing(4);
     let mut col = column::with_capacity(4).spacing(6).push(bar);
     if l.searching {
         col = col.push(

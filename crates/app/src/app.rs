@@ -3695,6 +3695,35 @@ mod tests {
         route_event(event, status, cosmic::iced::window::Id::unique())
     }
 
+    #[test]
+    fn viewer_keys_reach_the_app_but_not_from_a_text_field() {
+        let free = route_event(
+            cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Character("n".into()),
+                modified_key: Key::Character("n".into()),
+                physical_key: Physical::Code(Code::KeyN),
+                location: Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }),
+            event::Status::Ignored,
+            cosmic::iced::window::Id::unique(),
+        );
+        assert!(
+            matches!(free, Some(Message::ListerKey(ListerKey::Next))),
+            "{free:?}"
+        );
+        // Typed into the search field: stays text.
+        let typed = press_with(Key::Character("n".into()), Code::KeyN, Modifiers::empty());
+        assert!(typed.is_none(), "{typed:?}");
+        let prev = press_with(Key::Named(Named::F3), Code::F3, Modifiers::SHIFT);
+        assert!(
+            matches!(prev, Some(Message::ListerKey(ListerKey::FindPrev))),
+            "{prev:?}"
+        );
+    }
+
     fn press_with(key: Key, code: Code, mods: Modifiers) -> Option<Message> {
         let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: key.clone(),

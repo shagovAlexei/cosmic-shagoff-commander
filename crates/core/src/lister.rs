@@ -32,10 +32,18 @@ impl Doc {
 }
 
 pub fn load(path: &Path) -> io::Result<Doc> {
+    // A fifo would block `open` forever, a device never ends: regular files only.
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        let msg = format!("{}: not a regular file", path.display());
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
+    }
     let file = std::fs::File::open(path)?;
-    let total = file.metadata()?.len();
+    let total = meta.len();
     let mut bytes = Vec::new();
     file.take(LIMIT).read_to_end(&mut bytes)?;
+    // /proc files report size 0 but have content.
+    let total = total.max(bytes.len() as u64);
     Ok(Doc {
         bytes: decode(bytes),
         total,
@@ -312,5 +320,24 @@ mod tests {
         assert_eq!(d.bytes.len() as u64, LIMIT);
         assert_eq!(d.total, LIMIT + 10);
         assert!(d.truncated());
+    }
+
+    #[test]
+    fn regression_fifo_is_refused_not_read() {
+        let d = tempfile::tempdir().unwrap();
+        let fifo = d.path().join("p");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        // Run in a thread: the bug is a read that never returns.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(load(&fifo).is_err()).unwrap());
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(2));
+        assert_eq!(refused, Ok(true));
     }
 }
