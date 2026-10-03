@@ -321,3 +321,16 @@ help-cmd-name = Insert the name under the cursor
 help-cmd-path = Insert the full path under the cursor
 help-cmd-cwd = Insert the panel's path
 help-cmd-previous = Previous command
+
+## Tabs (phase 28)
+menu-tabs = Tabs
+menu-tab-open = Folder in a new tab
+menu-tab-open-other = Folder in a new tab of the other panel
+menu-tab-copy-other = Copy tab to the other panel
+menu-tab-move-other = Move tab to the other panel
+menu-tab-lock = Locked tab
+menu-tab-rename = Rename tab…
+menu-close-other-tabs = Close other tabs
+tab-rename = Tab caption (empty: the folder's name)
+tab-locked = The tab is locked
+tab-last = The panel's last tab cannot be moved

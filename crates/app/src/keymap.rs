@@ -92,6 +92,17 @@ pub enum Action {
     CmdCwd,
     CmdPrevious,
     CmdHistory,
+    /// Ctrl+↑ / Ctrl+Shift+↑: the dir under the cursor in a new tab here / in the other panel.
+    TabOpen,
+    TabOpenOther,
+    /// Menu only (TC: tab context menu): the active tab copied / moved to the other panel.
+    TabCopyOther,
+    TabMoveOther,
+    /// Menu only: lock / unlock, own caption.
+    TabLock,
+    TabRename,
+    /// Ctrl+Shift+W: close the panel's other tabs but the locked ones.
+    CloseOtherTabs,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -128,6 +139,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::Tab, true, false) => Action::NextTab,
             (Named::Tab, true, true) => Action::PrevTab,
             (Named::ArrowUp, false, false) => Action::Up,
+            (Named::ArrowUp, true, false) => Action::TabOpen,
+            (Named::ArrowUp, true, true) => Action::TabOpenOther,
             (Named::ArrowDown, false, false) => Action::Down,
             (Named::PageUp, false, false) => Action::PageUp,
             (Named::PageDown, false, false) => Action::PageDown,
@@ -167,6 +180,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::Backslash), true, false) => Some(Action::Root),
         (Physical::Code(Code::KeyT), true, false) => Some(Action::NewTab),
         (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
+        (Physical::Code(Code::KeyW), true, true) => Some(Action::CloseOtherTabs),
         (Physical::Code(Code::KeyH), true, false) => Some(Action::ToggleHidden),
         (Physical::Code(Code::KeyS), true, false) => Some(Action::QuickFilter),
         (Physical::Code(Code::KeyS), true, true) => Some(Action::SyncDirs),
@@ -385,7 +399,7 @@ mod tests {
 
     #[test]
     fn unbound_combinations() {
-        assert_eq!(named(Named::ArrowUp, CTRL), None);
+        assert_eq!(named(Named::ArrowDown, CTRL), None);
         assert_eq!(named(Named::F12, NONE), None);
     }
 
@@ -409,6 +423,19 @@ mod tests {
         assert_eq!(named(Named::F4, ALT), None); // Alt+F4 stays with the compositor
         assert_eq!(chr("a", Code::KeyA, ALT), Some(Action::QuickSearch('a')));
         assert_eq!(named(Named::F1, Modifiers::LOGO), None);
+    }
+
+    #[test]
+    fn tab_more_keys() {
+        assert_eq!(named(Named::ArrowUp, CTRL), Some(Action::TabOpen));
+        assert_eq!(
+            named(Named::ArrowUp, CTRL | Modifiers::SHIFT),
+            Some(Action::TabOpenOther)
+        );
+        assert_eq!(
+            chr("W", Code::KeyW, CTRL | Modifiers::SHIFT),
+            Some(Action::CloseOtherTabs)
+        );
     }
 
     #[test]

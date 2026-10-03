@@ -106,6 +106,21 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         (vec![Ctrl], K::Letter(Code::KeyR, "r"), a(Action::Reload)),
         (vec![Ctrl], K::Letter(Code::KeyT, "t"), a(Action::NewTab)),
         (vec![Ctrl], K::Letter(Code::KeyW, "w"), a(Action::CloseTab)),
+        (
+            vec![Ctrl, Shift],
+            K::Letter(Code::KeyW, "w"),
+            a(Action::CloseOtherTabs),
+        ),
+        (
+            vec![Ctrl],
+            K::Shown(Named::ArrowUp, "↑"),
+            a(Action::TabOpen),
+        ),
+        (
+            vec![Ctrl, Shift],
+            K::Shown(Named::ArrowUp, "↑"),
+            a(Action::TabOpenOther),
+        ),
         (vec![Ctrl], K::Letter(Code::KeyF, "f"), a(Action::Connect)),
         (
             vec![Ctrl, Shift],
@@ -160,7 +175,7 @@ fn key_binds() -> HashMap<KeyBind, MenuAct> {
 type Item = menu::Item<MenuAct, String>;
 
 /// (title, items) of every menu.
-fn menus(show_hidden: bool) -> Vec<(String, Vec<Item>)> {
+fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
     let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
     let sort = |label: String, k: SortKey| b(label, Action::Sort(k));
     vec![
@@ -212,9 +227,28 @@ fn menus(show_hidden: bool) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-filter"), Action::QuickFilter),
                 b(fl!("menu-reload"), Action::Reload),
-                menu::Item::Divider,
+            ],
+        ),
+        (
+            fl!("menu-tabs"),
+            vec![
                 b(fl!("menu-new-tab"), Action::NewTab),
+                b(fl!("menu-tab-open"), Action::TabOpen),
+                b(fl!("menu-tab-open-other"), Action::TabOpenOther),
+                menu::Item::Divider,
+                b(fl!("menu-tab-copy-other"), Action::TabCopyOther),
+                b(fl!("menu-tab-move-other"), Action::TabMoveOther),
+                menu::Item::Divider,
+                menu::Item::CheckBox(
+                    fl!("menu-tab-lock"),
+                    None,
+                    locked,
+                    MenuAct::Key(Action::TabLock),
+                ),
+                b(fl!("menu-tab-rename"), Action::TabRename),
+                menu::Item::Divider,
                 b(fl!("menu-close-tab"), Action::CloseTab),
+                b(fl!("menu-close-other-tabs"), Action::CloseOtherTabs),
             ],
         ),
         (
@@ -259,9 +293,9 @@ fn menus(show_hidden: bool) -> Vec<(String, Vec<Item>)> {
     ]
 }
 
-pub fn bar(show_hidden: bool) -> Element<'static, Message> {
+pub fn bar(show_hidden: bool, locked: bool) -> Element<'static, Message> {
     let binds = key_binds();
-    let roots = menus(show_hidden)
+    let roots = menus(show_hidden, locked)
         .into_iter()
         .map(|(title, items)| {
             menu::Tree::with_children(Element::from(menu::root(title)), menu::items(&binds, items))
@@ -343,14 +377,25 @@ mod tests {
     #[test]
     fn every_item_shows_a_key() {
         let binds = key_binds();
-        for (title, items) in menus(false) {
+        for (title, items) in menus(false, false) {
             for item in items {
                 let act = match item {
                     menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => a,
                     _ => continue,
                 };
-                if matches!(act, MenuAct::Key(Action::About | Action::Donate)) {
-                    continue; // no key, as in TC
+                // No key, as in TC.
+                if matches!(
+                    act,
+                    MenuAct::Key(
+                        Action::About
+                            | Action::Donate
+                            | Action::TabCopyOther
+                            | Action::TabMoveOther
+                            | Action::TabLock
+                            | Action::TabRename
+                    )
+                ) {
+                    continue;
                 }
                 assert!(binds.values().any(|b| *b == act), "{title}: {act:?}");
             }

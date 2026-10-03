@@ -62,6 +62,10 @@ pub struct Tab {
     pub(crate) history: History,
     /// Alt+F7 "To panel": (dir searched, found paths) listed instead of the dir.
     pub(crate) results: Option<(PathBuf, Arc<Vec<PathBuf>>)>,
+    /// TC locked tab: cannot be closed, leaving its dir opens a new tab.
+    pub locked: bool,
+    /// Own caption instead of the dir's name.
+    pub name: Option<String>,
 }
 
 impl Tab {
@@ -75,6 +79,18 @@ impl Tab {
             error: None,
             history: History::default(),
             results: None,
+            locked: false,
+            name: None,
+        }
+    }
+
+    /// Tab caption: own name or the dir's, `*` in front when locked (as in TC).
+    pub fn title(&self) -> String {
+        let name = (self.name.clone()).unwrap_or_else(|| format::dir_title(self.panel.cwd()));
+        if self.locked {
+            format!("*{name}")
+        } else {
+            name
         }
     }
 
@@ -103,6 +119,8 @@ impl Tab {
             error: None,
             history: self.history.clone(),
             results: self.results.clone(),
+            locked: false,
+            name: None,
         }
     }
 }
@@ -441,7 +459,10 @@ impl Application for App {
     }
 
     fn header_start(&self) -> Vec<Element<'_, Message>> {
-        vec![crate::menu::bar(self.config.show_hidden)]
+        vec![crate::menu::bar(
+            self.config.show_hidden,
+            self.panes[self.active].active().locked,
+        )]
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -520,6 +541,11 @@ impl App {
                 tabs.open_after(app.new_tab(p.clone()));
             }
             tabs.select(active);
+            let saved = &state.panes[side];
+            for (i, t) in tabs.items_mut().iter_mut().enumerate() {
+                t.locked = saved.locked.get(i).copied().unwrap_or(false);
+                t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
+            }
             app.panes[side] = tabs;
         }
         app.refresh_mounts();
@@ -722,6 +748,10 @@ impl App {
             }
             Message::CloseTabAt(side, i) => {
                 self.search = None;
+                if self.panes[side].items().get(i).is_some_and(|t| t.locked) {
+                    self.say(StatusKind::Error, fl!("tab-locked"));
+                    return Task::none();
+                }
                 self.panes[side].close(i);
                 return self.tab_switched(side);
             }
@@ -1342,6 +1372,10 @@ impl App {
                     .map(|t| t.panel.cwd().to_path_buf())
                     .collect(),
                 active: self.panes[s].active_index(),
+                locked: self.panes[s].items().iter().map(|t| t.locked).collect(),
+                names: (self.panes[s].items().iter())
+                    .map(|t| t.name.clone().unwrap_or_default())
+                    .collect(),
             }),
             active: self.active,
             find: self.find.clone(),
@@ -1366,6 +1400,13 @@ impl App {
     /// Scan `path` for the active tab of `side` in the background; the result lands in `Message::Listed`.
     /// Go to `path` in the active tab (leaves search results).
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
+        // A locked tab keeps its dir: going elsewhere happens in a new tab next to it (TC).
+        let t = self.panes[side].active();
+        if t.locked && path != t.panel.cwd() {
+            let id = self.next_id();
+            let copy = self.panes[side].active().duplicate(id);
+            self.panes[side].open_after(copy);
+        }
         self.panes[side].active_mut().results = None;
         self.reload(side, path, focus)
     }
@@ -1638,7 +1679,8 @@ impl App {
             | Action::CmdPath
             | Action::CmdCwd
             | Action::CmdPrevious
-            | Action::CmdHistory => {} // handled above
+            | Action::CmdHistory
+            | Action::TabRename => {} // handled above
             Action::Connect => {} // always a dialog
             Action::HistoryBack | Action::HistoryForward => {
                 let history = &mut self.panes[side].active_mut().history;
@@ -1719,6 +1761,46 @@ impl App {
                 let cwd = panel.cwd().to_path_buf();
                 return self.reload(side, cwd, None);
             }
+            Action::TabOpen | Action::TabOpenOther => {
+                let path = self.tab_target(side);
+                let to = if action == Action::TabOpen {
+                    side
+                } else {
+                    1 - side
+                };
+                let tab = self.new_tab(path.clone());
+                self.panes[to].open_after(tab);
+                return self.load(to, path, None);
+            }
+            Action::TabCopyOther | Action::TabMoveOther => {
+                let tab = if action == Action::TabCopyOther {
+                    let id = self.next_id();
+                    Some(self.panes[side].active().duplicate(id))
+                } else {
+                    let i = self.panes[side].active_index();
+                    self.panes[side].take(i)
+                };
+                let Some(tab) = tab else {
+                    self.say(StatusKind::Error, fl!("tab-last"));
+                    return Task::none();
+                };
+                self.panes[1 - side].open_after(tab);
+                self.active = 1 - side;
+                let mut tasks = vec![self.tab_switched(1 - side)];
+                if action == Action::TabMoveOther {
+                    tasks.push(self.tab_switched(side));
+                }
+                return Task::batch(tasks);
+            }
+            Action::TabLock => {
+                let t = self.panes[side].active_mut();
+                t.locked = !t.locked;
+                return Task::none();
+            }
+            Action::CloseOtherTabs => {
+                self.panes[side].retain(|t| t.locked);
+                return Task::none();
+            }
             Action::NewTab => {
                 let id = self.next_id();
                 let copy = self.panes[side].active().duplicate(id);
@@ -1726,6 +1808,10 @@ impl App {
                 return self.restore_scroll(side);
             }
             Action::CloseTab => {
+                if self.panes[side].active().locked {
+                    self.say(StatusKind::Error, fl!("tab-locked"));
+                    return Task::none();
+                }
                 let i = self.panes[side].active_index();
                 if !self.panes[side].close(i) {
                     if self.config.last_tab_close == LastTab::Home {
@@ -1786,6 +1872,11 @@ impl App {
                 ))
             }
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
+            Action::TabRename => Some(input(
+                InputOp::TabName,
+                Vec::new(),
+                self.panes[side].active().name.clone().unwrap_or_default(),
+            )),
             Action::Rename => {
                 let e = panel.current().filter(|e| e.name != PARENT)?;
                 let path = panel.cwd().join(&e.os_name);
@@ -2015,6 +2106,16 @@ impl App {
                 input,
                 ..
             } => self.mkdir(side, input.trim()),
+            Dialog::Input {
+                op: InputOp::TabName,
+                side,
+                input,
+                ..
+            } => {
+                let name = input.trim();
+                self.panes[side].active_mut().name = (!name.is_empty()).then(|| name.to_string());
+                Task::none()
+            }
             Dialog::Input {
                 op,
                 side,
@@ -3293,6 +3394,24 @@ impl App {
         Task::batch([unfocus(), task])
     }
 
+    /// Ctrl+↑: the dir under the cursor (an archive as a dir, ".." the parent), else the panel's own.
+    fn tab_target(&self, side: usize) -> PathBuf {
+        let panel = &self.panes[side].active().panel;
+        if let Some((path, _)) = panel.enter_path() {
+            return path;
+        }
+        let cwd = panel.cwd();
+        match panel.current() {
+            Some(e)
+                if archive::split_path(cwd).is_none()
+                    && Format::detect(&e.name).is_some_and(Format::is_tree) =>
+            {
+                cwd.join(&e.os_name)
+            }
+            _ => cwd.to_path_buf(),
+        }
+    }
+
     fn go_to(&mut self, side: usize, path: PathBuf) -> Task<Message> {
         self.active = side;
         self.load(side, path, None)
@@ -3766,10 +3885,12 @@ mod tests {
                 PaneState {
                     tabs: vec![tmp.path().into(), a.clone()],
                     active: 1,
+                    ..PaneState::default()
                 },
                 PaneState {
                     tabs: vec![tmp.path().join("gone")],
                     active: 0,
+                    ..PaneState::default()
                 },
             ],
             active: 1,
@@ -3790,6 +3911,7 @@ mod tests {
                 PaneState {
                     tabs: vec!["/".into(), "/".into()],
                     active: 1,
+                    ..PaneState::default()
                 },
                 PaneState::default(),
             ],
@@ -6223,6 +6345,158 @@ mod tests {
             let _ = app.update(Message::CmdInput("x".into()));
             let _ = app.update(Message::FieldKey(Action::Copy));
             assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+        }
+    }
+
+    mod tabs_more {
+        use super::*;
+
+        /// tmp with dirs `a`, `a/in` and file `f`; pane 0 shows tmp, cursor on `a`.
+        fn setup() -> (tempfile::TempDir, App) {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join("a/in")).unwrap();
+            std::fs::write(tmp.path().join("f"), "").unwrap();
+            let mut app = app_with(Config::default(), State::default());
+            listed_at(&mut app, 0, tmp.path());
+            let _ = app.update(Message::Key(Action::Down));
+            (tmp, app)
+        }
+
+        fn key(app: &mut App, a: Action) {
+            let _ = app.update(Message::Key(a));
+        }
+
+        #[test]
+        fn ctrl_up_opens_the_dir_under_the_cursor_in_a_new_tab() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::TabOpen);
+            assert_eq!(
+                cwds_or_targets(&app, 0),
+                [tmp.path().into(), tmp.path().join("a")]
+            );
+            assert_eq!(app.panes[0].active_index(), 1);
+            // On "..": the parent; on a file: the dir itself.
+            let (tmp2, mut app) = setup();
+            key(&mut app, Action::Up);
+            key(&mut app, Action::TabOpen);
+            let parent = tmp2.path().parent().unwrap().to_path_buf();
+            assert_eq!(app.panes[0].active().target(), parent);
+            let (tmp3, mut app) = setup();
+            key(&mut app, Action::End);
+            key(&mut app, Action::TabOpen);
+            assert_eq!(app.panes[0].active().target(), tmp3.path());
+        }
+
+        fn cwds_or_targets(app: &App, side: usize) -> Vec<PathBuf> {
+            app.panes[side].items().iter().map(Tab::target).collect()
+        }
+
+        #[test]
+        fn ctrl_shift_up_opens_it_in_the_other_panel_and_keeps_focus() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::TabOpenOther);
+            assert_eq!(app.panes[1].items().len(), 2);
+            assert_eq!(app.panes[1].active().target(), tmp.path().join("a"));
+            assert_eq!(app.panes[0].items().len(), 1);
+            assert_eq!(app.active, 0);
+        }
+
+        #[test]
+        fn copy_and_move_a_tab_to_the_other_panel() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::TabCopyOther);
+            assert_eq!(app.panes[0].items().len(), 1);
+            assert_eq!(app.panes[1].items().len(), 2);
+            assert_eq!(app.panes[1].active().target(), tmp.path());
+            assert_eq!(app.active, 1);
+            // The last tab of a panel stays.
+            key(&mut app, Action::SwitchPane);
+            key(&mut app, Action::TabMoveOther);
+            assert_eq!(app.panes[0].items().len(), 1);
+            assert!(app.msg().is_some());
+            // Pane 1 has two: one moves over, with its lock and name.
+            key(&mut app, Action::SwitchPane);
+            key(&mut app, Action::TabLock);
+            let id = app.panes[1].active().id;
+            key(&mut app, Action::TabMoveOther);
+            assert_eq!(app.panes[1].items().len(), 1);
+            assert_eq!(app.panes[0].items().len(), 2);
+            assert_eq!(app.panes[0].active().id, id);
+            assert!(app.panes[0].active().locked);
+            assert_eq!(app.active, 0);
+        }
+
+        #[test]
+        fn locked_tab_stays_and_navigation_opens_a_new_one() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::NewTab);
+            key(&mut app, Action::TabLock);
+            assert!(app.panes[0].active().locked);
+            key(&mut app, Action::CloseTab);
+            assert_eq!(app.panes[0].items().len(), 2);
+            assert!(app.msg().is_some());
+            let i = app.panes[0].active_index();
+            let _ = app.update(Message::CloseTabAt(0, i));
+            assert_eq!(app.panes[0].items().len(), 2);
+            key(&mut app, Action::Enter); // cursor on `a`
+            assert_eq!(app.panes[0].items().len(), 3);
+            assert_eq!(app.panes[0].active().target(), tmp.path().join("a"));
+            assert!(!app.panes[0].active().locked);
+            let locked = &app.panes[0].items()[1];
+            assert!(locked.locked);
+            assert_eq!(locked.target(), tmp.path());
+            // Unlock: a plain tab again.
+            app.panes[0].select(1);
+            key(&mut app, Action::TabLock);
+            assert!(!app.panes[0].active().locked);
+        }
+
+        #[test]
+        fn rename_and_reset_a_tab_caption() {
+            let (_tmp, mut app) = setup();
+            key(&mut app, Action::TabRename);
+            let _ = app.update(Message::DialogInput("Work".into()));
+            let _ = app.update(Message::DialogSubmit);
+            assert_eq!(app.panes[0].active().name.as_deref(), Some("Work"));
+            key(&mut app, Action::TabRename);
+            let _ = app.update(Message::DialogInput("  ".into()));
+            let _ = app.update(Message::DialogSubmit);
+            assert_eq!(app.panes[0].active().name, None);
+        }
+
+        #[test]
+        fn close_others_keeps_active_and_locked() {
+            let (_tmp, mut app) = setup();
+            key(&mut app, Action::NewTab);
+            key(&mut app, Action::TabLock);
+            let locked = app.panes[0].active().id;
+            key(&mut app, Action::NewTab);
+            key(&mut app, Action::NewTab);
+            let active = app.panes[0].active().id;
+            key(&mut app, Action::CloseOtherTabs);
+            let ids: Vec<u64> = app.panes[0].items().iter().map(|t| t.id).collect();
+            assert_eq!(ids, [locked, active]);
+            assert_eq!(app.panes[0].active().id, active);
+        }
+
+        #[test]
+        fn lock_and_caption_survive_a_restart() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::NewTab);
+            key(&mut app, Action::TabLock);
+            key(&mut app, Action::TabRename);
+            let _ = app.update(Message::DialogInput("W".into()));
+            let _ = app.update(Message::DialogSubmit);
+            app.save_state();
+            let state = app.saved.clone();
+            assert_eq!(state.panes[0].locked, [false, true]);
+            assert_eq!(state.panes[0].names, ["", "W"]);
+            let app = app_with(Config::default(), state);
+            let t = &app.panes[0].items()[1];
+            assert!(t.locked);
+            assert_eq!(t.name.as_deref(), Some("W"));
+            assert_eq!(t.target(), tmp.path());
+            assert!(!app.panes[0].items()[0].locked);
         }
     }
 }

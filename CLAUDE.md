@@ -46,7 +46,7 @@ The workspace has two crates.
   - `ops.rs`: our own synchronous engine (`plan`, `transfer`, `delete`) driven through a `Handler` trait — not cosmic-files' (that one needs compio; see the phase 5 spec). Writes go to a hidden `.<name>.<pid>.<n>.shagoff-part` (created with O_EXCL) then `rename`; a moved source is deleted only after its copy succeeded; symlinks are never followed.
 - **`crates/app` (`shagoff-commander`)** is the libcosmic UI.
   - `app.rs`: `App { panes: [Pane; 2], active }`.
-  - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error.
+  - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error + `locked` / `name` (saved in `PaneState`). A locked tab never leaves its dir: `App::load` opens a new tab for that.
   - `view/`: drive buttons, tabs, path line, column table; `footer`: one status line (each pane's totals under it, the message or cursor entry details in the active half), the command line (`path>`, `App::cmdline`; logic in `core::cmdline`: `cd`, quoting, history) and the F-key bar.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
   - `drawer.rs` + `help.rs`: side drawer (libcosmic context drawer) with help (F1), about (libcosmic `about` feature; `DONATE_URL` for the future Stripe Payment Link) and settings (Ctrl+,). Settings write the whole `Config` and go through `App::apply_config`, the same path as a hand edit seen by the config watcher.
