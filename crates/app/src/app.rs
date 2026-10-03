@@ -1198,7 +1198,7 @@ impl App {
             Dialog::Pack(p) => {
                 let cwd = self.panes[p.side].active().target();
                 let path = cwd.join(p.path.trim());
-                if archive::split_path(&path).is_some() {
+                if into_archive(&path) {
                     self.panes[p.side].active_mut().error = Some(fl!("archive-read-only"));
                     return Task::none();
                 }
@@ -1225,7 +1225,7 @@ impl App {
                 own_dir,
             } => {
                 let dest = self.panes[side].active().target().join(path.trim());
-                if archive::split_path(&dest).is_some() {
+                if into_archive(&dest) {
                     self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
                     return Task::none();
                 }
@@ -1284,12 +1284,20 @@ impl App {
     ) -> Task<Message> {
         // While a navigation is in flight the rows still show the dir being left; aim at where the tab is going.
         let cwd = self.panes[side].active().target();
-        if op != InputOp::Rename && archive::split_path(&cwd.join(input)).is_some() {
+        if op != InputOp::Rename && into_archive(&cwd.join(input)) {
             self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
             return Task::none();
         }
-        if op == InputOp::Copy && archive::split_path(&cwd).is_some() {
-            return self.start_extract(side, &cwd, &sources, cwd.join(input));
+        // From the rows' own dir: right after Enter on an archive they still show the dir left.
+        let from = sources
+            .first()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+        if let Some(from) = from
+            && op == InputOp::Copy
+            && archive::split_path(&from).is_some()
+        {
+            return self.start_extract(side, &from, &sources, cwd.join(input));
         }
         let (method, kind) = match op {
             InputOp::Copy => (Method::Copy, OpKind::Copy),
@@ -1326,7 +1334,7 @@ impl App {
         let Some((archive, inner)) = archive::split_path(cwd) else {
             return Task::none();
         };
-        if paths.is_empty() || archive::split_path(&dest).is_some() {
+        if paths.is_empty() || into_archive(&dest) {
             return Task::none();
         }
         let names = paths
@@ -1742,6 +1750,12 @@ fn plan_error(e: &PlanError) -> String {
 }
 
 /// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").
+/// A typed target that lies inside an archive (`a.zip/x`). The archive file itself is not: packing
+/// or copying onto an existing `a.zip` asks to replace it, as for any file.
+fn into_archive(p: &Path) -> bool {
+    archive::split_path(p).is_some_and(|(_, inner)| !inner.as_os_str().is_empty())
+}
+
 fn dir_input(dir: &Path) -> String {
     let s = dir.display().to_string();
     if s.ends_with('/') { s } else { s + "/" }
@@ -2947,5 +2961,38 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::ClipCopy));
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Extract));
+    }
+
+    #[test]
+    fn regression_pack_onto_existing_archive_is_not_read_only() {
+        let (tmp, mut app, _a) = zip_setup();
+        std::fs::write(tmp.path().join("out/note.txt"), "1").unwrap();
+        std::fs::copy(tmp.path().join("a.zip"), tmp.path().join("out/note.zip")).unwrap();
+        listed_at(&mut app, 0, &tmp.path().join("out"));
+        listed_at(&mut app, 1, tmp.path());
+        let _ = app.update(Message::Key(Action::End)); // note.zip, note.txt sorted: put cursor on note.txt
+        let _ = app.update(Message::Key(Action::Home));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Down)); // "..", note.txt, note.zip
+        let _ = app.update(Message::Key(Action::Pack));
+        let Some(Dialog::Pack(p)) = &mut app.dialog else {
+            panic!("no pack dialog")
+        };
+        p.path = tmp.path().join("out/note.zip").display().to_string(); // an existing archive
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Pack));
+    }
+
+    #[test]
+    fn regression_f5_right_after_entering_archive_copies_the_shown_rows() {
+        let (tmp, mut app, a) = zip_setup();
+        std::fs::write(tmp.path().join("plain.txt"), "1").unwrap();
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::End)); // plain.txt
+        let _ = app.update(Message::Key(Action::Mark));
+        let _ = app.load(0, a, None); // entering the archive, listing not back yet
+        let _ = app.update(Message::Key(Action::Copy));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Copy));
     }
 }

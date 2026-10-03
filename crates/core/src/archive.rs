@@ -784,15 +784,19 @@ pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<E
     Ok(kids.into_values().collect())
 }
 
-/// Where files opened from archives (Enter, F3) are extracted: per-user, outside the panels.
+/// Where files opened from archives (Enter, F3) are extracted: the user's cache dir, on disk —
+/// `$XDG_RUNTIME_DIR` is a small RAM tmpfs that other session services need.
 pub fn temp_root() -> PathBuf {
-    match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(d) if !d.is_empty() => PathBuf::from(d).join("shagoff-commander"),
-        _ => std::env::temp_dir().join(format!(
-            "shagoff-commander-{}",
-            rustix::process::getuid().as_raw()
-        )),
+    let home = std::env::home_dir().unwrap_or_else(std::env::temp_dir);
+    temp_root_in(std::env::var_os("XDG_CACHE_HOME"), &home)
+}
+
+fn temp_root_in(cache: Option<std::ffi::OsString>, home: &Path) -> PathBuf {
+    match cache {
+        Some(c) if !c.is_empty() => PathBuf::from(c),
+        _ => home.join(".cache"),
     }
+    .join("shagoff-commander")
 }
 
 /// A new empty `<root>/<pid>/<n>`: same-named files opened one after another never mix.
@@ -2480,5 +2484,22 @@ mod tests {
         let slashed = PathBuf::from(format!("{}/", a.display()));
         assert_eq!(split_path(&slashed), Some((a.clone(), PathBuf::new())));
         assert_eq!(crate::listing::scan(&slashed, true).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn temp_root_is_on_disk_not_in_the_runtime_tmpfs() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            temp_root_in(Some("/c".into()), home),
+            Path::new("/c/shagoff-commander")
+        );
+        assert_eq!(
+            temp_root_in(None, home),
+            Path::new("/home/u/.cache/shagoff-commander")
+        );
+        assert_eq!(
+            temp_root_in(Some("".into()), home),
+            Path::new("/home/u/.cache/shagoff-commander")
+        );
     }
 }

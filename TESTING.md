@@ -156,3 +156,5 @@
 | `regression_pack_onto_one_of_its_sources_is_refused` | Упаковка `a.zip` в `a.zip` заменяла файл пустым архивом | 11 |
 | `regression_short_source_is_an_error_not_a_padded_entry` | Файл, уменьшившийся во время упаковки в tar, молча дополнялся нулями | 11 |
 | `regression_split_path_trailing_slash` | Путь `…/a.zip/` со слешем на конце не открывался как архив | 12 |
+| `regression_pack_onto_existing_archive_is_not_read_only` | Упаковка поверх существующего `foo.zip` отказывала с «Архив только для чтения» вместо вопроса о замене | 12 |
+| `regression_f5_right_after_entering_archive_copies_the_shown_rows` | F5 сразу после Enter на архиве искал файлы старого каталога внутри архива | 12 |
