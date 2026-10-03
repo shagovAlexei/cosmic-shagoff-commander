@@ -299,9 +299,9 @@ mod tests {
                 inner: inner.into(),
             };
             let r = modify(&a, &add(""), &mut Script::default());
-            assert_eq!(r.completed, [new.clone()], "{f:?}");
+            assert_eq!(r.completed, std::slice::from_ref(&new), "{f:?}");
             let r = modify(&a, &add("sub"), &mut Script::default());
-            assert_eq!(r.completed, [new.clone()], "{f:?}");
+            assert_eq!(r.completed, std::slice::from_ref(&new), "{f:?}");
             assert_eq!(
                 contents(&a),
                 [
@@ -400,7 +400,7 @@ mod tests {
         };
         assert_eq!(
             modify(&a, &rep, &mut Script::default()).completed,
-            [a.clone()]
+            std::slice::from_ref(&a)
         );
         assert_eq!(
             contents(&a),
