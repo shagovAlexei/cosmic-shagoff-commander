@@ -162,6 +162,12 @@ pub struct SyncDlg {
     pub ignore_date: bool,
     pub hidden: bool,
     pub show_same: bool,
+    /// The right becomes a copy of the left (right-only goes to the trash).
+    pub mirror: bool,
+    /// Mask of file names to compare, as typed ("" or "*": all).
+    pub mask: String,
+    /// "Synchronize" was pressed once with deletions pending: the next press runs.
+    pub confirm: bool,
     pub rows: Vec<sync::Row>,
     /// Results of other compares are dropped.
     pub id: u64,
@@ -176,6 +182,11 @@ impl SyncDlg {
             content: self.content,
             ignore_date: self.ignore_date,
             hidden: self.hidden,
+            mirror: self.mirror,
+            mask: match self.mask.trim() {
+                "" | "*" | "*.*" => None,
+                m => Some(shagoff_core::mask::Mask::parse(m)),
+            },
         }
     }
 }
@@ -194,6 +205,7 @@ pub enum SyncOpt {
     Content,
     IgnoreDate,
     ShowSame,
+    Mirror,
 }
 
 /// Deleted (left only), inserted (right only), changed: tinted, readable in light and dark themes.
@@ -884,23 +896,28 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 Some(i) if i.dir => "<DIR>".into(),
                 Some(i) => format!("{}  {}", format::size(i.size), format::date(i.mtime, tz)),
             };
-            let (mut r, mut l, mut d, mut same) = (0, 0, 0, 0);
+            let (mut r, mut l, mut d, mut same, mut x) = (0, 0, 0, 0, 0);
             let mut list = column![].spacing(2);
             let mut shown = 0;
             for (i, row) in s.rows.iter().enumerate() {
                 match (row.dir, row.state) {
                     (Dir::ToRight, _) => r += 1,
                     (Dir::ToLeft, _) => l += 1,
+                    (Dir::Delete, _) => x += 1,
                     (Dir::None, State::Same) => same += 1,
                     (Dir::None, _) => d += 1,
                 }
-                if (row.state == State::Same && !s.show_same) || shown >= FIND_SHOWN {
+                // ✕ rows are always listed: nothing is deleted unseen.
+                if (row.state == State::Same && !s.show_same)
+                    || (shown >= FIND_SHOWN && row.dir != Dir::Delete)
+                {
                     continue;
                 }
                 shown += 1;
                 let arrow = match (row.dir, row.state) {
                     (Dir::ToRight, _) => "→",
                     (Dir::ToLeft, _) => "←",
+                    (Dir::Delete, _) => "✕",
                     (Dir::None, State::Same) => "=",
                     (Dir::None, State::Differ) => "≠",
                     (Dir::None, _) => "·",
@@ -928,8 +945,24 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     widget::button::standard(fl!("sync-compare")).on_press(Message::SyncCompare)
                 }
             };
-            let run = widget::button::suggested(fl!("sync-run"))
-                .on_press_maybe((r + l > 0 && s.running.is_none()).then_some(Message::SyncRun));
+            let run = if s.confirm {
+                widget::button::destructive(fl!("sync-run-delete"))
+            } else {
+                widget::button::suggested(fl!("sync-run"))
+            }
+            .on_press_maybe((r + l + x > 0 && s.running.is_none()).then_some(Message::SyncRun));
+            let summary = fl!(
+                "sync-summary",
+                r = r.to_string(),
+                l = l.to_string(),
+                d = d.to_string(),
+                s = same.to_string()
+            );
+            let summary = match (x, s.confirm) {
+                (0, _) => summary,
+                (x, false) => format!("{summary}, ✕ {x}"),
+                (x, true) => format!("{summary}. {}", fl!("sync-confirm-delete", n = x)),
+            };
             widget::dialog()
                 .title(fl!("sync-dirs"))
                 .width(Length::Fill)
@@ -945,15 +978,18 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                             opt(fl!("sync-show-same"), s.show_same, SyncOpt::ShowSame),
                         ]
                         .spacing(16),
+                        row![
+                            opt(fl!("sync-mirror"), s.mirror, SyncOpt::Mirror),
+                            widget::text_input(fl!("sync-mask"), &s.mask)
+                                .on_input(Message::SyncMask)
+                                .on_submit(|_| Message::SyncCompare)
+                                .width(Length::Fixed(240.0)),
+                        ]
+                        .spacing(16)
+                        .align_y(cosmic::iced::Alignment::Center),
                         // All buttons above the list: a short window clips the dialog's bottom row.
                         row![compare, run, cancel].spacing(8),
-                        widget::text(fl!(
-                            "sync-summary",
-                            r = r.to_string(),
-                            l = l.to_string(),
-                            d = d.to_string(),
-                            s = same.to_string()
-                        )),
+                        widget::text(summary),
                         widget::scrollable(list).height(list_height(shown)),
                     ]
                     .spacing(12),

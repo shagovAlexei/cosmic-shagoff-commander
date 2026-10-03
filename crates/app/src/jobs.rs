@@ -34,6 +34,8 @@ pub enum Job {
     Sync {
         to_right: Vec<(PathBuf, PathBuf)>,
         to_left: Vec<(PathBuf, PathBuf)>,
+        /// Mirror / ✕ rows: to the trash, after the copies.
+        delete: Vec<PathBuf>,
     },
     /// F5 / Ctrl+C / Enter in an archive panel: `names` of the dir `inner` into `dest`.
     Extract {
@@ -160,15 +162,30 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
                 dest,
                 own_dir,
             } => archive::unpack(&archives, &dest, own_dir, &mut h),
-            Job::Sync { to_right, to_left } => {
+            Job::Sync {
+                to_right,
+                to_left,
+                delete,
+            } => {
                 let a = ops::transfer(Method::Copy, &to_right, &mut h);
                 if a.cancelled {
                     a
                 } else {
                     let b = ops::transfer(Method::Copy, &to_left, &mut h);
-                    Report {
-                        cancelled: b.cancelled,
-                        completed: a.completed.into_iter().chain(b.completed).collect(),
+                    let mut done: Vec<PathBuf> =
+                        a.completed.into_iter().chain(b.completed).collect();
+                    if b.cancelled || delete.is_empty() {
+                        Report {
+                            cancelled: b.cancelled,
+                            completed: done,
+                        }
+                    } else {
+                        let d = ops::delete(&delete, false, &mut h);
+                        done.extend(d.completed);
+                        Report {
+                            cancelled: d.cancelled,
+                            completed: done,
+                        }
                     }
                 }
             }
@@ -246,6 +263,7 @@ mod sync_tests {
         let job = Job::Sync {
             to_right: vec![(l.join("a"), r.join("a"))],
             to_left: vec![],
+            delete: vec![],
         };
         let (_cancel, mut rx) = spawn(job);
         let asked = block_on(async {

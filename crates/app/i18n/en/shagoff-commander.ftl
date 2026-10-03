@@ -285,3 +285,9 @@ find-bad-regex = Regular expression: { $err }
 find-results = Search results: { $dir }
 find-bad-range = Size from is larger than size up to
 results-unsupported = Not available in search results
+
+# Sync, more
+sync-mirror = Mirror: the right becomes a copy of the left
+sync-mask = Files (mask), Enter
+sync-run-delete = Delete and synchronize
+sync-confirm-delete = { $n } to the trash (✕). Press "Delete and synchronize" to go on.

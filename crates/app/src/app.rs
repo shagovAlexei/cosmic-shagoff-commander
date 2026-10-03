@@ -275,6 +275,8 @@ pub enum Message {
     /// Cycle row i's arrow: → ← none.
     SyncFlip(usize),
     SyncRun,
+    /// Sync dialog: the file mask as typed.
+    SyncMask(String),
     /// Compare result for the diff dialog with this id.
     DiffReady(u64, Arc<Result<shagoff_core::diff::Outcome, String>>),
     DiffNext,
@@ -778,6 +780,7 @@ impl App {
                         SyncOpt::Content => &mut s.content,
                         SyncOpt::IgnoreDate => &mut s.ignore_date,
                         SyncOpt::ShowSame => &mut s.show_same,
+                        SyncOpt::Mirror => &mut s.mirror,
                     };
                     *flag = !*flag;
                     // The rows must match the options they are synced with.
@@ -787,6 +790,14 @@ impl App {
                 }
             }
             Message::SyncCompare => return self.start_compare(),
+            Message::SyncMask(m) => {
+                if let Some(Dialog::Sync(s)) = &mut self.dialog {
+                    s.mask = m;
+                    // The rows were for the old mask: nothing to run until compared again.
+                    s.rows.clear();
+                    s.confirm = false;
+                }
+            }
             Message::SyncStop => {
                 if let Some(Dialog::Sync(s)) = &self.dialog
                     && let Some(f) = &s.running
@@ -800,18 +811,15 @@ impl App {
                 {
                     s.rows = rows;
                     s.running = None;
+                    s.confirm = false; // asked again for the new rows
                 }
             }
             Message::SyncFlip(i) => {
-                use shagoff_core::sync::Dir;
                 if let Some(Dialog::Sync(s)) = &mut self.dialog
                     && let Some(row) = s.rows.get_mut(i)
                 {
-                    row.dir = match row.dir {
-                        Dir::ToRight => Dir::ToLeft,
-                        Dir::ToLeft => Dir::None,
-                        Dir::None => Dir::ToRight,
-                    };
+                    row.dir = shagoff_core::sync::next_dir(row);
+                    s.confirm = false;
                 }
             }
             Message::SyncRun => return self.start_sync(),
@@ -1736,6 +1744,9 @@ impl App {
                 ignore_date: false,
                 hidden: panel.show_hidden(),
                 show_same: false,
+                mirror: false,
+                mask: String::new(),
+                confirm: false,
                 rows: Vec::new(),
                 id: 0,
                 running: None,
@@ -2141,19 +2152,29 @@ impl App {
 
     /// Copy by the arrows; the dialog closes, both panes reload after the job.
     fn start_sync(&mut self) -> Task<Message> {
-        let Some(Dialog::Sync(s)) = &self.dialog else {
+        let Some(Dialog::Sync(s)) = &mut self.dialog else {
             return Task::none();
         };
         if s.running.is_some() {
             return Task::none();
         }
-        let (to_right, to_left) = shagoff_core::sync::plan(&s.left, &s.right, &s.rows);
-        if to_right.is_empty() && to_left.is_empty() {
+        let p = shagoff_core::sync::plan(&s.left, &s.right, &s.rows);
+        if p.to_right.is_empty() && p.to_left.is_empty() && p.delete.is_empty() {
+            return Task::none();
+        }
+        // Deleting: the button turns into "delete and synchronize" first.
+        if !p.delete.is_empty() && !s.confirm {
+            s.confirm = true;
             return Task::none();
         }
         let side = s.side;
         self.dialog = None;
-        self.start_job(side, OpKind::Sync, Job::Sync { to_right, to_left }, None)
+        let job = Job::Sync {
+            to_right: p.to_right,
+            to_left: p.to_left,
+            delete: p.delete,
+        };
+        self.start_job(side, OpKind::Sync, job, None)
     }
 
     /// (Re)start the search of the open find dialog; the previous one is stopped.
@@ -4960,6 +4981,55 @@ mod tests {
         let _ = app.update(Message::SyncRun);
         assert!(app.dialog.is_none());
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Sync));
+    }
+
+    #[test]
+    fn mirror_asks_before_deleting() {
+        use shagoff_core::sync::Dir;
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let _ = app.update(Message::SyncOpt(SyncOpt::Mirror));
+        compared(&mut app);
+        let s = sync_dlg(&mut app);
+        let only_r = s
+            .rows
+            .iter()
+            .find(|r| r.rel == Path::new("only_r"))
+            .unwrap();
+        assert_eq!(only_r.dir, Dir::Delete);
+        // First press only asks (never run here: deleting goes to the user's real trash).
+        let _ = app.update(Message::SyncRun);
+        assert!(app.job.is_none());
+        assert!(sync_dlg(&mut app).confirm);
+        // A new compare drops the confirmation.
+        compared(&mut app);
+        assert!(!sync_dlg(&mut app).confirm);
+    }
+
+    #[test]
+    fn regression_editing_the_mask_drops_rows_and_confirmation() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let _ = app.update(Message::SyncOpt(SyncOpt::Mirror));
+        compared(&mut app);
+        let _ = app.update(Message::SyncRun); // armed
+        let _ = app.update(Message::SyncMask("*.rs".into()));
+        let s = sync_dlg(&mut app);
+        assert!(!s.confirm && s.rows.is_empty());
+    }
+
+    #[test]
+    fn sync_mask_limits_rows() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let _ = app.update(Message::SyncMask("only_*".into()));
+        compared(&mut app);
+        let names: Vec<String> = sync_dlg(&mut app)
+            .rows
+            .iter()
+            .map(|r| r.rel.display().to_string())
+            .collect();
+        assert_eq!(names, ["only_l", "only_r"]);
     }
 
     #[test]
