@@ -33,6 +33,8 @@ impl menu::Action for MenuAct {
 #[cfg_attr(not(test), expect(dead_code))]
 enum K {
     Named(Named),
+    /// A named key shown as a symbol (libcosmic prints `Named` with `{:?}`: "ArrowDown").
+    Shown(Named, &'static str),
     Letter(Code, &'static str),
     Num(Code, &'static str),
 }
@@ -94,7 +96,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         (vec![Ctrl], K::Letter(Code::KeyD, "d"), a(Action::Hotlist)),
         (
             vec![Alt],
-            K::Named(Named::ArrowDown),
+            K::Shown(Named::ArrowDown, "↓"),
             a(Action::HistoryList),
         ),
         (vec![Ctrl], K::Letter(Code::KeyU, "u"), a(Action::SwapPanes)),
@@ -148,7 +150,7 @@ fn key_binds() -> HashMap<KeyBind, MenuAct> {
         .map(|(modifiers, k, act)| {
             let key = match k {
                 K::Named(n) => Key::Named(n),
-                K::Letter(_, s) | K::Num(_, s) => Key::Character(s.into()),
+                K::Letter(_, s) | K::Num(_, s) | K::Shown(_, s) => Key::Character(s.into()),
             };
             (KeyBind { modifiers, key }, act)
         })
@@ -276,7 +278,7 @@ mod tests {
                 };
             }
             let (key, physical) = match k {
-                K::Named(n) => (Key::Named(n), Physical::Code(Code::F35)),
+                K::Named(n) | K::Shown(n, _) => (Key::Named(n), Physical::Code(Code::F35)),
                 K::Letter(c, s) => (Key::Character(s.into()), Physical::Code(c)),
                 K::Num(c, _) => (Key::Character("+".into()), Physical::Code(c)),
             };
@@ -287,6 +289,26 @@ mod tests {
                 MenuAct::Key(a) => assert_eq!(got, Some(a), "{mods:?} {key:?}"),
             }
         }
+    }
+
+    #[test]
+    fn keys_and_actions_are_unique() {
+        // A HashMap: a repeated key would hide an item's label, a repeated action shows a random key.
+        let t = table();
+        assert_eq!(key_binds().len(), t.len());
+        for (i, (_, _, a)) in t.iter().enumerate() {
+            assert!(!t[..i].iter().any(|(_, _, b)| b == a), "{a:?} twice");
+        }
+    }
+
+    #[test]
+    fn arrow_shown_as_arrow() {
+        let shown: Vec<String> = key_binds()
+            .into_iter()
+            .filter(|(_, a)| *a == MenuAct::Key(Action::HistoryList))
+            .map(|(k, _)| k.to_string())
+            .collect();
+        assert_eq!(shown, ["Alt + ↓"]);
     }
 
     #[test]
