@@ -254,10 +254,18 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
 }
 
 pub fn fkey_bar() -> Element<'static, Message> {
+    // Eleven buttons must fit a ~1000 px window: tight padding, one line, centred.
     let key = |label: String, action| {
-        button::standard(label)
-            .on_press(Message::Key(action))
-            .width(Length::Fill)
+        button::custom(
+            text(label)
+                .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                .width(Length::Fill)
+                .align_x(cosmic::iced::alignment::Horizontal::Center),
+        )
+        .class(theme::Button::Standard)
+        .padding([6, 4])
+        .on_press(Message::Key(action))
+        .width(Length::Fill)
     };
     row![
         key(fl!("fkey-help"), Action::Help),
@@ -268,11 +276,11 @@ pub fn fkey_bar() -> Element<'static, Message> {
         key(fl!("fkey-move"), Action::Move),
         key(fl!("fkey-mkdir"), Action::Mkdir),
         key(fl!("fkey-delete"), Action::Delete),
-        button::standard(fl!("fkey-exit"))
-            .on_press(Message::Exit)
-            .width(Length::Fill),
+        key(fl!("fkey-name"), Action::CopyNames),
+        key(fl!("fkey-path"), Action::CopyPaths),
+        key(fl!("fkey-compare"), Action::CompareFiles),
     ]
-    .spacing(4)
+    .spacing(3)
     .padding(4)
     .into()
 }
