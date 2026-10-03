@@ -58,6 +58,26 @@ impl Default for Config {
 pub struct State {
     pub panes: [PaneState; 2],
     pub active: usize,
+    /// Alt+F7: last search settings.
+    pub find: FindPrefs,
+}
+
+/// What the find dialog opens with (the dir always comes from the panel).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindPrefs {
+    pub mask: String,
+    pub text: String,
+    pub case_sensitive: bool,
+}
+
+impl Default for FindPrefs {
+    fn default() -> Self {
+        Self {
+            mask: "*".into(),
+            text: String::new(),
+            case_sensitive: false,
+        }
+    }
 }
 
 pub fn config_handler() -> Option<cosmic_config::Config> {

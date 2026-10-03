@@ -61,6 +61,8 @@ pub enum Action {
     /// Alt+F5 / Alt+F9: pack the targets / unpack the archives among them.
     Pack,
     Unpack,
+    /// Alt+F7: find files.
+    FindFiles,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -74,6 +76,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             Key::Named(Named::F1) if mods == Modifiers::ALT => Some(Action::Drives(0)),
             Key::Named(Named::F2) if mods == Modifiers::ALT => Some(Action::Drives(1)),
             Key::Named(Named::F5) if mods == Modifiers::ALT => Some(Action::Pack),
+            Key::Named(Named::F7) if mods == Modifiers::ALT => Some(Action::FindFiles),
             Key::Named(Named::F9) if mods == Modifiers::ALT => Some(Action::Unpack),
             Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Action::HistoryBack),
             Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
@@ -357,5 +360,10 @@ mod tests {
     #[test]
     fn ctrl_pgdn_enters() {
         assert_eq!(named(Named::PageDown, Modifiers::CTRL), Some(Action::Enter));
+    }
+
+    #[test]
+    fn alt_f7_finds() {
+        assert_eq!(named(Named::F7, Modifiers::ALT), Some(Action::FindFiles));
     }
 }

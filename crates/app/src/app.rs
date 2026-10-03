@@ -1,6 +1,6 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State};
-use crate::dialogs::{self, Dialog, InputOp, ListItem, ListKind, MrField, Toggle};
+use crate::dialogs::{self, Dialog, FindField, InputOp, ListItem, ListKind, MrField, Toggle};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -150,6 +150,8 @@ pub struct App {
     state_handler: Option<cosmic_config::Config>,
     /// Last state written, to skip identical writes.
     saved: State,
+    /// Alt+F7 settings, kept in `State`.
+    find: config::FindPrefs,
     pub drives: Vec<Drive>,
     /// (free, total) bytes of each pane's current disk.
     pub space: [Option<(u64, u64)>; 2],
@@ -186,6 +188,15 @@ pub enum Message {
     PackFormat(Format),
     /// Pack / unpack dialog checkboxes.
     Toggle(Toggle),
+    FindInput(FindField, String),
+    FindCase,
+    FindStart,
+    /// Enter in a find field: go to the selected result after ↑/↓, else search.
+    FindSubmit,
+    FindStop,
+    Find(crate::find::FindEvent),
+    /// Go to result i of the find dialog.
+    FindPick(usize),
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -306,6 +317,7 @@ impl App {
             config_handler: None,
             state_handler: None,
             saved: State::default(),
+            find: state.find.clone(),
             drives: Vec::new(),
             space: [None, None],
         };
@@ -351,6 +363,25 @@ impl App {
                             let i = *cursor;
                             return self.pick(i);
                         }
+                        _ => {}
+                    }
+                    return Task::none();
+                }
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    match action {
+                        Action::Up => {
+                            f.cursor = f.cursor.saturating_sub(1);
+                            f.in_list = true;
+                        }
+                        Action::Down => {
+                            f.cursor = (f.cursor + 1).min(f.results.len().saturating_sub(1));
+                            f.in_list = true;
+                        }
+                        Action::Enter => {
+                            let i = f.cursor;
+                            return self.find_pick(i);
+                        }
+                        Action::SwitchPane => return cosmic::iced::widget::operation::focus_next(),
                         _ => {}
                     }
                     return Task::none();
@@ -527,6 +558,42 @@ impl App {
                 (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
                 _ => {}
             },
+            Message::FindInput(field, s) => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.in_list = false;
+                    *match field {
+                        FindField::Mask => &mut f.mask,
+                        FindField::Dir => &mut f.dir,
+                        FindField::Text => &mut f.text,
+                    } = s;
+                }
+            }
+            Message::FindCase => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.case_sensitive = !f.case_sensitive;
+                    f.in_list = false;
+                }
+            }
+            Message::FindStart => return self.start_find(),
+            Message::FindSubmit => {
+                if let Some(Dialog::Find(f)) = &self.dialog
+                    && f.in_list
+                    && !f.results.is_empty()
+                {
+                    let i = f.cursor;
+                    return self.find_pick(i);
+                }
+                return self.start_find();
+            }
+            Message::FindStop => {
+                if let Some(Dialog::Find(f)) = &self.dialog
+                    && let Some(s) = &f.stop
+                {
+                    s.store(true, Ordering::Relaxed);
+                }
+            }
+            Message::Find(e) => self.on_find_event(e),
+            Message::FindPick(i) => return self.find_pick(i),
             Message::DialogSubmit => return self.submit_dialog(),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -682,6 +749,7 @@ impl App {
                 active: self.panes[s].active_index(),
             }),
             active: self.active,
+            find: self.find.clone(),
         };
         if state == self.saved {
             return;
@@ -760,6 +828,7 @@ impl App {
                     | Dialog::MultiRename(_)
                     | Dialog::Pack(_)
                     | Dialog::Unpack { .. }
+                    | Dialog::Find(_)
             );
             self.dialog = Some(d);
             return if focus {
@@ -933,6 +1002,7 @@ impl App {
             | Action::MultiRename
             | Action::Pack
             | Action::Unpack
+            | Action::FindFiles
             | Action::Mkdir
             | Action::Delete
             | Action::DeletePermanent => {}
@@ -1121,6 +1191,28 @@ impl App {
                     separate: false,
                 })))
             }
+            Action::FindFiles => {
+                // Inside an archive: search where the archive lies.
+                let cwd = panel.cwd();
+                let dir = match archive::split_path(cwd) {
+                    Some((a, _)) => a.parent().map_or(cwd.to_path_buf(), Path::to_path_buf),
+                    None => cwd.to_path_buf(),
+                };
+                Some(Dialog::Find(Box::new(dialogs::Find {
+                    side,
+                    mask: self.find.mask.clone(),
+                    dir: dir.display().to_string(),
+                    text: self.find.text.clone(),
+                    case_sensitive: self.find.case_sensitive,
+                    results: Vec::new(),
+                    total: 0,
+                    current: String::new(),
+                    cursor: 0,
+                    id: 0, // set by each search start
+                    stop: None,
+                    in_list: false,
+                })))
+            }
             Action::Unpack => {
                 let archives: Vec<PathBuf> = panel
                     .targets()
@@ -1236,6 +1328,10 @@ impl App {
                 };
                 self.start_job(side, OpKind::Unpack, job, None)
             }
+            d @ Dialog::Find(_) => {
+                self.dialog = Some(d);
+                self.start_find()
+            }
             d @ Dialog::List { .. } => {
                 let i = match &d {
                     Dialog::List { cursor, .. } => *cursor,
@@ -1321,6 +1417,74 @@ impl App {
             }
         };
         self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
+    }
+
+    /// (Re)start the search of the open find dialog; the previous one is stopped.
+    fn start_find(&mut self) -> Task<Message> {
+        let id = self.next_id();
+        let Some(Dialog::Find(f)) = &self.dialog else {
+            return Task::none();
+        };
+        let side = f.side;
+        self.find = config::FindPrefs {
+            mask: f.mask.clone(),
+            text: f.text.clone(),
+            case_sensitive: f.case_sensitive,
+        };
+        let root = self.panes[side].active().target().join(f.dir.trim());
+        let text = f.text.trim().to_string();
+        let q = shagoff_core::search::Query {
+            mask: Mask::parse(&f.mask),
+            text: (!text.is_empty()).then_some(text),
+            case_sensitive: f.case_sensitive,
+            hidden: self.panes[side].active().panel.show_hidden(),
+        };
+        let (stop, events) = crate::find::spawn(id, root, q);
+        if let Some(Dialog::Find(f)) = &mut self.dialog {
+            if let Some(old) = f.stop.replace(stop) {
+                old.store(true, Ordering::Relaxed);
+            }
+            (f.id, f.cursor, f.total, f.in_list) = (id, 0, 0, false);
+            f.results.clear();
+        }
+        Task::run(events, |e| cosmic::Action::App(Message::Find(e)))
+    }
+
+    fn on_find_event(&mut self, e: crate::find::FindEvent) {
+        use crate::find::FindEvent;
+        let Some(Dialog::Find(f)) = &mut self.dialog else {
+            return;
+        };
+        match e {
+            FindEvent::Found(id, paths) if id == f.id => {
+                f.total += paths.len();
+                let room = dialogs::FIND_SHOWN.saturating_sub(f.results.len());
+                f.results.extend(paths.into_iter().take(room));
+            }
+            FindEvent::Dir(id, d) if id == f.id => f.current = d.display().to_string(),
+            FindEvent::Done(id) if id == f.id => {
+                f.stop = None;
+                f.current.clear();
+            }
+            _ => {} // a previous search
+        }
+    }
+
+    /// Result i: its dir in the dialog's panel, cursor on it (also for a found dir, as in TC).
+    fn find_pick(&mut self, i: usize) -> Task<Message> {
+        let Some(Dialog::Find(f)) = &self.dialog else {
+            return Task::none();
+        };
+        let (side, Some(path)) = (f.side, f.results.get(i).cloned()) else {
+            return Task::none();
+        };
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Task::none();
+        };
+        let (dir, name) = (dir.to_path_buf(), name.to_string_lossy().into_owned());
+        self.dialog = None; // stops the search (Drop)
+        self.active = side;
+        self.load(side, dir, Some(name))
     }
 
     /// Copy `paths` (inside the archive dir `cwd`) out into the real dir `dest`.
@@ -1951,6 +2115,7 @@ mod tests {
                 },
             ],
             active: 1,
+            ..State::default()
         };
         let app = app_with(Config::default(), state);
         assert_eq!(cwds(&app, 0), [tmp.path().to_path_buf(), a]);
@@ -1971,6 +2136,7 @@ mod tests {
                 PaneState::default(),
             ],
             active: 0,
+            ..State::default()
         };
         let app = App::build(
             Core::default(),
@@ -2994,5 +3160,120 @@ mod tests {
         let _ = app.update(Message::Key(Action::Copy));
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Copy));
+    }
+
+    fn find_dialog(app: &mut App) -> &mut dialogs::Find {
+        match &mut app.dialog {
+            Some(Dialog::Find(f)) => f,
+            _ => panic!("no find dialog"),
+        }
+    }
+
+    #[test]
+    fn alt_f7_opens_find_with_panel_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let f = find_dialog(&mut app);
+        assert_eq!(PathBuf::from(&f.dir), tmp.path());
+        assert_eq!(f.mask, "*");
+    }
+
+    #[test]
+    fn found_appends_results_and_stale_events_are_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id,
+            vec!["/a".into(), "/b".into()],
+        )));
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id + 1,
+            vec!["/stale".into()],
+        )));
+        let f = find_dialog(&mut app);
+        assert_eq!(f.results, [PathBuf::from("/a"), PathBuf::from("/b")]);
+        assert_eq!(f.total, 2);
+    }
+
+    #[test]
+    fn pick_goes_to_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub/x.txt"), "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id,
+            vec![tmp.path().join("sub/x.txt")],
+        )));
+        let _ = app.update(Message::Key(Action::Enter));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+    }
+
+    #[test]
+    fn regression_enter_after_moving_into_results_goes_to_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let found = vec![tmp.path().join("a"), tmp.path().join("sub/b")];
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, found)));
+        let _ = app.update(Message::Key(Action::Down));
+        // The mask field still has focus: Enter arrives as its submit, not as a key.
+        let _ = app.update(Message::FindSubmit);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+    }
+
+    #[test]
+    fn find_submit_after_typing_starts_a_search() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id,
+            vec![tmp.path().join("a")],
+        )));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::FindInput(FindField::Mask, "*.rs".into()));
+        let _ = app.update(Message::FindSubmit);
+        let f = find_dialog(&mut app);
+        assert!(f.stop.is_some() || f.results.is_empty()); // restarted
+        assert_ne!(f.id, id);
+    }
+
+    #[test]
+    fn find_settings_are_remembered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindInput(FindField::Mask, "*.ini".into()));
+        let _ = app.update(Message::FindInput(FindField::Text, "port".into()));
+        let _ = app.update(Message::FindCase);
+        let _ = app.update(Message::FindStart);
+        let _ = app.update(Message::DialogCancel);
+        assert_eq!(app.saved.find.mask, "*.ini"); // written to the state
+        // A new run starts from the saved state.
+        let mut app = app_with(Config::default(), app.saved.clone());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let f = find_dialog(&mut app);
+        assert_eq!(
+            (f.mask.as_str(), f.text.as_str(), f.case_sensitive),
+            ("*.ini", "port", true)
+        );
     }
 }
