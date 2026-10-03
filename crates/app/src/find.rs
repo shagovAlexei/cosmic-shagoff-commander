@@ -102,6 +102,7 @@ mod tests {
             text: None,
             case_sensitive: false,
             hidden: false,
+            ..Query::default()
         };
         let (_stop, rx) = spawn(7, d.path().to_path_buf(), q);
         let events: Vec<FindEvent> = block_on(rx.collect());

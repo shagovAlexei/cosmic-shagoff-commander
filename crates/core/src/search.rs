@@ -6,6 +6,7 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::SystemTime;
 
 pub struct Query {
     pub mask: Mask,
@@ -14,6 +15,66 @@ pub struct Query {
     pub case_sensitive: bool,
     /// Also hidden names (and their subtrees).
     pub hidden: bool,
+    /// Text as a regular expression (built by `regex`); replaces `text` when set.
+    pub regex: Option<regex::bytes::Regex>,
+    /// Size bounds in bytes, inclusive; set → files only (dirs have no size).
+    pub min_size: Option<u64>,
+    pub max_size: Option<u64>,
+    /// Modified at or after this time.
+    pub newer_than: Option<SystemTime>,
+}
+
+impl Default for Query {
+    fn default() -> Self {
+        Self {
+            mask: Mask::parse("*"),
+            text: None,
+            case_sensitive: false,
+            hidden: false,
+            regex: None,
+            min_size: None,
+            max_size: None,
+            newer_than: None,
+        }
+    }
+}
+
+impl Query {
+    fn reads_content(&self) -> bool {
+        self.regex.is_some() || self.text.as_deref().is_some_and(|t| !t.is_empty())
+    }
+
+    /// Size and date filters on the entry's metadata (through symlinks).
+    fn passes(&self, path: &Path, is_dir: bool) -> bool {
+        let sized = self.min_size.is_some() || self.max_size.is_some();
+        if !sized && self.newer_than.is_none() {
+            return true;
+        }
+        if sized && is_dir {
+            return false;
+        }
+        let Ok(m) = fs::metadata(path) else {
+            return false;
+        };
+        if sized && m.is_dir() {
+            return false; // a symlink to a dir
+        }
+        self.min_size.is_none_or(|n| m.len() >= n)
+            && self.max_size.is_none_or(|n| m.len() <= n)
+            && self
+                .newer_than
+                .is_none_or(|t| m.modified().is_ok_and(|mt| mt >= t))
+    }
+}
+
+/// The text field as a regular expression (Unicode, so `(?i)` folds Cyrillic too).
+pub fn regex(text: &str, case_sensitive: bool) -> Result<regex::bytes::Regex, String> {
+    regex::bytes::RegexBuilder::new(text)
+        .case_insensitive(!case_sensitive)
+        // `^` / `$` per line: the file is searched in windows, never as one haystack.
+        .multi_line(true)
+        .build()
+        .map_err(|e| e.to_string())
 }
 
 const CHUNK: usize = 256 << 10;
@@ -64,19 +125,16 @@ pub fn find(
         let Ok(ft) = e.file_type() else { continue };
         let named = q.mask.matches(&name);
         if ft.is_dir() {
-            if named && q.text.is_none() {
+            if named && !q.reads_content() && q.passes(&path, true) {
                 found(path.clone());
             }
             let next = open(&path, dir).collect();
             stack.push(next);
-        } else if named {
-            let hit = match &q.text {
-                None => true,
-                // Through symlinks to files too; anything else (fifo, socket) is never read.
-                Some(_) => {
-                    fs::metadata(&path).is_ok_and(|m| m.is_file()) && contains_until(&path, q, stop)
-                }
-            };
+        } else if named && q.passes(&path, false) {
+            // Through symlinks to files too; anything else (fifo, socket) is never read.
+            let hit = !q.reads_content()
+                || (fs::metadata(&path).is_ok_and(|m| m.is_file())
+                    && contains_until(&path, q, stop));
             if hit {
                 found(path);
             }
@@ -90,6 +148,9 @@ pub fn contains(path: &Path, q: &Query) -> bool {
 }
 
 fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
+    if let Some(re) = &q.regex {
+        return regex_until(path, re, stop);
+    }
     let Some(text) = q.text.as_deref().filter(|t| !t.is_empty()) else {
         return true;
     };
@@ -132,6 +193,46 @@ fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
     }
 }
 
+/// A regex over the file in windows of whole lines (so `^` / `$` mean line starts and ends,
+/// not window edges); each window keeps up to `REGEX_OVERLAP` bytes of the previous one, from a
+/// line start. A match longer than that crossing a window edge is missed, and a line longer than
+/// `CHUNK` is searched in pieces.
+// ponytail: fixed overlap; stream the regex (regex-automata) if long multi-line matches matter.
+const REGEX_OVERLAP: usize = 4096;
+
+fn regex_until(path: &Path, re: &regex::bytes::Regex, stop: &AtomicBool) -> bool {
+    let Ok(mut f) = File::open(path) else {
+        return false;
+    };
+    let mut buf: Vec<u8> = Vec::with_capacity(2 * CHUNK);
+    let mut chunk = vec![0; CHUNK];
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        let n = match f.read(&mut chunk) {
+            Ok(0) => return re.is_match(&buf), // the last line, without its newline
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return false,
+        };
+        buf.extend_from_slice(&chunk[..n]);
+        let end = match memchr::memrchr(b'\n', &buf) {
+            Some(i) => i + 1,
+            None if buf.len() > CHUNK => buf.len(),
+            None => continue, // the line goes on: wait for its end
+        };
+        if re.is_match(&buf[..end]) {
+            return true;
+        }
+        let mut cut = end.saturating_sub(REGEX_OVERLAP);
+        if let Some(i) = memchr::memchr(b'\n', &buf[cut..end]) {
+            cut += i + 1;
+        }
+        buf.drain(..cut);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +247,7 @@ mod tests {
             text: text.map(Into::into),
             case_sensitive: case,
             hidden,
+            ..Query::default()
         }
     }
 
@@ -338,5 +440,82 @@ mod tests {
                 "offset {off}"
             );
         }
+    }
+
+    #[test]
+    fn size_filter_keeps_files_in_range_and_drops_dirs() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("dir")).unwrap();
+        fs::write(d.path().join("small"), [0u8; 10]).unwrap();
+        fs::write(d.path().join("mid"), [0u8; 2000]).unwrap();
+        fs::write(d.path().join("big"), [0u8; 9000]).unwrap();
+        let mut query = q("*", None, false, false);
+        query.min_size = Some(1000);
+        query.max_size = Some(5000);
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["mid"]);
+    }
+
+    #[test]
+    fn date_filter_keeps_recent() {
+        let d = tempfile::tempdir().unwrap();
+        let old = d.path().join("old");
+        fs::write(&old, "").unwrap();
+        let week = std::time::Duration::from_secs(7 * 86400);
+        let then = std::time::SystemTime::now() - week;
+        File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        fs::write(d.path().join("new"), "").unwrap();
+        let mut query = q("*", None, false, false);
+        query.newer_than = Some(std::time::SystemTime::now() - week / 2);
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["new"]);
+    }
+
+    #[test]
+    fn text_as_regex() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("a"), "id = fooo7;").unwrap();
+        fs::write(d.path().join("b"), "id = foo;").unwrap();
+        fs::write(d.path().join("c"), "Привет, МИР").unwrap();
+        let mut query = q("*", None, false, false);
+        query.regex = Some(regex(r"fo+\d", false).unwrap());
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["a"]);
+        query.regex = Some(regex("мир$", false).unwrap()); // case folds Cyrillic
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["c"]);
+        query.regex = Some(regex("мир$", true).unwrap());
+        assert!(run(d.path(), &query).is_empty());
+        assert!(regex("(", false).is_err());
+    }
+
+    #[test]
+    fn regression_regex_anchors_are_per_line_across_chunks() {
+        let d = tempfile::tempdir().unwrap();
+        // A chunk ends right after "мир" in the middle of a line: `мир$` must not match there.
+        let mut a = "x".repeat(CHUNK - "мир".len()).into_bytes();
+        a.extend("мирок\n".as_bytes());
+        fs::write(d.path().join("a"), &a).unwrap();
+        // After the overlap is cut, the window starts mid-line at "foo": `^foo` must not match.
+        let mut b = "y".repeat(CHUNK - REGEX_OVERLAP).into_bytes();
+        b.extend(format!("foo{}\n", "y".repeat(5000)).as_bytes());
+        fs::write(d.path().join("b"), &b).unwrap();
+        fs::write(d.path().join("c"), "first\nfoo here\nend мир\nlast").unwrap();
+        let mut query = q("*", None, false, false);
+        query.regex = Some(regex("мир$", false).unwrap());
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["c"]);
+        query.regex = Some(regex("^foo", false).unwrap());
+        assert_eq!(rel(d.path(), run(d.path(), &query)), ["c"]);
+    }
+
+    #[test]
+    fn size_filter_skips_symlinked_dirs() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("dir")).unwrap();
+        symlink(d.path().join("dir"), d.path().join("ln")).unwrap();
+        let mut query = q("*", None, false, false);
+        query.min_size = Some(0);
+        assert!(run(d.path(), &query).is_empty());
     }
 }

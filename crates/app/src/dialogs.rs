@@ -230,7 +230,17 @@ pub struct Find {
     pub dir: String,
     pub text: String,
     pub case_sensitive: bool,
-    /// The first `FIND_SHOWN` matches.
+    /// The text is a regular expression.
+    pub regex: bool,
+    /// Filters as typed: size bounds in KB, "not older than" in days.
+    pub min_size: String,
+    pub max_size: String,
+    pub days: String,
+    /// Why the search did not start (a bad filter or regex).
+    pub error: Option<String>,
+    /// The dir the last search ran in ("To panel" lists it there).
+    pub root: Option<PathBuf>,
+    /// Every match; the list shows the first `FIND_SHOWN`, "To panel" takes them all.
     pub results: Vec<PathBuf>,
     pub total: usize,
     /// Dir being searched (progress line).
@@ -258,6 +268,9 @@ pub enum FindField {
     Mask,
     Dir,
     Text,
+    MinSize,
+    MaxSize,
+    Days,
 }
 
 pub struct Pack {
@@ -696,7 +709,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 column![widget::text::caption(label), input].spacing(2)
             };
             let mut list = column![].spacing(2);
-            for (i, p) in f.results.iter().enumerate() {
+            for (i, p) in f.results.iter().enumerate().take(FIND_SHOWN) {
                 let label = p.display().to_string();
                 let b = if i == f.cursor {
                     widget::button::suggested(label)
@@ -705,13 +718,14 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 };
                 list = list.push(b.on_press(Message::FindPick(i)).width(Length::Fill));
             }
-            let more = f.total.saturating_sub(f.results.len());
+            let more = f.total.saturating_sub(f.results.len().min(FIND_SHOWN));
             if more > 0 {
                 list = list.push(widget::text(fl!("find-more", n = more)));
             }
-            let status = match &f.stop {
-                Some(_) => format!("{}   {}", fl!("find-count", n = f.total), f.current),
-                None => fl!("find-count", n = f.total),
+            let status = match (&f.error, &f.stop) {
+                (Some(e), _) => e.clone(),
+                (None, Some(_)) => format!("{}   {}", fl!("find-count", n = f.total), f.current),
+                (None, None) => fl!("find-count", n = f.total),
             };
             let run = match &f.stop {
                 Some(_) => widget::button::standard(fl!("find-stop")).on_press(Message::FindStop),
@@ -720,6 +734,8 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             // Above the list, not in the dialog's bottom row: a short window clips that row.
             let go = widget::button::standard(fl!("find-go"))
                 .on_press_maybe((!f.results.is_empty()).then_some(Message::FindPick(f.cursor)));
+            let feed = widget::button::standard(fl!("find-feed"))
+                .on_press_maybe((!f.results.is_empty()).then_some(Message::FindFeed));
             widget::dialog()
                 .title(fl!("find-files"))
                 .width(Length::Fill)
@@ -732,10 +748,23 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                         ]
                         .spacing(8),
                         edit(fl!("find-text"), &f.text, FindField::Text),
-                        widget::checkbox(f.case_sensitive)
-                            .label(fl!("find-case"))
-                            .on_toggle(|_| Message::FindCase),
-                        row![run, go, cancel].spacing(8),
+                        row![
+                            widget::checkbox(f.case_sensitive)
+                                .label(fl!("find-case"))
+                                .on_toggle(|_| Message::FindCase),
+                            widget::checkbox(f.regex)
+                                .label(fl!("find-regex"))
+                                .on_toggle(|_| Message::FindRegex),
+                        ]
+                        .spacing(16),
+                        row![
+                            edit(fl!("find-min-size"), &f.min_size, FindField::MinSize),
+                            edit(fl!("find-max-size"), &f.max_size, FindField::MaxSize),
+                            edit(fl!("find-days"), &f.days, FindField::Days),
+                        ]
+                        .spacing(8),
+                        widget::flex_row(vec![run.into(), go.into(), feed.into(), cancel.into()])
+                            .spacing(8),
                         widget::text(status).wrapping(Wrapping::WordOrGlyph),
                         widget::scrollable(list).height(list_height(f.results.len())),
                     ]

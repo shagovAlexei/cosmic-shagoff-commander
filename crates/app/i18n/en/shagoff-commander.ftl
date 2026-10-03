@@ -273,3 +273,15 @@ archive-update-title = File changed
 archive-update = { $entry } was saved in the editor. Put it back into { $archive }?
 archive-update-ok = Update the archive
 archive-edit-link = A link inside an archive can't be edited
+
+# Find files, more
+find-regex = Regular expression
+find-min-size = Size from, KB
+find-max-size = Size up to, KB
+find-days = Not older than, days
+find-feed = To panel
+find-bad-number = { $field }: "{ $value }" is not a whole number
+find-bad-regex = Regular expression: { $err }
+find-results = Search results: { $dir }
+find-bad-range = Size from is larger than size up to
+results-unsupported = Not available in search results

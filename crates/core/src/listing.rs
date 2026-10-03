@@ -87,36 +87,64 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
             });
             continue;
         };
-        let is_link = lmeta.file_type().is_symlink();
-        let target = if is_link {
-            fs::metadata(item.path()).ok()
-        } else {
-            Some(lmeta.clone())
-        };
-        let (kind, size, meta) = match &target {
-            Some(m) if m.is_dir() => (Kind::Dir, 0, m),
-            Some(m) => (Kind::File, m.len(), m),
-            None => (Kind::File, 0, &lmeta), // broken symlink
-        };
-        let ext = if kind == Kind::File {
-            ext_of(&name)
-        } else {
-            String::new()
-        };
-        out.push(Entry {
-            os_name,
-            mtime: meta.modified().unwrap_or(UNIX_EPOCH),
-            name,
-            ext,
-            size,
-            kind,
-            is_link,
-            mode: meta.permissions().mode(),
-            owner: Some((meta.uid(), meta.gid())), // same metadata as size / mode
-            target: is_link.then(|| fs::read_link(item.path()).ok()).flatten(),
-        });
+        out.push(from_meta(&item.path(), os_name, name, &lmeta));
     }
     Ok(out)
+}
+
+/// An entry from the item's own (not followed) metadata.
+fn from_meta(path: &Path, os_name: OsString, name: String, lmeta: &fs::Metadata) -> Entry {
+    let is_link = lmeta.file_type().is_symlink();
+    let target = if is_link {
+        fs::metadata(path).ok()
+    } else {
+        Some(lmeta.clone())
+    };
+    let (kind, size, meta) = match &target {
+        Some(m) if m.is_dir() => (Kind::Dir, 0, m),
+        Some(m) => (Kind::File, m.len(), m),
+        None => (Kind::File, 0, lmeta), // broken symlink
+    };
+    let ext = if kind == Kind::File {
+        ext_of(&name)
+    } else {
+        String::new()
+    };
+    Entry {
+        os_name,
+        mtime: meta.modified().unwrap_or(UNIX_EPOCH),
+        name,
+        ext,
+        size,
+        kind,
+        is_link,
+        mode: meta.permissions().mode(),
+        owner: Some((meta.uid(), meta.gid())), // same metadata as size / mode
+        target: is_link.then(|| fs::read_link(path).ok()).flatten(),
+    }
+}
+
+/// Alt+F7 "To panel": the found paths as entries of a panel whose cwd is `root`. The name shown
+/// is the path below `root`; `os_name` is the whole path, so `cwd.join(os_name)` is the file
+/// itself. Paths that are gone are left out.
+pub fn entries(paths: &[std::path::PathBuf], root: &Path) -> Vec<Entry> {
+    paths
+        .iter()
+        .filter_map(|p| {
+            let lmeta = fs::symlink_metadata(p).ok()?;
+            let name = p
+                .strip_prefix(root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .into_owned();
+            let mut e = from_meta(p, p.as_os_str().to_owned(), name, &lmeta);
+            // From the file's own name: "conf.d/Makefile" has none.
+            if !e.is_dir() {
+                e.ext = ext_of(&p.file_name()?.to_string_lossy());
+            }
+            Some(e)
+        })
+        .collect()
 }
 
 pub(crate) fn ext_of(name: &str) -> String {
@@ -259,5 +287,27 @@ mod tests {
         assert_eq!(get("f").owner, Some((me.uid(), me.gid())));
         assert_eq!(get("f").target, None);
         assert_eq!(get("l").target, Some("f".into()));
+    }
+
+    #[test]
+    fn found_paths_as_entries() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("sub")).unwrap();
+        let f = d.path().join("sub/a.rs");
+        fs::write(&f, "12345").unwrap();
+        let gone = d.path().join("gone.rs");
+        let e = entries(&[f.clone(), gone, d.path().join("sub")], d.path());
+        assert_eq!(e.len(), 2);
+        assert_eq!(
+            (e[0].name.as_str(), e[0].size, e[0].ext.as_str()),
+            ("sub/a.rs", 5, "rs")
+        );
+        assert_eq!(d.path().join(&e[0].os_name), f);
+        assert!(e[1].is_dir());
+        // The extension comes from the file's own name, not from a dotted dir above it.
+        fs::create_dir(d.path().join("conf.d")).unwrap();
+        let mk = d.path().join("conf.d/Makefile");
+        fs::write(&mk, "").unwrap();
+        assert_eq!(entries(&[mk], d.path())[0].ext, "");
     }
 }

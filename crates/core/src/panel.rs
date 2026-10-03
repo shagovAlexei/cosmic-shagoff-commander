@@ -223,7 +223,7 @@ impl Panel {
             .map(|e| self.cwd.join(&e.os_name))
             .collect();
         if !marked.is_empty() {
-            return marked;
+            return outermost(marked);
         }
         self.current()
             .filter(|e| e.name != PARENT)
@@ -231,10 +231,13 @@ impl Panel {
             .unwrap_or_default()
     }
 
-    /// Drop marks of processed entries (by file name).
+    /// Drop marks of processed entries (by file name; search results are marked by whole path).
     pub fn unmark(&mut self, paths: &[PathBuf]) {
-        for name in paths.iter().filter_map(|p| p.file_name()) {
-            self.marked.remove(name);
+        for p in paths {
+            self.marked.remove(p.as_os_str());
+            if let Some(name) = p.file_name() {
+                self.marked.remove(name);
+            }
         }
     }
 
@@ -320,6 +323,16 @@ fn parent_entry() -> Entry {
 }
 
 /// `/a/b` → (`/a`, "b"): where Backspace leads and which name to put the cursor on.
+/// Without paths that lie inside another one of them (search results can hold a dir and its
+/// files: F6 / F8 / pack would act on those twice).
+pub fn outermost(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter(|p| !paths.iter().any(|q| q != *p && p.starts_with(q)))
+        .cloned()
+        .collect()
+}
+
 pub fn parent_of(path: &Path) -> Option<(PathBuf, String)> {
     let parent = path.parent()?;
     let name = path.file_name()?.to_string_lossy().into_owned();
@@ -751,5 +764,19 @@ mod tests {
         p.move_cursor(1);
         assert_eq!(p.enter_path(), None);
         assert_eq!(loaded("/", vec![]).parent_path(), None);
+    }
+
+    #[test]
+    fn outermost_drops_paths_inside_other_targets() {
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(
+            outermost(vec![
+                p("/r/sub"),
+                p("/r/sub/a.rs"),
+                p("/r/b"),
+                p("/r/subway")
+            ]),
+            [p("/r/sub"), p("/r/b"), p("/r/subway")]
+        );
     }
 }
