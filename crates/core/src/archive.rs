@@ -831,7 +831,7 @@ pub fn clean_temp(root: &Path) {
 }
 
 /// Hidden `.shagoff-unpack.<pid>.<n>` in `dest`, created fresh so it is never a user dir.
-fn make_staging(dest: &Path) -> io::Result<PathBuf> {
+pub(crate) fn make_staging(dest: &Path) -> io::Result<PathBuf> {
     let mut n = 0u32;
     loop {
         let p = dest.join(format!(".shagoff-unpack.{}.{n}", std::process::id()));
