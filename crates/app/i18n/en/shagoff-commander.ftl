@@ -291,3 +291,13 @@ sync-mirror = Mirror: the right becomes a copy of the left
 sync-mask = Files (mask), Enter
 sync-run-delete = Delete and synchronize
 sync-confirm-delete = { $n } to the trash (✕). Press "Delete and synchronize" to go on.
+
+# Compare files, more
+diff-ignore-space = Ignore spaces
+diff-ignore-case = Ignore case
+diff-copy-right = Block →
+diff-copy-left = ← Block
+diff-save = Save
+diff-saved = Saved
+diff-unsaved = Not saved
+diff-unsaved-close = Not saved: Esc again closes without saving

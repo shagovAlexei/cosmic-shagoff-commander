@@ -292,3 +292,13 @@ sync-mirror = Зеркало: справа станет как слева
 sync-mask = Файлы (маска), Enter
 sync-run-delete = Удалить и синхронизировать
 sync-confirm-delete = В корзину: { $n } (✕). Нажмите «Удалить и синхронизировать», чтобы продолжить.
+
+# Сравнение файлов, дополнения
+diff-ignore-space = Без учёта пробелов
+diff-ignore-case = Без учёта регистра
+diff-copy-right = Блок →
+diff-copy-left = ← Блок
+diff-save = Сохранить
+diff-saved = Сохранено
+diff-unsaved = Не сохранено
+diff-unsaved-close = Не сохранено: ещё раз Esc — закрыть без сохранения
