@@ -39,7 +39,11 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let entries = p.panel.entries();
     let cursor = p.panel.cursor();
 
-    let path = container(text(p.panel.cwd().display().to_string()).size(TEXT))
+    let title = match &p.results {
+        Some(_) => fl!("find-results", dir = p.panel.cwd().display().to_string()),
+        None => p.panel.cwd().display().to_string(),
+    };
+    let path = container(text(title).size(TEXT))
         .padding([2, 6])
         .width(Length::Fill)
         .class(bar_style(active));

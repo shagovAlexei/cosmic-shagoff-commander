@@ -274,3 +274,13 @@ archive-update-title = Файл изменён
 archive-update = { $entry } сохранён в редакторе. Обновить его в архиве { $archive }?
 archive-update-ok = Обновить архив
 archive-edit-link = Ссылку внутри архива править нельзя
+
+# Поиск файлов, дополнения
+find-regex = Регулярное выражение
+find-min-size = Размер от, КБ
+find-max-size = Размер до, КБ
+find-days = Не старше, дней
+find-feed = В панель
+find-bad-number = { $field }: «{ $value }» — не целое число
+find-bad-regex = Регулярное выражение: { $err }
+find-results = Результаты поиска: { $dir }

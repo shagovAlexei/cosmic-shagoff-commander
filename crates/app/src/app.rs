@@ -59,6 +59,8 @@ pub struct Tab {
     pub error: Option<String>,
     /// Alt+← / Alt+→ / Alt+↓.
     pub(crate) history: History,
+    /// Alt+F7 "To panel": (dir searched, found paths) listed instead of the dir.
+    pub(crate) results: Option<(PathBuf, Arc<Vec<PathBuf>>)>,
 }
 
 impl Tab {
@@ -71,6 +73,7 @@ impl Tab {
             pending: None,
             error: None,
             history: History::default(),
+            results: None,
         }
     }
 
@@ -98,6 +101,7 @@ impl Tab {
             pending: None,
             error: None,
             history: self.history.clone(),
+            results: self.results.clone(),
         }
     }
 }
@@ -276,6 +280,10 @@ pub enum Message {
     DiffNext,
     DiffPrev,
     DiffScrolled(f32),
+    /// Alt+F7: the "regular expression" checkbox.
+    FindRegex,
+    /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
+    FindFeed,
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -532,7 +540,8 @@ impl App {
                             f.in_list = true;
                         }
                         Action::Down => {
-                            f.cursor = (f.cursor + 1).min(f.results.len().saturating_sub(1));
+                            let shown = f.results.len().min(dialogs::FIND_SHOWN);
+                            f.cursor = (f.cursor + 1).min(shown.saturating_sub(1));
                             f.in_list = true;
                         }
                         Action::Enter => {
@@ -723,6 +732,9 @@ impl App {
                         FindField::Mask => &mut f.mask,
                         FindField::Dir => &mut f.dir,
                         FindField::Text => &mut f.text,
+                        FindField::MinSize => &mut f.min_size,
+                        FindField::MaxSize => &mut f.max_size,
+                        FindField::Days => &mut f.days,
                     } = s;
                 }
             }
@@ -732,6 +744,13 @@ impl App {
                     f.in_list = false;
                 }
             }
+            Message::FindRegex => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.regex = !f.regex;
+                    f.in_list = false;
+                }
+            }
+            Message::FindFeed => return self.find_feed(),
             Message::FindStart => return self.start_find(),
             Message::FindSubmit => {
                 if let Some(Dialog::Find(f)) = &self.dialog
@@ -1147,13 +1166,18 @@ impl App {
         let generation = self.next_id();
         let t = &mut self.panes[side].items_mut()[i];
         t.pending = Some((generation, path.clone()));
+        // Going anywhere else leaves the search results.
+        if t.results.as_ref().is_some_and(|(root, _)| *root != path) {
+            t.results = None;
+        }
+        let results = t.results.as_ref().map(|(_, r)| r.clone());
         let tab = t.id;
         let show_hidden = t.panel.show_hidden();
         Task::perform(
             async move {
                 let p = path.clone();
                 let (result, space) = tokio::task::spawn_blocking(move || {
-                    let result = listing::scan(&p, show_hidden).map_err(|e| e.to_string());
+                    let result = read_listing(&p, show_hidden, results.as_deref());
                     (result, drives::space(&p))
                 })
                 .await
@@ -1181,6 +1205,14 @@ impl App {
             .is_some_and(|s| s.kind != StatusKind::Busy)
         {
             self.status = None;
+        }
+        // Backspace / ".." in search results: back to the dir that was searched.
+        let t = self.panes[side].active_mut();
+        let on_parent = t.panel.current().is_some_and(|e| e.name == PARENT);
+        if (action == Action::Parent || (action == Action::Enter && on_parent))
+            && let Some((root, _)) = t.results.take()
+        {
+            return self.load(side, root, None);
         }
         match action {
             Action::QuickSearch(c) => return self.quick_search(side, c),
@@ -1520,11 +1552,12 @@ impl App {
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
             Action::Rename => {
                 let e = panel.current().filter(|e| e.name != PARENT)?;
-                Some(input(
-                    InputOp::Rename,
-                    vec![panel.cwd().join(&e.os_name)],
-                    e.name.clone(),
-                ))
+                let path = panel.cwd().join(&e.os_name);
+                // In search results the shown name is a path; offer the file's own name.
+                let name = path
+                    .file_name()
+                    .map_or(e.name.clone(), |n| n.to_string_lossy().into_owned());
+                Some(input(InputOp::Rename, vec![path], name))
             }
             Action::Delete | Action::DeletePermanent => {
                 let paths = panel.targets();
@@ -1652,6 +1685,11 @@ impl App {
                     dir: dir.display().to_string(),
                     text: self.find.text.clone(),
                     case_sensitive: self.find.case_sensitive,
+                    regex: false,
+                    min_size: String::new(),
+                    max_size: String::new(),
+                    days: String::new(),
+                    error: None,
                     results: Vec::new(),
                     total: 0,
                     current: String::new(),
@@ -2117,11 +2155,17 @@ impl App {
         };
         let root = self.panes[side].active().target().join(f.dir.trim());
         let text = f.text.trim().to_string();
-        let q = shagoff_core::search::Query {
-            mask: Mask::parse(&f.mask),
-            text: (!text.is_empty()).then_some(text),
-            case_sensitive: f.case_sensitive,
-            hidden: self.panes[side].active().panel.show_hidden(),
+        let q = match find_query(f, text) {
+            Ok(q) => shagoff_core::search::Query {
+                hidden: self.panes[side].active().panel.show_hidden(),
+                ..q
+            },
+            Err(e) => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.error = Some(e);
+                }
+                return Task::none();
+            }
         };
         let (stop, events) = crate::find::spawn(id, root, q);
         if let Some(Dialog::Find(f)) = &mut self.dialog {
@@ -2129,6 +2173,7 @@ impl App {
                 old.store(true, Ordering::Relaxed);
             }
             (f.id, f.cursor, f.total, f.in_list) = (id, 0, 0, false);
+            f.error = None;
             f.results.clear();
         }
         Task::run(events, |e| cosmic::Action::App(Message::Find(e)))
@@ -2142,8 +2187,7 @@ impl App {
         match e {
             FindEvent::Found(id, paths) if id == f.id => {
                 f.total += paths.len();
-                let room = dialogs::FIND_SHOWN.saturating_sub(f.results.len());
-                f.results.extend(paths.into_iter().take(room));
+                f.results.extend(paths);
             }
             FindEvent::Dir(id, d) if id == f.id => f.current = d.display().to_string(),
             FindEvent::Done(id) if id == f.id => {
@@ -2152,6 +2196,20 @@ impl App {
             }
             _ => {} // a previous search
         }
+    }
+
+    /// "To panel": the active tab of the dialog's panel lists the results until it is left.
+    fn find_feed(&mut self) -> Task<Message> {
+        let Some(Dialog::Find(f)) = &self.dialog else {
+            return Task::none();
+        };
+        let side = f.side;
+        let root = self.panes[side].active().target().join(f.dir.trim());
+        let paths = Arc::new(f.results.clone());
+        self.dialog = None; // stops the search
+        self.active = side;
+        self.panes[side].active_mut().results = Some((root.clone(), paths));
+        self.load(side, root, None)
     }
 
     /// Result i: its dir in the dialog's panel, cursor on it (also for a found dir, as in TC).
@@ -2983,6 +3041,51 @@ fn mount_error(e: &mount::Error) -> String {
 /// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").
 /// A typed target that lies inside an archive (`a.zip/x`). The archive file itself is not: packing
 /// or copying onto an existing `a.zip` asks to replace it, as for any file.
+/// A dir's entries, or the search results fed to the panel (re-read: deleted ones drop out).
+fn read_listing(
+    path: &Path,
+    show_hidden: bool,
+    results: Option<&Vec<PathBuf>>,
+) -> Result<Vec<Entry>, String> {
+    match results {
+        Some(r) => Ok(listing::entries(r, path)),
+        None => listing::scan(path, show_hidden).map_err(|e| e.to_string()),
+    }
+}
+
+/// The dialog's search fields as a query (`hidden` is the panel's).
+fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Query, String> {
+    let number = |s: &str, what: String| -> Result<Option<u64>, String> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(None);
+        }
+        s.parse::<u64>()
+            .map(Some)
+            .map_err(|_| fl!("find-bad-number", field = what, value = s))
+    };
+    let kb = |n: Option<u64>| n.map(|n| n.saturating_mul(1024));
+    let days = number(&f.days, fl!("find-days"))?;
+    let regex = match (f.regex, text.is_empty()) {
+        (true, false) => Some(
+            shagoff_core::search::regex(&text, f.case_sensitive)
+                .map_err(|e| fl!("find-bad-regex", err = e))?,
+        ),
+        _ => None,
+    };
+    Ok(shagoff_core::search::Query {
+        mask: Mask::parse(&f.mask),
+        text: (regex.is_none() && !text.is_empty()).then_some(text),
+        case_sensitive: f.case_sensitive,
+        regex,
+        min_size: kb(number(&f.min_size, fl!("find-min-size"))?),
+        max_size: kb(number(&f.max_size, fl!("find-max-size"))?),
+        newer_than: days
+            .map(|d| SystemTime::now() - std::time::Duration::from_secs(d.saturating_mul(86400))),
+        ..Default::default()
+    })
+}
+
 fn into_archive(p: &Path) -> bool {
     archive::split_path(p).is_some_and(|(_, inner)| !inner.as_os_str().is_empty())
 }
@@ -4501,6 +4604,63 @@ mod tests {
             Some(Dialog::Find(f)) => f,
             _ => panic!("no find dialog"),
         }
+    }
+
+    #[test]
+    fn find_results_to_panel_and_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let (a, b) = (tmp.path().join("sub/a.rs"), tmp.path().join("b.rs"));
+        std::fs::write(&a, "").unwrap();
+        std::fs::write(&b, "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindStart);
+        let id = find_dialog(&mut app).id;
+        // More than the dialog shows: the panel gets them all.
+        let many: Vec<PathBuf> = (0..dialogs::FIND_SHOWN + 5).map(|_| a.clone()).collect();
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, many)));
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id,
+            vec![b.clone()],
+        )));
+        let _ = app.update(Message::FindFeed);
+        assert!(app.dialog.is_none());
+        let t = app.panes[0].active();
+        let (root, paths) = t.results.clone().unwrap();
+        assert_eq!(root, tmp.path());
+        assert_eq!(paths.len(), dialogs::FIND_SHOWN + 6);
+        assert_eq!(t.pending.as_ref().map(|p| p.1.clone()), Some(root.clone()));
+        let e = read_listing(&root, false, Some(&paths)).unwrap();
+        assert!(e.iter().any(|e| e.name == "sub/a.rs"));
+        // Backspace leaves the results for the dir that was searched.
+        let _ = app.update(Message::Key(Action::Parent));
+        let t = app.panes[0].active();
+        assert!(t.results.is_none());
+        assert_eq!(t.pending.as_ref().map(|p| p.1.clone()), Some(root));
+    }
+
+    #[test]
+    fn find_refuses_bad_filters_and_regex() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindInput(FindField::MinSize, "abc".into()));
+        let _ = app.update(Message::FindStart);
+        let f = find_dialog(&mut app);
+        assert!(f.stop.is_none() && f.error.is_some());
+        let _ = app.update(Message::FindInput(FindField::MinSize, "10".into()));
+        let _ = app.update(Message::FindInput(FindField::Text, "(".into()));
+        let _ = app.update(Message::FindRegex);
+        let _ = app.update(Message::FindStart);
+        let f = find_dialog(&mut app);
+        assert!(f.stop.is_none() && f.error.is_some());
+        let _ = app.update(Message::FindInput(FindField::Text, "a+".into()));
+        let _ = app.update(Message::FindStart);
+        let f = find_dialog(&mut app);
+        assert!(f.stop.is_some() && f.error.is_none());
     }
 
     #[test]
