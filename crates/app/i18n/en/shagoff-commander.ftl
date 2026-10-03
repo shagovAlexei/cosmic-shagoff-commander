@@ -121,3 +121,16 @@ diff-prev = Previous
 diff-pick-two = Select two files: two marked in one panel, or one under the cursor in each
 diff-eol = The text is identical; line endings or the final newline differ
 diff-in-archive = Files inside an archive can't be compared: copy them out first (F5)
+
+# Mounts (16)
+connect = Connect to server
+connect-url = Address: sftp://user@host/dir, smb://server/share, ftp://, dav://
+connect-password = Password (if needed)
+connect-go = Connect
+connecting = Connecting…
+mounting = Mounting…
+unmounting = Unmounting…
+not-mounted = not mounted
+mount-need-password = The server asks for a password
+mount-wrong-password = Wrong password
+mount-question = The server asks: { $text }

@@ -75,7 +75,9 @@ fn uri_path(s: &str) -> PathBuf {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%'
-            && let Some(byte) = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+            && let Some(byte) = s
+                .get(i + 1..i + 3)
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
         {
             out.push(byte);
             i += 3;
@@ -202,7 +204,11 @@ fn talk(mut cmd: Command, password: &str) -> Result<String, Error> {
     if status.success() {
         Ok(out)
     } else {
-        let msg = if errors.trim().is_empty() { &out } else { &errors };
+        let msg = if errors.trim().is_empty() {
+            &out
+        } else {
+            &errors
+        };
         Err(Error::Failed(msg.trim().to_string()))
     }
 }
@@ -217,11 +223,15 @@ fn gio<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(args: I) -> Command {
     c
 }
 
+/// The volumes gio knows (`gio mount -li`).
+pub fn list() -> Result<Vec<Volume>, Error> {
+    talk(gio(["mount", "-li"]), "").map(|s| volumes(&s))
+}
+
 /// Mount a partition by device; its mount point.
 pub fn mount_device(device: &str) -> Result<PathBuf, Error> {
     talk(gio(["mount", "-d", device]), "")?;
-    let list = talk(gio(["mount", "-li"]), "")?;
-    volumes(&list)
+    list()?
         .into_iter()
         .find(|v| v.device == device)
         .and_then(|v| v.mount)
@@ -232,7 +242,10 @@ pub fn mount_device(device: &str) -> Result<PathBuf, Error> {
 pub fn connect(url: &str, password: &str) -> Result<PathBuf, Error> {
     // "Already mounted" is an error to gio but fine for us: the local path decides.
     let mounted = talk(gio(["mount", url]), password);
-    match talk(gio(["info", url]), "").ok().and_then(|s| local_path(&s)) {
+    match talk(gio(["info", url]), "")
+        .ok()
+        .and_then(|s| local_path(&s))
+    {
         Some(p) => Ok(p),
         None => Err(mounted.err().unwrap_or_else(|| {
             Error::Failed(format!("{url}: no local path (gvfs-fuse not running?)"))
@@ -323,7 +336,10 @@ Mount(0): nas -> sftp://nas/
     fn gvfs_labels() {
         assert_eq!(gvfs_label("sftp:host=nas,user=bob"), "nas");
         assert_eq!(gvfs_label("smb-share:server=nas,share=media"), "nas/media");
-        assert_eq!(gvfs_label("ftp:host=ftp.example.org,port=2121"), "ftp.example.org");
+        assert_eq!(
+            gvfs_label("ftp:host=ftp.example.org,port=2121"),
+            "ftp.example.org"
+        );
         assert_eq!(gvfs_label("weird"), "weird");
     }
 
@@ -354,11 +370,23 @@ Mount(0): nas -> sftp://nas/
     fn answers() {
         let mut asked = false;
         assert_eq!(answer("User [bob]: ", "pw", &mut asked), Ok(String::new()));
-        assert_eq!(answer("Domain [WORKGROUP]: ", "pw", &mut asked), Ok(String::new()));
+        assert_eq!(
+            answer("Domain [WORKGROUP]: ", "pw", &mut asked),
+            Ok(String::new())
+        );
         assert_eq!(answer("Password: ", "pw", &mut asked), Ok("pw".into()));
-        assert_eq!(answer("Password: ", "pw", &mut asked), Err(Error::WrongPassword));
-        assert_eq!(answer("Password: ", "", &mut false), Err(Error::NeedPassword));
-        assert!(matches!(answer("Choice: ", "pw", &mut false), Err(Error::Question(_))));
+        assert_eq!(
+            answer("Password: ", "pw", &mut asked),
+            Err(Error::WrongPassword)
+        );
+        assert_eq!(
+            answer("Password: ", "", &mut false),
+            Err(Error::NeedPassword)
+        );
+        assert!(matches!(
+            answer("Choice: ", "pw", &mut false),
+            Err(Error::Question(_))
+        ));
     }
 
     /// A stand-in for gio: a shell script.
@@ -372,7 +400,11 @@ Mount(0): nas -> sftp://nas/
     fn talk_sends_password_once() {
         let script = r#"printf 'Authentication Required\nUser [bob]: '; read u
             printf 'Password: '; read p; [ "$u" = "" ] && [ "$p" = "s3cret" ] && echo ok"#;
-        assert!(talk(sh(script), "s3cret").unwrap().ends_with("Password: ok\n"));
+        assert!(
+            talk(sh(script), "s3cret")
+                .unwrap()
+                .ends_with("Password: ok\n")
+        );
     }
 
     #[test]
@@ -396,6 +428,9 @@ Mount(0): nas -> sftp://nas/
             talk(sh("echo 'gio: nas: Connection refused' >&2; exit 2"), ""),
             Err(Error::Failed("gio: nas: Connection refused".into()))
         );
-        assert_eq!(talk(sh("printf 'Password: '; read p"), ""), Err(Error::NeedPassword));
+        assert_eq!(
+            talk(sh("printf 'Password: '; read p"), ""),
+            Err(Error::NeedPassword)
+        );
     }
 }

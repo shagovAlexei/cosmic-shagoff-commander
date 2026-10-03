@@ -81,6 +81,12 @@ pub enum Dialog {
     Sync(Box<SyncDlg>),
     /// Ctrl+Shift+D.
     Diff(Box<DiffDlg>),
+    /// Ctrl+F: network location and password.
+    Connect {
+        side: usize,
+        url: String,
+        password: String,
+    },
 }
 
 pub struct DiffDlg {
@@ -323,6 +329,8 @@ pub struct ListItem {
     pub label: String,
     /// Empty for the hotlist's "add current dir" row.
     pub path: PathBuf,
+    /// An unmounted volume: `path` is its device, Enter mounts it.
+    pub mount: bool,
 }
 
 impl Dialog {
@@ -332,6 +340,7 @@ impl Dialog {
             Dialog::Mask { input, .. } | Dialog::Input { input, .. } => Some(input),
             Dialog::Pack(p) => Some(&mut p.path),
             Dialog::Unpack { path, .. } => Some(path),
+            Dialog::Connect { url, .. } => Some(url),
             _ => None,
         }
     }
@@ -466,6 +475,9 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             for (i, item) in items.iter().enumerate() {
                 let label = if item.path.as_os_str().is_empty() {
                     item.label.clone()
+                } else if item.mount {
+                    let path = item.path.display();
+                    format!("{}   {path}   ({})", item.label, fl!("not-mounted"))
                 } else {
                     format!("{}   {}", item.label, item.path.display())
                 };
@@ -614,6 +626,24 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .secondary_action(cancel)
                 .into()
         }
+        Dialog::Connect { url, password, .. } => widget::dialog()
+            .title(fl!("connect"))
+            .control(
+                column![
+                    widget::text::caption(fl!("connect-url")),
+                    field(url),
+                    widget::text::caption(fl!("connect-password")),
+                    widget::secure_input("", password.as_str(), None, true)
+                        .on_input(Message::ConnectPassword)
+                        .on_submit(|_| Message::DialogSubmit),
+                ]
+                .spacing(4),
+            )
+            .primary_action(
+                widget::button::suggested(fl!("connect-go")).on_press(Message::DialogSubmit),
+            )
+            .secondary_action(cancel)
+            .into(),
         Dialog::Unpack {
             archives,
             path,

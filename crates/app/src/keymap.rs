@@ -69,6 +69,10 @@ pub enum Action {
     SyncDirs,
     /// Ctrl+Shift+D: compare two files by content.
     CompareFiles,
+    /// Ctrl+F: connect to a network location (TC: FTP connect).
+    Connect,
+    /// Ctrl+Shift+F: unmount / eject the drive of the active panel (TC: FTP disconnect).
+    Disconnect,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -143,6 +147,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyD), true, true) => Some(Action::CompareFiles),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
+        (Physical::Code(Code::KeyF), true, false) => Some(Action::Connect),
+        (Physical::Code(Code::KeyF), true, true) => Some(Action::Disconnect),
         (Physical::Code(Code::KeyC), true, false) => Some(Action::ClipCopy),
         (Physical::Code(Code::KeyX), true, false) => Some(Action::ClipCut),
         (Physical::Code(Code::KeyV), true, false) => Some(Action::ClipPaste),
@@ -188,6 +194,14 @@ mod tests {
         assert_eq!(named(Named::Enter, NONE), Some(Action::Enter));
         assert_eq!(named(Named::Backspace, NONE), Some(Action::Parent));
         assert_eq!(named(Named::PageUp, CTRL), Some(Action::Parent));
+    }
+
+    #[test]
+    fn ctrl_f_connects_ctrl_shift_f_disconnects() {
+        let shift = CTRL | Modifiers::SHIFT;
+        assert_eq!(chr("f", Code::KeyF, CTRL), Some(Action::Connect));
+        assert_eq!(chr("а", Code::KeyF, CTRL), Some(Action::Connect)); // Russian layout
+        assert_eq!(chr("F", Code::KeyF, shift), Some(Action::Disconnect));
     }
 
     #[test]
