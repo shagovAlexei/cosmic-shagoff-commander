@@ -9,6 +9,7 @@ pub mod format;
 pub mod history;
 pub mod launch;
 pub mod listing;
+pub mod mount;
 pub mod mask;
 pub mod multirename;
 pub mod ops;
