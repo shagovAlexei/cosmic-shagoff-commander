@@ -3514,4 +3514,29 @@ mod tests {
         assert!(app.dialog.is_none());
         assert!(app.panes[0].active().error.is_some());
     }
+
+    #[test]
+    fn shift_f2_through_the_event_route_marks() {
+        let (_tmp, mut app) = sync_setup();
+        let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(Named::F2),
+            modified_key: Key::Named(Named::F2),
+            physical_key: Physical::Code(Code::F2),
+            location: Location::Standard,
+            modifiers: Modifiers::SHIFT,
+            text: None,
+            repeat: false,
+        });
+        let msg = route_event(
+            event,
+            event::Status::Ignored,
+            cosmic::iced::window::Id::unique(),
+        );
+        assert!(
+            matches!(msg, Some(Message::Key(Action::CompareLists))),
+            "{msg:?}"
+        );
+        let _ = app.update(msg.unwrap());
+        assert_eq!(marked(&app, 0), ["a", "only_l"]);
+    }
 }
