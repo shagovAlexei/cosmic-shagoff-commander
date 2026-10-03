@@ -126,7 +126,7 @@ pub enum SyncOpt {
 /// Result lists grow with their rows up to a cap, so an empty list leaves no blank area and a
 /// full one still fits a short window.
 fn list_height(rows: usize) -> Length {
-    Length::Fixed((rows as f32 * 34.0).min(240.0))
+    Length::Fixed((rows as f32 * 36.0).min(240.0))
 }
 
 /// Rows kept and shown; the search still counts everything.
