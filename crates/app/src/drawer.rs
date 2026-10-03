@@ -76,29 +76,31 @@ pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
         }
         Drawer::Settings(form) => {
             context_drawer::context_drawer(settings_view(app, form), Message::CloseDrawer)
-                .title(fl!("menu-settings"))
+                .title(fl!("settings-title"))
         }
     }
 }
 
 /// A key as a small rounded label.
 fn key_label(keys: &'static str) -> Element<'static, Message> {
-    widget::container(widget::text::body(keys).font(cosmic::font::mono()))
-        .padding([2, 8])
-        .class(theme::Container::custom(|t| {
-            let c = t.cosmic();
-            widget::container::Style {
-                background: Some(
-                    cosmic::iced::Color::from(c.background(false).component.base).into(),
-                ),
-                border: cosmic::iced::Border {
-                    radius: c.corner_radii.radius_s.into(),
-                    ..Default::default()
-                },
+    widget::container(
+        widget::text::body(keys)
+            .font(cosmic::font::mono())
+            .wrapping(cosmic::iced::widget::text::Wrapping::None),
+    )
+    .padding([2, 8])
+    .class(theme::Container::custom(|t| {
+        let c = t.cosmic();
+        widget::container::Style {
+            background: Some(cosmic::iced::Color::from(c.background(false).component.base).into()),
+            border: cosmic::iced::Border {
+                radius: c.corner_radii.radius_s.into(),
                 ..Default::default()
-            }
-        }))
-        .into()
+            },
+            ..Default::default()
+        }
+    }))
+    .into()
 }
 
 fn help() -> Element<'static, Message> {

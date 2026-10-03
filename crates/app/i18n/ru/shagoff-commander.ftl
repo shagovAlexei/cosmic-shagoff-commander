@@ -237,3 +237,4 @@ settings-viewer = Просмотр (F3)
 settings-editor = Правка (F4)
 settings-archives = Архивы
 settings-pack-format = Формат упаковки по умолчанию
+settings-title = Настройки

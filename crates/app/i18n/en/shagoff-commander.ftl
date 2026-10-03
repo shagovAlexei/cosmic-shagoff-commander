@@ -236,3 +236,4 @@ settings-viewer = Viewer (F3)
 settings-editor = Editor (F4)
 settings-archives = Archives
 settings-pack-format = Default pack format
+settings-title = Settings
