@@ -127,6 +127,17 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             ],
         ),
         (
+            fl!("help-lister"),
+            vec![
+                o("↑ ↓ PgUp PgDn Home End, ← →", fl!("help-lister-scroll")),
+                o("1 / 3 / 4", fl!("help-lister-modes")),
+                o("N / P", fl!("help-lister-step")),
+                o("F7", fl!("help-lister-find")),
+                o("F3 / Shift+F3", fl!("help-lister-again")),
+                o("Esc, Q", fl!("help-lister-close")),
+            ],
+        ),
+        (
             fl!("help-window"),
             vec![
                 r("F1", fl!("menu-help"), Action::Help),

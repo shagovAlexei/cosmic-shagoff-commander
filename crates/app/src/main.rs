@@ -8,6 +8,7 @@ mod help;
 mod i18n;
 mod jobs;
 mod keymap;
+mod lister;
 mod menu;
 mod view;
 mod watcher;

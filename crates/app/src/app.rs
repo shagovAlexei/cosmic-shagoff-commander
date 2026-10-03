@@ -6,7 +6,8 @@ use crate::dialogs::{
 use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
 use crate::jobs::{self, Job};
-use crate::keymap::{self, Action};
+use crate::keymap::{self, Action, ListerKey};
+use crate::lister::{self, Lister};
 use cosmic::app::{Core, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::Modifiers;
@@ -121,8 +122,14 @@ pub struct Running {
     cancel: Arc<AtomicBool>,
     /// Name to put the source pane's cursor on afterwards (rename).
     focus: Option<String>,
-    /// Enter / F3 in an archive: argv to run on the extracted file once the job succeeds.
-    open: Option<(Vec<OsString>, PathBuf)>,
+    /// Enter / F3 in an archive: what to do with the extracted file once the job succeeds.
+    open: Option<(Open, PathBuf)>,
+}
+
+enum Open {
+    Run(Vec<OsString>),
+    /// In the viewer, under this name.
+    Lister(String),
 }
 
 /// Quick search (Alt+letter) or filter (Ctrl+S) field, shown instead of the pane's status line.
@@ -168,6 +175,8 @@ pub struct App {
     pub status: Option<Status>,
     /// User / group names for the status bar.
     pub owners: shagoff_core::owners::Owners,
+    /// F3 viewer, shown in place of the panels.
+    pub(crate) lister: Option<Box<Lister>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,6 +279,21 @@ pub enum Message {
     /// (unmounted drive root, result).
     Unmounted(PathBuf, Result<(), mount::Error>),
     Config(Config),
+    /// File read for the viewer with this id.
+    ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
+    ListerKey(ListerKey),
+    /// x, y scroll offset, viewport height.
+    ListerScrolled(f32, f32, f32),
+    ListerResized(f32),
+    ListerMode(shagoff_core::lister::Mode),
+    /// F7 / the Find button: show the search field.
+    ListerSearch,
+    ListerQuery(String),
+    /// Enter in the search field.
+    ListerFind,
+    /// Next (true) / previous file of the pane.
+    ListerStep(bool),
+    ListerClose,
     Exit,
 }
 
@@ -399,6 +423,7 @@ impl App {
             space: [None, None],
             status: None,
             owners: shagoff_core::owners::Owners::load(),
+            lister: None,
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -425,6 +450,14 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Key(action)
+                if self.lister.is_some() && self.dialog.is_none() && self.job.is_none() =>
+            {
+                if let Some(task) = self.lister_action(action) {
+                    return task;
+                }
+                return self.act(self.active, action);
+            }
             Message::Key(action) => {
                 if let Some(Dialog::List { kind, cursor, .. }) = &self.dialog
                     && *kind == ListKind::Hotlist
@@ -744,6 +777,61 @@ impl App {
             Message::DiffNext => return self.diff_step(1),
             Message::DiffPrev => return self.diff_step(-1),
             Message::DialogSubmit => return self.submit_dialog(),
+            Message::ListerLoaded(id, loaded) => {
+                if let Some(l) = &mut self.lister
+                    && l.id == id
+                {
+                    l.set_loaded(loaded);
+                }
+            }
+            Message::ListerKey(k)
+                if self.lister.is_some() && self.dialog.is_none() && self.job.is_none() =>
+            {
+                return match k {
+                    ListerKey::Mode(m) => self.handle(Message::ListerMode(m)),
+                    ListerKey::Next => self.lister_step(true),
+                    ListerKey::Prev => self.lister_step(false),
+                    ListerKey::Close => self.handle(Message::ListerClose),
+                    ListerKey::Left | ListerKey::Right => {
+                        self.lister_scroll_x(k == ListerKey::Right)
+                    }
+                    ListerKey::FindPrev => self.lister_find(false, true),
+                };
+            }
+            Message::ListerKey(_) => {}
+            Message::ListerScrolled(x, y, h) => {
+                if let Some(l) = &mut self.lister {
+                    (l.offset, l.height) = ((x, y), h);
+                }
+            }
+            Message::ListerResized(h) => {
+                if let Some(l) = &mut self.lister {
+                    l.height = h;
+                }
+            }
+            Message::ListerMode(m) => {
+                if let Some(l) = &mut self.lister {
+                    let before = l.mode;
+                    l.set_mode(m);
+                    if l.mode != before {
+                        return lister_scroll(l, 0.0, 0.0);
+                    }
+                }
+            }
+            Message::ListerSearch => return self.lister_search(),
+            Message::ListerQuery(q) => {
+                if let Some(l) = &mut self.lister {
+                    l.query = q;
+                }
+            }
+            Message::ListerFind => {
+                if let Some(l) = &mut self.lister {
+                    l.searching = false;
+                }
+                return self.lister_find(true, false);
+            }
+            Message::ListerStep(forward) => return self.lister_step(forward),
+            Message::ListerClose => self.lister = None,
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(Resolution::Cancel);
@@ -761,6 +849,12 @@ impl App {
                         }
                     } else if self.job.is_some() {
                         self.cancel_job();
+                    } else if let Some(l) = &mut self.lister {
+                        if l.searching {
+                            l.searching = false;
+                        } else {
+                            self.lister = None;
+                        }
                     } else {
                         self.panes[self.active].active_mut().panel.set_filter(None);
                     }
@@ -818,7 +912,9 @@ impl App {
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
             Message::FieldKey(action) => {
-                if self.search.is_some() && self.dialog.is_none() {
+                // Not from a settings field: the viewer is behind the drawer.
+                let viewer = self.lister.is_some() && self.drawer.is_none();
+                if (self.search.is_some() || viewer) && self.dialog.is_none() {
                     return self.handle(Message::Key(action));
                 }
             }
@@ -1118,8 +1214,7 @@ impl App {
                                 arc,
                                 inner,
                                 os_name,
-                                &[],
-                                &["xdg-open"],
+                                Some((&[], &["xdg-open"])),
                             );
                         }
                         // Not inside one already: archives inside archives open as files.
@@ -1163,6 +1258,7 @@ impl App {
                 }
                 return self.apply_hidden();
             }
+            Action::View if self.config.internal_viewer => return self.view_current(side),
             Action::View | Action::Edit => {
                 let cwd = panel.cwd().to_path_buf();
                 let current = panel
@@ -1177,8 +1273,7 @@ impl App {
                         arc,
                         inner,
                         os_name,
-                        &viewer,
-                        &["xdg-open"],
+                        Some((&viewer, &["xdg-open"])),
                     );
                 }
                 let t = self.panes[side].active_mut();
@@ -1980,8 +2075,8 @@ impl App {
         archive: PathBuf,
         inner: PathBuf,
         name: OsString,
-        prog: &[String],
-        default: &[&str],
+        // `None`: in the viewer.
+        prog: Option<(&[String], &[&str])>,
     ) -> Task<Message> {
         let dir = match archive::fresh_temp_dir(&archive::temp_root()) {
             Ok(d) => d,
@@ -1991,7 +2086,10 @@ impl App {
             }
         };
         let file = dir.join(&name);
-        let argv = launch::command(prog, default, &file);
+        let open = match prog {
+            Some((prog, default)) => Open::Run(launch::command(prog, default, &file)),
+            None => Open::Lister(name.to_string_lossy().into_owned()),
+        };
         let job = Job::Extract {
             archive,
             inner,
@@ -2000,9 +2098,126 @@ impl App {
         };
         let task = self.start_job(side, OpKind::Extract, job, None);
         if let Some(j) = &mut self.job {
-            j.open = Some((argv, file));
+            j.open = Some((open, file));
         }
         task
+    }
+
+    /// F3 with the built-in viewer: the file under the cursor (extracted first inside an archive).
+    fn view_current(&mut self, side: usize) -> Task<Message> {
+        let panel = &self.panes[side].active().panel;
+        let cwd = panel.cwd().to_path_buf();
+        let Some(e) = panel.current().filter(|e| !e.is_dir() && e.name != PARENT) else {
+            return Task::none();
+        };
+        let (os_name, name) = (e.os_name.clone(), e.name.clone());
+        if let Some((arc, inner)) = archive::split_path(&cwd) {
+            return self.open_from_archive(side, arc, inner, os_name, None);
+        }
+        let file = cwd.join(&os_name);
+        if !file.exists() {
+            self.say(StatusKind::Error, fl!("broken-link", name = name));
+            return Task::none();
+        }
+        self.open_lister(side, file, name)
+    }
+
+    fn open_lister(&mut self, side: usize, file: PathBuf, name: String) -> Task<Message> {
+        let id = self.next_id();
+        match &mut self.lister {
+            Some(l) => l.reopen(name.clone(), id),
+            None => self.lister = Some(Box::new(Lister::new(side, name.clone(), id))),
+        }
+        self.search = None;
+        let read = Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || lister::Loaded::read(&file, &name))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            move |r| cosmic::Action::App(Message::ListerLoaded(id, Arc::new(r))),
+        );
+        let top = self
+            .lister
+            .as_deref_mut()
+            .map_or(Task::none(), |l| lister_scroll(l, 0.0, 0.0));
+        Task::batch([read, top])
+    }
+
+    /// Keys while the viewer is open; `None`: not the viewer's (help, settings…), act as usual.
+    fn lister_action(&mut self, action: Action) -> Option<Task<Message>> {
+        let l = self.lister.as_deref_mut()?;
+        Some(match action {
+            Action::Help | Action::About | Action::Settings | Action::Donate => return None,
+            Action::View => self.lister_find(true, true),
+            Action::Mkdir => self.lister_search(),
+            a => match l.scroll_y(a) {
+                Some(y) => lister_scroll(l, l.offset.0, y),
+                None => Task::none(),
+            },
+        })
+    }
+
+    fn lister_search(&mut self) -> Task<Message> {
+        let Some(l) = &mut self.lister else {
+            return Task::none();
+        };
+        l.searching = true;
+        widget::text_input::focus(l.input.clone())
+    }
+
+    /// Enter in the field (`again` false) or F3 / Shift+F3; no text yet → open the field.
+    fn lister_find(&mut self, forward: bool, again: bool) -> Task<Message> {
+        let Some(l) = &mut self.lister else {
+            return Task::none();
+        };
+        if l.query.is_empty() {
+            return self.lister_search();
+        }
+        match l.find(forward, again) {
+            Some(y) => lister_scroll(l, 0.0, y),
+            None => {
+                let q = l.query.clone();
+                self.say(StatusKind::Info, fl!("lister-not-found", query = q));
+                Task::none()
+            }
+        }
+    }
+
+    fn lister_scroll_x(&mut self, right: bool) -> Task<Message> {
+        self.lister.as_deref_mut().map_or(Task::none(), |l| {
+            let (x, y) = (l.scroll_x(right), l.offset.1);
+            lister_scroll(l, x, y)
+        })
+    }
+
+    /// N / P: the next / previous file of the pane (dirs skipped), cursor moved there too.
+    fn lister_step(&mut self, forward: bool) -> Task<Message> {
+        let Some(side) = self.lister.as_ref().map(|l| l.side) else {
+            return Task::none();
+        };
+        let t = self.panes[side].active_mut();
+        let entries = t.panel.entries();
+        let file = |i: &usize| !entries[*i].is_dir() && entries[*i].name != PARENT;
+        let cur = t.panel.cursor();
+        let next = if forward {
+            (cur + 1..entries.len()).find(file)
+        } else {
+            (0..cur).rev().find(file)
+        };
+        let Some(i) = next else {
+            return Task::none();
+        };
+        t.panel.set_cursor(i);
+        let tab = t.id;
+        let shown = self.lister.as_ref().map(|l| l.id);
+        let view = self.view_current(side);
+        if self.job.is_none() && self.lister.as_ref().map(|l| l.id) == shown {
+            // Not opened (broken link): the cursor stays with the file on screen.
+            self.panes[side].active_mut().panel.set_cursor(cur);
+            return view;
+        }
+        Task::batch([self.reveal(side, tab), view])
     }
 
     /// Actions that would change an archive (this panel inside one, or the other one as target).
@@ -2089,12 +2304,19 @@ impl App {
             return Task::none();
         };
         let side = job.side;
-        if let Some((argv, file)) = &job.open
+        let mut view = Task::none();
+        if let Some((open, file)) = job.open
             && !report.cancelled
             && file.exists()
-            && let Err(err) = spawn_detached(argv)
         {
-            self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
+            match open {
+                Open::Run(argv) => {
+                    if let Err(err) = spawn_detached(&argv) {
+                        self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
+                    }
+                }
+                Open::Lister(name) => view = self.open_lister(side, file, name),
+            }
         }
         self.panes[side]
             .active_mut()
@@ -2105,6 +2327,7 @@ impl App {
         Task::batch([
             self.load(side, here, job.focus),
             self.load(1 - side, there, None),
+            view,
         ])
     }
 
@@ -2241,6 +2464,7 @@ impl App {
             }
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
+            Setting::InternalViewer(b) => c.internal_viewer = b,
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::LastTabHome(b) => {
                 c.last_tab_close = if b { LastTab::Home } else { LastTab::Nothing };
@@ -2439,6 +2663,19 @@ impl App {
     }
 }
 
+/// Scroll the viewer and record the offset: iced reports nothing when the content fits, and a
+/// stale offset would leave the rows out of view.
+fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
+    l.offset = (x, y);
+    scrollable::scroll_to(
+        l.scroll.clone(),
+        AbsoluteOffset {
+            x: Some(x),
+            y: Some(y),
+        },
+    )
+}
+
 /// Window events → messages. Panel keys only when no widget took the event (`Ignored`).
 fn route_event(
     event: cosmic::iced::Event,
@@ -2457,9 +2694,9 @@ fn route_event(
             physical_key,
             modifiers,
             ..
-        }) if status == event::Status::Ignored => {
-            keymap::action(&key, physical_key, modifiers).map(Message::Key)
-        }
+        }) if status == event::Status::Ignored => keymap::action(&key, physical_key, modifiers)
+            .map(Message::Key)
+            .or_else(|| keymap::lister_key(&key, physical_key, modifiers).map(Message::ListerKey)),
         // A focused text field captures every key but Up/Down/Tab; pass on the ones it has no use for.
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
@@ -2467,7 +2704,14 @@ fn route_event(
             modifiers,
             ..
         }) if not_for_text(&key, physical_key, modifiers) => {
-            keymap::action(&key, physical_key, modifiers).map(Message::FieldKey)
+            keymap::action(&key, physical_key, modifiers)
+                .map(Message::FieldKey)
+                .or_else(|| {
+                    // Shift+F3 in the viewer's search field: previous match.
+                    keymap::lister_key(&key, physical_key, modifiers)
+                        .filter(|k| *k == ListerKey::FindPrev)
+                        .map(Message::ListerKey)
+                })
         }
         cosmic::iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
             Some(Message::Modifiers(m))
@@ -2592,6 +2836,7 @@ mod tests {
     use cosmic::iced::keyboard::{Key, Location};
     use shagoff_core::archive::Format;
     use shagoff_core::drives::Drive;
+    use shagoff_core::lister::Mode;
     use shagoff_core::multirename::Case;
     use shagoff_core::session::PaneState;
 
@@ -2938,6 +3183,152 @@ mod tests {
         let _ = app.update(Message::Key(Action::View));
         let err = app.msg().unwrap_or_default().to_string();
         assert_eq!(err, fl!("broken-link", name = "dangling"));
+    }
+
+    /// Pane 0 in a temp dir with `sub/`, `a.txt` ("alpha\nfoo\n"), `b.bin`; cursor on `a.txt`.
+    fn lister_app(config: Config) -> (App, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "alpha\nfoo\n").unwrap();
+        std::fs::write(tmp.path().join("b.bin"), b"x\0y").unwrap();
+        let mut app = app_with(config, State::default());
+        let _ = app.load(0, tmp.path().into(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let entries = listing::scan(tmp.path(), false).unwrap();
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: tmp.path().into(),
+            focus: Some("a.txt".into()),
+            result: Ok(entries),
+            space: None,
+        });
+        (app, tmp)
+    }
+
+    /// What the background read would deliver for the viewer's current file.
+    fn lister_loaded(app: &mut App, dir: &Path) {
+        let l = app.lister.as_ref().unwrap();
+        let (id, name) = (l.id, l.name.clone());
+        let loaded = lister::Loaded::read(&dir.join(&name), &name);
+        let _ = app.update(Message::ListerLoaded(id, Arc::new(loaded)));
+    }
+
+    #[test]
+    fn f3_opens_the_viewer_and_esc_closes_it() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        assert_eq!(app.lister.as_ref().map(|l| l.name.as_str()), Some("a.txt"));
+        lister_loaded(&mut app, tmp.path());
+        assert_eq!(app.lister.as_ref().unwrap().rows(), 2);
+        // Panel keys are the viewer's now: F8 does not ask to delete.
+        let _ = app.update(Message::Key(Action::Delete));
+        assert!(app.dialog.is_none());
+        let _ = app.update(Message::DialogCancel);
+        assert!(app.lister.is_none());
+    }
+
+    #[test]
+    fn f3_without_the_builtin_viewer_runs_the_program() {
+        let config = Config {
+            internal_viewer: false,
+            viewer: vec!["/nonexistent/viewer".into()], // never launch anything from a test
+            ..Config::default()
+        };
+        let (mut app, _tmp) = lister_app(config);
+        let _ = app.update(Message::Key(Action::View));
+        assert!(app.lister.is_none());
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
+    }
+
+    #[test]
+    fn viewer_n_and_p_walk_files_skipping_dirs() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        let _ = app.update(Message::ListerKey(ListerKey::Next));
+        assert_eq!(app.lister.as_ref().unwrap().name, "b.bin");
+        let cur = |app: &App| app.panes[0].active().panel.current().unwrap().name.clone();
+        assert_eq!(cur(&app), "b.bin");
+        lister_loaded(&mut app, tmp.path());
+        assert_eq!(app.lister.as_ref().unwrap().mode, Mode::Hex); // NUL inside
+        let _ = app.update(Message::ListerKey(ListerKey::Next)); // last file: stays
+        assert_eq!(cur(&app), "b.bin");
+        let _ = app.update(Message::ListerKey(ListerKey::Prev));
+        let _ = app.update(Message::ListerKey(ListerKey::Prev)); // `sub` and `..` skipped
+        assert_eq!(cur(&app), "a.txt");
+        assert_eq!(app.lister.as_ref().unwrap().name, "a.txt");
+    }
+
+    #[test]
+    fn regression_mode_switch_resets_offset() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        lister_loaded(&mut app, tmp.path());
+        // Scrolled far down in another mode; a short text fits, so iced reports no scroll.
+        let _ = app.update(Message::ListerScrolled(30.0, 4700.0, 400.0));
+        let _ = app.update(Message::ListerMode(Mode::Hex));
+        assert_eq!(app.lister.as_ref().unwrap().offset, (0.0, 0.0));
+        let _ = app.update(Message::Key(Action::End));
+        assert_eq!(app.lister.as_ref().unwrap().offset, (0.0, 0.0)); // 1 hex row fits
+    }
+
+    #[test]
+    fn settings_field_keys_do_not_reach_the_viewer() {
+        let (mut app, _tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        let _ = app.update(Message::Key(Action::Settings));
+        assert!(app.drawer.is_some());
+        let _ = app.update(Message::FieldKey(Action::Mkdir)); // F7 typed in a settings field
+        assert!(!app.lister.as_ref().unwrap().searching);
+    }
+
+    #[test]
+    fn viewer_next_onto_a_broken_link_keeps_cursor_and_file() {
+        let (mut app, tmp) = lister_app(Config::default());
+        std::os::unix::fs::symlink("nowhere", tmp.path().join("c_dangling")).unwrap();
+        let _ = app.load(0, tmp.path().into(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: tmp.path().into(),
+            focus: Some("b.bin".into()),
+            result: Ok(listing::scan(tmp.path(), false).unwrap()),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::View));
+        let _ = app.update(Message::ListerKey(ListerKey::Next));
+        assert_eq!(app.lister.as_ref().unwrap().name, "b.bin");
+        let cur = app.panes[0].active().panel.current().unwrap().name.clone();
+        assert_eq!(cur, "b.bin");
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
+    }
+
+    #[test]
+    fn viewer_modes_and_search() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        lister_loaded(&mut app, tmp.path());
+        let _ = app.update(Message::ListerKey(ListerKey::Mode(Mode::Hex)));
+        assert_eq!(app.lister.as_ref().unwrap().mode, Mode::Hex);
+        let _ = app.update(Message::ListerKey(ListerKey::Mode(Mode::Text)));
+        // F3 with nothing to find opens the field; Esc closes the field, not the viewer.
+        let _ = app.update(Message::Key(Action::View));
+        assert!(app.lister.as_ref().unwrap().searching);
+        let _ = app.update(Message::DialogCancel);
+        assert!(app.lister.as_ref().is_some_and(|l| !l.searching));
+        let _ = app.update(Message::Key(Action::Mkdir)); // F7
+        let _ = app.update(Message::ListerQuery("FOO".into()));
+        let _ = app.update(Message::ListerFind);
+        let l = app.lister.as_ref().unwrap();
+        assert_eq!((l.hit, l.searching), (Some(1), false));
+        let _ = app.update(Message::Key(Action::View)); // F3: no further match
+        assert_eq!(
+            app.msg(),
+            Some(fl!("lister-not-found", query = "FOO").as_str())
+        );
     }
 
     /// Pane 0 listing 20 files, viewport `height` px tall, scrolled to the top.
@@ -3364,6 +3755,35 @@ mod tests {
             repeat: false,
         });
         route_event(event, status, cosmic::iced::window::Id::unique())
+    }
+
+    #[test]
+    fn viewer_keys_reach_the_app_but_not_from_a_text_field() {
+        let free = route_event(
+            cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Character("n".into()),
+                modified_key: Key::Character("n".into()),
+                physical_key: Physical::Code(Code::KeyN),
+                location: Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }),
+            event::Status::Ignored,
+            cosmic::iced::window::Id::unique(),
+        );
+        assert!(
+            matches!(free, Some(Message::ListerKey(ListerKey::Next))),
+            "{free:?}"
+        );
+        // Typed into the search field: stays text.
+        let typed = press_with(Key::Character("n".into()), Code::KeyN, Modifiers::empty());
+        assert!(typed.is_none(), "{typed:?}");
+        let prev = press_with(Key::Named(Named::F3), Code::F3, Modifiers::SHIFT);
+        assert!(
+            matches!(prev, Some(Message::ListerKey(ListerKey::FindPrev))),
+            "{prev:?}"
+        );
     }
 
     fn press_with(key: Key, code: Code, mods: Modifiers) -> Option<Message> {

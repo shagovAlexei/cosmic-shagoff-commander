@@ -38,6 +38,7 @@ pub enum Setting {
     Language(usize),
     Theme(usize),
     ShowFkeys(bool),
+    InternalViewer(bool),
     ShowHidden(bool),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
@@ -216,6 +217,11 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .into(),
         settings::section()
             .title(fl!("settings-programs"))
+            .add(settings::item(
+                fl!("settings-internal-viewer"),
+                widget::toggler(c.internal_viewer)
+                    .on_toggle(move |b| set(Setting::InternalViewer(b))),
+            ))
             .add(settings::item(
                 fl!("settings-viewer"),
                 input(&form.viewer, "xdg-open", Setting::Viewer),

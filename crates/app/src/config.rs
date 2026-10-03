@@ -73,6 +73,8 @@ pub struct Config {
     pub app_theme: AppTheme,
     /// F-key buttons at the bottom.
     pub show_fkeys: bool,
+    /// F3 opens the built-in viewer; off: runs `viewer`.
+    pub internal_viewer: bool,
 }
 
 /// A favourite dir (Ctrl+D).
@@ -95,6 +97,7 @@ impl Default for Config {
             language: String::new(),
             app_theme: AppTheme::System,
             show_fkeys: true,
+            internal_viewer: true,
         }
     }
 }

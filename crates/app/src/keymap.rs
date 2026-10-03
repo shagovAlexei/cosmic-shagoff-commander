@@ -1,6 +1,7 @@
 //! TC key bindings → `Action`. One table; the F-key buttons dispatch the same actions.
 
 use cosmic::iced::keyboard::{Key, Modifiers, key::Physical};
+use shagoff_core::lister::Mode;
 use shagoff_core::sort::SortKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,6 +178,39 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::NumpadSubtract), true, false) => Some(Action::UnselectAll),
         _ => None,
     }
+}
+
+/// Keys the viewer (F3) adds; looked at only while it is open, after `action` found nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListerKey {
+    Mode(Mode),
+    Next,
+    Prev,
+    Close,
+    Left,
+    Right,
+    FindPrev,
+}
+
+pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<ListerKey> {
+    use cosmic::iced::keyboard::key::{Code, Named};
+    match key {
+        Key::Named(Named::F3) if mods == Modifiers::SHIFT => return Some(ListerKey::FindPrev),
+        _ if !mods.is_empty() => return None,
+        Key::Named(Named::ArrowLeft) => return Some(ListerKey::Left),
+        Key::Named(Named::ArrowRight) => return Some(ListerKey::Right),
+        _ => {}
+    }
+    // TC: 1 text, 3 hex, 4 multimedia; N / P next / previous file; Q closes.
+    Some(match physical {
+        Physical::Code(Code::Digit1 | Code::Numpad1) => ListerKey::Mode(Mode::Text),
+        Physical::Code(Code::Digit3 | Code::Numpad3) => ListerKey::Mode(Mode::Hex),
+        Physical::Code(Code::Digit4 | Code::Numpad4) => ListerKey::Mode(Mode::Image),
+        Physical::Code(Code::KeyN) => ListerKey::Next,
+        Physical::Code(Code::KeyP) => ListerKey::Prev,
+        Physical::Code(Code::KeyQ) => ListerKey::Close,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -442,5 +476,57 @@ mod tests {
             Modifiers::CTRL | Modifiers::SHIFT,
         );
         assert_eq!(d, Some(Action::CompareFiles));
+    }
+
+    #[test]
+    fn lister_keys_are_free_in_the_main_table() {
+        let keys = [
+            (
+                Key::Character("1".into()),
+                Code::Digit1,
+                ListerKey::Mode(Mode::Text),
+            ),
+            (
+                Key::Character("3".into()),
+                Code::Digit3,
+                ListerKey::Mode(Mode::Hex),
+            ),
+            (
+                Key::Character("4".into()),
+                Code::Digit4,
+                ListerKey::Mode(Mode::Image),
+            ),
+            (Key::Character("т".into()), Code::KeyN, ListerKey::Next), // any layout
+            (Key::Character("p".into()), Code::KeyP, ListerKey::Prev),
+            (Key::Character("q".into()), Code::KeyQ, ListerKey::Close),
+            (
+                Key::Named(Named::ArrowLeft),
+                Code::ArrowLeft,
+                ListerKey::Left,
+            ),
+            (
+                Key::Named(Named::ArrowRight),
+                Code::ArrowRight,
+                ListerKey::Right,
+            ),
+        ];
+        for (key, code, want) in keys {
+            assert_eq!(action(&key, Physical::Code(code), NONE), None, "{want:?}");
+            assert_eq!(lister_key(&key, Physical::Code(code), NONE), Some(want));
+        }
+        let f3 = Key::Named(Named::F3);
+        let ph = Physical::Code(Code::F3);
+        assert_eq!(action(&f3, ph, Modifiers::SHIFT), None);
+        assert_eq!(
+            lister_key(&f3, ph, Modifiers::SHIFT),
+            Some(ListerKey::FindPrev)
+        );
+        assert_eq!(lister_key(&f3, ph, NONE), None); // F3 is View: find next
+        let ctrl_n = lister_key(
+            &Key::Character("n".into()),
+            Physical::Code(Code::KeyN),
+            CTRL,
+        );
+        assert_eq!(ctrl_n, None);
     }
 }

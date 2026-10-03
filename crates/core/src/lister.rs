@@ -1,0 +1,391 @@
+//! F3 viewer (TC's Lister): mode detection, line index, hex rows, search.
+
+use std::io::{self, Read};
+use std::ops::Range;
+use std::path::Path;
+
+/// Read at most this much of a file.
+pub const LIMIT: u64 = 32 << 20;
+/// Longer lines are split: one huge line (minified JS) would stall rendering.
+pub const MAX_COLS: usize = 4096;
+pub const HEX_WIDTH: usize = 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Text,
+    Hex,
+    Image,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Doc {
+    /// The first `LIMIT` bytes as they are in the file (hex shows these).
+    pub bytes: Vec<u8>,
+    /// The same as UTF-8 when the file has a BOM (UTF-16 or UTF-8), for text mode.
+    pub decoded: Option<Vec<u8>>,
+    /// Size of the whole file.
+    pub total: u64,
+}
+
+impl Doc {
+    pub fn truncated(&self) -> bool {
+        self.total > LIMIT
+    }
+
+    /// Bytes for text mode and its line index.
+    pub fn text(&self) -> &[u8] {
+        self.decoded.as_deref().unwrap_or(&self.bytes)
+    }
+}
+
+pub fn load(path: &Path) -> io::Result<Doc> {
+    // A fifo would block `open` forever, a device never ends: regular files only.
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        let msg = format!("{}: not a regular file", path.display());
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
+    }
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(LIMIT).read_to_end(&mut bytes)?;
+    // /proc files report size 0 but have content.
+    let total = meta.len().max(bytes.len() as u64);
+    Ok(Doc {
+        decoded: decode(&bytes),
+        bytes,
+        total,
+    })
+}
+
+/// UTF-16 with a BOM → UTF-8; a UTF-8 BOM dropped. `None`: no BOM, the bytes are the text.
+pub fn decode(bytes: &[u8]) -> Option<Vec<u8>> {
+    let utf16 = |be: bool| {
+        let (pairs, rest) = bytes[2..].as_chunks::<2>();
+        let units = pairs.iter().map(|&pair| {
+            if be {
+                u16::from_be_bytes(pair)
+            } else {
+                u16::from_le_bytes(pair)
+            }
+        });
+        let mut s: String = char::decode_utf16(units)
+            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
+        if !rest.is_empty() {
+            s.push(char::REPLACEMENT_CHARACTER);
+        }
+        s.into_bytes()
+    };
+    match bytes {
+        [0xEF, 0xBB, 0xBF, rest @ ..] => Some(rest.to_vec()),
+        [0xFF, 0xFE, ..] => Some(utf16(false)),
+        [0xFE, 0xFF, ..] => Some(utf16(true)),
+        _ => None,
+    }
+}
+
+const IMAGES: [&str; 8] = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg"];
+
+pub fn is_image(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| IMAGES.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+/// Mode a file opens in: images by extension, a NUL in the first 8 KiB → hex, else text.
+pub fn detect(name: &str, bytes: &[u8]) -> Mode {
+    if is_image(name) {
+        Mode::Image
+    } else if bytes[..bytes.len().min(8192)].contains(&0) {
+        Mode::Hex
+    } else {
+        Mode::Text
+    }
+}
+
+/// Byte ranges of the lines (without `\n` / `\r\n`), lines over `MAX_COLS` chars split.
+pub fn lines(bytes: &[u8]) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut push = |s: usize, mut e: usize| {
+        if e > s && bytes[e - 1] == b'\r' {
+            e -= 1;
+        }
+        split_long(bytes, s, e, &mut out);
+    };
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\n' {
+            push(start, i);
+            start = i + 1;
+        }
+    }
+    if start < bytes.len() {
+        push(start, bytes.len());
+    }
+    out
+}
+
+/// Cut `s..e` every `MAX_COLS` chars, at char starts (UTF-8 continuation bytes never start a piece).
+fn split_long(bytes: &[u8], s: usize, e: usize, out: &mut Vec<Range<usize>>) {
+    let mut from = s;
+    let mut chars = 0;
+    for (i, &b) in bytes.iter().enumerate().take(e).skip(s) {
+        if b & 0xC0 != 0x80 {
+            if chars == MAX_COLS {
+                out.push(from..i);
+                from = i;
+                chars = 0;
+            }
+            chars += 1;
+        }
+    }
+    out.push(from..e);
+}
+
+/// A line as shown: invalid UTF-8 as `�`, tabs as four spaces.
+pub fn line_text(bytes: &[u8], r: &Range<usize>) -> String {
+    String::from_utf8_lossy(&bytes[r.clone()]).replace('\t', "    ")
+}
+
+/// Width of a line as shown, in monospace cells: a tab is four, CJK and emoji two.
+pub fn width(bytes: &[u8], r: &Range<usize>) -> usize {
+    let b = &bytes[r.clone()];
+    if b.is_ascii() {
+        return b.iter().map(|&c| if c == b'\t' { 4 } else { 1 }).sum();
+    }
+    String::from_utf8_lossy(b)
+        .chars()
+        .map(|c| match c {
+            '\t' => 4,
+            c if wide(c) => 2,
+            _ => 1,
+        })
+        .sum()
+}
+
+// ponytail: the main East Asian Wide blocks and emoji, not the full Unicode width table.
+fn wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F
+        | 0x2E80..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1FAFF
+        | 0x20000..=0x3FFFD)
+}
+
+pub fn hex_rows(len: usize) -> usize {
+    len.div_ceil(HEX_WIDTH)
+}
+
+/// `00000010  48 65 6C 6C 6F 20 77 6F  72 6C 64 0A 00 00 00 00  Hello world.....`
+pub fn hex_row(bytes: &[u8], row: usize) -> String {
+    let start = row * HEX_WIDTH;
+    let chunk = &bytes[start.min(bytes.len())..(start + HEX_WIDTH).min(bytes.len())];
+    let mut s = format!("{start:08X} ");
+    for i in 0..HEX_WIDTH {
+        if i == HEX_WIDTH / 2 {
+            s.push(' ');
+        }
+        match chunk.get(i) {
+            Some(b) => s.push_str(&format!(" {b:02X}")),
+            None => s.push_str("   "),
+        }
+    }
+    s.push_str("  ");
+    s.extend(chunk.iter().map(|&b| {
+        if (0x20..0x7F).contains(&b) {
+            b as char
+        } else {
+            '.'
+        }
+    }));
+    s
+}
+
+/// First line from `start` (inclusive, going down or up) that contains `query`, ignoring case.
+pub fn find_line(
+    bytes: &[u8],
+    lines: &[Range<usize>],
+    query: &str,
+    start: usize,
+    forward: bool,
+) -> Option<usize> {
+    if query.is_empty() || lines.is_empty() {
+        return None;
+    }
+    let q = query.to_lowercase();
+    let hit = |&i: &usize| line_text(bytes, &lines[i]).to_lowercase().contains(&q);
+    if forward {
+        (start..lines.len()).find(hit)
+    } else {
+        (0..=start.min(lines.len() - 1)).rev().find(hit)
+    }
+}
+
+/// Hex row of the first match of `needle` that starts in row `start` or later (or, going up, in
+/// row `start` or earlier).
+pub fn find_bytes(bytes: &[u8], needle: &[u8], start: usize, forward: bool) -> Option<usize> {
+    if needle.is_empty() || needle.len() > bytes.len() {
+        return None;
+    }
+    let mut at = bytes.windows(needle.len()).enumerate();
+    let pos = if forward {
+        at.find(|(i, w)| *i >= start * HEX_WIDTH && *w == needle)
+    } else {
+        at.rfind(|(i, w)| *i < (start + 1) * HEX_WIDTH && *w == needle)
+    };
+    pos.map(|(i, _)| i / HEX_WIDTH)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_picks_mode() {
+        assert_eq!(detect("a.PNG", b"text"), Mode::Image);
+        assert_eq!(detect("a.svg", b"<svg/>"), Mode::Image);
+        assert_eq!(detect("a.bin", b"ab\0cd"), Mode::Hex);
+        assert_eq!(detect("a.txt", "привет".as_bytes()), Mode::Text);
+        assert_eq!(detect("png", b""), Mode::Text); // no extension
+    }
+
+    #[test]
+    fn lines_split_on_lf_and_crlf() {
+        let b = b"one\r\ntwo\n\nlast";
+        let l = lines(b);
+        let text: Vec<String> = l.iter().map(|r| line_text(b, r)).collect();
+        assert_eq!(text, ["one", "two", "", "last"]);
+        assert_eq!(lines(b"a\n").len(), 1);
+        assert!(lines(b"").is_empty());
+    }
+
+    #[test]
+    fn long_line_split_at_char_boundary() {
+        let s = "я".repeat(MAX_COLS + 3);
+        let l = lines(s.as_bytes());
+        assert_eq!(l.len(), 2);
+        assert_eq!(line_text(s.as_bytes(), &l[0]).chars().count(), MAX_COLS);
+        assert_eq!(line_text(s.as_bytes(), &l[1]), "яяя");
+    }
+
+    #[test]
+    fn line_text_expands_tabs_and_keeps_bad_bytes() {
+        let b = b"a\tb\xFF";
+        assert_eq!(line_text(b, &(0..b.len())), "a    b\u{FFFD}");
+    }
+
+    #[test]
+    fn width_counts_chars_and_tabs() {
+        let b = "a\tя".as_bytes();
+        assert_eq!(
+            width(b, &(0..b.len())),
+            line_text(b, &(0..b.len())).chars().count()
+        );
+    }
+
+    #[test]
+    fn decode_utf16_and_bom() {
+        let mut le = vec![0xFF, 0xFE];
+        le.extend("Привет".encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(decode(&le).unwrap(), "Привет".as_bytes());
+        let mut be = vec![0xFE, 0xFF];
+        be.extend("ok".encode_utf16().flat_map(u16::to_be_bytes));
+        assert_eq!(decode(&be).unwrap(), b"ok");
+        assert_eq!(decode(b"\xEF\xBB\xBFhi").unwrap(), b"hi");
+        assert_eq!(decode(b"\xFF"), None); // not UTF-16: the bytes as they are
+        // A cut-off last unit is shown, not dropped.
+        assert_eq!(decode(b"\xFF\xFEo\0k").unwrap(), "o\u{FFFD}".as_bytes());
+    }
+
+    #[test]
+    fn hex_shows_the_raw_bytes_text_the_decoded_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("u16.txt");
+        let mut le = vec![0xFF, 0xFE];
+        le.extend("Привет".encode_utf16().flat_map(u16::to_le_bytes));
+        std::fs::write(&p, &le).unwrap();
+        let d = load(&p).unwrap();
+        assert_eq!(d.bytes, le);
+        assert_eq!(d.text(), "Привет".as_bytes());
+        assert_eq!(detect("u16.txt", d.text()), Mode::Text);
+    }
+
+    #[test]
+    fn wide_chars_count_double() {
+        let b = "a日本🙂".as_bytes();
+        assert_eq!(width(b, &(0..b.len())), 7);
+    }
+
+    #[test]
+    fn hex_row_full_and_partial() {
+        let b = b"Hello world\n\0\0\0\0Hi";
+        assert_eq!(hex_rows(b.len()), 2);
+        assert_eq!(
+            hex_row(b, 0),
+            "00000000  48 65 6C 6C 6F 20 77 6F  72 6C 64 0A 00 00 00 00  Hello world....."
+        );
+        assert_eq!(
+            hex_row(b, 1),
+            format!("00000010  48 69{}  Hi", " ".repeat(3 * 14 + 1))
+        );
+    }
+
+    #[test]
+    fn find_line_ignores_case_both_ways() {
+        let b = "альфа\nБета\nгамма\nбета".as_bytes();
+        let l = lines(b);
+        assert_eq!(find_line(b, &l, "бЕТ", 0, true), Some(1));
+        assert_eq!(find_line(b, &l, "бет", 2, true), Some(3));
+        assert_eq!(find_line(b, &l, "бет", 2, false), Some(1));
+        assert_eq!(find_line(b, &l, "бет", 0, false), None);
+        assert_eq!(find_line(b, &l, "дельта", 0, true), None);
+        assert_eq!(find_line(b, &l, "", 0, true), None);
+    }
+
+    #[test]
+    fn find_bytes_by_row() {
+        let mut b = vec![0u8; 40];
+        b[3..5].copy_from_slice(b"ab");
+        b[35..37].copy_from_slice(b"ab");
+        assert_eq!(find_bytes(&b, b"ab", 0, true), Some(0));
+        assert_eq!(find_bytes(&b, b"ab", 1, true), Some(2));
+        assert_eq!(find_bytes(&b, b"ab", 1, false), Some(0));
+        assert_eq!(find_bytes(&b, b"ab", 2, false), Some(2)); // a match in the start row counts
+        assert_eq!(find_bytes(&b, b"zz", 0, true), None);
+    }
+
+    #[test]
+    fn load_stops_at_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("big");
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_len(LIMIT + 10).unwrap(); // sparse
+        let d = load(&p).unwrap();
+        assert_eq!(d.bytes.len() as u64, LIMIT);
+        assert_eq!(d.total, LIMIT + 10);
+        assert!(d.truncated());
+    }
+
+    #[test]
+    fn regression_fifo_is_refused_not_read() {
+        let d = tempfile::tempdir().unwrap();
+        let fifo = d.path().join("p");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        // Run in a thread: the bug is a read that never returns.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(load(&fifo).is_err()).unwrap());
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(2));
+        assert_eq!(refused, Ok(true));
+    }
+}

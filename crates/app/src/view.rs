@@ -23,6 +23,9 @@ const W_ATTR: f32 = 80.0;
 const TEXT: u16 = 13;
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    if let Some(l) = &app.lister {
+        return crate::lister::view(l);
+    }
     row![pane(app, 0), pane(app, 1)]
         .spacing(4)
         .height(Length::Fill)
@@ -256,7 +259,8 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
 /// F-key buttons (unless turned off) and the window status bar.
 pub fn footer(app: &App) -> Element<'_, Message> {
     let mut col = column![];
-    if app.config.show_fkeys {
+    // The viewer has its own buttons; the F-keys would act on the hidden panels.
+    if app.config.show_fkeys && app.lister.is_none() {
         col = col.push(fkey_bar());
     }
     col.push(status_bar(app)).into()
