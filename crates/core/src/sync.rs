@@ -2,7 +2,6 @@
 
 use crate::listing::Entry;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -203,21 +202,6 @@ pub fn plan(left: &Path, right: &Path, rows: &[Row]) -> (Pairs, Pairs) {
         }
     }
     (to_r, to_l)
-}
-
-/// What compare saw at each copy target (size, mtime): a target that changed since, or was not
-/// there, must not be replaced without asking.
-pub fn expected(left: &Path, right: &Path, rows: &[Row]) -> HashMap<PathBuf, (u64, SystemTime)> {
-    rows.iter()
-        .filter_map(|row| {
-            let (target, info) = match row.dir {
-                Dir::ToRight => (right.join(&row.rel), row.right?),
-                Dir::ToLeft => (left.join(&row.rel), row.left?),
-                Dir::None => return None,
-            };
-            Some((target, (info.size, info.mtime)))
-        })
-        .collect()
 }
 
 /// Shift+F2: files to mark on each side — missing opposite, newer, or same date with another size.
@@ -506,18 +490,5 @@ mod tests {
             .set_modified(t)
             .unwrap();
         assert_eq!(states(&l, &r, &opts()), [("a".into(), State::LeftNewer)]);
-    }
-
-    #[test]
-    fn expected_targets_are_what_compare_saw() {
-        let (_d, l, r) = pair();
-        put(&l.join("a"), "new", 2000);
-        put(&r.join("a"), "old", 1000);
-        put(&l.join("only"), "1", 1000);
-        let rows = compare(&l, &r, &opts(), &AtomicBool::new(false));
-        let seen = expected(&l, &r, &rows);
-        let a = seen.get(&r.join("a")).copied().unwrap();
-        assert_eq!(a.0, 3);
-        assert!(!seen.contains_key(&r.join("only"))); // absent at compare time
     }
 }

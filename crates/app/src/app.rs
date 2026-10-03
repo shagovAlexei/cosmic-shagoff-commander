@@ -1543,15 +1543,9 @@ impl App {
         if to_right.is_empty() && to_left.is_empty() {
             return Task::none();
         }
-        let seen = shagoff_core::sync::expected(&s.left, &s.right, &s.rows);
         let side = s.side;
         self.dialog = None;
-        let job = Job::Sync {
-            to_right,
-            to_left,
-            seen,
-        };
-        self.start_job(side, OpKind::Sync, job, None)
+        self.start_job(side, OpKind::Sync, Job::Sync { to_right, to_left }, None)
     }
 
     /// (Re)start the search of the open find dialog; the previous one is stopped.
@@ -3552,7 +3546,12 @@ mod tests {
             std::fs::create_dir_all(d).unwrap();
             std::fs::write(d.join("f"), "x").unwrap();
             let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
-            std::fs::File::options().write(true).open(d.join("f")).unwrap().set_modified(t).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(d.join("f"))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
         }
         let mut app = app_with(Config::default(), State::default());
         listed_at(&mut app, 0, &l);

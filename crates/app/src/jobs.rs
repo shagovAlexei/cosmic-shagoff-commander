@@ -3,11 +3,10 @@
 use cosmic::iced::futures::channel::mpsc as fmpsc;
 use shagoff_core::archive::{self, Format};
 use shagoff_core::ops::{self, ErrorChoice, FileInfo, Handler, Method, Report, Resolution};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 pub enum Job {
     Transfer {
@@ -30,12 +29,10 @@ pub enum Job {
         dest: PathBuf,
         own_dir: bool,
     },
-    /// Ctrl+Shift+S: copies by the dialog's arrows. A target is replaced without asking only if it
-    /// is still what the compare saw (`seen`: size, mtime); anything else asks as usual.
+    /// Ctrl+Shift+S: copies by the dialog's arrows; existing targets ask as for F5.
     Sync {
         to_right: Vec<(PathBuf, PathBuf)>,
         to_left: Vec<(PathBuf, PathBuf)>,
-        seen: HashMap<PathBuf, (u64, SystemTime)>,
     },
     /// F5 / Ctrl+C / Enter in an archive panel: `names` of the dir `inner` into `dest`.
     Extract {
@@ -113,32 +110,6 @@ impl Handler for ChannelHandler {
     }
 }
 
-/// Sync: the direction was chosen in the dialog, so replacing a target the compare saw is what
-/// the user asked for. A target that changed since, or was not there (case-insensitive fs,
-/// unreadable dir), goes to the real conflict dialog.
-struct Replacing<'a> {
-    h: &'a mut dyn Handler,
-    seen: &'a HashMap<PathBuf, (u64, SystemTime)>,
-}
-
-impl Handler for Replacing<'_> {
-    fn progress(&mut self, done: u64, total: u64, current: &Path) {
-        self.h.progress(done, total, current);
-    }
-    fn conflict(&mut self, src: &FileInfo, dst: &FileInfo) -> Resolution {
-        match self.seen.get(&dst.path) {
-            Some(&(size, mtime)) if size == dst.size && mtime == dst.mtime => Resolution::Replace,
-            _ => self.h.conflict(src, dst),
-        }
-    }
-    fn error(&mut self, path: &Path, err: &std::io::Error) -> ErrorChoice {
-        self.h.error(path, err)
-    }
-    fn cancelled(&self) -> bool {
-        self.h.cancelled()
-    }
-}
-
 /// Start `job` on its own thread. Returns the cancel flag and the event stream (ends after `Finished`).
 pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
     let (tx, rx) = fmpsc::unbounded();
@@ -174,15 +145,7 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
                 dest,
                 own_dir,
             } => archive::unpack(&archives, &dest, own_dir, &mut h),
-            Job::Sync {
-                to_right,
-                to_left,
-                seen,
-            } => {
-                let mut h = Replacing {
-                    h: &mut h,
-                    seen: &seen,
-                };
+            Job::Sync { to_right, to_left } => {
                 let a = ops::transfer(Method::Copy, &to_right, &mut h);
                 if a.cancelled {
                     a
@@ -212,7 +175,7 @@ mod sync_tests {
     use cosmic::iced::futures::{StreamExt, executor::block_on};
 
     #[test]
-    fn sync_replaces_without_asking_and_deletes_nothing() {
+    fn regression_sync_asks_before_replacing_and_deletes_nothing() {
         let d = tempfile::tempdir().unwrap();
         let (l, r) = (d.path().join("l"), d.path().join("r"));
         std::fs::create_dir_all(&l).unwrap();
@@ -220,55 +183,23 @@ mod sync_tests {
         std::fs::write(l.join("a"), "new").unwrap();
         std::fs::write(r.join("a"), "old").unwrap();
         std::fs::write(r.join("extra"), "keep").unwrap();
-        let mut seen = std::collections::HashMap::new();
-        let m = std::fs::metadata(r.join("a")).unwrap();
-        seen.insert(r.join("a"), (m.len(), m.modified().unwrap()));
         let job = Job::Sync {
             to_right: vec![(l.join("a"), r.join("a"))],
             to_left: vec![],
-            seen,
-        };
-        let (_cancel, rx) = spawn(job);
-        let events: Vec<Event> = block_on(rx.collect());
-        assert!(
-            events
-                .iter()
-                .all(|e| !matches!(e, Event::Conflict { .. } | Event::Error { .. }))
-        );
-        assert_eq!(std::fs::read_to_string(r.join("a")).unwrap(), "new");
-        assert_eq!(std::fs::read_to_string(r.join("extra")).unwrap(), "keep");
-    }
-
-    #[test]
-    fn regression_sync_asks_when_target_changed_since_compare() {
-        let d = tempfile::tempdir().unwrap();
-        let (l, r) = (d.path().join("l"), d.path().join("r"));
-        std::fs::create_dir_all(&l).unwrap();
-        std::fs::create_dir_all(&r).unwrap();
-        std::fs::write(l.join("a"), "new").unwrap();
-        std::fs::write(r.join("a"), "edited after the compare").unwrap();
-        let mut seen = std::collections::HashMap::new();
-        seen.insert(r.join("a"), (3u64, std::time::SystemTime::UNIX_EPOCH));
-        let job = Job::Sync {
-            to_right: vec![(l.join("a"), r.join("a"))],
-            to_left: vec![],
-            seen,
         };
         let (_cancel, mut rx) = spawn(job);
         let asked = block_on(async {
+            let mut asked = false;
             while let Some(e) = rx.next().await {
                 if let Event::Conflict { reply, .. } = e {
+                    asked = true;
                     let _ = reply.send(Resolution::Skip);
-                    return true;
                 }
             }
-            false
+            asked
         });
         assert!(asked);
-        block_on(async { while rx.next().await.is_some() {} });
-        assert_eq!(
-            std::fs::read_to_string(r.join("a")).unwrap(),
-            "edited after the compare"
-        );
+        assert_eq!(std::fs::read_to_string(r.join("a")).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(r.join("extra")).unwrap(), "keep");
     }
 }
