@@ -612,6 +612,482 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
     report
 }
 
+use crate::ops::{FileInfo, Resolution};
+use std::fs::Metadata;
+use std::io::Write;
+use std::os::unix::fs::MetadataExt;
+
+/// Compression around a tar stream; `finish` flushes the trailer the encoder needs.
+enum Enc {
+    Plain(File),
+    Gz(flate2::write::GzEncoder<File>),
+    Bz2(bzip2::write::BzEncoder<File>),
+    Xz(liblzma::write::XzEncoder<File>),
+    Zst(zstd::stream::write::Encoder<'static, File>),
+}
+
+impl Write for Enc {
+    fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+        match self {
+            Enc::Plain(w) => w.write(b),
+            Enc::Gz(w) => w.write(b),
+            Enc::Bz2(w) => w.write(b),
+            Enc::Xz(w) => w.write(b),
+            Enc::Zst(w) => w.write(b),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Enc::Plain(w) => w.flush(),
+            Enc::Gz(w) => w.flush(),
+            Enc::Bz2(w) => w.flush(),
+            Enc::Xz(w) => w.flush(),
+            Enc::Zst(w) => w.flush(),
+        }
+    }
+}
+
+impl Enc {
+    fn finish(self) -> io::Result<File> {
+        match self {
+            Enc::Plain(w) => Ok(w),
+            Enc::Gz(w) => w.finish(),
+            Enc::Bz2(w) => w.finish(),
+            Enc::Xz(w) => w.finish(),
+            Enc::Zst(w) => w.finish(),
+        }
+    }
+}
+
+enum Packer {
+    Zip(Box<zip::ZipWriter<File>>),
+    Tar(tar::Builder<Enc>),
+    SevenZ(sevenz_rust2::ArchiveWriter<File>),
+}
+
+impl Packer {
+    fn new(f: Format, w: File) -> io::Result<Packer> {
+        let tar = |e| Packer::Tar(tar::Builder::new(e));
+        Ok(match f {
+            Format::Zip => Packer::Zip(Box::new(zip::ZipWriter::new(w))),
+            Format::SevenZ => {
+                Packer::SevenZ(sevenz_rust2::ArchiveWriter::new(w).map_err(io::Error::other)?)
+            }
+            Format::Tar => tar(Enc::Plain(w)),
+            Format::TarGz => tar(Enc::Gz(flate2::write::GzEncoder::new(
+                w,
+                flate2::Compression::default(),
+            ))),
+            Format::TarBz2 => tar(Enc::Bz2(bzip2::write::BzEncoder::new(
+                w,
+                bzip2::Compression::default(),
+            ))),
+            Format::TarXz => tar(Enc::Xz(liblzma::write::XzEncoder::new(w, 6))),
+            Format::TarZst => tar(Enc::Zst(zstd::stream::write::Encoder::new(w, 0)?)),
+            Format::Gz | Format::Bz2 | Format::Xz | Format::Zst => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "not a packing format",
+                ));
+            }
+        })
+    }
+
+    /// Zip and 7z store names as UTF-8 only.
+    fn needs_utf8(&self) -> bool {
+        !matches!(self, Packer::Tar(_))
+    }
+
+    fn dir(&mut self, rel: &Path, m: &Metadata) -> io::Result<()> {
+        match self {
+            Packer::Zip(z) => Ok(z.add_directory(utf8(rel)?, zip_opts(m))?),
+            Packer::Tar(b) => {
+                let mut h = tar_header(m);
+                h.set_size(0);
+                b.append_data(&mut h, rel, io::empty())
+            }
+            Packer::SevenZ(w) => {
+                w.push_archive_entry::<&[u8]>(sz_entry(utf8(rel)?, m, true), None)
+                    .map_err(io::Error::other)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn file(&mut self, rel: &Path, m: &Metadata, r: &mut dyn Read) -> io::Result<()> {
+        match self {
+            Packer::Zip(z) => {
+                z.start_file(
+                    utf8(rel)?,
+                    zip_opts(m).large_file(m.len() >= u32::MAX as u64),
+                )?;
+                io::copy(r, z)?;
+                Ok(())
+            }
+            Packer::Tar(b) => b.append_data(&mut tar_header(m), rel, r.take(m.len())),
+            Packer::SevenZ(w) => {
+                w.push_archive_entry(sz_entry(utf8(rel)?, m, false), Some(r))
+                    .map_err(io::Error::other)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// `Ok(false)`: this format can't hold the link (7z, or a non-UTF-8 target in zip).
+    fn symlink(&mut self, rel: &Path, target: &Path, m: &Metadata) -> io::Result<bool> {
+        match self {
+            Packer::Zip(z) => match target.to_str() {
+                Some(t) => {
+                    z.add_symlink(utf8(rel)?, t, zip_opts(m))?;
+                    Ok(true)
+                }
+                None => Ok(false),
+            },
+            Packer::Tar(b) => {
+                let mut h = tar_header(m);
+                h.set_size(0);
+                b.append_link(&mut h, rel, target)?;
+                Ok(true)
+            }
+            Packer::SevenZ(_) => Ok(false),
+        }
+    }
+
+    fn finish(self) -> io::Result<File> {
+        match self {
+            Packer::Zip(z) => Ok(z.finish()?),
+            Packer::Tar(b) => b.into_inner()?.finish(),
+            Packer::SevenZ(w) => w.finish(),
+        }
+    }
+}
+
+fn utf8(rel: &Path) -> io::Result<&str> {
+    rel.to_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "name is not UTF-8"))
+}
+
+fn tar_header(m: &Metadata) -> tar::Header {
+    let mut h = tar::Header::new_gnu();
+    h.set_metadata_in_mode(m, tar::HeaderMode::Complete);
+    h
+}
+
+fn zip_opts(m: &Metadata) -> zip::write::SimpleFileOptions {
+    zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(m.mode() & 0o7777)
+        .last_modified_time(m.modified().map(to_zip_time).unwrap_or_default())
+}
+
+fn sz_entry(rel: &str, m: &Metadata, dir: bool) -> sevenz_rust2::ArchiveEntry {
+    let mut e = if dir {
+        sevenz_rust2::ArchiveEntry::new_directory(rel)
+    } else {
+        sevenz_rust2::ArchiveEntry::new_file(rel)
+    };
+    e.has_windows_attributes = true;
+    e.windows_attributes = UNIX_EXTENSION | (m.mode() << 16) | if dir { 0x10 } else { 0 };
+    if let Some(t) = m.modified().ok().and_then(|t| t.try_into().ok()) {
+        e.last_modified_date = t;
+        e.has_last_modified_date = true;
+    }
+    e
+}
+
+/// Zip stores local wall-clock time without a zone: written and read in the system zone.
+fn to_zip_time(t: SystemTime) -> zip::DateTime {
+    jiff::Timestamp::try_from(t)
+        .ok()
+        .map(|ts| ts.to_zoned(jiff::tz::TimeZone::system()))
+        .and_then(|z| {
+            zip::DateTime::from_date_and_time(
+                z.year() as u16,
+                z.month() as u8,
+                z.day() as u8,
+                z.hour() as u8,
+                z.minute() as u8,
+                z.second() as u8,
+            )
+            .ok()
+        })
+        .unwrap_or_default()
+}
+
+/// Counts bytes into the progress bar and stops reading on cancel.
+struct Progress<'a> {
+    r: File,
+    h: &'a mut dyn Handler,
+    done: &'a mut u64,
+    total: u64,
+    path: &'a Path,
+    cancelled: bool,
+}
+
+impl Read for Progress<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.h.cancelled() {
+            self.cancelled = true;
+            return Err(io::Error::other("cancelled"));
+        }
+        let n = self.r.read(buf)?;
+        *self.done += n as u64;
+        self.h.progress(*self.done, self.total, self.path);
+        Ok(n)
+    }
+}
+
+/// Everything under `p`, dirs before their contents, symlinks not followed. `skip`: (dev, ino) of
+/// the part file and the target archive, so an archive inside a packed dir never packs itself.
+fn walk(
+    p: &Path,
+    skip: &[(u64, u64)],
+    out: &mut Vec<(PathBuf, Metadata)>,
+    h: &mut dyn Handler,
+) -> Result<bool, bool> {
+    let m = attempt(h, p, || fs::symlink_metadata(p))?;
+    if skip.contains(&(m.dev(), m.ino())) {
+        return Ok(true);
+    }
+    let is_dir = m.is_dir();
+    let special = !is_dir && !m.is_file() && !m.file_type().is_symlink();
+    if special {
+        return Ok(false); // sockets, fifos, devices: not packed (and not "completed")
+    }
+    out.push((p.to_path_buf(), m));
+    let mut ok = true;
+    if is_dir {
+        let mut children: Vec<PathBuf> = match attempt(h, p, || {
+            fs::read_dir(p)?.map(|e| e.map(|e| e.path())).collect()
+        }) {
+            Ok(c) => c,
+            Err(false) => return Ok(false),
+            Err(true) => return Err(true),
+        };
+        children.sort();
+        for c in children {
+            ok &= walk(&c, skip, out, h)?;
+        }
+    }
+    Ok(ok)
+}
+
+/// What became of one group.
+enum Packed {
+    Done { skipped: bool },
+    Dropped,
+    Cancel,
+}
+
+/// Alt+F5: one archive per `(sources, archive)`; names inside are relative to `base`.
+/// `completed` = sources of groups written without any skip (for "move to archive").
+pub fn pack(
+    f: Format,
+    base: &Path,
+    groups: &[(Vec<PathBuf>, PathBuf)],
+    h: &mut dyn Handler,
+) -> Report {
+    let mut report = Report::default();
+    let mut policy: Option<Resolution> = None;
+    for (sources, dest) in groups {
+        match pack_one(f, base, sources, dest, &mut policy, h) {
+            Packed::Done { skipped: false } => report.completed.extend(sources.iter().cloned()),
+            Packed::Done { skipped: true } | Packed::Dropped => {}
+            Packed::Cancel => {
+                report.cancelled = true;
+                break;
+            }
+        }
+    }
+    report
+}
+
+fn pack_one(
+    f: Format,
+    base: &Path,
+    sources: &[PathBuf],
+    dest: &Path,
+    policy: &mut Option<Resolution>,
+    h: &mut dyn Handler,
+) -> Packed {
+    loop {
+        let (part, w) = match attempt(h, dest, || {
+            if let Some(dir) = dest.parent() {
+                fs::create_dir_all(dir)?;
+            }
+            ops::create_part(dest)
+        }) {
+            Ok(pw) => pw,
+            Err(true) => return Packed::Cancel,
+            Err(false) => return Packed::Dropped,
+        };
+        let outcome = write_archive(f, base, sources, dest, &part, w, h);
+        match outcome {
+            Ok(Some(skipped)) => {
+                return match place(&part, dest, policy, h) {
+                    Some(true) => Packed::Done { skipped },
+                    Some(false) => Packed::Dropped,
+                    None => Packed::Cancel,
+                };
+            }
+            Ok(None) => {
+                let _ = fs::remove_file(&part);
+                return Packed::Cancel;
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&part);
+                match h.error(dest, &e) {
+                    ErrorChoice::Retry => {}
+                    ErrorChoice::Skip => return Packed::Dropped,
+                    ErrorChoice::Cancel => return Packed::Cancel,
+                }
+            }
+        }
+    }
+}
+
+/// Write the archive into `part`. `Ok(Some(skipped))` = written; `Ok(None)` = cancelled.
+fn write_archive(
+    f: Format,
+    base: &Path,
+    sources: &[PathBuf],
+    dest: &Path,
+    part: &Path,
+    w: File,
+    h: &mut dyn Handler,
+) -> io::Result<Option<bool>> {
+    let mut skip = vec![];
+    for p in [part, dest] {
+        if let Ok(m) = fs::symlink_metadata(p) {
+            skip.push((m.dev(), m.ino()));
+        }
+    }
+    let mut items = Vec::new();
+    let mut skipped = false;
+    for s in sources {
+        match walk(s, &skip, &mut items, h) {
+            Ok(ok) => skipped |= !ok,
+            Err(_) => return Ok(None), // walk only gives up on Cancel; Skip is Ok(false)
+        }
+    }
+    let total = items
+        .iter()
+        .filter(|(_, m)| m.is_file())
+        .map(|(_, m)| m.len())
+        .sum();
+    let mut done = 0;
+    let mut p = Packer::new(f, w)?;
+    for (path, m) in &items {
+        if h.cancelled() {
+            return Ok(None);
+        }
+        let rel = path.strip_prefix(base).unwrap_or(path);
+        if p.needs_utf8() && rel.to_str().is_none() {
+            let e = io::Error::new(io::ErrorKind::InvalidData, "name is not UTF-8");
+            match h.error(path, &e) {
+                ErrorChoice::Cancel => return Ok(None),
+                _ => {
+                    skipped = true;
+                    continue;
+                }
+            }
+        }
+        if m.is_dir() {
+            p.dir(rel, m)?;
+        } else if m.file_type().is_symlink() {
+            let target = fs::read_link(path)?;
+            skipped |= !p.symlink(rel, &target, m)?;
+        } else {
+            let r = match attempt(h, path, || File::open(path)) {
+                Ok(r) => r,
+                Err(true) => return Ok(None),
+                Err(false) => {
+                    skipped = true;
+                    done += m.len();
+                    continue;
+                }
+            };
+            let mut pr = Progress {
+                r,
+                h: &mut *h,
+                done: &mut done,
+                total,
+                path,
+                cancelled: false,
+            };
+            let written = p.file(rel, m, &mut pr);
+            if pr.cancelled {
+                return Ok(None);
+            }
+            written?;
+        }
+    }
+    p.finish()?;
+    Ok(Some(skipped))
+}
+
+/// Rename `part` to `dest` without replacing; an existing `dest` asks. `Some(placed)`, `None` = cancel.
+fn place(
+    part: &Path,
+    dest: &Path,
+    policy: &mut Option<Resolution>,
+    h: &mut dyn Handler,
+) -> Option<bool> {
+    let drop_part = || {
+        let _ = fs::remove_file(part);
+    };
+    match ops::rename_noreplace(part, dest) {
+        Ok(()) => return Some(true),
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+            return match attempt(h, dest, || ops::rename_noreplace(part, dest)) {
+                Ok(()) => Some(true),
+                Err(cancel) => {
+                    drop_part();
+                    (!cancel).then_some(false)
+                }
+            };
+        }
+        Err(_) => {}
+    }
+    let info = |p: &Path| {
+        let m = fs::symlink_metadata(p).ok();
+        FileInfo {
+            path: p.to_path_buf(),
+            size: m.as_ref().map_or(0, Metadata::len),
+            mtime: m
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+        }
+    };
+    let answer = policy.unwrap_or_else(|| h.conflict(&info(part), &info(dest)));
+    match answer {
+        Resolution::ReplaceAll | Resolution::SkipAll | Resolution::ReplaceOlder => {
+            *policy = Some(answer)
+        }
+        _ => {}
+    }
+    match answer {
+        // The new archive is always the newer file.
+        Resolution::Replace | Resolution::ReplaceAll | Resolution::ReplaceOlder => {
+            match attempt(h, dest, || fs::rename(part, dest)) {
+                Ok(()) => Some(true),
+                Err(cancel) => {
+                    drop_part();
+                    (!cancel).then_some(false)
+                }
+            }
+        }
+        Resolution::Skip | Resolution::SkipAll => {
+            drop_part();
+            Some(false)
+        }
+        Resolution::Cancel => {
+            drop_part();
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1022,5 +1498,187 @@ mod tests {
             fs::read_to_string(d.path().join("out/notes.txt")).unwrap(),
             "text"
         );
+    }
+
+    use std::time::{Duration, SystemTime};
+
+    /// file, nested dir, empty dir, symlink, Cyrillic name; fixed mtime and modes.
+    fn tree(base: &Path) -> Vec<PathBuf> {
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let src = base.join("src");
+        fs::create_dir_all(src.join("sub/empty")).unwrap();
+        fs::write(src.join("sub/файл.txt"), "привет").unwrap();
+        fs::write(src.join("run.sh"), "#!/bin/sh").unwrap();
+        fs::set_permissions(src.join("run.sh"), fs::Permissions::from_mode(0o750)).unwrap();
+        symlink("run.sh", src.join("ln")).unwrap();
+        for p in ["sub/файл.txt", "run.sh"] {
+            fs::File::options()
+                .write(true)
+                .open(src.join(p))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        }
+        vec![src]
+    }
+
+    fn mtime(p: &Path) -> u64 {
+        fs::metadata(p)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn round_trip_every_pack_format() {
+        for f in Format::PACK {
+            let d = tempfile::tempdir().unwrap();
+            let sources = tree(d.path());
+            let archive = d.path().join(format!("a.{}", f.ext()));
+            let r = pack(
+                f,
+                d.path(),
+                &[(sources.clone(), archive.clone())],
+                &mut Script::default(),
+            );
+            assert!(!r.cancelled, "{f:?}");
+            let out = d.path().join("out");
+            let r = unpack(
+                std::slice::from_ref(&archive),
+                &out,
+                false,
+                &mut Script::default(),
+            );
+            assert_eq!(r.completed, [archive], "{f:?}");
+            let o = out.join("src");
+            assert_eq!(
+                fs::read_to_string(o.join("sub/файл.txt")).unwrap(),
+                "привет",
+                "{f:?}"
+            );
+            assert!(o.join("sub/empty").is_dir(), "{f:?}");
+            assert_eq!(
+                fs::metadata(o.join("run.sh")).unwrap().permissions().mode() & 0o777,
+                0o750,
+                "{f:?}"
+            );
+            assert!(
+                mtime(&o.join("run.sh")).abs_diff(1_700_000_000) <= 2,
+                "{f:?}"
+            ); // zip: 2 s DOS time
+            if f != Format::SevenZ {
+                assert_eq!(
+                    fs::read_link(o.join("ln")).unwrap(),
+                    Path::new("run.sh"),
+                    "{f:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn seven_z_symlink_is_a_skip() {
+        let d = tempfile::tempdir().unwrap();
+        let sources = tree(d.path());
+        let r = pack(
+            Format::SevenZ,
+            d.path(),
+            &[(sources, d.path().join("a.7z"))],
+            &mut Script::default(),
+        );
+        assert!(r.completed.is_empty()); // so "move to archive" keeps the sources
+        assert!(d.path().join("a.7z").exists());
+    }
+
+    #[test]
+    fn completed_excludes_skipped_group() {
+        let d = tempfile::tempdir().unwrap();
+        let (ok, bad) = (d.path().join("ok"), d.path().join("bad"));
+        fs::write(&ok, "1").unwrap();
+        fs::write(&bad, "2").unwrap();
+        fs::set_permissions(&bad, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::File::open(&bad).is_ok() {
+            return; // running as root: can't make a file unreadable
+        }
+        let groups = [
+            (vec![ok.clone()], d.path().join("ok.zip")),
+            (vec![bad.clone()], d.path().join("bad.zip")),
+        ];
+        let mut h = Script {
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        let r = pack(Format::Zip, d.path(), &groups, &mut h);
+        assert_eq!(r.completed, [ok]);
+        assert_eq!(h.errored, [bad]);
+    }
+
+    #[test]
+    fn archive_inside_source_is_not_packed() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("f"), "x").unwrap();
+        let archive = src.join("self.tar");
+        pack(
+            Format::Tar,
+            d.path(),
+            &[(vec![src.clone()], archive.clone())],
+            &mut Script::default(),
+        );
+        let names: Vec<String> = tar::Archive::new(fs::File::open(&archive).unwrap())
+            .entries()
+            .unwrap()
+            .map(|e| e.unwrap().path().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .all(|n| !n.contains("self.tar") && !n.contains("shagoff-part")),
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn existing_archive_asks() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("f"), "x").unwrap();
+        let archive = d.path().join("a.zip");
+        fs::write(&archive, "old").unwrap();
+        let g = [(vec![d.path().join("f")], archive.clone())];
+        let mut h = Script {
+            conflicts: vec![Resolution::Skip],
+            ..Default::default()
+        };
+        pack(Format::Zip, d.path(), &g, &mut h);
+        assert_eq!(fs::read_to_string(&archive).unwrap(), "old");
+        let mut h = Script {
+            conflicts: vec![Resolution::Replace],
+            ..Default::default()
+        };
+        pack(Format::Zip, d.path(), &g, &mut h);
+        assert_ne!(fs::read(&archive).unwrap(), b"old");
+        assert!(names(d.path()).iter().all(|n| !n.contains("shagoff-part")));
+    }
+
+    #[test]
+    fn cancel_pack_leaves_no_part() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("f"), "x").unwrap();
+        let g = [(vec![d.path().join("f")], d.path().join("a.tar.gz"))];
+        let r = pack(
+            Format::TarGz,
+            d.path(),
+            &g,
+            &mut Script {
+                cancel: true,
+                ..Default::default()
+            },
+        );
+        assert!(r.cancelled);
+        assert_eq!(names(d.path()), ["f"]);
     }
 }
