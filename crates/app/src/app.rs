@@ -150,6 +150,8 @@ pub struct App {
     state_handler: Option<cosmic_config::Config>,
     /// Last state written, to skip identical writes.
     saved: State,
+    /// Alt+F7 settings, kept in `State`.
+    find: config::FindPrefs,
     pub drives: Vec<Drive>,
     /// (free, total) bytes of each pane's current disk.
     pub space: [Option<(u64, u64)>; 2],
@@ -315,6 +317,7 @@ impl App {
             config_handler: None,
             state_handler: None,
             saved: State::default(),
+            find: state.find.clone(),
             drives: Vec::new(),
             space: [None, None],
         };
@@ -746,6 +749,7 @@ impl App {
                 active: self.panes[s].active_index(),
             }),
             active: self.active,
+            find: self.find.clone(),
         };
         if state == self.saved {
             return;
@@ -1196,10 +1200,10 @@ impl App {
                 };
                 Some(Dialog::Find(Box::new(dialogs::Find {
                     side,
-                    mask: "*".into(),
+                    mask: self.find.mask.clone(),
                     dir: dir.display().to_string(),
-                    text: String::new(),
-                    case_sensitive: false,
+                    text: self.find.text.clone(),
+                    case_sensitive: self.find.case_sensitive,
                     results: Vec::new(),
                     total: 0,
                     current: String::new(),
@@ -1422,6 +1426,11 @@ impl App {
             return Task::none();
         };
         let side = f.side;
+        self.find = config::FindPrefs {
+            mask: f.mask.clone(),
+            text: f.text.clone(),
+            case_sensitive: f.case_sensitive,
+        };
         let root = self.panes[side].active().target().join(f.dir.trim());
         let text = f.text.trim().to_string();
         let q = shagoff_core::search::Query {
@@ -2106,6 +2115,7 @@ mod tests {
                 },
             ],
             active: 1,
+            ..State::default()
         };
         let app = app_with(Config::default(), state);
         assert_eq!(cwds(&app, 0), [tmp.path().to_path_buf(), a]);
@@ -2126,6 +2136,7 @@ mod tests {
                 PaneState::default(),
             ],
             active: 0,
+            ..State::default()
         };
         let app = App::build(
             Core::default(),
@@ -3241,5 +3252,28 @@ mod tests {
         let f = find_dialog(&mut app);
         assert!(f.stop.is_some() || f.results.is_empty()); // restarted
         assert_ne!(f.id, id);
+    }
+
+    #[test]
+    fn find_settings_are_remembered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindInput(FindField::Mask, "*.ini".into()));
+        let _ = app.update(Message::FindInput(FindField::Text, "port".into()));
+        let _ = app.update(Message::FindCase);
+        let _ = app.update(Message::FindStart);
+        let _ = app.update(Message::DialogCancel);
+        assert_eq!(app.saved.find.mask, "*.ini"); // written to the state
+        // A new run starts from the saved state.
+        let mut app = app_with(Config::default(), app.saved.clone());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let f = find_dialog(&mut app);
+        assert_eq!(
+            (f.mask.as_str(), f.text.as_str(), f.case_sensitive),
+            ("*.ini", "port", true)
+        );
     }
 }

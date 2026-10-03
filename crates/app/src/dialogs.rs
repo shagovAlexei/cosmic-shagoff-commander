@@ -537,6 +537,9 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 Some(_) => widget::button::standard(fl!("find-stop")).on_press(Message::FindStop),
                 None => widget::button::suggested(fl!("find-start")).on_press(Message::FindStart),
             };
+            // Above the list, not in the dialog's bottom row: a short window clips that row.
+            let go = widget::button::standard(fl!("find-go"))
+                .on_press_maybe((!f.results.is_empty()).then_some(Message::FindPick(f.cursor)));
             widget::dialog()
                 .title(fl!("find-files"))
                 .width(Length::Fill)
@@ -552,18 +555,13 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                         widget::checkbox(f.case_sensitive)
                             .label(fl!("find-case"))
                             .on_toggle(|_| Message::FindCase),
+                        row![run, go].spacing(8),
                         widget::text(status).wrapping(Wrapping::WordOrGlyph),
-                        widget::scrollable(list).height(Length::Fixed(300.0)),
+                        widget::scrollable(list).height(Length::Fixed(240.0)),
                     ]
                     .spacing(12),
                 )
-                .primary_action(run)
                 .secondary_action(cancel)
-                .tertiary_action(
-                    widget::button::standard(fl!("find-go")).on_press_maybe(
-                        (!f.results.is_empty()).then_some(Message::FindPick(f.cursor)),
-                    ),
-                )
                 .into()
         }
         Dialog::Error { path, error, .. } => widget::dialog()
