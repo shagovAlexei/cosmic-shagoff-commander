@@ -18,6 +18,9 @@ notify = "8.2"
 simple_logger = "5"
 tokio = { version = "1", features = ["rt", "time"] }
 
+# Codecs for the viewer (F3), on top of png/jpeg/ico that libcosmic enables.
+image = { version = "0.25", default-features = false, features = ["gif", "webp", "bmp"] }
+
 [dev-dependencies]
 tempfile = "3"
 zip = { version = "8", default-features = false, features = ["deflate"] }

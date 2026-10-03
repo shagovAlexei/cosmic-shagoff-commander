@@ -45,8 +45,7 @@ pub fn load(path: &Path) -> io::Result<Doc> {
 /// UTF-16 with a BOM → UTF-8; a UTF-8 BOM is dropped. Anything else is kept as is.
 pub fn decode(bytes: Vec<u8>) -> Vec<u8> {
     let utf16 = |be: bool| {
-        let units = bytes[2..].chunks_exact(2).map(|c| {
-            let pair = [c[0], c[1]];
+        let units = bytes[2..].as_chunks::<2>().0.iter().map(|&pair| {
             if be {
                 u16::from_be_bytes(pair)
             } else {
@@ -112,8 +111,8 @@ pub fn lines(bytes: &[u8]) -> Vec<Range<usize>> {
 fn split_long(bytes: &[u8], s: usize, e: usize, out: &mut Vec<Range<usize>>) {
     let mut from = s;
     let mut chars = 0;
-    for i in s..e {
-        if bytes[i] & 0xC0 != 0x80 {
+    for (i, &b) in bytes.iter().enumerate().take(e).skip(s) {
+        if b & 0xC0 != 0x80 {
             if chars == MAX_COLS {
                 out.push(from..i);
                 from = i;
@@ -128,6 +127,18 @@ fn split_long(bytes: &[u8], s: usize, e: usize, out: &mut Vec<Range<usize>>) {
 /// A line as shown: invalid UTF-8 as `�`, tabs as four spaces.
 pub fn line_text(bytes: &[u8], r: &Range<usize>) -> String {
     String::from_utf8_lossy(&bytes[r.clone()]).replace('\t', "    ")
+}
+
+/// Width of a line as shown, in chars (a tab counts as four).
+pub fn width(bytes: &[u8], r: &Range<usize>) -> usize {
+    bytes[r.clone()]
+        .iter()
+        .map(|&b| match b {
+            b'\t' => 4,
+            b if b & 0xC0 == 0x80 => 0,
+            _ => 1,
+        })
+        .sum()
 }
 
 pub fn hex_rows(len: usize) -> usize {
@@ -230,6 +241,15 @@ mod tests {
     fn line_text_expands_tabs_and_keeps_bad_bytes() {
         let b = b"a\tb\xFF";
         assert_eq!(line_text(b, &(0..b.len())), "a    b\u{FFFD}");
+    }
+
+    #[test]
+    fn width_counts_chars_and_tabs() {
+        let b = "a\tя".as_bytes();
+        assert_eq!(
+            width(b, &(0..b.len())),
+            line_text(b, &(0..b.len())).chars().count()
+        );
     }
 
     #[test]

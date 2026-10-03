@@ -243,3 +243,26 @@ fkey-rename = F2 Rename
 copied = Copied to the clipboard: { $n }
 menu-copy-names = Copy names to clipboard
 menu-copy-paths = Copy names with path
+
+# Viewer (F3)
+lister-text = Text (1)
+lister-hex = Hex (3)
+lister-image = Image (4)
+lister-loading = Reading…
+lister-info-lines = { $n } lines, { $size } B
+lister-info = { $size } B
+lister-find = Find (F7)
+lister-find-hint = Text to find, then Enter; F3 / Shift+F3: next / previous
+lister-prev = ← Prev (P)
+lister-next = Next (N) →
+lister-close = Close (Esc)
+lister-truncated = Showing the first { $limit } MB of { $size } B
+lister-not-found = Not found: { $query }
+settings-internal-viewer = Built-in viewer (F3)
+help-lister = Viewer (F3)
+help-lister-scroll = Scroll
+help-lister-modes = Text / hex / image
+help-lister-step = Next / previous file
+help-lister-find = Find
+help-lister-again = Find next / previous
+help-lister-close = Close

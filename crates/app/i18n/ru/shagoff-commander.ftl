@@ -244,3 +244,26 @@ fkey-rename = F2 Переим.
 copied = Скопировано в буфер обмена: { $n }
 menu-copy-names = Копировать имена в буфер
 menu-copy-paths = Копировать имена с путём
+
+# Просмотр (F3)
+lister-text = Текст (1)
+lister-hex = Hex (3)
+lister-image = Картинка (4)
+lister-loading = Чтение…
+lister-info-lines = строк: { $n }, { $size } б
+lister-info = { $size } б
+lister-find = Поиск (F7)
+lister-find-hint = Что искать, затем Enter; F3 / Shift+F3 — следующее / предыдущее
+lister-prev = ← Пред. (P)
+lister-next = След. (N) →
+lister-close = Закрыть (Esc)
+lister-truncated = Показаны первые { $limit } МБ из { $size } б
+lister-not-found = Не найдено: { $query }
+settings-internal-viewer = Встроенный просмотрщик (F3)
+help-lister = Просмотр (F3)
+help-lister-scroll = Прокрутка
+help-lister-modes = Текст / hex / картинка
+help-lister-step = Следующий / предыдущий файл
+help-lister-find = Поиск
+help-lister-again = Найти следующее / предыдущее
+help-lister-close = Закрыть
