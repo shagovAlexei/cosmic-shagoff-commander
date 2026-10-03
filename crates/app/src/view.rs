@@ -1,5 +1,5 @@
 //! TC layout: per pane a path line, column headers and a virtualized file list; one status line
-//! (each pane's half) and the F-keys in the footer.
+//! (each pane's half), the command line and the F-keys in the footer.
 
 use crate::app::{App, Message, ROW_H, StatusKind, Tab};
 use crate::fl;
@@ -309,10 +309,43 @@ pub fn footer(app: &App) -> Element<'_, Message> {
             .padding([2, 6])
             .height(Length::Shrink)
     ];
+    if app.config.show_cmdline {
+        col = col.push(command_line(app));
+    }
     if app.config.show_fkeys {
         col = col.push(fkey_bar());
     }
     col.into()
+}
+
+/// TC `path>`: the active panel's dir and the command field.
+fn command_line(app: &App) -> Element<'_, Message> {
+    let cwd = app.panes[app.active]
+        .active()
+        .panel
+        .cwd()
+        .display()
+        .to_string();
+    // A deep path must leave the field room: it is cut in the middle.
+    let prompt = container(
+        text(format!("{cwd}>"))
+            .size(TEXT)
+            .wrapping(Wrapping::None)
+            .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
+    )
+    .max_width(420.0);
+    row![
+        prompt,
+        widget::text_input("", &app.cmdline)
+            .id(app.cmd_id.clone())
+            .on_input(Message::CmdInput)
+            .on_submit(|_| Message::CmdSubmit)
+            .size(TEXT)
+    ]
+    .spacing(6)
+    .padding([0, 6, 2, 6])
+    .align_y(Alignment::Center)
+    .into()
 }
 
 /// The last message, else the entry under the active panel's cursor (right-aligned).

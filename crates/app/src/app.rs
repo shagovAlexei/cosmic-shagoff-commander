@@ -16,6 +16,7 @@ use cosmic::iced::{Subscription, event, keyboard};
 use cosmic::{Application, Element, widget};
 use shagoff_core::archive::{self, Format};
 use shagoff_core::clipboard::Kind as ClipKind;
+use shagoff_core::cmdline::{self, Cmd};
 use shagoff_core::drives::{self, Drive};
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::history::History;
@@ -213,6 +214,10 @@ pub struct App {
     pub(crate) edited: Vec<Edited>,
     /// Ctrl+F in progress: (address, cancel flag set by Esc).
     pub(crate) connecting: Option<(String, Arc<AtomicBool>)>,
+    /// Command line under the panels (TC `path>`): its text, field id, history (last first).
+    pub cmdline: String,
+    pub(crate) cmd_id: widget::Id,
+    pub commands: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -306,6 +311,10 @@ pub enum Message {
     Pasted(Option<(ClipKind, Vec<PathBuf>)>),
     /// Enter in that field.
     SearchSubmit,
+    /// Command line: text edited, Enter (Shift+Enter: in a terminal), a character typed in the panel.
+    CmdInput(String),
+    CmdSubmit,
+    CmdType(char),
     /// The watched dir of this pane's active tab changed.
     Changed(usize),
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
@@ -489,6 +498,9 @@ impl App {
             lister: None,
             edited: Vec::new(),
             connecting: None,
+            cmdline: String::new(),
+            cmd_id: widget::Id::unique(),
+            commands: state.commands.clone(),
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -1041,6 +1053,8 @@ impl App {
                         }
                     } else if let Some((_, cancel)) = &self.connecting {
                         cancel.store(true, Ordering::Relaxed);
+                    } else if !self.cmdline.is_empty() {
+                        self.cmdline.clear();
                     } else {
                         self.panes[self.active].active_mut().panel.set_filter(None);
                     }
@@ -1097,11 +1111,35 @@ impl App {
             }
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
+            // Quick search, viewer search or command line; not a dialog's or a settings field.
             Message::FieldKey(action) => {
-                // Not from a settings field: the viewer is behind the drawer.
-                let viewer = self.lister.is_some() && self.drawer.is_none();
-                if (self.search.is_some() || viewer) && self.dialog.is_none() {
+                if self.dialog.is_none() && self.drawer.is_none() {
                     return self.handle(Message::Key(action));
+                }
+            }
+            Message::CmdInput(text) => {
+                self.cmdline = text;
+                // Erased: the panel gets its keys back (Backspace goes up again).
+                if self.cmdline.is_empty() {
+                    return unfocus();
+                }
+            }
+            // The field takes Ctrl+Enter as Enter: here it inserts the name / path under the cursor.
+            Message::CmdSubmit if self.mods.control() => {
+                let action = if self.mods.shift() {
+                    Action::CmdPath
+                } else {
+                    Action::CmdName
+                };
+                return self
+                    .cmd_action(self.active, action)
+                    .unwrap_or_else(Task::none);
+            }
+            Message::CmdSubmit => return self.cmd_run(self.mods.shift()),
+            Message::CmdType(c) => {
+                if self.cmd_ready() {
+                    self.cmdline.push(c);
+                    return self.cmd_focus();
                 }
             }
             Message::SearchSubmit => {
@@ -1293,6 +1331,7 @@ impl App {
             }),
             active: self.active,
             find: self.find.clone(),
+            commands: self.commands.clone(),
         };
         if state == self.saved {
             return;
@@ -1380,6 +1419,9 @@ impl App {
         {
             self.say(StatusKind::Error, fl!("results-unsupported"));
             return Task::none();
+        }
+        if let Some(task) = self.cmd_action(side, action) {
+            return task;
         }
         // Backspace / ".." in search results: back to the dir that was searched.
         let t = self.panes[side].active_mut();
@@ -1577,7 +1619,12 @@ impl App {
             | Action::Settings
             | Action::Donate
             | Action::CopyNames
-            | Action::CopyPaths => {} // handled above
+            | Action::CopyPaths
+            | Action::CmdName
+            | Action::CmdPath
+            | Action::CmdCwd
+            | Action::CmdPrevious
+            | Action::CmdHistory => {} // handled above
             Action::Connect => {} // always a dialog
             Action::HistoryBack | Action::HistoryForward => {
                 let history = &mut self.panes[side].active_mut().history;
@@ -2937,6 +2984,7 @@ impl App {
             }
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
+            Setting::ShowCmdline(b) => c.show_cmdline = b,
             Setting::InternalViewer(b) => c.internal_viewer = b,
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::LastTabHome(b) => {
@@ -3034,6 +3082,13 @@ impl App {
         else {
             return Task::none();
         };
+        if kind == ListKind::Commands {
+            if let Some(item) = items.get(i) {
+                self.cmdline.clone_from(&item.label);
+                return self.cmd_focus();
+            }
+            return Task::none();
+        }
         if kind == ListKind::Hotlist && i == 0 {
             let cwd = self.panes[side].active().panel.cwd().to_path_buf();
             if !self.config.hotlist.iter().any(|e| e.path == cwd) {
@@ -3124,6 +3179,107 @@ impl App {
         Task::none()
     }
 
+    /// The command line takes input: shown, and nothing modal or in front of the panels.
+    fn cmd_ready(&self) -> bool {
+        self.config.show_cmdline
+            && self.dialog.is_none()
+            && self.drawer.is_none()
+            && self.lister.is_none()
+            && self.search.is_none()
+            && self.job.is_none()
+    }
+
+    /// Command line keys and the panel keys it changes (Enter, Space with text typed).
+    fn cmd_action(&mut self, side: usize, action: Action) -> Option<Task<Message>> {
+        if !self.cmd_ready() {
+            return matches!(
+                action,
+                Action::CmdName
+                    | Action::CmdPath
+                    | Action::CmdCwd
+                    | Action::CmdPrevious
+                    | Action::CmdHistory
+            )
+            .then(Task::none);
+        }
+        let panel = &self.panes[side].active().panel;
+        let word = match action {
+            Action::Enter if !self.cmdline.trim().is_empty() => return Some(self.cmd_run(false)),
+            Action::Mark if !self.cmdline.is_empty() => {
+                self.cmdline.push(' ');
+                None
+            }
+            Action::CmdName | Action::CmdPath => {
+                let e = panel.current().filter(|e| e.name != PARENT)?;
+                Some(cmdline::quote(&if action == Action::CmdPath {
+                    panel.cwd().join(&e.os_name).display().to_string()
+                } else {
+                    e.name.clone()
+                }))
+            }
+            Action::CmdCwd => Some(cmdline::quote(&panel.cwd().display().to_string())),
+            Action::CmdPrevious => {
+                self.cmdline = cmdline::previous(&self.commands, &self.cmdline)?;
+                None
+            }
+            Action::CmdHistory => {
+                if !self.commands.is_empty() {
+                    self.dialog = Some(Dialog::List {
+                        kind: ListKind::Commands,
+                        side,
+                        cursor: 0,
+                        items: (self.commands.iter())
+                            .map(|c| ListItem {
+                                label: c.clone(),
+                                path: PathBuf::new(),
+                                mount: false,
+                            })
+                            .collect(),
+                    });
+                }
+                return Some(Task::none());
+            }
+            _ => return None,
+        };
+        if let Some(w) = word {
+            self.cmdline = cmdline::append(&self.cmdline, &w);
+        }
+        Some(self.cmd_focus())
+    }
+
+    /// Focus the command line with the cursor at the end (an already focused field keeps its cursor).
+    fn cmd_focus(&self) -> Task<Message> {
+        Task::batch([
+            widget::text_input::focus(self.cmd_id.clone()),
+            widget::text_input::move_cursor_to_end(self.cmd_id.clone()),
+        ])
+    }
+
+    /// Run the command line in the active panel's dir (`cd` changes the dir instead).
+    fn cmd_run(&mut self, terminal: bool) -> Task<Message> {
+        if !self.cmd_ready() {
+            return Task::none();
+        }
+        let line = std::mem::take(&mut self.cmdline);
+        let side = self.active;
+        let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+        let Some(cmd) = cmdline::parse(&line, &cwd, &self.home) else {
+            return unfocus();
+        };
+        self.commands = cmdline::remember(&self.commands, &line);
+        let task = match cmd {
+            Cmd::Cd(dir) => self.go_to(side, dir),
+            Cmd::Run(line) => {
+                let term = terminal.then_some(self.config.terminal.as_slice());
+                if let Err(e) = spawn_in(&cmdline::argv(&line, &cwd, term), &cwd) {
+                    self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
+                }
+                Task::none()
+            }
+        };
+        Task::batch([unfocus(), task])
+    }
+
     fn go_to(&mut self, side: usize, path: PathBuf) -> Task<Message> {
         self.active = side;
         self.load(side, path, None)
@@ -3180,7 +3336,8 @@ fn route_event(
             ..
         }) if status == event::Status::Ignored => keymap::action(&key, physical_key, modifiers)
             .map(Message::Key)
-            .or_else(|| keymap::lister_key(&key, physical_key, modifiers).map(Message::ListerKey)),
+            .or_else(|| keymap::lister_key(&key, physical_key, modifiers).map(Message::ListerKey))
+            .or_else(|| typed_char(&key, modifiers).map(Message::CmdType)),
         // A focused text field captures every key but Up/Down/Tab; pass on the ones it has no use for.
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
@@ -3248,6 +3405,25 @@ fn not_for_text(key: &keyboard::Key, physical: keyboard::key::Physical, mods: Mo
             mods.control() && !clipboard
         }
     }
+}
+
+/// A printable character typed without Ctrl/Alt/Super: TC sends it to the command line.
+fn typed_char(key: &keyboard::Key, mods: Modifiers) -> Option<char> {
+    let keyboard::Key::Character(s) = key else {
+        return None;
+    };
+    let mut chars = s.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if !c.is_control() && !(mods.control() || mods.alt() || mods.logo()) => {
+            Some(c)
+        }
+        _ => None,
+    }
+}
+
+/// Take the keyboard focus from every text field.
+fn unfocus() -> Task<Message> {
+    widget::text_input::focus(widget::Id::unique())
 }
 
 fn plan_error(e: &PlanError) -> String {
@@ -3365,9 +3541,28 @@ fn dir_input(dir: &Path) -> String {
 /// Run `argv` without blocking the UI or leaving a zombie.
 fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
     let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
-    let mut child = std::process::Command::new(prog).args(args).spawn()?;
-    std::thread::spawn(move || child.wait());
+    let child = std::process::Command::new(prog).args(args).spawn()?;
+    reap(child);
     Ok(())
+}
+
+/// A command line in `dir`, its output dropped (TC closes the console too).
+fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
+    use std::process::Stdio;
+    let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
+    let child = std::process::Command::new(prog)
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    reap(child);
+    Ok(())
+}
+
+fn reap(mut child: std::process::Child) {
+    std::thread::spawn(move || child.wait());
 }
 
 #[cfg(test)]
@@ -5768,6 +5963,171 @@ mod tests {
             let failed = MountError::Failed("target is busy".into());
             let _ = app.update(Message::Unmounted("/media/x".into(), Err(failed)));
             assert_eq!(app.msg(), Some("target is busy"));
+        }
+    }
+
+    mod cmdline {
+        use super::*;
+
+        /// A key no widget took (the panel has focus).
+        fn typed(key: &str, code: Code, mods: Modifiers) -> Option<Message> {
+            let event = cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Character(key.into()),
+                modified_key: Key::Character(key.into()),
+                physical_key: Physical::Code(code),
+                location: Location::Standard,
+                modifiers: mods,
+                text: None,
+                repeat: false,
+            });
+            route_event(
+                event,
+                event::Status::Ignored,
+                cosmic::iced::window::Id::unique(),
+            )
+        }
+
+        fn at(dir: &Path) -> App {
+            let mut app = app_with(Config::default(), State::default());
+            listed_at(&mut app, 0, dir);
+            app
+        }
+
+        #[test]
+        fn letters_go_to_the_command_line_space_only_when_it_has_text() {
+            assert!(matches!(
+                typed("l", Code::KeyL, Modifiers::empty()),
+                Some(Message::CmdType('l'))
+            ));
+            assert!(matches!(
+                typed("L", Code::KeyL, Modifiers::SHIFT),
+                Some(Message::CmdType('L'))
+            ));
+            assert!(typed("l", Code::KeyL, Modifiers::CTRL).is_none());
+            let tmp = tempfile::tempdir().unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::Key(Action::Mark)); // empty: Space marks
+            assert_eq!(app.cmdline, "");
+            let _ = app.update(Message::CmdType('l'));
+            let _ = app.update(Message::Key(Action::Mark));
+            let _ = app.update(Message::CmdType('s'));
+            assert_eq!(app.cmdline, "l s");
+        }
+
+        #[test]
+        fn hidden_command_line_takes_nothing() {
+            let config = Config {
+                show_cmdline: false,
+                ..Config::default()
+            };
+            let mut app = app_with(config, State::default());
+            let _ = app.update(Message::CmdType('l'));
+            let _ = app.update(Message::Key(Action::CmdCwd));
+            assert_eq!(app.cmdline, "");
+        }
+
+        #[test]
+        fn cd_changes_the_panel_dir_and_is_remembered() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir(tmp.path().join("sub")).unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::CmdInput("cd sub".into()));
+            let _ = app.update(Message::CmdSubmit);
+            assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+            assert_eq!(app.cmdline, "");
+            assert_eq!(app.commands, ["cd sub"]);
+        }
+
+        #[test]
+        fn enter_in_the_panel_runs_a_typed_line() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir(tmp.path().join("sub")).unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::CmdInput("cd sub".into()));
+            let _ = app.update(Message::Key(Action::Enter));
+            assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+        }
+
+        #[test]
+        fn a_command_runs_in_the_panel_dir() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::CmdInput("touch made".into()));
+            let _ = app.update(Message::CmdSubmit);
+            let made = tmp.path().join("made");
+            for _ in 0..100 {
+                if made.exists() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            assert!(made.exists());
+            assert_eq!(app.msg(), None);
+        }
+
+        #[test]
+        fn ctrl_enter_is_for_the_name_not_a_submit() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::write(tmp.path().join("a b.txt"), "").unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::Key(Action::Down)); // off ".."
+            let _ = app.update(Message::CmdInput("cat".into()));
+            let _ = app.update(Message::Modifiers(Modifiers::CTRL));
+            let _ = app.update(Message::CmdSubmit); // the field reports Ctrl+Enter as Enter
+            assert_eq!(app.cmdline, "cat 'a b.txt'");
+            let _ = app.update(Message::Modifiers(Modifiers::CTRL | Modifiers::SHIFT));
+            let _ = app.update(Message::CmdSubmit);
+            let full = tmp.path().join("a b.txt").display().to_string();
+            assert_eq!(app.cmdline, format!("cat 'a b.txt' '{full}'"));
+        }
+
+        #[test]
+        fn parent_row_inserts_nothing() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::Key(Action::CmdName));
+            assert_eq!(app.cmdline, "");
+        }
+
+        #[test]
+        fn ctrl_e_and_alt_f8_bring_back_commands() {
+            let tmp = tempfile::tempdir().unwrap();
+            let state = State {
+                commands: vec!["make".into(), "ls".into()],
+                ..State::default()
+            };
+            let mut app = app_with(Config::default(), state);
+            listed_at(&mut app, 0, tmp.path());
+            let _ = app.update(Message::Key(Action::CmdPrevious));
+            assert_eq!(app.cmdline, "make");
+            let _ = app.update(Message::FieldKey(Action::CmdPrevious));
+            assert_eq!(app.cmdline, "ls");
+            let _ = app.update(Message::FieldKey(Action::CmdHistory));
+            let _ = app.update(Message::Key(Action::Down));
+            let _ = app.update(Message::Key(Action::Enter));
+            assert!(app.dialog.is_none());
+            assert_eq!(app.cmdline, "ls");
+            let _ = app.update(Message::ListPick(0));
+            assert_eq!(app.cmdline, "ls"); // no dialog: nothing picked
+        }
+
+        #[test]
+        fn escape_clears_the_line() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::CmdInput("rm -rf x".into()));
+            let _ = app.update(Message::DialogCancel);
+            assert_eq!(app.cmdline, "");
+        }
+
+        #[test]
+        fn f_keys_from_the_command_line_reach_the_panel() {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::write(tmp.path().join("f"), "").unwrap();
+            let mut app = at(tmp.path());
+            let _ = app.update(Message::Key(Action::Down));
+            let _ = app.update(Message::CmdInput("x".into()));
+            let _ = app.update(Message::FieldKey(Action::Copy));
+            assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
         }
     }
 }

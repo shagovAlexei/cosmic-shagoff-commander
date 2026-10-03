@@ -85,6 +85,13 @@ pub enum Action {
     Connect,
     /// Ctrl+Shift+F: unmount / eject the drive of the active panel (TC: FTP disconnect).
     Disconnect,
+    /// Command line: name / full path under the cursor (Ctrl+Enter / Ctrl+Shift+Enter), the
+    /// panel's path (Ctrl+P), the previous command (Ctrl+E), the history list (Alt+F8).
+    CmdName,
+    CmdPath,
+    CmdCwd,
+    CmdPrevious,
+    CmdHistory,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -99,6 +106,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             Key::Named(Named::F2) if mods == Modifiers::ALT => Some(Action::Drives(1)),
             Key::Named(Named::F5) if mods == Modifiers::ALT => Some(Action::Pack),
             Key::Named(Named::F7) if mods == Modifiers::ALT => Some(Action::FindFiles),
+            Key::Named(Named::F8) if mods == Modifiers::ALT => Some(Action::CmdHistory),
             Key::Named(Named::F9) if mods == Modifiers::ALT => Some(Action::Unpack),
             Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Action::HistoryBack),
             Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
@@ -126,6 +134,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::Home, false, false) => Action::Home,
             (Named::End, false, false) => Action::End,
             (Named::Enter, false, false) => Action::Enter,
+            (Named::Enter, true, false) => Action::CmdName,
+            (Named::Enter, true, true) => Action::CmdPath,
             (Named::Backspace, false, false) | (Named::PageUp, true, false) => Action::Parent,
             // TC: Ctrl+PgDn enters the dir or archive under the cursor.
             (Named::PageDown, true, false) => Action::Enter,
@@ -170,6 +180,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyX), true, false) => Some(Action::ClipCut),
         (Physical::Code(Code::KeyV), true, false) => Some(Action::ClipPaste),
         (Physical::Code(Code::KeyM), true, false) => Some(Action::MultiRename),
+        (Physical::Code(Code::KeyP), true, false) => Some(Action::CmdCwd),
+        (Physical::Code(Code::KeyE), true, false) => Some(Action::CmdPrevious),
         (Physical::Code(Code::Space), false, false) => Some(Action::Mark),
         (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
         (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
@@ -397,6 +409,19 @@ mod tests {
         assert_eq!(named(Named::F4, ALT), None); // Alt+F4 stays with the compositor
         assert_eq!(chr("a", Code::KeyA, ALT), Some(Action::QuickSearch('a')));
         assert_eq!(named(Named::F1, Modifiers::LOGO), None);
+    }
+
+    #[test]
+    fn command_line_keys() {
+        assert_eq!(named(Named::Enter, CTRL), Some(Action::CmdName));
+        assert_eq!(
+            named(Named::Enter, CTRL | Modifiers::SHIFT),
+            Some(Action::CmdPath)
+        );
+        assert_eq!(named(Named::F8, ALT), Some(Action::CmdHistory));
+        assert_eq!(chr("з", Code::KeyP, CTRL), Some(Action::CmdCwd));
+        assert_eq!(chr("e", Code::KeyE, CTRL), Some(Action::CmdPrevious));
+        assert_eq!(named(Named::Enter, Modifiers::SHIFT), None); // the field's own Enter
     }
 
     #[test]
