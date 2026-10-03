@@ -6,6 +6,7 @@ mod find;
 mod i18n;
 mod jobs;
 mod keymap;
+mod menu;
 mod view;
 mod watcher;
 

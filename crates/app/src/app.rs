@@ -296,6 +296,15 @@ impl Application for App {
         Subscription::batch(subs)
     }
 
+    /// The title bar's × and Alt+F4: the same temp cleanup as Exit (libcosmic exits after it).
+    fn on_close_requested(&self, _id: cosmic::iced::window::Id) -> Option<Message> {
+        Some(Message::Exit)
+    }
+
+    fn header_start(&self) -> Vec<Element<'_, Message>> {
+        vec![crate::menu::bar(self.config.show_hidden)]
+    }
+
     fn view(&self) -> Element<'_, Message> {
         crate::view::view(self)
     }
@@ -3954,6 +3963,22 @@ mod tests {
             app.panes[0].active().error.as_deref(),
             Some(fl!("diff-in-archive").as_str())
         );
+    }
+
+    #[test]
+    fn menu_item_does_what_its_key_does() {
+        use cosmic::widget::menu::Action as _;
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(crate::menu::MenuAct::Key(Action::Mkdir).message());
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+    }
+
+    #[test]
+    fn window_close_cleans_up_like_exit() {
+        // Alt+F4 / the title bar's ×: same temp cleanup as the Exit button and menu item.
+        let app = app_with(Config::default(), State::default());
+        let id = cosmic::iced::window::Id::unique();
+        assert!(matches!(app.on_close_requested(id), Some(Message::Exit)));
     }
 
     mod mount_tests {
