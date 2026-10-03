@@ -313,3 +313,4 @@
 | `regression_copy_block_leaves_other_lines_byte_for_byte` | Перенос блока переписывал концы строк во всём файле со смешанными CRLF/LF | 25 |
 | `regression_copy_block_uses_the_rows_shown` | Перенос пересчитывал сравнение и мог взять не тот блок, что на экране | 25 |
 | `regression_save_keeps_links_and_refuses_what_it_should` | «Сохранить» заменял ссылку файлом, затирал изменения с диска, писал файл только для чтения | 25 |
+| `regression_password_never_saved` | Пароль с `#`, `/` или `?` ломал разбор адреса, и адрес сохранялся вместе с паролем | 26 |

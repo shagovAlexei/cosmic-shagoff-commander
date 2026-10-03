@@ -714,12 +714,12 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             };
             if !saved.is_empty() {
                 col = col.push(widget::text::caption(fl!("connect-saved")));
-                for (i, s) in saved.iter().enumerate() {
+                for s in saved {
                     col = col.push(
                         row![
                             pick(s.clone(), s),
                             widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
-                                .on_press(Message::ConnectForget(i)),
+                                .on_press(Message::ConnectForget(s.clone())),
                         ]
                         .align_y(cosmic::iced::Alignment::Center),
                     );

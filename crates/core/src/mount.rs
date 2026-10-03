@@ -8,8 +8,8 @@ use std::io::{Read, Write};
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 /// A volume with a unix device that udisks can mount.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,21 +36,29 @@ pub enum Error {
 /// Ctrl+F remembers this many addresses.
 pub const MAX_SAVED: usize = 20;
 
-/// `url` without a password (`sftp://bob:pw@host` → `sftp://bob@host`): addresses are saved in
-/// the plain-text config. Anything that does not parse is kept as typed.
-pub fn without_password(url: &str) -> String {
-    match url::Url::parse(url) {
-        Ok(mut u) if u.password().is_some() => {
-            let _ = u.set_password(None);
-            u.to_string()
-        }
-        _ => url.to_string(),
-    }
+/// `url` as typed, minus a password in it (`sftp://bob:pw@host` → `sftp://bob@host`): addresses
+/// are saved in the plain-text config. By hand, not by URL parsing: a password with `#`, `/` or
+/// `?` breaks parsing, and that must not let it through. `None`: no `scheme://` but something
+/// that may hold a password — not saved at all.
+pub fn without_password(url: &str) -> Option<String> {
+    let url = url.trim();
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return (!url.contains('@')).then(|| url.to_string());
+    };
+    // The user part ends at the last '@' (a password may contain '/', '#', '?', even '@').
+    let Some(at) = rest.rfind('@') else {
+        return Some(url.to_string());
+    };
+    let user = &rest[..at];
+    let user = user.split_once(':').map_or(user, |(u, _)| u);
+    Some(format!("{scheme}://{user}{}", &rest[at..]))
 }
 
 /// The saved addresses after connecting to `url`: it goes first (once), at most `MAX_SAVED`.
 pub fn remember(saved: &[String], url: &str) -> Vec<String> {
-    let url = without_password(url);
+    let Some(url) = without_password(url) else {
+        return saved.to_vec();
+    };
     std::iter::once(url.clone())
         .chain(saved.iter().filter(|s| **s != url).cloned())
         .take(MAX_SAVED)
@@ -232,7 +240,8 @@ fn talk_until(
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<String, Error> {
     let failed = |e: std::io::Error| Error::Failed(e.to_string());
-    // Its own process group: cancel kills whatever it started too (they hold the pipes open).
+    // Its own process group: cancel kills it and anything it started (a child holding the pipes
+    // open would keep the read below waiting).
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -247,10 +256,9 @@ fn talk_until(
         let _ = stderr.read_to_string(&mut s);
         s
     });
-    // Killing the child ends the blocking read below (EOF).
-    let child = Arc::new(Mutex::new(child));
+    // Killing the group ends the blocking read below (EOF).
     let done = Arc::new(AtomicBool::new(false));
-    let group = rustix::process::Pid::from_raw(child.lock().map_or(0, |c| c.id()) as i32);
+    let group = rustix::process::Pid::from_raw(child.id() as i32);
     if let (Some(c), Some(group)) = (cancel, group) {
         let (c, done) = (c.clone(), done.clone());
         std::thread::spawn(move || {
@@ -264,13 +272,6 @@ fn talk_until(
             }
         });
     }
-    let wait = || {
-        child
-            .lock()
-            .map_err(|_| Error::Failed("lock".into()))?
-            .wait()
-            .map_err(failed)
-    };
     // `since`: output after our last reply (a prompt answered with echo gets no newline).
     let (mut out, mut since, mut buf, mut asked) = (Vec::new(), 0, [0; 4096], false);
     let aborted = loop {
@@ -300,17 +301,16 @@ fn talk_until(
     };
     drop(stdin);
     done.store(true, Ordering::Relaxed);
-    if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-        let _ = child.lock().map(|mut ch| ch.kill());
-        let _ = wait();
-        return Err(Error::Cancelled);
-    }
     if let Some(e) = aborted {
-        let _ = child.lock().map(|mut ch| ch.kill());
-        let _ = wait();
+        let _ = child.kill();
+        let _ = child.wait();
         return Err(e);
     }
-    let status = wait()?;
+    let status = child.wait().map_err(failed)?;
+    // Esc right after it succeeded: the mount is there, report it as done.
+    if !status.success() && cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        return Err(Error::Cancelled);
+    }
     let errors = errors.join().unwrap_or_default();
     let out = String::from_utf8_lossy(&out).into_owned();
     if status.success() {
@@ -581,7 +581,25 @@ Mount(0): nas -> sftp://nas/
         let many: Vec<String> = (0..30).map(|i| format!("ftp://h{i}/")).collect();
         let r = remember(&many, "ftp://new/");
         assert_eq!((r.len(), r[0].as_str()), (MAX_SAVED, "ftp://new/"));
-        assert_eq!(without_password("not a url"), "not a url");
+        assert_eq!(without_password("not a url").as_deref(), Some("not a url"));
+    }
+
+    #[test]
+    fn regression_password_never_saved() {
+        // Characters that break URL parsing must not let the password through.
+        for (typed, saved) in [
+            ("sftp://bob:p#ss@host/", Some("sftp://bob@host/")),
+            ("sftp://bob:p/ss@host/dir", Some("sftp://bob@host/dir")),
+            (
+                "smb://DOM;bob:pw@nas/share",
+                Some("smb://DOM;bob@nas/share"),
+            ),
+            ("ftp://Host", Some("ftp://Host")), // kept as typed, not normalised
+            ("bob:pw@host", None),              // no scheme: not saved at all
+        ] {
+            assert_eq!(without_password(typed).as_deref(), saved, "{typed}");
+        }
+        assert!(remember(&[], "bob:pw@host").is_empty());
     }
 
     #[test]
@@ -608,7 +626,8 @@ Mount(0): nas -> sftp://nas/
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
         });
         let t = std::time::Instant::now();
-        let r = talk_until(sh("sleep 30"), "", Some(&cancel));
+        // "; true" makes sh fork: `sleep` is a grandchild holding the pipes, killed with the group.
+        let r = talk_until(sh("sleep 30; true"), "", Some(&cancel));
         assert_eq!(r, Err(Error::Cancelled));
         assert!(t.elapsed() < std::time::Duration::from_secs(5));
     }

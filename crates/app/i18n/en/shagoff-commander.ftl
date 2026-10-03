@@ -308,3 +308,4 @@ connect-browse = Browse network
 connect-browsing = Looking…
 connect-none-found = Nothing found on the network
 connect-cancelled = Connecting cancelled
+connect-busy = Already connecting: Esc stops it

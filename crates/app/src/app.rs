@@ -329,8 +329,8 @@ pub enum Message {
     Connected(usize, String, Result<PathBuf, mount::Error>),
     /// Ctrl+F: a saved or found address into the field.
     ConnectPick(String),
-    /// Ctrl+F: forget saved address i.
-    ConnectForget(usize),
+    /// Ctrl+F: forget this saved address.
+    ConnectForget(String),
     ConnectBrowse,
     /// What "Browse network" found.
     Browsed(Result<Vec<(String, String)>, mount::Error>),
@@ -1033,14 +1033,14 @@ impl App {
                         }
                     } else if self.job.is_some() {
                         self.cancel_job();
-                    } else if let Some((_, cancel)) = &self.connecting {
-                        cancel.store(true, Ordering::Relaxed);
                     } else if let Some(l) = &mut self.lister {
                         if l.searching {
                             l.searching = false;
                         } else {
                             self.lister = None;
                         }
+                    } else if let Some((_, cancel)) = &self.connecting {
+                        cancel.store(true, Ordering::Relaxed);
                     } else {
                         self.panes[self.active].active_mut().panel.set_filter(None);
                     }
@@ -1177,6 +1177,9 @@ impl App {
                 }
                 if result.is_ok() {
                     let list = mount::remember(&self.config.connections, &url);
+                    if let Some(Dialog::Connect { saved, .. }) = &mut self.dialog {
+                        saved.clone_from(&list);
+                    }
                     self.save_connections(list);
                 }
                 return self.handle(Message::Mounted(side, result));
@@ -1187,11 +1190,10 @@ impl App {
                 }
                 return widget::text_input::focus(self.input_id.clone());
             }
-            Message::ConnectForget(i) => {
+            // By value: the config may have changed since the dialog opened.
+            Message::ConnectForget(url) => {
                 let mut list = self.config.connections.clone();
-                if i < list.len() {
-                    list.remove(i);
-                }
+                list.retain(|u| *u != url);
                 if let Some(Dialog::Connect { saved, .. }) = &mut self.dialog {
                     saved.clone_from(&list);
                 }
@@ -2015,6 +2017,11 @@ impl App {
             } => {
                 let url = url.trim().to_string();
                 if url.is_empty() {
+                    return Task::none();
+                }
+                // One at a time: Esc must be able to stop the one running.
+                if self.connecting.is_some() {
+                    self.say(StatusKind::Info, fl!("connect-busy"));
                     return Task::none();
                 }
                 self.say(StatusKind::Busy, fl!("connecting"));
@@ -5694,6 +5701,11 @@ mod tests {
             // Esc while connecting stops it.
             let _ = app.update(Message::DialogSubmit);
             let flag = app.connecting.as_ref().unwrap().1.clone();
+            // A second one meanwhile is refused (its flag would replace this one).
+            let _ = app.update(Message::Key(Action::Connect));
+            let _ = app.update(Message::DialogSubmit);
+            assert_eq!(app.msg(), Some(fl!("connect-busy").as_str()));
+            assert!(Arc::ptr_eq(&flag, &app.connecting.as_ref().unwrap().1));
             let _ = app.update(Message::DialogCancel);
             assert!(flag.load(Ordering::Relaxed));
             let gone = Err(MountError::Cancelled);
@@ -5711,7 +5723,7 @@ mod tests {
             };
             let mut app = app_with(config, State::default());
             let _ = app.update(Message::Key(Action::Connect));
-            let _ = app.update(Message::ConnectForget(0));
+            let _ = app.update(Message::ConnectForget("smb://a/".into()));
             assert_eq!(app.config.connections, ["smb://b/"]);
             let found = vec![("nas".to_string(), "sftp://nas.local/".to_string())];
             let _ = app.update(Message::Browsed(Ok(found.clone())));
