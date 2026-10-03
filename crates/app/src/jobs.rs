@@ -3,6 +3,7 @@
 use cosmic::iced::futures::channel::mpsc as fmpsc;
 use shagoff_core::archive::{self, Format};
 use shagoff_core::ops::{self, ErrorChoice, FileInfo, Handler, Method, Report, Resolution};
+use shagoff_core::repack::{self, Change};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
@@ -40,6 +41,20 @@ pub enum Job {
         inner: PathBuf,
         names: Vec<PathBuf>,
         dest: PathBuf,
+    },
+    /// F6 out of an archive: extract, then delete from the archive what came out without skips.
+    ExtractMove {
+        archive: PathBuf,
+        inner: PathBuf,
+        names: Vec<PathBuf>,
+        dest: PathBuf,
+    },
+    /// F5 / F6 / F7 / F8 / Shift+F6 / F4 inside an archive: rewrite it with the change.
+    Repack {
+        archive: PathBuf,
+        change: Change,
+        /// F6 into the archive: delete the sources that were added completely.
+        move_sources: bool,
     },
 }
 
@@ -163,6 +178,51 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
                 names,
                 dest,
             } => archive::extract(&archive, &inner, &names, &dest, &mut h),
+            Job::ExtractMove {
+                archive,
+                inner,
+                names,
+                dest,
+            } => {
+                let r = archive::extract(&archive, &inner, &names, &dest, &mut h);
+                let entries: Vec<PathBuf> = r
+                    .completed
+                    .iter()
+                    .filter_map(|p| p.strip_prefix(&archive).ok().map(Path::to_path_buf))
+                    .collect();
+                if r.cancelled || entries.is_empty() {
+                    r
+                } else {
+                    let d = repack::modify(&archive, &Change::Delete(entries), &mut h);
+                    Report {
+                        cancelled: d.cancelled,
+                        completed: d.completed,
+                    }
+                }
+            }
+            Job::Repack {
+                archive,
+                change,
+                move_sources,
+            } => {
+                let r = repack::modify(&archive, &change, &mut h);
+                // Never the archive itself (the app refuses that F6 too).
+                let sources: Vec<PathBuf> = r
+                    .completed
+                    .iter()
+                    .filter(|s| !archive.starts_with(s))
+                    .cloned()
+                    .collect();
+                if move_sources && !r.cancelled && !sources.is_empty() {
+                    let d = ops::delete(&sources, true, &mut h);
+                    Report {
+                        cancelled: d.cancelled,
+                        completed: r.completed,
+                    }
+                } else {
+                    r
+                }
+            }
         };
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });
@@ -201,5 +261,74 @@ mod sync_tests {
         assert!(asked);
         assert_eq!(std::fs::read_to_string(r.join("a")).unwrap(), "old");
         assert_eq!(std::fs::read_to_string(r.join("extra")).unwrap(), "keep");
+    }
+
+    /// Run a job to the end, answering nothing (no conflicts or errors expected).
+    fn run(job: Job) -> Arc<Report> {
+        let (_cancel, mut rx) = spawn(job);
+        block_on(async {
+            while let Some(e) = rx.next().await {
+                if let Event::Finished(r) = e {
+                    return r;
+                }
+            }
+            panic!("no Finished")
+        })
+    }
+
+    #[test]
+    fn move_into_and_out_of_an_archive() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("f.txt");
+        std::fs::write(&src, "F").unwrap();
+        let a = d.path().join("a.zip");
+        let r = archive::pack(
+            Format::Zip,
+            d.path(),
+            &[(vec![src.clone()], a.clone())],
+            &mut NoAsk,
+        );
+        assert!(!r.cancelled);
+        std::fs::write(d.path().join("g.txt"), "G").unwrap();
+        // F6 into the archive: g.txt goes in, the source is gone.
+        run(Job::Repack {
+            archive: a.clone(),
+            change: Change::Add {
+                sources: vec![d.path().join("g.txt")],
+                inner: "".into(),
+            },
+            move_sources: true,
+        });
+        assert!(!d.path().join("g.txt").exists());
+        // F6 out of it: f.txt comes out and leaves the archive.
+        std::fs::remove_file(&src).unwrap();
+        let out = d.path().join("out");
+        run(Job::ExtractMove {
+            archive: a.clone(),
+            inner: "".into(),
+            names: vec!["f.txt".into()],
+            dest: out.clone(),
+        });
+        assert_eq!(std::fs::read_to_string(out.join("f.txt")).unwrap(), "F");
+        let names: Vec<String> = archive::list(&a, Path::new(""), true)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["g.txt"]);
+    }
+
+    struct NoAsk;
+    impl Handler for NoAsk {
+        fn progress(&mut self, _: u64, _: u64, _: &Path) {}
+        fn conflict(&mut self, _: &FileInfo, _: &FileInfo) -> Resolution {
+            Resolution::Cancel
+        }
+        fn error(&mut self, _: &Path, _: &std::io::Error) -> ErrorChoice {
+            ErrorChoice::Cancel
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
     }
 }

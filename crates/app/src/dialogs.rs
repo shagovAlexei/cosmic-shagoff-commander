@@ -81,6 +81,12 @@ pub enum Dialog {
     Sync(Box<SyncDlg>),
     /// Ctrl+Shift+D.
     Diff(Box<DiffDlg>),
+    /// A file from an archive was saved in the editor (F4): put it back?
+    UpdateArchive {
+        file: PathBuf,
+        archive: PathBuf,
+        entry: PathBuf,
+    },
     /// Ctrl+F: network location and password.
     Connect {
         side: usize,
@@ -401,6 +407,18 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .secondary_action(cancel)
                 .into()
         }
+        Dialog::UpdateArchive { archive, entry, .. } => widget::dialog()
+            .title(fl!("archive-update-title"))
+            .body(fl!(
+                "archive-update",
+                entry = entry.display().to_string(),
+                archive = archive.display().to_string()
+            ))
+            .primary_action(
+                widget::button::suggested(fl!("archive-update-ok")).on_press(Message::DialogSubmit),
+            )
+            .secondary_action(cancel)
+            .into(),
         Dialog::ConfirmDelete {
             permanent, paths, ..
         } => {
@@ -942,6 +960,7 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
         OpKind::Unpack => fl!("unpacking"),
         OpKind::Extract => fl!("extracting"),
         OpKind::Sync => fl!("syncing"),
+        OpKind::Repack => fl!("repacking"),
     };
     let counts = match job.kind {
         OpKind::Delete => fl!(

@@ -266,3 +266,10 @@ help-lister-step = Next / previous file
 help-lister-find = Find
 help-lister-again = Find next / previous
 help-lister-close = Close
+
+# Writing into archives
+repacking = Updating the archive
+archive-update-title = File changed
+archive-update = { $entry } was saved in the editor. Put it back into { $archive }?
+archive-update-ok = Update the archive
+archive-edit-link = A link inside an archive can't be edited
