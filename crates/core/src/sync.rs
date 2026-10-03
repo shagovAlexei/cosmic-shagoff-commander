@@ -444,6 +444,8 @@ mod tests {
             },
             is_link: false,
             mode: 0o644,
+            owner: None,
+            target: None,
         }
     }
 

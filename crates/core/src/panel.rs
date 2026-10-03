@@ -314,6 +314,8 @@ fn parent_entry() -> Entry {
         kind: Kind::Dir,
         is_link: false,
         mode: 0,
+        owner: None,
+        target: None,
     }
 }
 
@@ -339,6 +341,8 @@ mod tests {
             kind: Kind::File,
             is_link: false,
             mode: 0,
+            owner: None,
+            target: None,
         }
     }
     fn d(name: &str) -> Entry {

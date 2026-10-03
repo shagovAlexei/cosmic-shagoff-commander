@@ -105,6 +105,8 @@ mod tests {
             kind,
             is_link: false,
             mode: 0,
+            owner: None,
+            target: None,
         }
     }
 
