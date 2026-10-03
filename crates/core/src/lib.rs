@@ -10,6 +10,7 @@ pub mod history;
 pub mod launch;
 pub mod listing;
 pub mod mask;
+pub mod mount;
 pub mod multirename;
 pub mod ops;
 pub mod panel;

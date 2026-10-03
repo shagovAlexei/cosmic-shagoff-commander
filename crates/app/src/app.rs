@@ -20,6 +20,7 @@ use shagoff_core::history::History;
 use shagoff_core::launch;
 use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
+use shagoff_core::mount;
 use shagoff_core::multirename::{self, Case, Rule};
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
 use shagoff_core::panel::{self, PARENT, Panel};
@@ -231,6 +232,14 @@ pub enum Message {
     Changed(usize),
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
     Drive(usize, PathBuf),
+    /// Ctrl+F dialog: the password field.
+    ConnectPassword(String),
+    /// Volumes from gio for the drive list of this side.
+    Volumes(usize, Vec<mount::Volume>),
+    /// A volume or network location was mounted (for this side): its path.
+    Mounted(usize, Result<PathBuf, mount::Error>),
+    /// (side that asked, unmounted drive root, result).
+    Unmounted(usize, PathBuf, Result<(), mount::Error>),
     Config(Config),
     Exit,
 }
@@ -779,6 +788,60 @@ impl App {
                     return self.go_to(side, path);
                 }
             }
+            Message::ConnectPassword(s) => {
+                if let Some(Dialog::Connect { password, .. }) = &mut self.dialog {
+                    *password = s;
+                }
+            }
+            Message::Volumes(side, vols) => {
+                if let Some(Dialog::List {
+                    kind: ListKind::Drives,
+                    side: s,
+                    items,
+                    ..
+                }) = &mut self.dialog
+                    && *s == side
+                {
+                    let fresh: Vec<_> = vols
+                        .into_iter()
+                        .filter(|v| v.mount.is_none())
+                        .filter(|v| {
+                            !items
+                                .iter()
+                                .any(|i| i.path.as_os_str() == v.device.as_str())
+                        })
+                        .collect();
+                    items.extend(fresh.into_iter().map(|v| ListItem {
+                        label: v.name,
+                        path: v.device.into(),
+                        mount: true,
+                    }));
+                }
+            }
+            Message::Mounted(side, result) => {
+                self.refresh_mounts();
+                match result {
+                    Ok(path) => {
+                        self.panes[side].active_mut().error = None;
+                        return self.go_to(side, path);
+                    }
+                    Err(e) => self.panes[side].active_mut().error = Some(mount_error(&e)),
+                }
+            }
+            Message::Unmounted(side, root, result) => {
+                self.refresh_mounts();
+                if let Err(e) = result {
+                    self.panes[side].active_mut().error = Some(mount_error(&e));
+                    return Task::none();
+                }
+                self.panes[side].active_mut().error = None;
+                // ponytail: only the active tab of each pane moves; other tabs inside show an error.
+                let inside: Vec<usize> = (0..2)
+                    .filter(|&s| self.panes[s].active().target().starts_with(&root))
+                    .collect();
+                let home = self.home.clone();
+                return Task::batch(inside.into_iter().map(|s| self.load(s, home.clone(), None)));
+            }
             Message::Config(c) => {
                 let hidden_changed = c.show_hidden != self.config.show_hidden;
                 self.config = c;
@@ -900,6 +963,7 @@ impl App {
         match action {
             Action::QuickSearch(c) => return self.quick_search(side, c),
             Action::QuickFilter => return self.quick_filter(side),
+            Action::Disconnect => return self.disconnect(side),
             _ => {}
         }
         if self.read_only(side, action) {
@@ -915,6 +979,15 @@ impl App {
                 self.dialog = Some(d);
                 return self.start_diff();
             }
+            if let Dialog::List {
+                kind: ListKind::Drives,
+                side: s,
+                ..
+            } = d
+            {
+                self.dialog = Some(d);
+                return list_volumes(s);
+            }
             let focus = matches!(
                 d,
                 Dialog::Mask { .. }
@@ -923,6 +996,7 @@ impl App {
                     | Dialog::Pack(_)
                     | Dialog::Unpack { .. }
                     | Dialog::Find(_)
+                    | Dialog::Connect { .. }
             );
             self.dialog = Some(d);
             return if focus {
@@ -1051,7 +1125,8 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
-            Action::QuickSearch(_) | Action::QuickFilter => {} // handled above
+            Action::QuickSearch(_) | Action::QuickFilter | Action::Disconnect => {} // handled above
+            Action::Connect => {} // always a dialog
             Action::HistoryBack | Action::HistoryForward => {
                 let history = &mut self.panes[side].active_mut().history;
                 let step = if action == Action::HistoryBack {
@@ -1232,6 +1307,7 @@ impl App {
                     .map(|p| ListItem {
                         label: format::dir_title(&p),
                         path: p,
+                        mount: false,
                     })
                     .collect(),
             }),
@@ -1247,8 +1323,14 @@ impl App {
                     .map(|d| ListItem {
                         label: d.label.clone(),
                         path: d.path.clone(),
+                        mount: false,
                     })
                     .collect(),
+            }),
+            Action::Connect => Some(Dialog::Connect {
+                side,
+                url: "sftp://".into(),
+                password: String::new(),
             }),
             Action::MultiRename => {
                 let wanted: HashSet<PathBuf> = panel.targets().into_iter().collect();
@@ -1454,6 +1536,21 @@ impl App {
                     move_after: p.move_after,
                 };
                 self.start_job(p.side, OpKind::Pack, job, focus)
+            }
+            Dialog::Connect {
+                side,
+                url,
+                password,
+            } => {
+                let url = url.trim().to_string();
+                if url.is_empty() {
+                    return Task::none();
+                }
+                self.panes[side].active_mut().error = Some(fl!("connecting"));
+                blocking(
+                    move || mount::connect(&url, &password),
+                    move |r| Message::Mounted(side, r),
+                )
             }
             Dialog::Unpack {
                 side,
@@ -1987,10 +2084,36 @@ impl App {
     }
 
     /// Mounts change rarely and procfs never blocks: re-read with every listing.
+    /// gvfs network mounts are dirs under `$XDG_RUNTIME_DIR/gvfs`, not separate mounts.
     fn refresh_mounts(&mut self) {
         if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
             self.drives = drives::parse(&m, &self.home);
         }
+        if let Some(gvfs) = mount::gvfs_root() {
+            self.drives.extend(mount::gvfs_drives(&gvfs));
+        }
+    }
+
+    /// Ctrl+Shift+F: unmount the removable or network drive holding the active panel. Not while a
+    /// job runs: it may be copying from or to that drive.
+    fn disconnect(&mut self, side: usize) -> Task<Message> {
+        let cwd = self.panes[side].active().target();
+        let gvfs = mount::gvfs_root();
+        let Some(i) = drives::containing(&self.drives, &cwd)
+            .filter(|&i| mount::removable(&self.drives[i].path, gvfs.as_deref()))
+        else {
+            return Task::none();
+        };
+        if self.job.is_some() {
+            return Task::none();
+        }
+        let root = self.drives[i].path.clone();
+        self.panes[side].active_mut().error = Some(fl!("unmounting"));
+        let r = root.clone();
+        blocking(
+            move || mount::unmount(&r),
+            move |res| Message::Unmounted(side, root.clone(), res),
+        )
     }
 
     /// Enter / click on entry `i` of the open list.
@@ -2014,6 +2137,14 @@ impl App {
             return Task::none();
         }
         match items.get(i) {
+            Some(item) if item.mount => {
+                self.panes[side].active_mut().error = Some(fl!("mounting"));
+                let device = item.path.to_string_lossy().into_owned();
+                blocking(
+                    move || mount::mount_device(&device),
+                    move |r| Message::Mounted(side, r),
+                )
+            }
             Some(item) => self.go_to(side, item.path.clone()),
             None => Task::none(),
         }
@@ -2024,10 +2155,12 @@ impl App {
         std::iter::once(ListItem {
             label: fl!("hotlist-add"),
             path: PathBuf::new(),
+            mount: false,
         })
         .chain(self.config.hotlist.iter().map(|e| ListItem {
             label: e.name.clone(),
             path: e.path.clone(),
+            mount: false,
         }))
         .collect()
     }
@@ -2183,6 +2316,37 @@ fn plan_error(e: &PlanError) -> String {
         PlanError::BadName => fl!("rename-bad-name"),
         PlanError::Exists(p) => fl!("rename-exists", path = p.display().to_string()),
         PlanError::Empty => String::new(),
+    }
+}
+
+/// Run a gio call off the UI thread.
+fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, mount::Error> + Send + 'static,
+    msg: impl FnOnce(Result<T, mount::Error>) -> Message + Send + 'static,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(f)
+                .await
+                .unwrap_or_else(|e| Err(mount::Error::Failed(e.to_string())))
+        },
+        move |r| cosmic::Action::App(msg(r)),
+    )
+}
+
+/// Alt+F1/F2: the volumes gio knows, appended to the open list when they arrive (~50 ms, D-Bus).
+fn list_volumes(side: usize) -> Task<Message> {
+    blocking(mount::list, move |r| {
+        Message::Volumes(side, r.unwrap_or_default())
+    })
+}
+
+fn mount_error(e: &mount::Error) -> String {
+    match e {
+        mount::Error::NeedPassword => fl!("mount-need-password"),
+        mount::Error::WrongPassword => fl!("mount-wrong-password"),
+        mount::Error::Question(q) => fl!("mount-question", text = q.replace('\n', " ")),
+        mount::Error::Failed(s) => s.clone(),
     }
 }
 
@@ -3790,5 +3954,143 @@ mod tests {
             app.panes[0].active().error.as_deref(),
             Some(fl!("diff-in-archive").as_str())
         );
+    }
+
+    mod mount_tests {
+        use super::*;
+        use shagoff_core::mount::{Error as MountError, Volume};
+
+        fn drive(label: &str, path: &str) -> Drive {
+            Drive {
+                label: label.into(),
+                path: path.into(),
+            }
+        }
+
+        fn volume(name: &str, device: &str, mount: Option<&str>) -> Volume {
+            Volume {
+                name: name.into(),
+                device: device.into(),
+                mount: mount.map(String::from),
+            }
+        }
+
+        fn list_len(app: &App) -> usize {
+            match &app.dialog {
+                Some(Dialog::List { items, .. }) => items.len(),
+                _ => 0,
+            }
+        }
+
+        #[test]
+        fn drive_list_gets_unmounted_volumes_of_its_side_only() {
+            let mut app = app_with(Config::default(), State::default());
+            app.drives = vec![drive("/", "/"), drive("~", "/tmp")];
+            let _ = app.update(Message::Key(Action::Drives(0)));
+            let vols = vec![
+                volume("sys", "/dev/nvme0n1p3", Some("file:///media/sys")),
+                volume("STICK", "/dev/sda1", None),
+            ];
+            let _ = app.update(Message::Volumes(1, vols.clone())); // the other side's list
+            assert_eq!(list_len(&app), 2);
+            let _ = app.update(Message::Volumes(0, vols.clone()));
+            assert_eq!(list_len(&app), 3); // only the unmounted one
+            // Alt+F1, Esc, Alt+F1 before gio answered: two replies for one list (review).
+            let _ = app.update(Message::Volumes(0, vols));
+            assert_eq!(list_len(&app), 3);
+            let Some(Dialog::List { items, .. }) = &app.dialog else {
+                panic!("no list")
+            };
+            assert!(items[2].mount && items[2].path == Path::new("/dev/sda1"));
+        }
+
+        #[test]
+        fn volumes_after_list_closed_are_dropped() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Volumes(0, vec![volume("S", "/dev/sda1", None)]));
+            assert!(app.dialog.is_none());
+        }
+
+        #[test]
+        fn enter_on_volume_mounts_instead_of_going() {
+            let mut app = app_with(Config::default(), State::default());
+            app.drives = vec![drive("/", "/")];
+            let _ = app.update(Message::Key(Action::Drives(0)));
+            let _ = app.update(Message::Volumes(0, vec![volume("S", "/dev/sda1", None)]));
+            app.panes[0].active_mut().pending = None;
+            let _ = app.update(Message::ListPick(1));
+            assert_eq!(pending_path(&app), None);
+            assert_eq!(
+                app.panes[0].active().error.as_deref(),
+                Some(fl!("mounting").as_str())
+            );
+        }
+
+        #[test]
+        fn mounted_goes_there_or_shows_error() {
+            let mut app = app_with(Config::default(), State::default());
+            app.panes[0].active_mut().pending = None;
+            let _ = app.update(Message::Mounted(0, Err(MountError::WrongPassword)));
+            assert_eq!(
+                app.panes[0].active().error.as_deref(),
+                Some(fl!("mount-wrong-password").as_str())
+            );
+            let _ = app.update(Message::Mounted(0, Ok(PathBuf::from("/media/x"))));
+            assert_eq!(pending_path(&app), Some(PathBuf::from("/media/x")));
+            assert_eq!(app.panes[0].active().error, None);
+        }
+
+        #[test]
+        fn ctrl_f_opens_connect_and_submit_reports_progress() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::Connect));
+            assert!(matches!(app.dialog, Some(Dialog::Connect { .. })));
+            let _ = app.update(Message::DialogInput("sftp://nas/".into()));
+            let _ = app.update(Message::ConnectPassword("pw".into()));
+            let Some(Dialog::Connect { url, password, .. }) = &app.dialog else {
+                panic!("no dialog")
+            };
+            assert_eq!((url.as_str(), password.as_str()), ("sftp://nas/", "pw"));
+            let _ = app.update(Message::DialogSubmit);
+            assert!(app.dialog.is_none());
+            assert_eq!(
+                app.panes[0].active().error.as_deref(),
+                Some(fl!("connecting").as_str())
+            );
+        }
+
+        #[test]
+        fn disconnect_refuses_root_home_and_fixed_partitions() {
+            let mut app = app_with(Config::default(), State::default());
+            let cwd = app.panes[0].active().panel.cwd().to_path_buf();
+            app.drives = vec![drive("/", "/"), drive("~", cwd.to_str().unwrap())];
+            let _ = app.update(Message::Key(Action::Disconnect));
+            assert_eq!(app.panes[0].active().error, None);
+            // A partition outside /media (like /home): udisks would ask for the admin password.
+            app.drives = vec![
+                drive("/", "/"),
+                drive("~", "/x"),
+                drive("tmp", cwd.to_str().unwrap()),
+            ];
+            let _ = app.update(Message::Key(Action::Disconnect));
+            assert_eq!(app.panes[0].active().error, None);
+        }
+
+        #[test]
+        fn unmounted_sends_panes_inside_home() {
+            let mut app = app_with(Config::default(), State::default());
+            let cwd = app.panes[0].active().panel.cwd().to_path_buf();
+            app.panes[0].active_mut().pending = None;
+            let _ = app.update(Message::Unmounted(0, "/nonexistent".into(), Ok(())));
+            assert_eq!(pending_path(&app), None);
+            let _ = app.update(Message::Unmounted(0, cwd, Ok(())));
+            assert_eq!(pending_path(&app), Some(app.home.clone()));
+            let failed = MountError::Failed("target is busy".into());
+            let _ = app.update(Message::Unmounted(0, "/media/x".into(), Err(failed)));
+            assert_eq!(
+                app.panes[0].active().error.as_deref(),
+                Some("target is busy")
+            );
+        }
     }
 }
