@@ -26,6 +26,8 @@ pub enum Dir {
     None,
     ToRight,
     ToLeft,
+    /// Delete the one side that has it (to the trash).
+    Delete,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +48,7 @@ pub struct Row {
     pub dir: Dir,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Options {
     pub recursive: bool,
     /// Equal sizes: compare the bytes.
@@ -54,6 +56,10 @@ pub struct Options {
     /// Size (and content) only.
     pub ignore_date: bool,
     pub hidden: bool,
+    /// The right becomes a copy of the left: the left wins every difference, right-only goes.
+    pub mirror: bool,
+    /// Only files whose name matches (dirs on one side are opened then, not copied whole).
+    pub mask: Option<crate::mask::Mask>,
 }
 
 /// FAT and zip keep 2-second times: this close is the same time.
@@ -73,6 +79,34 @@ pub fn default_dir(s: State) -> Dir {
         State::RightOnly | State::RightNewer => Dir::ToLeft,
         State::Same | State::Differ => Dir::None,
     }
+}
+
+/// Mirror arrows: the left is the source of truth. Different kinds (file / dir / link) get no
+/// arrow: replacing one by the other is never automatic.
+fn mirror_dir(s: State, a: Option<Info>, b: Option<Info>) -> Dir {
+    match (s, a, b) {
+        (State::Same, ..) => Dir::None,
+        (State::RightOnly, ..) => Dir::Delete,
+        (_, Some(a), Some(b)) if a.dir != b.dir || a.link != b.link => Dir::None,
+        _ => Dir::ToRight,
+    }
+}
+
+/// A click on a row's arrow: the next of → ← ✕ (delete, only when one side has it) and none,
+/// skipping what the row cannot do (no copy from a side that has nothing).
+pub fn next_dir(row: &Row) -> Dir {
+    let can = |d: Dir| match d {
+        Dir::ToRight => row.left.is_some(),
+        Dir::ToLeft => row.right.is_some(),
+        Dir::Delete => row.left.is_some() != row.right.is_some(),
+        Dir::None => true,
+    };
+    let order = [Dir::ToRight, Dir::ToLeft, Dir::Delete, Dir::None];
+    let at = order.iter().position(|d| *d == row.dir).unwrap_or(3);
+    (1..=4)
+        .map(|k| order[(at + k) % 4])
+        .find(|d| can(*d))
+        .unwrap_or(Dir::None)
 }
 
 /// Rows sorted by path; dirs present on both sides are descended (with `recursive`), not listed;
@@ -119,11 +153,26 @@ fn walk(left: &Path, right: &Path, rel: &Path, o: &Options, stop: &AtomicBool, o
         }
         let path = rel.join(name);
         let (a, b) = (l.get(name).copied(), r.get(name).copied());
+        let one_sided_dir = matches!((a, b), (Some(x), None) | (None, Some(x)) if x.dir);
         let state = match (a, b) {
             (Some(a), Some(b)) if a.dir && b.dir => {
                 if o.recursive {
                     walk(left, right, &path, o, stop, out);
                 }
+                continue;
+            }
+            // With a mask a dir on one side is opened: only its matching files are copied.
+            _ if one_sided_dir && o.mask.is_some() => {
+                if o.recursive {
+                    walk(left, right, &path, o, stop, out);
+                }
+                continue;
+            }
+            _ if !one_sided_dir
+                && o.mask
+                    .as_ref()
+                    .is_some_and(|m| !m.matches(&name.to_string_lossy())) =>
+            {
                 continue;
             }
             (Some(_), None) => State::LeftOnly,
@@ -133,12 +182,17 @@ fn walk(left: &Path, right: &Path, rel: &Path, o: &Options, stop: &AtomicBool, o
             (Some(a), Some(b)) => files(&left.join(&path), &right.join(&path), a, b, o),
             (None, None) => continue,
         };
+        let dir = if o.mirror {
+            mirror_dir(state, a, b)
+        } else {
+            default_dir(state)
+        };
         out.push(Row {
             rel: path,
             left: a,
             right: b,
             state,
-            dir: default_dir(state),
+            dir,
         });
     }
 }
@@ -191,17 +245,30 @@ fn same_bytes(a: &Path, b: &Path) -> io::Result<bool> {
 /// Source → target copies.
 pub type Pairs = Vec<(PathBuf, PathBuf)>;
 
-/// Copy pairs for the arrows: (left → right, right → left).
-pub fn plan(left: &Path, right: &Path, rows: &[Row]) -> (Pairs, Pairs) {
-    let (mut to_r, mut to_l) = (Vec::new(), Vec::new());
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Plan {
+    pub to_right: Pairs,
+    pub to_left: Pairs,
+    /// Paths to delete (the side that has the row).
+    pub delete: Vec<PathBuf>,
+}
+
+/// What the arrows do.
+pub fn plan(left: &Path, right: &Path, rows: &[Row]) -> Plan {
+    let mut p = Plan::default();
     for row in rows {
         match row.dir {
-            Dir::ToRight => to_r.push((left.join(&row.rel), right.join(&row.rel))),
-            Dir::ToLeft => to_l.push((right.join(&row.rel), left.join(&row.rel))),
+            Dir::ToRight => p.to_right.push((left.join(&row.rel), right.join(&row.rel))),
+            Dir::ToLeft => p.to_left.push((right.join(&row.rel), left.join(&row.rel))),
+            Dir::Delete => match (row.left.is_some(), row.right.is_some()) {
+                (true, false) => p.delete.push(left.join(&row.rel)),
+                (false, true) => p.delete.push(right.join(&row.rel)),
+                _ => {} // both or neither: deleting would be a guess
+            },
             Dir::None => {}
         }
     }
-    (to_r, to_l)
+    p
 }
 
 /// Shift+F2: files to mark on each side — missing opposite, newer, or same date with another size.
@@ -244,6 +311,7 @@ mod tests {
             content: false,
             ignore_date: false,
             hidden: false,
+            ..Options::default()
         }
     }
 
@@ -425,9 +493,9 @@ mod tests {
             [Dir::ToRight, Dir::ToRight, Dir::ToLeft]
         );
         rows[1].dir = Dir::None; // "c" skipped by the user
-        let (to_r, to_l) = plan(&l, &r, &rows);
-        assert_eq!(to_r, [(l.join("a"), r.join("a"))]);
-        assert_eq!(to_l, [(r.join("sub"), l.join("sub"))]);
+        let p = plan(&l, &r, &rows);
+        assert_eq!(p.to_right, [(l.join("a"), r.join("a"))]);
+        assert_eq!(p.to_left, [(r.join("sub"), l.join("sub"))]);
     }
 
     fn entry(name: &str, size: u64, secs: u64, dir: bool) -> Entry {
@@ -492,5 +560,116 @@ mod tests {
             .set_modified(t)
             .unwrap();
         assert_eq!(states(&l, &r, &opts()), [("a".into(), State::LeftNewer)]);
+    }
+
+    fn arrows(l: &Path, r: &Path, o: &Options) -> Vec<(String, Dir)> {
+        compare(l, r, o, &AtomicBool::new(false))
+            .into_iter()
+            .map(|x| (x.rel.to_string_lossy().into_owned(), x.dir))
+            .collect()
+    }
+
+    #[test]
+    fn mirror_makes_the_right_a_copy_of_the_left() {
+        let (_d, l, r) = pair();
+        put(&l.join("a"), "1", 1000); // left only
+        put(&r.join("b"), "1", 1000); // right only → delete
+        put(&l.join("c"), "1", 1000);
+        put(&r.join("c"), "1", 3000); // right newer: the left still wins
+        put(&l.join("d"), "1", 1000);
+        put(&r.join("d"), "1", 1000); // same
+        fs::create_dir(l.join("e")).unwrap();
+        put(&r.join("e"), "1", 1000); // dir against file: no arrow, never deleted
+        let o = Options {
+            mirror: true,
+            ..opts()
+        };
+        assert_eq!(
+            arrows(&l, &r, &o),
+            [
+                ("a".into(), Dir::ToRight),
+                ("b".into(), Dir::Delete),
+                ("c".into(), Dir::ToRight),
+                ("d".into(), Dir::None),
+                ("e".into(), Dir::None),
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_lists_deletions_on_the_existing_side() {
+        let (_d, l, r) = pair();
+        put(&r.join("b"), "1", 1000);
+        put(&l.join("a"), "1", 1000);
+        let mut rows = compare(&l, &r, &opts(), &AtomicBool::new(false));
+        for row in &mut rows {
+            row.dir = Dir::Delete;
+        }
+        let p = plan(&l, &r, &rows);
+        assert!(p.to_right.is_empty() && p.to_left.is_empty());
+        assert_eq!(p.delete, [l.join("a"), r.join("b")]);
+    }
+
+    #[test]
+    fn mask_keeps_matching_files_and_opens_one_sided_dirs() {
+        let (_d, l, r) = pair();
+        put(&l.join("a.rs"), "1", 1000);
+        put(&l.join("a.txt"), "1", 1000);
+        put(&l.join("only/b.rs"), "1", 1000);
+        put(&l.join("only/b.txt"), "1", 1000);
+        let o = Options {
+            mask: Some(crate::mask::Mask::parse("*.rs")),
+            ..opts()
+        };
+        assert_eq!(
+            arrows(&l, &r, &o),
+            [
+                ("a.rs".into(), Dir::ToRight),
+                ("only/b.rs".into(), Dir::ToRight)
+            ]
+        );
+        // Without a mask the one-sided dir stays one row.
+        assert_eq!(arrows(&l, &r, &opts()).len(), 3);
+    }
+
+    #[test]
+    fn click_cycles_through_what_the_row_allows() {
+        let row = |left: bool, right: bool| Row {
+            rel: "x".into(),
+            left: left.then_some(Info {
+                size: 1,
+                mtime: SystemTime::UNIX_EPOCH,
+                dir: false,
+                link: false,
+            }),
+            right: right.then_some(Info {
+                size: 1,
+                mtime: SystemTime::UNIX_EPOCH,
+                dir: false,
+                link: false,
+            }),
+            state: State::Same,
+            dir: Dir::None,
+        };
+        let cycle = |mut r: Row| {
+            let mut seen = Vec::new();
+            for _ in 0..4 {
+                r.dir = next_dir(&r);
+                seen.push(r.dir);
+            }
+            seen
+        };
+        assert_eq!(
+            cycle(row(true, true)),
+            [Dir::ToRight, Dir::ToLeft, Dir::None, Dir::ToRight]
+        );
+        assert_eq!(
+            cycle(row(true, false)),
+            [Dir::ToRight, Dir::Delete, Dir::None, Dir::ToRight]
+        );
+        assert_eq!(
+            cycle(row(false, true)),
+            [Dir::ToLeft, Dir::Delete, Dir::None, Dir::ToLeft]
+        );
     }
 }
