@@ -13,6 +13,7 @@ pub mod multirename;
 pub mod ops;
 pub mod panel;
 pub mod quicksearch;
+pub mod search;
 pub mod session;
 pub mod sort;
 pub mod tabs;
