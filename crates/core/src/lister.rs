@@ -19,8 +19,10 @@ pub enum Mode {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Doc {
-    /// The first `LIMIT` bytes, UTF-16 already turned into UTF-8.
+    /// The first `LIMIT` bytes as they are in the file (hex shows these).
     pub bytes: Vec<u8>,
+    /// The same as UTF-8 when the file has a BOM (UTF-16 or UTF-8), for text mode.
+    pub decoded: Option<Vec<u8>>,
     /// Size of the whole file.
     pub total: u64,
 }
@@ -28,6 +30,11 @@ pub struct Doc {
 impl Doc {
     pub fn truncated(&self) -> bool {
         self.total > LIMIT
+    }
+
+    /// Bytes for text mode and its line index.
+    pub fn text(&self) -> &[u8] {
+        self.decoded.as_deref().unwrap_or(&self.bytes)
     }
 }
 
@@ -39,39 +46,41 @@ pub fn load(path: &Path) -> io::Result<Doc> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
     }
     let file = std::fs::File::open(path)?;
-    let total = meta.len();
     let mut bytes = Vec::new();
     file.take(LIMIT).read_to_end(&mut bytes)?;
     // /proc files report size 0 but have content.
-    let total = total.max(bytes.len() as u64);
+    let total = meta.len().max(bytes.len() as u64);
     Ok(Doc {
-        bytes: decode(bytes),
+        decoded: decode(&bytes),
+        bytes,
         total,
     })
 }
 
-/// UTF-16 with a BOM → UTF-8; a UTF-8 BOM is dropped. Anything else is kept as is.
-pub fn decode(bytes: Vec<u8>) -> Vec<u8> {
+/// UTF-16 with a BOM → UTF-8; a UTF-8 BOM dropped. `None`: no BOM, the bytes are the text.
+pub fn decode(bytes: &[u8]) -> Option<Vec<u8>> {
     let utf16 = |be: bool| {
-        let units = bytes[2..].as_chunks::<2>().0.iter().map(|&pair| {
+        let (pairs, rest) = bytes[2..].as_chunks::<2>();
+        let units = pairs.iter().map(|&pair| {
             if be {
                 u16::from_be_bytes(pair)
             } else {
                 u16::from_le_bytes(pair)
             }
         });
-        char::decode_utf16(units)
+        let mut s: String = char::decode_utf16(units)
             .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect::<String>()
-            .into_bytes()
+            .collect();
+        if !rest.is_empty() {
+            s.push(char::REPLACEMENT_CHARACTER);
+        }
+        s.into_bytes()
     };
-    match bytes.get(..3) {
-        Some([0xEF, 0xBB, 0xBF]) => bytes[3..].to_vec(),
-        _ => match bytes.get(..2) {
-            Some([0xFF, 0xFE]) => utf16(false),
-            Some([0xFE, 0xFF]) => utf16(true),
-            _ => bytes,
-        },
+    match bytes {
+        [0xEF, 0xBB, 0xBF, rest @ ..] => Some(rest.to_vec()),
+        [0xFF, 0xFE, ..] => Some(utf16(false)),
+        [0xFE, 0xFF, ..] => Some(utf16(true)),
+        _ => None,
     }
 }
 
@@ -137,16 +146,34 @@ pub fn line_text(bytes: &[u8], r: &Range<usize>) -> String {
     String::from_utf8_lossy(&bytes[r.clone()]).replace('\t', "    ")
 }
 
-/// Width of a line as shown, in chars (a tab counts as four).
+/// Width of a line as shown, in monospace cells: a tab is four, CJK and emoji two.
 pub fn width(bytes: &[u8], r: &Range<usize>) -> usize {
-    bytes[r.clone()]
-        .iter()
-        .map(|&b| match b {
-            b'\t' => 4,
-            b if b & 0xC0 == 0x80 => 0,
+    let b = &bytes[r.clone()];
+    if b.is_ascii() {
+        return b.iter().map(|&c| if c == b'\t' { 4 } else { 1 }).sum();
+    }
+    String::from_utf8_lossy(b)
+        .chars()
+        .map(|c| match c {
+            '\t' => 4,
+            c if wide(c) => 2,
             _ => 1,
         })
         .sum()
+}
+
+// ponytail: the main East Asian Wide blocks and emoji, not the full Unicode width table.
+fn wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F
+        | 0x2E80..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1FAFF
+        | 0x20000..=0x3FFFD)
 }
 
 pub fn hex_rows(len: usize) -> usize {
@@ -264,12 +291,33 @@ mod tests {
     fn decode_utf16_and_bom() {
         let mut le = vec![0xFF, 0xFE];
         le.extend("Привет".encode_utf16().flat_map(u16::to_le_bytes));
-        assert_eq!(decode(le), "Привет".as_bytes());
+        assert_eq!(decode(&le).unwrap(), "Привет".as_bytes());
         let mut be = vec![0xFE, 0xFF];
         be.extend("ok".encode_utf16().flat_map(u16::to_be_bytes));
-        assert_eq!(decode(be), b"ok");
-        assert_eq!(decode(b"\xEF\xBB\xBFhi".to_vec()), b"hi");
-        assert_eq!(decode(b"\xFF".to_vec()), b"\xFF");
+        assert_eq!(decode(&be).unwrap(), b"ok");
+        assert_eq!(decode(b"\xEF\xBB\xBFhi").unwrap(), b"hi");
+        assert_eq!(decode(b"\xFF"), None); // not UTF-16: the bytes as they are
+        // A cut-off last unit is shown, not dropped.
+        assert_eq!(decode(b"\xFF\xFEo\0k").unwrap(), "o\u{FFFD}".as_bytes());
+    }
+
+    #[test]
+    fn hex_shows_the_raw_bytes_text_the_decoded_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("u16.txt");
+        let mut le = vec![0xFF, 0xFE];
+        le.extend("Привет".encode_utf16().flat_map(u16::to_le_bytes));
+        std::fs::write(&p, &le).unwrap();
+        let d = load(&p).unwrap();
+        assert_eq!(d.bytes, le);
+        assert_eq!(d.text(), "Привет".as_bytes());
+        assert_eq!(detect("u16.txt", d.text()), Mode::Text);
+    }
+
+    #[test]
+    fn wide_chars_count_double() {
+        let b = "a日本🙂".as_bytes();
+        assert_eq!(width(b, &(0..b.len())), 7);
     }
 
     #[test]

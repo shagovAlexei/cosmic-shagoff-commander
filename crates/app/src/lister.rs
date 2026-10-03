@@ -41,10 +41,10 @@ pub struct Loaded {
 impl Loaded {
     pub fn read(path: &Path, name: &str) -> Result<Self, String> {
         let doc = lister::load(path).map_err(|e| e.to_string())?;
-        let lines = lister::lines(&doc.bytes);
+        let lines = lister::lines(doc.text());
         let cols = lines
             .iter()
-            .map(|r| lister::width(&doc.bytes, r))
+            .map(|r| lister::width(doc.text(), r))
             .max()
             .unwrap_or(0);
         let image = lister::is_image(name).then(|| {
@@ -121,13 +121,17 @@ impl Lister {
 
     pub fn set_loaded(&mut self, loaded: Arc<Result<Loaded, String>>) {
         if let Ok(l) = loaded.as_ref() {
-            self.mode = lister::detect(&self.name, &l.doc.bytes);
+            self.mode = lister::detect(&self.name, l.doc.text());
         }
         self.loaded = Some(loaded);
     }
 
     /// `4` on a file that is not an image does nothing.
     pub fn set_mode(&mut self, mode: Mode) {
+        // While reading: the mode detected on arrival would undo it.
+        if self.loaded.is_none() {
+            return;
+        }
         if mode != Mode::Image || self.ok().is_some_and(|l| l.image.is_some()) {
             self.mode = mode;
             self.hit = None;
@@ -186,7 +190,7 @@ impl Lister {
         };
         let l = self.ok()?;
         let row = match self.mode {
-            Mode::Text => lister::find_line(&l.doc.bytes, &l.lines, &self.query, start, forward),
+            Mode::Text => lister::find_line(l.doc.text(), &l.lines, &self.query, start, forward),
             Mode::Hex => lister::find_bytes(&l.doc.bytes, self.query.as_bytes(), start, forward),
             Mode::Image => None,
         }?;
@@ -198,7 +202,7 @@ impl Lister {
     fn row_text(&self, l: &Loaded, i: usize) -> String {
         match self.mode {
             Mode::Hex => lister::hex_row(&l.doc.bytes, i),
-            _ => lister::line_text(&l.doc.bytes, &l.lines[i]),
+            _ => lister::line_text(l.doc.text(), &l.lines[i]),
         }
     }
 }
@@ -370,6 +374,7 @@ mod tests {
         let mut l = Lister::new(0, "a.txt".into(), 1);
         let doc = Doc {
             bytes: s.as_bytes().to_vec(),
+            decoded: None,
             total: s.len() as u64,
         };
         let lines = lister::lines(&doc.bytes);
@@ -409,6 +414,13 @@ mod tests {
         assert_eq!(l.hit, Some(5));
         l.find(false, true);
         assert_eq!(l.hit, Some(3));
+    }
+
+    #[test]
+    fn mode_keys_wait_for_the_file() {
+        let mut l = Lister::new(0, "a.bin".into(), 1);
+        l.set_mode(Mode::Hex); // still reading: the detected mode would undo it
+        assert_eq!(l.mode, Mode::Text);
     }
 
     #[test]

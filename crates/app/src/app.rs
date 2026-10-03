@@ -811,8 +811,11 @@ impl App {
             }
             Message::ListerMode(m) => {
                 if let Some(l) = &mut self.lister {
+                    let before = l.mode;
                     l.set_mode(m);
-                    return lister_scroll(l, 0.0, 0.0);
+                    if l.mode != before {
+                        return lister_scroll(l, 0.0, 0.0);
+                    }
                 }
             }
             Message::ListerSearch => return self.lister_search(),
@@ -909,7 +912,9 @@ impl App {
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
             Message::FieldKey(action) => {
-                if (self.search.is_some() || self.lister.is_some()) && self.dialog.is_none() {
+                // Not from a settings field: the viewer is behind the drawer.
+                let viewer = self.lister.is_some() && self.drawer.is_none();
+                if (self.search.is_some() || viewer) && self.dialog.is_none() {
                     return self.handle(Message::Key(action));
                 }
             }
@@ -2134,14 +2139,14 @@ impl App {
         );
         let top = self
             .lister
-            .as_deref()
+            .as_deref_mut()
             .map_or(Task::none(), |l| lister_scroll(l, 0.0, 0.0));
         Task::batch([read, top])
     }
 
     /// Keys while the viewer is open; `None`: not the viewer's (help, settings…), act as usual.
     fn lister_action(&mut self, action: Action) -> Option<Task<Message>> {
-        let l = self.lister.as_deref()?;
+        let l = self.lister.as_deref_mut()?;
         Some(match action {
             Action::Help | Action::About | Action::Settings | Action::Donate => return None,
             Action::View => self.lister_find(true, true),
@@ -2179,9 +2184,10 @@ impl App {
         }
     }
 
-    fn lister_scroll_x(&self, right: bool) -> Task<Message> {
-        self.lister.as_deref().map_or(Task::none(), |l| {
-            lister_scroll(l, l.scroll_x(right), l.offset.1)
+    fn lister_scroll_x(&mut self, right: bool) -> Task<Message> {
+        self.lister.as_deref_mut().map_or(Task::none(), |l| {
+            let (x, y) = (l.scroll_x(right), l.offset.1);
+            lister_scroll(l, x, y)
         })
     }
 
@@ -2204,7 +2210,14 @@ impl App {
         };
         t.panel.set_cursor(i);
         let tab = t.id;
-        Task::batch([self.reveal(side, tab), self.view_current(side)])
+        let shown = self.lister.as_ref().map(|l| l.id);
+        let view = self.view_current(side);
+        if self.job.is_none() && self.lister.as_ref().map(|l| l.id) == shown {
+            // Not opened (broken link): the cursor stays with the file on screen.
+            self.panes[side].active_mut().panel.set_cursor(cur);
+            return view;
+        }
+        Task::batch([self.reveal(side, tab), view])
     }
 
     /// Actions that would change an archive (this panel inside one, or the other one as target).
@@ -2650,7 +2663,10 @@ impl App {
     }
 }
 
-fn lister_scroll(l: &Lister, x: f32, y: f32) -> Task<Message> {
+/// Scroll the viewer and record the offset: iced reports nothing when the content fits, and a
+/// stale offset would leave the rows out of view.
+fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
+    l.offset = (x, y);
     scrollable::scroll_to(
         l.scroll.clone(),
         AbsoluteOffset {
@@ -3242,6 +3258,52 @@ mod tests {
         let _ = app.update(Message::ListerKey(ListerKey::Prev)); // `sub` and `..` skipped
         assert_eq!(cur(&app), "a.txt");
         assert_eq!(app.lister.as_ref().unwrap().name, "a.txt");
+    }
+
+    #[test]
+    fn regression_mode_switch_resets_offset() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        lister_loaded(&mut app, tmp.path());
+        // Scrolled far down in another mode; a short text fits, so iced reports no scroll.
+        let _ = app.update(Message::ListerScrolled(30.0, 4700.0, 400.0));
+        let _ = app.update(Message::ListerMode(Mode::Hex));
+        assert_eq!(app.lister.as_ref().unwrap().offset, (0.0, 0.0));
+        let _ = app.update(Message::Key(Action::End));
+        assert_eq!(app.lister.as_ref().unwrap().offset, (0.0, 0.0)); // 1 hex row fits
+    }
+
+    #[test]
+    fn settings_field_keys_do_not_reach_the_viewer() {
+        let (mut app, _tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        let _ = app.update(Message::Key(Action::Settings));
+        assert!(app.drawer.is_some());
+        let _ = app.update(Message::FieldKey(Action::Mkdir)); // F7 typed in a settings field
+        assert!(!app.lister.as_ref().unwrap().searching);
+    }
+
+    #[test]
+    fn viewer_next_onto_a_broken_link_keeps_cursor_and_file() {
+        let (mut app, tmp) = lister_app(Config::default());
+        std::os::unix::fs::symlink("nowhere", tmp.path().join("c_dangling")).unwrap();
+        let _ = app.load(0, tmp.path().into(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: tmp.path().into(),
+            focus: Some("b.bin".into()),
+            result: Ok(listing::scan(tmp.path(), false).unwrap()),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::View));
+        let _ = app.update(Message::ListerKey(ListerKey::Next));
+        assert_eq!(app.lister.as_ref().unwrap().name, "b.bin");
+        let cur = app.panes[0].active().panel.current().unwrap().name.clone();
+        assert_eq!(cur, "b.bin");
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
     }
 
     #[test]

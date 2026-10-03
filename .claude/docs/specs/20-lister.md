@@ -20,8 +20,8 @@
 
 ## Устройство
 
-- `core::lister`: `Doc { bytes, total, name }` (обрезанные байты + полный размер), `Mode`, `detect(name, bytes)`, индекс строк `lines(bytes) -> Vec<Range<usize>>` (по `\n`, `\r\n`, длинные режутся по границе символа), `line_text(bytes, range)` (UTF-8 lossy, табы), `hex_rows(len)`, `hex_row(bytes, row)`, `find_line(...)`, `find_bytes(...)`. UTF-16 перекодируется в UTF-8 при загрузке.
-- `app::lister`: состояние (`Lister { path, doc, lines, mode, offset, height, hit, search }`) и вид; виртуализированный список (только видимые строки, как панели и сравнение файлов).
+- `core::lister`: `Doc { bytes, decoded, total }` (байты файла как есть — для hex; UTF-8 после BOM — для текста; полный размер), `Mode`, `detect(name, bytes)`, индекс строк `lines(bytes) -> Vec<Range<usize>>` (по `\n`, `\r\n`, длинные режутся по границе символа), `line_text(bytes, range)` (UTF-8 lossy, табы), `hex_rows(len)`, `hex_row(bytes, row)`, `find_line(...)`, `find_bytes(...)`. UTF-16 перекодируется в UTF-8 при загрузке.
+- `app::lister`: состояние (`Lister { side, name, loaded, mode, offset, height, hit, query, searching }`, `Loaded { doc, lines, cols, image }`) и вид; виртуализированный список (только видимые строки, как панели и сравнение файлов).
 - Клавиши без модификаторов, которых нет в общей таблице (`1 3 4 N P Q ← →`, `Shift+F3`), — отдельная функция `keymap::lister_key`; приложение смотрит на них только когда Lister открыт.
 
 ## Тесты
