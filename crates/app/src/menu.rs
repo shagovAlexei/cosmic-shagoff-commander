@@ -59,11 +59,9 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             K::Letter(Code::KeyM, "m"),
             a(Action::MultiRename),
         ),
-        (
-            vec![Ctrl, Shift],
-            K::Letter(Code::KeyD, "d"),
-            a(Action::CompareFiles),
-        ),
+        (vec![], K::Named(Named::F11), a(Action::CompareFiles)),
+        (vec![], K::Named(Named::F9), a(Action::CopyNames)),
+        (vec![], K::Named(Named::F10), a(Action::CopyPaths)),
         (vec![Alt], K::Named(Named::F4), MenuAct::Exit),
         (
             vec![],
@@ -121,6 +119,8 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             K::Letter(Code::KeyH, "h"),
             a(Action::ToggleHidden),
         ),
+        (vec![], K::Named(Named::F1), a(Action::Help)),
+        (vec![Ctrl], K::Letter(Code::Comma, ","), a(Action::Settings)),
         (
             vec![Ctrl],
             K::Named(Named::F3),
@@ -195,6 +195,9 @@ fn menus(show_hidden: bool) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-invert"), Action::Invert),
                 menu::Item::Divider,
                 b(fl!("menu-compare-lists"), Action::CompareLists),
+                menu::Item::Divider,
+                b(fl!("menu-copy-names"), Action::CopyNames),
+                b(fl!("menu-copy-paths"), Action::CopyPaths),
             ],
         ),
         (
@@ -238,6 +241,19 @@ fn menus(show_hidden: bool) -> Vec<(String, Vec<Item>)> {
                 sort(fl!("menu-sort-ext"), SortKey::Ext),
                 sort(fl!("menu-sort-date"), SortKey::Date),
                 sort(fl!("menu-sort-size"), SortKey::Size),
+            ],
+        ),
+        (
+            fl!("menu-config"),
+            vec![b(fl!("menu-settings"), Action::Settings)],
+        ),
+        (
+            fl!("menu-help-root"),
+            vec![
+                b(fl!("menu-help"), Action::Help),
+                menu::Item::Divider,
+                b(fl!("donate-title"), Action::Donate),
+                b(fl!("menu-about"), Action::About),
             ],
         ),
     ]
@@ -312,6 +328,19 @@ mod tests {
     }
 
     #[test]
+    fn help_describes_every_menu_key() {
+        let described: Vec<Action> = crate::help::sections()
+            .into_iter()
+            .flat_map(|(_, rows)| rows.into_iter().filter_map(|(_, _, a)| a))
+            .collect();
+        for (_, _, act) in table() {
+            if let MenuAct::Key(a) = act {
+                assert!(described.contains(&a), "{a:?} missing in help");
+            }
+        }
+    }
+
+    #[test]
     fn every_item_shows_a_key() {
         let binds = key_binds();
         for (title, items) in menus(false) {
@@ -320,6 +349,9 @@ mod tests {
                     menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => a,
                     _ => continue,
                 };
+                if matches!(act, MenuAct::Key(Action::About | Action::Donate)) {
+                    continue; // no key, as in TC
+                }
                 assert!(binds.values().any(|b| *b == act), "{title}: {act:?}");
             }
         }

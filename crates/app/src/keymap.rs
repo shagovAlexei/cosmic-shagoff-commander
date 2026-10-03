@@ -69,6 +69,17 @@ pub enum Action {
     SyncDirs,
     /// Ctrl+Shift+D: compare two files by content.
     CompareFiles,
+    /// F1: help in the side drawer.
+    Help,
+    /// Ctrl+,: settings in the side drawer.
+    Settings,
+    /// Menu only: about the program.
+    About,
+    /// Menu only: support the project.
+    Donate,
+    /// F9 / F10: names / full paths of the targets to the clipboard as text.
+    CopyNames,
+    CopyPaths,
     /// Ctrl+F: connect to a network location (TC: FTP connect).
     Connect,
     /// Ctrl+Shift+F: unmount / eject the drive of the active panel (TC: FTP disconnect).
@@ -123,6 +134,10 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
             (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
             (Named::ArrowUp, false, true) => Action::MarkUp,
+            (Named::F1, false, false) => Action::Help,
+            (Named::F9, false, false) => Action::CopyNames,
+            (Named::F10, false, false) => Action::CopyPaths,
+            (Named::F11, false, false) => Action::CompareFiles,
             (Named::F3, false, false) => Action::View,
             (Named::F4, false, false) => Action::Edit,
             (Named::F5, false, false) => Action::Copy,
@@ -147,6 +162,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyD), true, true) => Some(Action::CompareFiles),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
+        (Physical::Code(Code::Comma), true, false) => Some(Action::Settings),
         (Physical::Code(Code::KeyF), true, false) => Some(Action::Connect),
         (Physical::Code(Code::KeyF), true, true) => Some(Action::Disconnect),
         (Physical::Code(Code::KeyC), true, false) => Some(Action::ClipCopy),
@@ -194,6 +210,20 @@ mod tests {
         assert_eq!(named(Named::Enter, NONE), Some(Action::Enter));
         assert_eq!(named(Named::Backspace, NONE), Some(Action::Parent));
         assert_eq!(named(Named::PageUp, CTRL), Some(Action::Parent));
+    }
+
+    #[test]
+    fn f9_f10_copy_names_f11_compares() {
+        assert_eq!(named(Named::F9, NONE), Some(Action::CopyNames));
+        assert_eq!(named(Named::F10, NONE), Some(Action::CopyPaths));
+        assert_eq!(named(Named::F11, NONE), Some(Action::CompareFiles));
+    }
+
+    #[test]
+    fn f1_help_ctrl_comma_settings() {
+        assert_eq!(named(Named::F1, NONE), Some(Action::Help));
+        assert_eq!(chr(",", Code::Comma, CTRL), Some(Action::Settings));
+        assert_eq!(chr("б", Code::Comma, CTRL), Some(Action::Settings)); // Russian layout
     }
 
     #[test]

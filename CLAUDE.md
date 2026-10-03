@@ -47,6 +47,7 @@ The workspace has two crates.
   - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error.
   - `view/`: drive buttons, tabs, path line, column table, status line, F-key bar.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
+  - `drawer.rs` + `help.rs`: side drawer (libcosmic context drawer) with help (F1), about (libcosmic `about` feature; `DONATE_URL` for the future Stripe Payment Link) and settings (Ctrl+,). Settings write the whole `Config` and go through `App::apply_config`, the same path as a hand edit seen by the config watcher.
   - `menu.rs`: main menu in the header bar; items send the same `Action` as their key. Its key table (shown next to items) is checked against `keymap::action` by a test.
   - `dialogs.rs`: modal dialogs.
   - `watcher.rs`: `notify` on the active tab's cwd of each pane, debounced; ignores open/read events (our own scan opens the dir). Paused while a file operation runs.
