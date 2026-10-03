@@ -1,4 +1,5 @@
-//! TC layout: per pane a path line, column headers, a virtualized file list and a status line.
+//! TC layout: per pane a path line, column headers and a virtualized file list; one status line
+//! (each pane's half) and the F-keys in the footer.
 
 use crate::app::{App, Message, ROW_H, StatusKind, Tab};
 use crate::fl;
@@ -71,51 +72,6 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .on_show(move |size| Message::Resized(side, size.height))
         .on_resize(move |size| Message::Resized(side, size.height));
 
-    let status: Element<_> = match (&app.search, &p.error) {
-        (Some(s), _) if s.side == side => {
-            let label = if s.filter {
-                fl!("filter-label")
-            } else {
-                fl!("search-label")
-            };
-            row![
-                text(label).size(TEXT),
-                widget::text_input("", &s.text)
-                    .id(app.input_id.clone())
-                    .on_input(Message::SearchInput)
-                    .on_submit(|_| Message::SearchSubmit)
-                    .size(TEXT)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .into()
-        }
-        (_, Some(e)) => text(e.clone())
-            .size(TEXT)
-            .class(theme::Text::Custom(|t| cosmic::iced::widget::text::Style {
-                color: Some(t.cosmic().destructive_color().into()),
-                ..Default::default()
-            }))
-            .into(),
-        (_, None) => {
-            let (t, m) = (p.panel.totals(), p.panel.marked_totals());
-            let totals = fl!(
-                "status",
-                sel_bytes = format::size(m.bytes),
-                bytes = format::size(t.bytes),
-                sel_files = m.files.to_string(),
-                files = t.files.to_string(),
-                sel_dirs = m.dirs.to_string(),
-                dirs = t.dirs.to_string()
-            );
-            let line = match p.panel.filter() {
-                Some(f) => format!("{}  {totals}", fl!("filter-status", pattern = f)),
-                None => totals,
-            };
-            text(line).size(TEXT).into()
-        }
-    };
-
     let mut col = column![drive_bar(app, side)];
     if tabs.items().len() > 1 {
         col = col.push(tab_bar(side, tabs, active));
@@ -123,7 +79,6 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     col.push(path)
         .push(header(side, p.panel.sort()))
         .push(list)
-        .push(container(status).padding([2, 6]))
         .width(Length::Fill)
         .into()
 }
@@ -260,53 +215,138 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
 }
 
-/// F-key buttons (unless turned off) and the window status bar.
-pub fn footer(app: &App) -> Element<'_, Message> {
-    let mut col = column![];
-    // The viewer has its own buttons; the F-keys would act on the hidden panels.
-    if app.config.show_fkeys && app.lister.is_none() {
-        col = col.push(fkey_bar());
+/// A pane's part of the status line: quick search / filter field, read error, or totals.
+fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
+    let p = app.panes[side].active();
+    match (&app.search, &p.error) {
+        (Some(s), _) if s.side == side => {
+            let label = if s.filter {
+                fl!("filter-label")
+            } else {
+                fl!("search-label")
+            };
+            row![
+                text(label).size(TEXT),
+                widget::text_input("", &s.text)
+                    .id(app.input_id.clone())
+                    .on_input(Message::SearchInput)
+                    .on_submit(|_| Message::SearchSubmit)
+                    .size(TEXT)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into()
+        }
+        (_, Some(e)) => text(e.clone())
+            .size(TEXT)
+            .wrapping(Wrapping::None)
+            .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
+            .class(theme::Text::Custom(|t| cosmic::iced::widget::text::Style {
+                color: Some(t.cosmic().destructive_color().into()),
+                ..Default::default()
+            }))
+            .into(),
+        (_, None) => {
+            let (t, m) = (p.panel.totals(), p.panel.marked_totals());
+            let totals = fl!(
+                "status",
+                sel_bytes = format::size(m.bytes),
+                bytes = format::size(t.bytes),
+                sel_files = m.files.to_string(),
+                files = t.files.to_string(),
+                sel_dirs = m.dirs.to_string(),
+                dirs = t.dirs.to_string()
+            );
+            let line = match p.panel.filter() {
+                Some(f) => format!("{}  {totals}", fl!("filter-status", pattern = f)),
+                None => totals,
+            };
+            text(line)
+                .size(TEXT)
+                .wrapping(Wrapping::None)
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
+                .into()
+        }
     }
-    col.push(status_bar(app)).into()
 }
 
-/// Left: the last message; right: the entry under the active panel's cursor.
-fn status_bar(app: &App) -> Element<'_, Message> {
-    let msg: Element<_> = match &app.status {
-        Some(s) => {
-            let class = match s.kind {
-                StatusKind::Info => theme::Text::Default,
-                StatusKind::Busy => theme::Text::Accent,
-                StatusKind::Error => theme::Text::Custom(destructive),
-            };
+/// One status line above the F-keys: each pane's totals under that pane; in the active pane's
+/// half also the last message or, without one, the entry under the cursor.
+pub fn footer(app: &App) -> Element<'_, Message> {
+    // The viewer has no panels to total and its own buttons.
+    if app.lister.is_some() {
+        return container(window_status(app)).padding([2, 8]).into();
+    }
+    let half = |side: usize| -> Element<'_, Message> {
+        let totals = container(pane_status(app, side))
+            .width(Length::FillPortion(3))
+            .clip(true);
+        // Nothing to show (no message, cursor on ".."): the totals take the whole half.
+        let extra = app.status.is_some()
+            || app.panes[side]
+                .active()
+                .panel
+                .current()
+                .is_some_and(|e| e.name != shagoff_core::panel::PARENT);
+        let line = if side == app.active && extra {
+            row![
+                totals,
+                container(window_status(app))
+                    .width(Length::FillPortion(2))
+                    .clip(true)
+            ]
+        } else {
+            row![totals]
+        };
+        line.spacing(12)
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .into()
+    };
+    let mut col = column![
+        row![half(0), half(1)]
+            .spacing(4)
+            .padding([2, 6])
+            .height(Length::Shrink)
+    ];
+    if app.config.show_fkeys {
+        col = col.push(fkey_bar());
+    }
+    col.into()
+}
+
+/// The last message, else the entry under the active panel's cursor (right-aligned).
+fn window_status(app: &App) -> Element<'_, Message> {
+    if let Some(s) = &app.status {
+        let class = match s.kind {
+            StatusKind::Info => theme::Text::Default,
+            StatusKind::Busy => theme::Text::Accent,
+            StatusKind::Error => theme::Text::Custom(destructive),
+        };
+        return container(
             text(s.text.as_str())
                 .size(TEXT)
                 .class(class)
-                .wrapping(cosmic::iced::widget::text::Wrapping::None)
-                .into()
-        }
-        None => widget::Space::new().into(),
-    };
+                .wrapping(Wrapping::None)
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .into();
+    }
     let p = &app.panes[app.active].active().panel;
     let details = p
         .current()
         .map(|e| format::details(e, &app.tz, &app.owners))
         .unwrap_or_default();
-    // Both sides bounded: a long file name must not squeeze the message out.
-    row![
-        container(msg).width(Length::FillPortion(2)).clip(true),
-        container(
-            text(details)
-                .size(TEXT)
-                .wrapping(Wrapping::None)
-                .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
-        )
-        .width(Length::FillPortion(3))
-        .align_x(Alignment::End)
-        .clip(true),
-    ]
-    .spacing(16)
-    .padding([2, 8])
+    container(
+        text(details)
+            .size(TEXT)
+            .wrapping(Wrapping::None)
+            .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
+    )
+    .width(Length::Fill)
+    .align_x(Alignment::End)
     .into()
 }
 

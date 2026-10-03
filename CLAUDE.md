@@ -47,7 +47,7 @@ The workspace has two crates.
 - **`crates/app` (`shagoff-commander`)** is the libcosmic UI.
   - `app.rs`: `App { panes: [Pane; 2], active }`.
   - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error.
-  - `view/`: drive buttons, tabs, path line, column table, status line, F-key bar.
+  - `view/`: drive buttons, tabs, path line, column table; `footer`: one status line (each pane's totals under it, the message or cursor entry details in the active half) above the F-key bar.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
   - `drawer.rs` + `help.rs`: side drawer (libcosmic context drawer) with help (F1), about (libcosmic `about` feature; `DONATE_URL` for the future Stripe Payment Link) and settings (Ctrl+,). Settings write the whole `Config` and go through `App::apply_config`, the same path as a hand edit seen by the config watcher.
   - `lister.rs`: F3 viewer shown in place of the panels (`App::lister`); text / hex / image modes, search, N/P. Logic (line index, hex rows, search, mode detection) in `core::lister`. Its letter keys (`1 3 4 N P Q`) come from `keymap::lister_key`, tried only after the main table found nothing.
