@@ -165,3 +165,7 @@
 | `regression_split_path_trailing_slash` | Путь `…/a.zip/` со слешем на конце не открывался как архив | 12 |
 | `regression_pack_onto_existing_archive_is_not_read_only` | Упаковка поверх существующего `foo.zip` отказывала с «Архив только для чтения» вместо вопроса о замене | 12 |
 | `regression_f5_right_after_entering_archive_copies_the_shown_rows` | F5 сразу после Enter на архиве искал файлы старого каталога внутри архива | 12 |
+| `regression_enter_after_moving_into_results_goes_to_file` | Alt+F7: Enter после ↓ по результатам перезапускал поиск (фокус оставался в поле) | 13 |
+| `regression_pending_matches_flush_on_a_tick` | Alt+F7: найденный файл не показывался, пока не найдётся следующий | 13 |
+| `regression_deep_tree_does_not_overflow_the_stack` | Поиск в очень глубоком дереве ронял отладочную сборку (рекурсия) | 13 |
+| `regression_shrinking_lowercase_across_chunk_boundary` | Поиск без учёта регистра пропускал текст на границе кусков, если строчная форма короче | 13 |

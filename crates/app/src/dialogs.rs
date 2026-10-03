@@ -96,6 +96,8 @@ pub struct Find {
     pub id: u64,
     /// Set while a search runs.
     pub stop: Option<Arc<AtomicBool>>,
+    /// ↑/↓ moved into the results: Enter (a field's submit) goes to the file, not a new search.
+    pub in_list: bool,
 }
 
 /// Closing the dialog in any way stops its search.
@@ -505,7 +507,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             let edit = |label: String, value: &'a str, field: FindField| {
                 let input = widget::text_input("", value)
                     .on_input(move |s| Message::FindInput(field, s))
-                    .on_submit(|_| Message::FindStart);
+                    .on_submit(|_| Message::FindSubmit);
                 let input = if field == FindField::Mask {
                     input.id(input_id.clone())
                 } else {

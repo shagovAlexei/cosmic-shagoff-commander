@@ -189,6 +189,8 @@ pub enum Message {
     FindInput(FindField, String),
     FindCase,
     FindStart,
+    /// Enter in a find field: go to the selected result after ↑/↓, else search.
+    FindSubmit,
     FindStop,
     Find(crate::find::FindEvent),
     /// Go to result i of the find dialog.
@@ -364,9 +366,13 @@ impl App {
                 }
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
                     match action {
-                        Action::Up => f.cursor = f.cursor.saturating_sub(1),
+                        Action::Up => {
+                            f.cursor = f.cursor.saturating_sub(1);
+                            f.in_list = true;
+                        }
                         Action::Down => {
                             f.cursor = (f.cursor + 1).min(f.results.len().saturating_sub(1));
+                            f.in_list = true;
                         }
                         Action::Enter => {
                             let i = f.cursor;
@@ -551,6 +557,7 @@ impl App {
             },
             Message::FindInput(field, s) => {
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.in_list = false;
                     *match field {
                         FindField::Mask => &mut f.mask,
                         FindField::Dir => &mut f.dir,
@@ -561,9 +568,20 @@ impl App {
             Message::FindCase => {
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
                     f.case_sensitive = !f.case_sensitive;
+                    f.in_list = false;
                 }
             }
             Message::FindStart => return self.start_find(),
+            Message::FindSubmit => {
+                if let Some(Dialog::Find(f)) = &self.dialog
+                    && f.in_list
+                    && !f.results.is_empty()
+                {
+                    let i = f.cursor;
+                    return self.find_pick(i);
+                }
+                return self.start_find();
+            }
             Message::FindStop => {
                 if let Some(Dialog::Find(f)) = &self.dialog
                     && let Some(s) = &f.stop
@@ -1188,6 +1206,7 @@ impl App {
                     cursor: 0,
                     id: 0, // set by each search start
                     stop: None,
+                    in_list: false,
                 })))
             }
             Action::Unpack => {
@@ -1416,7 +1435,7 @@ impl App {
             if let Some(old) = f.stop.replace(stop) {
                 old.store(true, Ordering::Relaxed);
             }
-            (f.id, f.cursor, f.total) = (id, 0, 0);
+            (f.id, f.cursor, f.total, f.in_list) = (id, 0, 0, false);
             f.results.clear();
         }
         Task::run(events, |e| cosmic::Action::App(Message::Find(e)))
@@ -3186,5 +3205,41 @@ mod tests {
         let _ = app.update(Message::Key(Action::Enter));
         assert!(app.dialog.is_none());
         assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+    }
+
+    #[test]
+    fn regression_enter_after_moving_into_results_goes_to_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let found = vec![tmp.path().join("a"), tmp.path().join("sub/b")];
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, found)));
+        let _ = app.update(Message::Key(Action::Down));
+        // The mask field still has focus: Enter arrives as its submit, not as a key.
+        let _ = app.update(Message::FindSubmit);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+    }
+
+    #[test]
+    fn find_submit_after_typing_starts_a_search() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(
+            id,
+            vec![tmp.path().join("a")],
+        )));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::FindInput(FindField::Mask, "*.rs".into()));
+        let _ = app.update(Message::FindSubmit);
+        let f = find_dialog(&mut app);
+        assert!(f.stop.is_some() || f.results.is_empty()); // restarted
+        assert_ne!(f.id, id);
     }
 }

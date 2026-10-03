@@ -26,7 +26,8 @@ fn skipped(p: &Path) -> bool {
 }
 
 /// Depth-first under `root` (names sorted per dir). `found` gets every match, `dir` every dir
-/// entered. Symlinked dirs are not entered (loops). Unreadable entries are skipped.
+/// entered. Symlinked dirs are not entered (loops). Unreadable entries are skipped. An explicit
+/// stack, not recursion: a worker thread's stack must not limit the depth.
 pub fn find(
     root: &Path,
     q: &Query,
@@ -34,17 +35,27 @@ pub fn find(
     found: &mut dyn FnMut(PathBuf),
     dir: &mut dyn FnMut(&Path),
 ) {
-    if stop.load(Ordering::Relaxed) || skipped(root) {
-        return;
-    }
-    dir(root);
-    let Ok(rd) = fs::read_dir(root) else { return };
-    let mut items: Vec<_> = rd.flatten().collect();
-    items.sort_by_key(|e| e.file_name());
-    for e in items {
+    let open = |d: &Path, dir: &mut dyn FnMut(&Path)| {
+        if skipped(d) {
+            return Vec::new().into_iter();
+        }
+        dir(d);
+        let mut items: Vec<_> = fs::read_dir(d)
+            .map(|rd| rd.flatten().collect())
+            .unwrap_or_default();
+        items.sort_by_key(|e: &fs::DirEntry| std::cmp::Reverse(e.file_name()));
+        items.into_iter()
+    };
+    // Each level holds its remaining entries, last-sorted first so `pop` yields them in order.
+    let mut stack = vec![open(root, dir).collect::<Vec<_>>()];
+    while let Some(level) = stack.last_mut() {
         if stop.load(Ordering::Relaxed) {
             return;
         }
+        let Some(e) = level.pop() else {
+            stack.pop();
+            continue;
+        };
         let name = e.file_name().to_string_lossy().into_owned();
         if !q.hidden && name.starts_with('.') {
             continue;
@@ -56,7 +67,8 @@ pub fn find(
             if named && q.text.is_none() {
                 found(path.clone());
             }
-            find(&path, q, stop, found, dir);
+            let next = open(&path, dir).collect();
+            stack.push(next);
         } else if named {
             let hit = match &q.text {
                 None => true,
@@ -90,7 +102,8 @@ fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
         return false;
     };
     // Carry the tail of each chunk over, so a match across the boundary is still whole.
-    let keep = needle.len() + 4;
+    // In source bytes: uppercase can be 3x longer than its lowercase (KELVIN SIGN → "k").
+    let keep = needle.len() * 3 + 4;
     let mut buf: Vec<u8> = Vec::with_capacity(CHUNK + keep);
     let mut chunk = vec![0; CHUNK];
     loop {
@@ -289,5 +302,41 @@ mod tests {
                 && skipped(Path::new("/run"))
         );
         assert!(!skipped(Path::new("/home/proc")));
+    }
+
+    #[test]
+    fn regression_deep_tree_does_not_overflow_the_stack() {
+        let d = tempfile::tempdir().unwrap();
+        let mut p = d.path().to_path_buf();
+        for _ in 0..1500 {
+            p.push("a");
+        }
+        fs::create_dir_all(&p).unwrap();
+        fs::write(p.join("deep.rs"), "").unwrap();
+        // A small stack like a worker thread's: recursion per level would overflow it.
+        let root = d.path().to_path_buf();
+        let n = std::thread::Builder::new()
+            .stack_size(256 << 10)
+            .spawn(move || run(&root, &q("*.rs", None, false, false)).len())
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn regression_shrinking_lowercase_across_chunk_boundary() {
+        // KELVIN SIGN (3 bytes) lowercases to "k" (1 byte): the carried tail must cover it.
+        for off in 0..16 {
+            let d = tempfile::tempdir().unwrap();
+            let mut data = vec![b'x'; CHUNK - off];
+            data.extend("\u{212A}\u{212A}\u{212A}\u{212A}".as_bytes());
+            fs::write(d.path().join("f"), &data).unwrap();
+            assert_eq!(
+                run(d.path(), &q("*", Some("kkkk"), false, false)).len(),
+                1,
+                "offset {off}"
+            );
+        }
     }
 }
