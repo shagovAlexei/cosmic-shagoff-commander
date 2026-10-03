@@ -41,6 +41,7 @@ The workspace has two crates.
   - `listing.rs`: `scan()` on `std::fs`. `..` comes first, then folders, then files.
   - `archive.rs`: pack/unpack zip, tar.*, 7z through the same `Handler`. A path through an archive (`/x/a.zip/docs`) is a plain path: `listing::scan` falls back to `archive::list` (cached index) when `split_path` finds an archive; `extract` copies chosen entries out; the app refuses changes there (`App::read_only`). Unpack goes into a hidden `.shagoff-unpack.<pid>.<n>` in the destination (entry paths checked by `safe_path`, never through a symlink), then `ops::transfer(Move)`; pack writes a part file and renames without replacing.
   - `mount.rs`: mount / unmount through the `gio` CLI (udisks + gvfs, no glib in the build). Network mounts are dirs under `$XDG_RUNTIME_DIR/gvfs` (FUSE), so they are plain paths; gio's password prompts are answered by reading its stdout (once: it re-asks forever).
+  - `owners.rs`: uid/gid → names from `/etc/passwd` / `/etc/group` (read once) for the status bar; `Entry.owner` / `Entry.target` are filled by `scan` so rendering never touches the disk.
   - `ops.rs`: our own synchronous engine (`plan`, `transfer`, `delete`) driven through a `Handler` trait — not cosmic-files' (that one needs compio; see the phase 5 spec). Writes go to a hidden `.<name>.<pid>.<n>.shagoff-part` (created with O_EXCL) then `rename`; a moved source is deleted only after its copy succeeded; symlinks are never followed.
 - **`crates/app` (`shagoff-commander`)** is the libcosmic UI.
   - `app.rs`: `App { panes: [Pane; 2], active }`.

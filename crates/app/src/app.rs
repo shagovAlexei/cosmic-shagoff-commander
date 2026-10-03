@@ -164,6 +164,24 @@ pub struct App {
     pub drives: Vec<Drive>,
     /// (free, total) bytes of each pane's current disk.
     pub space: [Option<(u64, u64)>; 2],
+    /// Window status bar: the last message.
+    pub status: Option<Status>,
+    /// User / group names for the status bar.
+    pub owners: shagoff_core::owners::Owners,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusKind {
+    Info,
+    /// Something runs in the background ("Mounting…"): kept until its result.
+    Busy,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Status {
+    pub kind: StatusKind,
+    pub text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -249,8 +267,8 @@ pub enum Message {
     Volumes(usize, Vec<mount::Volume>),
     /// A volume or network location was mounted (for this side): its path.
     Mounted(usize, Result<PathBuf, mount::Error>),
-    /// (side that asked, unmounted drive root, result).
-    Unmounted(usize, PathBuf, Result<(), mount::Error>),
+    /// (unmounted drive root, result).
+    Unmounted(PathBuf, Result<(), mount::Error>),
     Config(Config),
     Exit,
 }
@@ -340,7 +358,7 @@ impl Application for App {
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {
-        self.config.show_fkeys.then(crate::view::fkey_bar)
+        Some(crate::view::footer(self))
     }
 }
 
@@ -379,6 +397,8 @@ impl App {
             find: state.find.clone(),
             drives: Vec::new(),
             space: [None, None],
+            status: None,
+            owners: shagoff_core::owners::Owners::load(),
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -858,19 +878,19 @@ impl App {
                 self.refresh_mounts();
                 match result {
                     Ok(path) => {
-                        self.panes[side].active_mut().error = None;
+                        self.status = None;
                         return self.go_to(side, path);
                     }
-                    Err(e) => self.panes[side].active_mut().error = Some(mount_error(&e)),
+                    Err(e) => self.say(StatusKind::Error, mount_error(&e)),
                 }
             }
-            Message::Unmounted(side, root, result) => {
+            Message::Unmounted(root, result) => {
                 self.refresh_mounts();
                 if let Err(e) = result {
-                    self.panes[side].active_mut().error = Some(mount_error(&e));
+                    self.say(StatusKind::Error, mount_error(&e));
                     return Task::none();
                 }
-                self.panes[side].active_mut().error = None;
+                self.status = None;
                 // ponytail: only the active tab of each pane moves; other tabs inside show an error.
                 let inside: Vec<usize> = (0..2)
                     .filter(|&s| self.panes[s].active().target().starts_with(&root))
@@ -998,6 +1018,14 @@ impl App {
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
         // An error stays in the status line until the next action in that pane.
         self.panes[side].active_mut().error = None;
+        // A message lasts until the next action; "working…" until its result.
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.kind != StatusKind::Busy)
+        {
+            self.status = None;
+        }
         match action {
             Action::QuickSearch(c) => return self.quick_search(side, c),
             Action::QuickFilter => return self.quick_filter(side),
@@ -1012,13 +1040,13 @@ impl App {
                     return Task::none();
                 }
                 let text = shagoff_core::clipboard::names_text(&paths, action == Action::CopyPaths);
-                self.panes[side].active_mut().error = Some(fl!("copied", n = paths.len()));
+                self.say(StatusKind::Info, fl!("copied", n = paths.len()));
                 return cosmic::iced::clipboard::write(text);
             }
             _ => {}
         }
         if self.read_only(side, action) {
-            self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
+            self.say(StatusKind::Error, fl!("archive-read-only"));
             return Task::none();
         }
         if let Some(d) = self.dialog_for(side, action) {
@@ -1107,7 +1135,7 @@ impl App {
                 if let Some(file) = file
                     && let Err(err) = spawn_detached(&launch::command(&[], &["xdg-open"], &file))
                 {
-                    t.error = Some(fl!("open-failed", err = err.to_string()));
+                    self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
                 }
             }
             // From where the tab is going, so quick Backspaces on a slow fs are not lost.
@@ -1161,7 +1189,7 @@ impl App {
                     .map(|e| (panel.cwd().join(&e.os_name), e.name.clone()));
                 if let Some((file, name)) = file {
                     if !file.exists() {
-                        t.error = Some(fl!("broken-link", name = name));
+                        self.say(StatusKind::Error, fl!("broken-link", name = name));
                         return Task::none();
                     }
                     let argv = if action == Action::View {
@@ -1170,7 +1198,7 @@ impl App {
                         launch::command(&self.config.editor, &["cosmic-edit"], &file)
                     };
                     if let Err(err) = spawn_detached(&argv) {
-                        t.error = Some(fl!("open-failed", err = err.to_string()));
+                        self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
                     }
                 }
             }
@@ -1206,7 +1234,7 @@ impl App {
                 } else {
                     fl!("diff-pick-two")
                 };
-                self.panes[side].active_mut().error = Some(msg);
+                self.say(StatusKind::Error, msg);
             }
             Action::CompareLists => {
                 let (l, r) = shagoff_core::sync::compare_lists(
@@ -1215,7 +1243,7 @@ impl App {
                 );
                 // Nothing to mark must not look like a key that did nothing.
                 if l.is_empty() && r.is_empty() {
-                    self.panes[side].active_mut().error = Some(fl!("compare-identical"));
+                    self.say(StatusKind::Info, fl!("compare-identical"));
                 }
                 self.panes[0].active_mut().panel.mark_names(&l);
                 self.panes[1].active_mut().panel.mark_names(&r);
@@ -1577,7 +1605,7 @@ impl App {
                 let cwd = self.panes[p.side].active().target();
                 let path = cwd.join(p.path.trim());
                 if into_archive(&path) {
-                    self.panes[p.side].active_mut().error = Some(fl!("archive-read-only"));
+                    self.say(StatusKind::Error, fl!("archive-read-only"));
                     return Task::none();
                 }
                 let groups = archive::groups(&p.sources, &p.base, &path, p.format, p.separate);
@@ -1605,7 +1633,7 @@ impl App {
                 if url.is_empty() {
                     return Task::none();
                 }
-                self.panes[side].active_mut().error = Some(fl!("connecting"));
+                self.say(StatusKind::Busy, fl!("connecting"));
                 blocking(
                     move || mount::connect(&url, &password),
                     move |r| Message::Mounted(side, r),
@@ -1619,7 +1647,7 @@ impl App {
             } => {
                 let dest = self.panes[side].active().target().join(path.trim());
                 if into_archive(&dest) {
-                    self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
+                    self.say(StatusKind::Error, fl!("archive-read-only"));
                     return Task::none();
                 }
                 let job = Job::Unpack {
@@ -1674,7 +1702,10 @@ impl App {
                 self.load(side, cwd, focus)
             }
             Err(e) => {
-                t.error = Some(fl!("mkdir-failed", path = name, err = e.to_string()));
+                self.say(
+                    StatusKind::Error,
+                    fl!("mkdir-failed", path = name, err = e.to_string()),
+                );
                 Task::none()
             }
         }
@@ -1691,7 +1722,7 @@ impl App {
         // While a navigation is in flight the rows still show the dir being left; aim at where the tab is going.
         let cwd = self.panes[side].active().target();
         if op != InputOp::Rename && into_archive(&cwd.join(input)) {
-            self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
+            self.say(StatusKind::Error, fl!("archive-read-only"));
             return Task::none();
         }
         // From the rows' own dir: right after Enter on an archive they still show the dir left.
@@ -1722,7 +1753,7 @@ impl App {
             Ok(pairs) if pairs.is_empty() => return Task::none(), // rename to the same name
             Ok(pairs) => pairs,
             Err(e) => {
-                self.panes[side].active_mut().error = Some(plan_error(&e));
+                self.say(StatusKind::Error, plan_error(&e));
                 return Task::none();
             }
         };
@@ -1955,7 +1986,7 @@ impl App {
         let dir = match archive::fresh_temp_dir(&archive::temp_root()) {
             Ok(d) => d,
             Err(e) => {
-                self.panes[side].active_mut().error = Some(fl!("open-failed", err = e.to_string()));
+                self.say(StatusKind::Error, fl!("open-failed", err = e.to_string()));
                 return Task::none();
             }
         };
@@ -2063,7 +2094,7 @@ impl App {
             && file.exists()
             && let Err(err) = spawn_detached(argv)
         {
-            self.panes[side].active_mut().error = Some(fl!("open-failed", err = err.to_string()));
+            self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
         }
         self.panes[side]
             .active_mut()
@@ -2140,6 +2171,16 @@ impl App {
         });
         self.active = side;
         widget::text_input::focus(self.input_id.clone())
+    }
+
+    fn say(&mut self, kind: StatusKind, text: String) {
+        self.status = Some(Status { kind, text });
+    }
+
+    /// The status bar text (tests).
+    #[cfg(test)]
+    fn msg(&self) -> Option<&str> {
+        self.status.as_ref().map(|s| s.text.as_str())
     }
 
     fn set_drawer(&mut self, d: Option<Drawer>) {
@@ -2268,11 +2309,11 @@ impl App {
             return Task::none();
         }
         let root = self.drives[i].path.clone();
-        self.panes[side].active_mut().error = Some(fl!("unmounting"));
+        self.say(StatusKind::Busy, fl!("unmounting"));
         let r = root.clone();
         blocking(
             move || mount::unmount(&r),
-            move |res| Message::Unmounted(side, root.clone(), res),
+            move |res| Message::Unmounted(root.clone(), res),
         )
     }
 
@@ -2298,7 +2339,7 @@ impl App {
         }
         match items.get(i) {
             Some(item) if item.mount => {
-                self.panes[side].active_mut().error = Some(fl!("mounting"));
+                self.say(StatusKind::Busy, fl!("mounting"));
                 let device = item.path.to_string_lossy().into_owned();
                 blocking(
                     move || mount::mount_device(&device),
@@ -2858,7 +2899,7 @@ mod tests {
             "{err}"
         );
         let _ = app.update(Message::Key(Action::Down));
-        assert!(app.panes[0].active().error.is_none());
+        assert!(app.msg().is_none());
     }
 
     #[test]
@@ -2883,7 +2924,7 @@ mod tests {
             space: None,
         });
         let _ = app.update(Message::Key(Action::View));
-        let err = app.panes[0].active().error.clone().unwrap_or_default();
+        let err = app.msg().unwrap_or_default().to_string();
         assert_eq!(err, fl!("broken-link", name = "dangling"));
     }
 
@@ -3441,7 +3482,7 @@ mod tests {
         let _ = app.update(Message::Pasted(None));
         let _ = app.update(Message::Pasted(Some((ClipKind::Copy, Vec::new()))));
         assert!(app.job.is_none());
-        assert!(app.panes[0].active().error.is_none());
+        assert!(app.msg().is_none());
     }
 
     #[test]
@@ -3451,7 +3492,7 @@ mod tests {
         let _ = app.update(Message::Pasted(Some((ClipKind::Cut, vec![a.clone()]))));
         assert!(app.job.is_none());
         assert_eq!(
-            app.panes[0].active().error.as_deref(),
+            app.msg(),
             Some(fl!("plan-same-file", path = a.display().to_string()).as_str())
         );
     }
@@ -3693,7 +3734,7 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::Delete));
         assert!(app.dialog.is_none() && app.job.is_none());
-        assert!(app.panes[0].active().error.is_some());
+        assert!(app.msg().is_some());
     }
 
     #[test]
@@ -3716,7 +3757,7 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down)); // x
         let _ = app.update(Message::Key(Action::Copy));
         assert!(app.dialog.is_none() && app.job.is_none());
-        assert!(app.panes[0].active().error.is_some());
+        assert!(app.msg().is_some());
     }
 
     #[test]
@@ -3978,7 +4019,7 @@ mod tests {
         listed_at(&mut app, 1, &a);
         let _ = app.update(Message::Key(Action::SyncDirs));
         assert!(app.dialog.is_none());
-        assert!(app.panes[0].active().error.is_some());
+        assert!(app.msg().is_some());
     }
 
     #[test]
@@ -4026,7 +4067,7 @@ mod tests {
         listed_at(&mut app, 1, &r);
         let _ = app.update(Message::Key(Action::CompareLists));
         assert!(marked(&app, 0).is_empty() && marked(&app, 1).is_empty());
-        assert!(app.panes[0].active().error.is_some()); // "identical" note in the status line
+        assert!(app.msg().is_some()); // "identical" note in the status line
     }
 
     fn diff_dlg(app: &mut App) -> &mut dialogs::DiffDlg {
@@ -4069,7 +4110,7 @@ mod tests {
         let (_tmp, mut app) = sync_setup(); // cursors on ".."
         let _ = app.update(Message::Key(Action::CompareFiles));
         assert!(app.dialog.is_none());
-        assert!(app.panes[0].active().error.is_some());
+        assert!(app.msg().is_some());
     }
 
     #[test]
@@ -4102,7 +4143,7 @@ mod tests {
         app.active = 0;
         let _ = app.update(Message::Key(Action::CompareFiles));
         assert!(app.dialog.is_none());
-        assert!(app.panes[0].active().error.is_some());
+        assert!(app.msg().is_some());
     }
 
     #[test]
@@ -4112,10 +4153,7 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::CompareFiles));
         assert!(app.dialog.is_none());
-        assert_eq!(
-            app.panes[0].active().error.as_deref(),
-            Some(fl!("diff-in-archive").as_str())
-        );
+        assert_eq!(app.msg(), Some(fl!("diff-in-archive").as_str()));
     }
 
     #[test]
@@ -4173,10 +4211,27 @@ mod tests {
             let panel = &mut app.panes[0].active_mut().panel;
             panel.set_listing(d.path().to_path_buf(), entries, Some("a.txt"));
             let _ = app.update(Message::Key(Action::CopyNames));
-            assert_eq!(
-                app.panes[0].active().error.as_deref(),
-                Some(fl!("copied", n = 1).as_str())
-            );
+            assert_eq!(app.msg(), Some(fl!("copied", n = 1).as_str()));
+        }
+
+        #[test]
+        fn messages_go_to_the_window_bar_not_the_panel() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::CompareLists)); // both panels empty: identical
+            assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Info));
+            assert_eq!(app.panes[0].active().error, None);
+            let _ = app.update(Message::Key(Action::Down));
+            assert_eq!(app.status, None); // gone with the next action
+        }
+
+        #[test]
+        fn working_message_outlives_the_next_key() {
+            let mut app = app_with(Config::default(), State::default());
+            app.say(StatusKind::Busy, fl!("connecting"));
+            let _ = app.update(Message::Key(Action::Down));
+            assert_eq!(app.msg(), Some(fl!("connecting").as_str()));
+            let _ = app.update(Message::Mounted(0, Err(mount::Error::WrongPassword)));
+            assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
         }
 
         #[test]
@@ -4296,10 +4351,7 @@ mod tests {
             app.panes[0].active_mut().pending = None;
             let _ = app.update(Message::ListPick(1));
             assert_eq!(pending_path(&app), None);
-            assert_eq!(
-                app.panes[0].active().error.as_deref(),
-                Some(fl!("mounting").as_str())
-            );
+            assert_eq!(app.msg(), Some(fl!("mounting").as_str()));
         }
 
         #[test]
@@ -4307,13 +4359,10 @@ mod tests {
             let mut app = app_with(Config::default(), State::default());
             app.panes[0].active_mut().pending = None;
             let _ = app.update(Message::Mounted(0, Err(MountError::WrongPassword)));
-            assert_eq!(
-                app.panes[0].active().error.as_deref(),
-                Some(fl!("mount-wrong-password").as_str())
-            );
+            assert_eq!(app.msg(), Some(fl!("mount-wrong-password").as_str()));
             let _ = app.update(Message::Mounted(0, Ok(PathBuf::from("/media/x"))));
             assert_eq!(pending_path(&app), Some(PathBuf::from("/media/x")));
-            assert_eq!(app.panes[0].active().error, None);
+            assert_eq!(app.msg(), None);
         }
 
         #[test]
@@ -4329,10 +4378,7 @@ mod tests {
             assert_eq!((url.as_str(), password.as_str()), ("sftp://nas/", "pw"));
             let _ = app.update(Message::DialogSubmit);
             assert!(app.dialog.is_none());
-            assert_eq!(
-                app.panes[0].active().error.as_deref(),
-                Some(fl!("connecting").as_str())
-            );
+            assert_eq!(app.msg(), Some(fl!("connecting").as_str()));
         }
 
         #[test]
@@ -4341,7 +4387,7 @@ mod tests {
             let cwd = app.panes[0].active().panel.cwd().to_path_buf();
             app.drives = vec![drive("/", "/"), drive("~", cwd.to_str().unwrap())];
             let _ = app.update(Message::Key(Action::Disconnect));
-            assert_eq!(app.panes[0].active().error, None);
+            assert_eq!(app.msg(), None);
             // A partition outside /media (like /home): udisks would ask for the admin password.
             app.drives = vec![
                 drive("/", "/"),
@@ -4349,7 +4395,7 @@ mod tests {
                 drive("tmp", cwd.to_str().unwrap()),
             ];
             let _ = app.update(Message::Key(Action::Disconnect));
-            assert_eq!(app.panes[0].active().error, None);
+            assert_eq!(app.msg(), None);
         }
 
         #[test]
@@ -4357,16 +4403,13 @@ mod tests {
             let mut app = app_with(Config::default(), State::default());
             let cwd = app.panes[0].active().panel.cwd().to_path_buf();
             app.panes[0].active_mut().pending = None;
-            let _ = app.update(Message::Unmounted(0, "/nonexistent".into(), Ok(())));
+            let _ = app.update(Message::Unmounted("/nonexistent".into(), Ok(())));
             assert_eq!(pending_path(&app), None);
-            let _ = app.update(Message::Unmounted(0, cwd, Ok(())));
+            let _ = app.update(Message::Unmounted(cwd, Ok(())));
             assert_eq!(pending_path(&app), Some(app.home.clone()));
             let failed = MountError::Failed("target is busy".into());
-            let _ = app.update(Message::Unmounted(0, "/media/x".into(), Err(failed)));
-            assert_eq!(
-                app.panes[0].active().error.as_deref(),
-                Some("target is busy")
-            );
+            let _ = app.update(Message::Unmounted("/media/x".into(), Err(failed)));
+            assert_eq!(app.msg(), Some("target is busy"));
         }
     }
 }

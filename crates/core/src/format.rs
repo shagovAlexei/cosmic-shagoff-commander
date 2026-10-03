@@ -219,7 +219,10 @@ mod tests {
         );
         let mut d = full("docs", Kind::Dir);
         d.owner = None; // inside an archive
-        assert_eq!(details(&d, &tz, &o), "docs   02.01.1970 00:00   rwxr-xr-x (755)");
+        assert_eq!(
+            details(&d, &tz, &o),
+            "docs   02.01.1970 00:00   rwxr-xr-x (755)"
+        );
         let mut l = full("lib", Kind::File);
         l.is_link = true;
         l.target = Some("/usr/lib/x".into());

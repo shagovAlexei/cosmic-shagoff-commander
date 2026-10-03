@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn scan_reads_mode() {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("x");
         fs::write(&p, "").unwrap();
