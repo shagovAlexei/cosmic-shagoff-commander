@@ -260,6 +260,7 @@ pub fn fkey_bar() -> Element<'static, Message> {
             .width(Length::Fill)
     };
     row![
+        key(fl!("fkey-help"), Action::Help),
         key(fl!("fkey-view"), Action::View),
         key(fl!("fkey-edit"), Action::Edit),
         key(fl!("fkey-copy"), Action::Copy),

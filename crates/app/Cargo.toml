@@ -26,4 +26,4 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 git = "https://github.com/pop-os/libcosmic.git"
 rev = "ef490df50b0a05a21c494c3f75737581bf0b39d9"
 default-features = false
-features = ["tokio", "winit", "wayland", "wgpu", "multi-window"]
+features = ["tokio", "winit", "wayland", "wgpu", "multi-window", "about"]

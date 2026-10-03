@@ -3,6 +3,7 @@ use crate::config::{self, Config, HotEntry, LastTab, State};
 use crate::dialogs::{
     self, Dialog, FindField, InputOp, ListItem, ListKind, MrField, SyncOpt, Toggle,
 };
+use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -143,6 +144,10 @@ pub struct App {
     /// Current keyboard modifiers, for Ctrl+click.
     mods: Modifiers,
     dialog: Option<Dialog>,
+    /// Help / about / settings in the side drawer.
+    pub(crate) drawer: Option<Drawer>,
+    /// Built once (the widget borrows it), rebuilt when the language changes.
+    pub(crate) about: cosmic::widget::about::About,
     job: Option<Running>,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
     pub(crate) input_id: widget::Id,
@@ -232,6 +237,10 @@ pub enum Message {
     Changed(usize),
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
     Drive(usize, PathBuf),
+    CloseDrawer,
+    Setting(Setting),
+    /// A link in the about drawer.
+    OpenUrl(String),
     /// Ctrl+F dialog: the password field.
     ConnectPassword(String),
     /// Volumes from gio for the drive list of this side.
@@ -267,7 +276,15 @@ impl Application for App {
         let (cfg, state): (Config, State) = (config::read(ch.as_ref()), config::read(sh.as_ref()));
         let saved = state.clone();
         archive::clean_temp(&archive::temp_root()); // left by crashed runs; not in `build` (tests)
+        // The language is chosen in main() from the system; a configured one replaces it.
+        let theme = (cfg.app_theme != config::AppTheme::System)
+            .then(|| cosmic::command::set_theme(cfg.app_theme.theme()));
+        if !cfg.language.is_empty() {
+            crate::i18n::init(&config::languages(&cfg.language, Vec::new()));
+            core.window.header_title = fl!("app-title");
+        }
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
+        let task = Task::batch([task].into_iter().chain(theme));
         app.saved = saved;
         (app.config_handler, app.state_handler) = (ch, sh);
         (app, task)
@@ -301,6 +318,10 @@ impl Application for App {
         Some(Message::Exit)
     }
 
+    fn context_drawer(&self) -> Option<cosmic::app::context_drawer::ContextDrawer<'_, Message>> {
+        self.drawer.as_ref().map(|d| drawer::view(self, d))
+    }
+
     fn header_start(&self) -> Vec<Element<'_, Message>> {
         vec![crate::menu::bar(self.config.show_hidden)]
     }
@@ -317,7 +338,7 @@ impl Application for App {
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {
-        Some(crate::view::fkey_bar())
+        self.config.show_fkeys.then(crate::view::fkey_bar)
     }
 }
 
@@ -343,6 +364,8 @@ impl App {
             next_id: 0,
             mods: Modifiers::empty(),
             dialog: None,
+            drawer: None,
+            about: drawer::about(),
             job: None,
             input_id: widget::Id::unique(),
             search: None,
@@ -708,7 +731,9 @@ impl App {
                 }
                 Some(_) => {}
                 None => {
-                    if let Some(s) = self.search.take() {
+                    if self.drawer.is_some() {
+                        self.set_drawer(None);
+                    } else if let Some(s) = self.search.take() {
                         if s.filter {
                             self.panes[s.side].active_mut().panel.set_filter(None);
                         }
@@ -851,11 +876,12 @@ impl App {
                 let home = self.home.clone();
                 return Task::batch(inside.into_iter().map(|s| self.load(s, home.clone(), None)));
             }
-            Message::Config(c) => {
-                let hidden_changed = c.show_hidden != self.config.show_hidden;
-                self.config = c;
-                if hidden_changed {
-                    return self.apply_hidden();
+            Message::Config(c) => return self.apply_config(c),
+            Message::CloseDrawer => self.set_drawer(None),
+            Message::Setting(s) => return self.set(s),
+            Message::OpenUrl(url) => {
+                if let Err(e) = spawn_detached(&["xdg-open".into(), url.into()]) {
+                    log::warn!("xdg-open: {e}");
                 }
             }
             Message::Exit => {
@@ -973,6 +999,10 @@ impl App {
             Action::QuickSearch(c) => return self.quick_search(side, c),
             Action::QuickFilter => return self.quick_filter(side),
             Action::Disconnect => return self.disconnect(side),
+            Action::Help | Action::About | Action::Settings => {
+                self.toggle_drawer(action);
+                return Task::none();
+            }
             _ => {}
         }
         if self.read_only(side, action) {
@@ -1134,7 +1164,12 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::Drives(_) => {}
-            Action::QuickSearch(_) | Action::QuickFilter | Action::Disconnect => {} // handled above
+            Action::QuickSearch(_)
+            | Action::QuickFilter
+            | Action::Disconnect
+            | Action::Help
+            | Action::About
+            | Action::Settings => {} // handled above
             Action::Connect => {} // always a dialog
             Action::HistoryBack | Action::HistoryForward => {
                 let history = &mut self.panes[side].active_mut().history;
@@ -2090,6 +2125,106 @@ impl App {
         });
         self.active = side;
         widget::text_input::focus(self.input_id.clone())
+    }
+
+    fn set_drawer(&mut self, d: Option<Drawer>) {
+        self.core.window.show_context = d.is_some();
+        self.drawer = d;
+    }
+
+    /// F1 / About / Ctrl+,: open that drawer, or close it if it is the one open.
+    fn toggle_drawer(&mut self, action: Action) {
+        let d = match action {
+            Action::Help => Drawer::Help,
+            Action::About => Drawer::About,
+            _ => Drawer::Settings(SettingsForm {
+                viewer: self.config.viewer.join(" "),
+                editor: self.config.editor.join(" "),
+                home: self
+                    .config
+                    .home_dir
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+            }),
+        };
+        let same = self
+            .drawer
+            .as_ref()
+            .is_some_and(|cur| std::mem::discriminant(cur) == std::mem::discriminant(&d));
+        self.set_drawer((!same).then_some(d));
+    }
+
+    /// A change in the settings drawer: written like a hand edit of the config, applied now.
+    fn set(&mut self, s: Setting) -> Task<Message> {
+        let mut c = self.config.clone();
+        let form = match &mut self.drawer {
+            Some(Drawer::Settings(f)) => Some(f),
+            _ => None,
+        };
+        let command = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        match s {
+            Setting::Language(i) => {
+                c.language = i
+                    .checked_sub(1)
+                    .and_then(|i| config::LANGUAGES.get(i))
+                    .map_or(String::new(), |l| l.to_string());
+            }
+            Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
+            Setting::ShowFkeys(b) => c.show_fkeys = b,
+            Setting::ShowHidden(b) => c.show_hidden = b,
+            Setting::LastTabHome(b) => {
+                c.last_tab_close = if b { LastTab::Home } else { LastTab::Nothing };
+            }
+            Setting::HomeDir(v) => {
+                c.home_dir = (!v.trim().is_empty()).then(|| PathBuf::from(v.trim()));
+                if let Some(f) = form {
+                    f.home = v;
+                }
+            }
+            Setting::Viewer(v) => {
+                c.viewer = command(&v);
+                if let Some(f) = form {
+                    f.viewer = v;
+                }
+            }
+            Setting::Editor(v) => {
+                c.editor = command(&v);
+                if let Some(f) = form {
+                    f.editor = v;
+                }
+            }
+            Setting::PackFormat(i) => {
+                if let Some(f) = Format::PACK.get(i) {
+                    c.pack_format = f.ext().into();
+                }
+            }
+        }
+        if let Some(h) = &self.config_handler
+            && let Err(e) = c.write_entry(h)
+        {
+            log::warn!("config: {e}");
+        }
+        self.apply_config(c)
+    }
+
+    /// New settings, from the settings drawer or the config watcher (a hand edit).
+    fn apply_config(&mut self, c: Config) -> Task<Message> {
+        let old = std::mem::replace(&mut self.config, c);
+        let mut tasks = Vec::new();
+        if old.language != self.config.language {
+            let system = i18n_embed::DesktopLanguageRequester::requested_languages();
+            crate::i18n::init(&config::languages(&self.config.language, system));
+            self.core.window.header_title = fl!("app-title");
+            self.about = drawer::about();
+        }
+        if old.app_theme != self.config.app_theme {
+            tasks.push(cosmic::command::set_theme(self.config.app_theme.theme()));
+        }
+        if old.show_hidden != self.config.show_hidden {
+            tasks.push(self.apply_hidden());
+        }
+        Task::batch(tasks)
     }
 
     /// Mounts change rarely and procfs never blocks: re-read with every listing.
@@ -3979,6 +4114,82 @@ mod tests {
         let app = app_with(Config::default(), State::default());
         let id = cosmic::iced::window::Id::unique();
         assert!(matches!(app.on_close_requested(id), Some(Message::Exit)));
+    }
+
+    mod drawer_tests {
+        use super::*;
+        use crate::config::{AppTheme, LastTab};
+        use crate::drawer::{Drawer, Setting};
+
+        fn form(app: &App) -> crate::drawer::SettingsForm {
+            match &app.drawer {
+                Some(Drawer::Settings(f)) => f.clone(),
+                d => panic!("no settings: {d:?}"),
+            }
+        }
+
+        #[test]
+        fn f1_toggles_help_and_about_replaces_it() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::Help));
+            assert_eq!(app.drawer, Some(Drawer::Help));
+            let _ = app.update(Message::Key(Action::About));
+            assert_eq!(app.drawer, Some(Drawer::About));
+            let _ = app.update(Message::Key(Action::About));
+            assert_eq!(app.drawer, None);
+        }
+
+        #[test]
+        fn escape_closes_the_drawer_first() {
+            let mut app = app_with(Config::default(), State::default());
+            app.panes[0].active_mut().panel.set_filter(Some("x".into()));
+            let _ = app.update(Message::Key(Action::Help));
+            let _ = app.update(Message::DialogCancel);
+            assert_eq!(app.drawer, None);
+            assert!(app.panes[0].active().panel.filter().is_some()); // filter kept
+        }
+
+        #[test]
+        fn settings_form_shows_config() {
+            let config = Config {
+                viewer: vec!["code".into(), "--wait".into()],
+                home_dir: Some("/srv".into()),
+                ..Config::default()
+            };
+            let mut app = app_with(config, State::default());
+            let _ = app.update(Message::Key(Action::Settings));
+            let f = form(&app);
+            assert_eq!(
+                (f.viewer.as_str(), f.editor.as_str(), f.home.as_str()),
+                ("code --wait", "cosmic-edit", "/srv")
+            );
+        }
+
+        #[test]
+        fn settings_change_config() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::Settings));
+            let set = |app: &mut App, s| {
+                let _ = app.update(Message::Setting(s));
+            };
+            set(&mut app, Setting::ShowFkeys(false));
+            set(&mut app, Setting::ShowHidden(true));
+            set(&mut app, Setting::LastTabHome(true));
+            set(&mut app, Setting::PackFormat(1));
+            set(&mut app, Setting::Theme(2));
+            set(&mut app, Setting::Language(1)); // "en": tests share the fallback loader
+            set(&mut app, Setting::Viewer("code ".into()));
+            set(&mut app, Setting::HomeDir("  ".into()));
+            let c = &app.config;
+            assert!(!c.show_fkeys && c.show_hidden);
+            assert_eq!(c.last_tab_close, LastTab::Home);
+            assert_eq!(c.pack_format, Format::PACK[1].ext());
+            assert_eq!((c.app_theme, c.language.as_str()), (AppTheme::Dark, "en"));
+            assert_eq!(c.viewer, ["code"]);
+            assert_eq!(c.home_dir, None);
+            assert_eq!(form(&app).viewer, "code "); // the space being typed stays
+            assert!(app.panes[0].active().panel.show_hidden());
+        }
     }
 
     mod mount_tests {
