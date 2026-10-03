@@ -42,14 +42,35 @@ impl<T> Tabs<T> {
 
     /// Close tab `i`; refuses the last one. Closing the active tab activates its right neighbour (left if none).
     pub fn close(&mut self, i: usize) -> bool {
+        self.take(i).is_some()
+    }
+
+    /// Remove tab `i` and hand it over; refuses the last one. The active tab moves as with `close`.
+    pub fn take(&mut self, i: usize) -> Option<T> {
         if self.items.len() == 1 || i >= self.items.len() {
-            return false;
+            return None;
         }
-        self.items.remove(i);
+        let item = self.items.remove(i);
         if i < self.active || self.active == self.items.len() {
             self.active -= 1;
         }
-        true
+        Some(item)
+    }
+
+    /// Keep the tabs `keep` says yes to, and always the active one.
+    pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
+        let mut i = 0;
+        let active = self.active;
+        let mut new_active = 0;
+        self.items.retain(|t| {
+            let kept = i == active || keep(t);
+            if kept && i < active {
+                new_active += 1;
+            }
+            i += 1;
+            kept
+        });
+        self.active = new_active;
     }
 
     pub fn select(&mut self, i: usize) {
@@ -152,5 +173,28 @@ mod tests {
         one.next();
         one.prev();
         assert_eq!(*one.active(), 'a');
+    }
+
+    #[test]
+    fn take_hands_over_and_refuses_last() {
+        let mut t = tabs(3, 2); // a b [c]
+        assert_eq!(t.take(0), Some('a'));
+        assert_eq!(t.items(), ['b', 'c']);
+        assert_eq!(*t.active(), 'c');
+        assert_eq!(t.take(1), Some('c'));
+        assert_eq!(*t.active(), 'b');
+        assert_eq!(t.take(0), None);
+        assert_eq!(t.take(7), None);
+    }
+
+    #[test]
+    fn retain_keeps_the_active_one() {
+        let mut t = tabs(5, 2); // a b [c] d e
+        t.retain(|c| *c == 'b' || *c == 'e');
+        assert_eq!(t.items(), ['b', 'c', 'e']);
+        assert_eq!(*t.active(), 'c');
+        t.retain(|_| false);
+        assert_eq!(t.items(), ['c']);
+        assert_eq!(t.active_index(), 0);
     }
 }
