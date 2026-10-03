@@ -119,3 +119,5 @@ diff-binary-differ = Binary files, different
 diff-next = Next difference
 diff-prev = Previous
 diff-pick-two = Select two files: two marked in one panel, or one under the cursor in each
+diff-eol = The text is identical; line endings or the final newline differ
+diff-in-archive = Files inside an archive can't be compared: copy them out first (F5)

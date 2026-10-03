@@ -90,22 +90,55 @@ pub struct DiffDlg {
     pub id: u64,
     /// `None` while comparing. `Arc`: `Message` must be `Clone` and the rows are large.
     pub result: Option<Arc<Result<diff::Outcome, String>>>,
-    /// Current block of differences (index into `blocks`).
+    /// Current block of differences (index into `blocks()`).
     pub block: usize,
     pub scroll: widget::Id,
+    /// Vertical scroll offset: only the rows in view are built.
+    pub offset: f32,
+    /// Width of each side, from its longest line: `Fill` inside a two-way scrollable lays out at 0.
+    pub widths: (f32, f32),
 }
 
 /// Diff rows have one fixed height, so a block's scroll offset is `row * DIFF_ROW_H`.
 pub const DIFF_ROW_H: f32 = 22.0;
-const DIFF_SHOWN: usize = 10_000;
+pub const DIFF_LIST_H: f32 = 260.0;
+/// Monospace advance at the default text size, plus the line-number column.
+const MONO_W: f32 = 8.5;
+const NUM_W: f32 = 56.0;
 
 impl DiffDlg {
-    pub fn blocks(&self) -> &[usize] {
+    pub fn text(&self) -> Option<&diff::Text> {
         match self.result.as_deref() {
-            Some(Ok(diff::Outcome::Text { blocks, .. })) => blocks,
-            _ => &[],
+            Some(Ok(diff::Outcome::Text(t))) => Some(t),
+            _ => None,
         }
     }
+
+    /// Blocks that start within the kept rows (the only ones we can scroll to).
+    pub fn blocks(&self) -> &[usize] {
+        self.text().map_or(&[], |t| {
+            let n = t.blocks.partition_point(|&b| b < t.rows.len());
+            &t.blocks[..n]
+        })
+    }
+
+    /// Side widths from the longest line on each side (at least a readable minimum).
+    pub fn measure(t: &diff::Text) -> (f32, f32) {
+        let longest = |f: fn(&diff::Row) -> &Option<(usize, String)>| {
+            t.rows
+                .iter()
+                .filter_map(|r| f(r).as_ref())
+                .map(|(_, s)| expand(s).chars().count())
+                .max()
+                .unwrap_or(0)
+        };
+        let w = |chars: usize| (NUM_W + chars as f32 * MONO_W).max(420.0);
+        (w(longest(|r| &r.left)), w(longest(|r| &r.right)))
+    }
+}
+
+fn expand(s: &str) -> String {
+    s.replace('\t', "    ")
 }
 
 pub struct SyncDlg {
@@ -159,7 +192,7 @@ fn diff_style(kind: diff::Kind) -> cosmic::theme::Container<'static> {
             diff::Kind::Same => return Default::default(),
             diff::Kind::Deleted => c.destructive_color(),
             diff::Kind::Inserted => c.success_color(),
-            diff::Kind::Changed => c.warning_color(),
+            diff::Kind::Changed => c.accent_color(),
         };
         let mut bg = cosmic::iced::Color::from(tint);
         bg.a = 0.25;
@@ -670,37 +703,54 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 Some(Err(e)) => e.clone(),
                 Some(Ok(diff::Outcome::Binary { same: true })) => fl!("diff-binary-same"),
                 Some(Ok(diff::Outcome::Binary { same: false })) => fl!("diff-binary-differ"),
-                Some(Ok(diff::Outcome::Text { rows, blocks })) => {
+                Some(Ok(diff::Outcome::Text(t))) => {
                     let mono = |s: String| {
                         widget::text(s)
                             .font(cosmic::font::mono())
                             .wrapping(Wrapping::None)
                     };
-                    let side = |c: &Option<(usize, String)>| match c {
-                        Some((n, t)) => row![
-                            mono(format!("{n:>5} ")).width(Length::Fixed(56.0)),
-                            mono(t.replace('\t', "    ")).width(Length::Fill),
-                        ],
-                        None => row![],
+                    let half = |c: &Option<(usize, String)>, w: f32| {
+                        let content = match c {
+                            Some((n, s)) => row![
+                                mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W)),
+                                mono(expand(s)),
+                            ],
+                            None => row![],
+                        };
+                        widget::container(content)
+                            .width(Length::Fixed(w))
+                            .clip(true)
                     };
-                    for r in rows.iter().take(DIFF_SHOWN) {
-                        let line = row![
-                            widget::container(side(&r.left)).width(Length::FillPortion(1)),
-                            widget::container(side(&r.right)).width(Length::FillPortion(1)),
-                        ]
-                        .spacing(8);
+                    // Only the rows in view (plus a margin) are built; spacers keep the height.
+                    let first = ((d.offset / DIFF_ROW_H) as usize).min(t.rows.len());
+                    let last = (first + (DIFF_LIST_H / DIFF_ROW_H) as usize + 2).min(t.rows.len());
+                    let (wl, wr) = d.widths;
+                    list = list.push(
+                        widget::Space::new()
+                            .width(Length::Fixed(wl + wr + 8.0))
+                            .height(Length::Fixed(first as f32 * DIFF_ROW_H)),
+                    );
+                    for r in &t.rows[first..last] {
                         list = list.push(
-                            widget::container(line)
-                                .height(Length::Fixed(DIFF_ROW_H))
-                                .width(Length::Fill)
-                                .class(diff_style(r.kind)),
+                            widget::container(
+                                row![half(&r.left, wl), half(&r.right, wr)].spacing(8),
+                            )
+                            .height(Length::Fixed(DIFF_ROW_H))
+                            .class(diff_style(r.kind)),
                         );
                     }
-                    let more = rows.len().saturating_sub(DIFF_SHOWN);
+                    let below = (t.rows.len() - last) as f32 * DIFF_ROW_H;
+                    list = list.push(
+                        widget::Space::new()
+                            .width(Length::Fixed(1.0))
+                            .height(Length::Fixed(below)),
+                    );
+                    let more = t.total.saturating_sub(t.rows.len());
                     if more > 0 {
                         list = list.push(widget::text(fl!("find-more", n = more)));
                     }
-                    match blocks.len() {
+                    match t.blocks.len() {
+                        0 if t.eol_differs => fl!("diff-eol"),
                         0 => fl!("diff-same"),
                         n => fl!(
                             "diff-count",
@@ -739,11 +789,13 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                         widget::text(status),
                         widget::scrollable(list)
                             .id(d.scroll.clone())
+                            .on_scroll(|v| Message::DiffScrolled(v.absolute_offset().y))
                             .direction(cosmic::iced::widget::scrollable::Direction::Both {
                                 vertical: Default::default(),
                                 horizontal: Default::default(),
                             })
-                            .height(Length::Fixed(260.0)),
+                            .width(Length::Fill)
+                            .height(Length::Fixed(DIFF_LIST_H)),
                     ]
                     .spacing(10),
                 )
