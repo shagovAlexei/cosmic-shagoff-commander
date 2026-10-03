@@ -710,6 +710,9 @@ fn index(archive: &Path) -> io::Result<Index> {
 /// "/x/a.zip/docs" → ("/x/a.zip", "docs"). `None` if `p` is a real dir or no ancestor (up to the
 /// first real dir) is a regular file with a tree format.
 pub fn split_path(p: &Path) -> Option<(PathBuf, PathBuf)> {
+    // Rebuilt from components: "a.zip/" with its trailing slash fails `metadata` (ENOTDIR).
+    let p: PathBuf = p.components().collect();
+    let p = p.as_path();
     for a in p.ancestors() {
         let Ok(m) = fs::metadata(a) else { continue };
         if m.is_dir() {
@@ -2467,5 +2470,15 @@ mod tests {
         assert!(mine.is_dir());
         assert!(!d.path().join("999999999").exists());
         assert!(d.path().join("not-a-pid").exists());
+    }
+
+    #[test]
+    fn regression_split_path_trailing_slash() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        zip_fixture(&a);
+        let slashed = PathBuf::from(format!("{}/", a.display()));
+        assert_eq!(split_path(&slashed), Some((a.clone(), PathBuf::new())));
+        assert_eq!(crate::listing::scan(&slashed, true).unwrap().len(), 3);
     }
 }
