@@ -1,6 +1,7 @@
 //! Runs an `ops` job on a worker thread; events go to the UI over a channel, answers come back blocking.
 
 use cosmic::iced::futures::channel::mpsc as fmpsc;
+use shagoff_core::archive::{self, Format};
 use shagoff_core::ops::{self, ErrorChoice, FileInfo, Handler, Method, Report, Resolution};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +16,18 @@ pub enum Job {
     Delete {
         paths: Vec<PathBuf>,
         permanent: bool,
+    },
+    Pack {
+        format: Format,
+        base: PathBuf,
+        groups: Vec<(Vec<PathBuf>, PathBuf)>,
+        /// "Move to archive": delete the sources of archives written without skips.
+        move_after: bool,
+    },
+    Unpack {
+        archives: Vec<PathBuf>,
+        dest: PathBuf,
+        own_dir: bool,
     },
 }
 
@@ -98,6 +111,28 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
         let report = match job {
             Job::Transfer { method, pairs } => ops::transfer(method, &pairs, &mut h),
             Job::Delete { paths, permanent } => ops::delete(&paths, permanent, &mut h),
+            Job::Pack {
+                format,
+                base,
+                groups,
+                move_after,
+            } => {
+                let r = archive::pack(format, &base, &groups, &mut h);
+                if move_after && !r.cancelled && !r.completed.is_empty() {
+                    let d = ops::delete(&r.completed, true, &mut h);
+                    Report {
+                        cancelled: d.cancelled,
+                        completed: r.completed,
+                    }
+                } else {
+                    r
+                }
+            }
+            Job::Unpack {
+                archives,
+                dest,
+                own_dir,
+            } => archive::unpack(&archives, &dest, own_dir, &mut h),
         };
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });

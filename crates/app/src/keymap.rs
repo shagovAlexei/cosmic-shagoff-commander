@@ -58,6 +58,9 @@ pub enum Action {
     ClipCut,
     ClipPaste,
     MultiRename,
+    /// Alt+F5 / Alt+F9: pack the targets / unpack the archives among them.
+    Pack,
+    Unpack,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -70,6 +73,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         return match key {
             Key::Named(Named::F1) if mods == Modifiers::ALT => Some(Action::Drives(0)),
             Key::Named(Named::F2) if mods == Modifiers::ALT => Some(Action::Drives(1)),
+            Key::Named(Named::F5) if mods == Modifiers::ALT => Some(Action::Pack),
+            Key::Named(Named::F9) if mods == Modifiers::ALT => Some(Action::Unpack),
             Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Action::HistoryBack),
             Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
             Key::Named(Named::ArrowDown) if mods == Modifiers::ALT => Some(Action::HistoryList),
@@ -338,5 +343,12 @@ mod tests {
         assert_eq!(chr("в", Code::KeyD, CTRL), Some(Action::Hotlist));
         assert_eq!(chr("u", Code::KeyU, CTRL), Some(Action::SwapPanes));
         assert_eq!(chr("г", Code::KeyU, CTRL), Some(Action::SwapPanes));
+    }
+
+    #[test]
+    fn alt_f5_f9_pack_unpack() {
+        assert_eq!(named(Named::F5, ALT), Some(Action::Pack));
+        assert_eq!(named(Named::F9, ALT), Some(Action::Unpack));
+        assert_eq!(named(Named::F5, ALT | Modifiers::SHIFT), None);
     }
 }
