@@ -875,8 +875,11 @@ impl App {
                 if self.dialog.is_some() || self.job.is_some() {
                     return Task::none(); // asked on a later tick
                 }
+                // Gone (temp cleaned, file deleted): stop watching it.
+                self.edited
+                    .retain(|e| std::fs::symlink_metadata(&e.file).is_ok());
                 for e in &mut self.edited {
-                    if let Ok(m) = std::fs::metadata(&e.file).and_then(|m| m.modified())
+                    if let Ok(m) = std::fs::symlink_metadata(&e.file).and_then(|m| m.modified())
                         && m != e.mtime
                     {
                         e.mtime = m;
@@ -1323,6 +1326,12 @@ impl App {
                     .filter(|e| !e.is_dir() && e.name != PARENT)
                     .map(|e| e.os_name.clone());
                 if let (Some(os_name), Some((arc, inner))) = (current, archive::split_path(&cwd)) {
+                    // A link entry would open (and on "update", overwrite) whatever it points to.
+                    let link = panel.current().is_some_and(|e| e.is_link);
+                    if action == Action::Edit && link {
+                        self.say(StatusKind::Error, fl!("archive-edit-link"));
+                        return Task::none();
+                    }
                     let how = if action == Action::Edit {
                         How::Edit(self.config.editor.clone())
                     } else {
@@ -1861,6 +1870,10 @@ impl App {
             _ => None,
         };
         if let Some((archive, inner)) = archive::split_path(&cwd) {
+            if Path::new(name).is_absolute() {
+                self.say(StatusKind::Error, plan_error(&PlanError::BadName));
+                return Task::none();
+            }
             let job = Job::Repack {
                 archive,
                 change: Change::Mkdir(inner.join(name)),
@@ -1912,6 +1925,11 @@ impl App {
                 if input.is_empty() || Path::new(name) == Path::new(input) {
                     return Task::none();
                 }
+                // As outside archives (`rename_pairs`): a new name, not a path.
+                if input.contains('/') || input == "." || input == ".." {
+                    self.say(StatusKind::Error, plan_error(&PlanError::BadName));
+                    return Task::none();
+                }
                 let job = Job::Repack {
                     archive,
                     change: Change::Rename {
@@ -1927,6 +1945,14 @@ impl App {
                 return self.start_extract(side, &from, &sources, target, op == InputOp::Move);
             }
             (None, Some((archive, inner))) => {
+                // The archive itself (or a dir holding it) among the sources: F6 would delete it.
+                let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                let arc = real(&archive);
+                if let Some(s) = sources.iter().find(|s| arc.starts_with(real(s))) {
+                    let e = PlanError::IntoItself(s.clone());
+                    self.say(StatusKind::Error, plan_error(&e));
+                    return Task::none();
+                }
                 let job = Job::Repack {
                     archive,
                     change: Change::Add { sources, inner },
@@ -2448,7 +2474,7 @@ impl App {
                     entry,
                 } => match spawn_detached(&argv) {
                     Ok(()) => {
-                        let mtime = std::fs::metadata(&file)
+                        let mtime = std::fs::symlink_metadata(&file)
                             .and_then(|m| m.modified())
                             .unwrap_or(SystemTime::UNIX_EPOCH);
                         self.edited.push(Edited {
@@ -4347,6 +4373,29 @@ mod tests {
         let _ = app.update(Message::Key(Action::Move));
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Move));
+    }
+
+    #[test]
+    fn regression_f6_of_the_archive_into_itself_is_refused() {
+        let (_tmp, mut app, a) = zip_setup(); // cursor on a.zip
+        listed_at(&mut app, 1, &a);
+        let _ = app.update(Message::Key(Action::Move));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.job.is_none());
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
+        assert!(a.exists());
+    }
+
+    #[test]
+    fn rename_inside_archive_refuses_a_slash() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::End));
+        let _ = app.update(Message::Key(Action::Rename));
+        let _ = app.update(Message::DialogInput("d/x.txt".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.job.is_none());
+        assert_eq!(app.msg(), Some(fl!("rename-bad-name").as_str()));
     }
 
     #[test]

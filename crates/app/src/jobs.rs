@@ -206,8 +206,15 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
                 move_sources,
             } => {
                 let r = repack::modify(&archive, &change, &mut h);
-                if move_sources && !r.cancelled && !r.completed.is_empty() {
-                    let d = ops::delete(&r.completed, true, &mut h);
+                // Never the archive itself (the app refuses that F6 too).
+                let sources: Vec<PathBuf> = r
+                    .completed
+                    .iter()
+                    .filter(|s| !archive.starts_with(s))
+                    .cloned()
+                    .collect();
+                if move_sources && !r.cancelled && !sources.is_empty() {
+                    let d = ops::delete(&sources, true, &mut h);
                     Report {
                         cancelled: d.cancelled,
                         completed: r.completed,

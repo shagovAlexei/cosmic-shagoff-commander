@@ -272,3 +272,4 @@ repacking = Updating the archive
 archive-update-title = File changed
 archive-update = { $entry } was saved in the editor. Put it back into { $archive }?
 archive-update-ok = Update the archive
+archive-edit-link = A link inside an archive can't be edited

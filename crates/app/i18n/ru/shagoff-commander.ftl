@@ -273,3 +273,4 @@ repacking = Обновление архива
 archive-update-title = Файл изменён
 archive-update = { $entry } сохранён в редакторе. Обновить его в архиве { $archive }?
 archive-update-ok = Обновить архив
+archive-edit-link = Ссылку внутри архива править нельзя

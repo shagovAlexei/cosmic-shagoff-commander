@@ -440,14 +440,17 @@ fn read_tar(r: impl Read, st: &mut Stage) -> Result<(), Stop> {
             || -> io::Result<PathBuf> { Ok(e.link_name()?.unwrap_or_default().into_owned()) };
         let kind = if t.is_dir() {
             Kind::Dir
-        } else if t.is_file() {
-            Kind::File(Some(e.size()))
+        } else if t.is_file() || t.is_gnu_sparse() || t.is_contiguous() {
+            Kind::File(Some(e.size())) // tar fills a sparse file's holes when reading
         } else if t.is_symlink() {
             Kind::Symlink(link()?)
         } else if t.is_hard_link() {
             Kind::Hardlink(link()?)
         } else {
-            continue; // devices, fifos, sockets: not created
+            // Devices, fifos, sockets: not created, without asking; but not "done" either, so
+            // a rewrite of the archive (repack) refuses instead of dropping them.
+            st.skipped = true;
+            continue;
         };
         st.put(&name, kind, mode, mtime, &mut e)?;
     }
@@ -663,7 +666,8 @@ fn read_index(f: Format, archive: &Path) -> io::Result<Vec<Item>> {
                 let e = e?;
                 let h = e.header();
                 let t = h.entry_type();
-                if !(t.is_dir() || t.is_file() || t.is_symlink() || t.is_hard_link()) {
+                let file = t.is_file() || t.is_gnu_sparse() || t.is_contiguous();
+                if !(t.is_dir() || file || t.is_symlink() || t.is_hard_link()) {
                     continue;
                 }
                 let mtime = h.mtime().ok().map(|s| UNIX_EPOCH + Duration::from_secs(s));
@@ -912,6 +916,8 @@ fn run(units: &[Unit], dest: &Path, h: &mut dyn Handler) -> Report {
             return report;
         }
     };
+    // Units read without skips; `completed` once their entries also got past the final move.
+    let mut read: Vec<&Unit> = Vec::new();
     'archives: for u in units {
         let a = &u.archive;
         let name = a
@@ -949,7 +955,7 @@ fn run(units: &[Unit], dest: &Path, h: &mut dyn Handler) -> Report {
             match result {
                 Ok(()) => {
                     if !skipped {
-                        report.completed.extend(u.done.iter().cloned());
+                        read.push(u);
                     }
                     break;
                 }
@@ -976,7 +982,28 @@ fn run(units: &[Unit], dest: &Path, h: &mut dyn Handler) -> Report {
                     .collect()
             })
             .unwrap_or_default();
-        report.cancelled = ops::transfer(Method::Move, &pairs, h).cancelled;
+        let t = ops::transfer(Method::Move, &pairs, h);
+        report.cancelled = t.cancelled;
+        // A conflict answered Skip leaves the entry unextracted: F6 out must not delete it.
+        let moved = |p: &Path| t.completed.iter().any(|c| c == p);
+        for u in read {
+            match (&u.select, &u.sub) {
+                (Some(sel), _) => report.completed.extend(
+                    sel.names
+                        .iter()
+                        .zip(&u.done)
+                        .filter(|(n, _)| moved(&staging.join(n)))
+                        .map(|(_, d)| d.clone()),
+                ),
+                (None, Some(sub)) if moved(&staging.join(sub)) => {
+                    report.completed.extend(u.done.iter().cloned())
+                }
+                (None, None) if pairs.iter().all(|(src, _)| moved(src)) => {
+                    report.completed.extend(u.done.iter().cloned())
+                }
+                _ => {}
+            }
+        }
     }
     let _ = fs::remove_dir_all(&staging); // never follows symlinks
     report
@@ -1809,9 +1836,71 @@ mod tests {
             ],
         );
         let mut h = Script::default();
-        unpack(&[a], &d.path().join("out"), false, &mut h);
+        let r = unpack(
+            std::slice::from_ref(&a),
+            &d.path().join("out"),
+            false,
+            &mut h,
+        );
         assert_eq!(names(&d.path().join("out")), ["ok"]);
         assert!(h.errored.is_empty());
+        // Not "done": a rewrite of the archive (repack) would drop them.
+        assert!(r.completed.is_empty());
+    }
+
+    #[test]
+    fn regression_extract_skipped_on_conflict_is_not_completed() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.tar");
+        evil_tar(&a, &[("f.txt", tar::EntryType::Regular, "", b"new")]);
+        let out = d.path().join("out");
+        fs::create_dir(&out).unwrap();
+        fs::write(out.join("f.txt"), "old").unwrap();
+        let mut h = Script {
+            conflicts: vec![Resolution::Skip],
+            ..Script::default()
+        };
+        let r = extract(&a, Path::new(""), &[PathBuf::from("f.txt")], &out, &mut h);
+        assert_eq!(fs::read_to_string(out.join("f.txt")).unwrap(), "old");
+        assert!(r.completed.is_empty(), "{:?}", r.completed);
+    }
+
+    #[test]
+    fn regression_gnu_sparse_file_is_unpacked() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("sparse.img");
+        let file = fs::File::create(&f).unwrap();
+        file.set_len(1 << 20).unwrap();
+        use std::io::{Seek, Write};
+        let mut file = file;
+        file.seek(io::SeekFrom::Start(4096)).unwrap();
+        file.write_all(b"data").unwrap();
+        drop(file);
+        let a = d.path().join("s.tar");
+        // GNU tar is what writes sparse entries; skip where it is missing.
+        let Ok(st) = std::process::Command::new("tar")
+            .args(["--format=gnu", "-cSf"])
+            .arg(&a)
+            .arg("-C")
+            .arg(d.path())
+            .arg("sparse.img")
+            .status()
+        else {
+            return;
+        };
+        assert!(st.success());
+        fs::remove_file(&f).unwrap();
+        let out = d.path().join("out");
+        let r = unpack(
+            std::slice::from_ref(&a),
+            &out,
+            false,
+            &mut Script::default(),
+        );
+        assert_eq!(r.completed, [a]);
+        let back = fs::read(out.join("sparse.img")).unwrap();
+        assert_eq!(back.len(), 1 << 20);
+        assert_eq!(&back[4096..4100], b"data");
     }
 
     #[test]

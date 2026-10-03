@@ -256,3 +256,9 @@
 | `regression_diff_with_three_marked_does_not_fall_back_to_cursors` | Ctrl+Shift+D при «не двух» отмеченных молча сравнивал файлы под курсорами | 15 |
 | `regression_diff_inside_archive_explains` | Ctrl+Shift+D внутри архива давал «Not a directory» | 15 |
 | `regression_fifo_is_refused_not_read` (lister) | F3 на FIFO вешал поток чтения | 20 |
+| `regression_extract_skipped_on_conflict_is_not_completed` | F6 из архива удалял запись, хотя в конфликте выбран «Пропустить» | 21 |
+| `regression_gnu_sparse_file_is_unpacked` | Разреженные файлы tar молча пропадали при распаковке и при перезаписи архива | 21 |
+| `regression_links_inside_never_lead_outside` | Изменение архива через ссылку внутри него писало за пределы временного каталога (F4 на ссылке обнулял настоящий файл) | 21 |
+| `regression_symlinked_archive_stays_a_link` | Архив-ссылка заменялся обычным файлом, настоящий архив не менялся | 21 |
+| `regression_zip_names_in_a_legacy_encoding_are_kept` | Имена cp866 в zip без флага UTF-8 навсегда портились при перезаписи | 21 |
+| `regression_f6_of_the_archive_into_itself_is_refused` | F6 архива в самого себя удалял архив | 21 |

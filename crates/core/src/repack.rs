@@ -36,15 +36,32 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let Some(format) = Format::detect(&name).filter(|f| f.is_tree()) else {
-        let e = io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not an archive that can be changed",
-        );
-        report.cancelled = h.error(archive, &e) == ErrorChoice::Cancel;
-        return report;
+    let refuse = |h: &mut dyn Handler, why: &str| {
+        let e = io::Error::new(io::ErrorKind::InvalidInput, why.to_string());
+        Report {
+            cancelled: h.error(archive, &e) == ErrorChoice::Cancel,
+            completed: Vec::new(),
+        }
     };
-    let dir = archive.parent().unwrap_or(Path::new("."));
+    let Some(format) = Format::detect(&name).filter(|f| f.is_tree()) else {
+        return refuse(h, "not an archive that can be changed");
+    };
+    // A symlinked archive: rewrite the real file, keep the link.
+    let real = match retry(h, archive, || fs::canonicalize(archive)) {
+        Ok(r) => r,
+        Err(cancel) => {
+            report.cancelled = cancel;
+            return report;
+        }
+    };
+    if format == Format::Zip && legacy_zip_names(&real).unwrap_or(false) {
+        // Read as CP437 and written back as UTF-8, they would turn into garbage for good.
+        return refuse(
+            h,
+            "file names in a legacy encoding; changing the archive would garble them",
+        );
+    }
+    let dir = real.parent().unwrap_or(Path::new("."));
     let staging = match retry(h, archive, || archive::make_staging(dir)) {
         Ok(s) => s,
         Err(cancel) => {
@@ -52,13 +69,37 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
             return report;
         }
     };
-    let outcome = rewrite(archive, format, &name, &staging, change, h);
+    let outcome = rewrite(&real, format, &name, &staging, change, h);
     let _ = fs::remove_dir_all(&staging); // never follows symlinks
     match outcome {
-        Ok(done) => report.completed = done,
+        // Paths as the caller knows them (through the link, if any).
+        Ok(done) => {
+            report.completed = done
+                .into_iter()
+                .map(|p| match p.strip_prefix(&real) {
+                    Ok(rest) if rest.as_os_str().is_empty() => archive.to_path_buf(),
+                    Ok(rest) => archive.join(rest),
+                    Err(_) => p,
+                })
+                .collect()
+        }
         Err(cancel) => report.cancelled = cancel,
     }
     report
+}
+
+/// A zip entry with a non-ASCII name not marked UTF-8 (Windows zips in cp866 and the like).
+fn legacy_zip_names(archive: &Path) -> io::Result<bool> {
+    let mut z = zip::ZipArchive::new(fs::File::open(archive)?)?;
+    for i in 0..z.len() {
+        let e = z.by_index_raw(i)?;
+        let raw = e.name_raw();
+        // The crate decodes unmarked names as CP437, so they differ from the raw bytes.
+        if !raw.is_ascii() && std::str::from_utf8(raw) != Ok(e.name()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `Err(true)`: cancelled, `Err(false)`: given up (skipped); the archive is unchanged either way.
@@ -78,7 +119,11 @@ fn rewrite(
     }
     // Something was skipped: packing again would silently drop it.
     if r.completed.is_empty() {
-        return Err(false);
+        give_up(
+            h,
+            archive,
+            "some entries can't be unpacked; the archive is left as it was",
+        )?;
     }
     let done = apply(archive, &root, change, h)?;
     if done.is_empty() {
@@ -96,7 +141,11 @@ fn rewrite(
         return Err(true);
     }
     if p.completed.len() != children.len() || !new.exists() {
-        return Err(false);
+        give_up(
+            h,
+            archive,
+            "some entries can't be packed again; the archive is left as it was",
+        )?;
     }
     retry(h, archive, || {
         let perms = fs::metadata(archive)?.permissions();
@@ -106,6 +155,31 @@ fn rewrite(
     Ok(done)
 }
 
+/// Say why the archive stays unchanged; always `Err` (cancelled or given up).
+fn give_up(h: &mut dyn Handler, archive: &Path, why: &str) -> Result<(), bool> {
+    let e = io::Error::new(io::ErrorKind::InvalidData, why.to_string());
+    Err(h.error(archive, &e) == ErrorChoice::Cancel)
+}
+
+/// `rel` inside `root`, refused when it climbs out or goes through a symlink of the unpacked
+/// tree (a link entry would let the change write outside). `last`: the final component may not
+/// be a link either.
+fn inside(root: &Path, rel: &Path, last: bool) -> io::Result<PathBuf> {
+    let bad = |why: &str| io::Error::new(io::ErrorKind::InvalidInput, why.to_string());
+    let rel = archive::safe_path(rel).ok_or_else(|| bad("bad path inside the archive"))?;
+    let parts: Vec<_> = rel.components().collect();
+    let mut p = root.to_path_buf();
+    for (i, c) in parts.iter().enumerate() {
+        p.push(c);
+        if (i + 1 < parts.len() || last)
+            && fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink())
+        {
+            return Err(bad("the path goes through a link inside the archive"));
+        }
+    }
+    Ok(p)
+}
+
 /// The change on the unpacked tree in `root`.
 fn apply(
     archive: &Path,
@@ -113,16 +187,17 @@ fn apply(
     change: &Change,
     h: &mut dyn Handler,
 ) -> Result<Vec<PathBuf>, bool> {
-    let inside = |p: &Path| archive::safe_path(p).map(|p| root.join(p));
-    let bad = || io::Error::new(io::ErrorKind::InvalidInput, "bad path inside the archive");
     match change {
         Change::Add { sources, inner } => {
-            let dir = if inner.as_os_str().is_empty() {
-                root.to_path_buf()
-            } else {
-                inside(inner).ok_or(false)?
-            };
-            retry(h, archive, || fs::create_dir_all(&dir))?;
+            let dir = retry(h, archive, || {
+                let dir = if inner.as_os_str().is_empty() {
+                    root.to_path_buf()
+                } else {
+                    inside(root, inner, true)?
+                };
+                fs::create_dir_all(&dir)?;
+                Ok(dir)
+            })?;
             let pairs: Vec<(PathBuf, PathBuf)> = sources
                 .iter()
                 .filter_map(|s| Some((s.clone(), dir.join(s.file_name()?))))
@@ -136,13 +211,13 @@ fn apply(
         Change::Delete(entries) => {
             let mut done = Vec::new();
             for e in entries {
-                let p = inside(e);
                 retry(h, &archive.join(e), || {
-                    let p = p.as_ref().ok_or_else(bad)?;
-                    if fs::symlink_metadata(p)?.is_dir() {
-                        fs::remove_dir_all(p)
+                    // The entry itself may be a link: removing it removes the link.
+                    let p = inside(root, e, false)?;
+                    if fs::symlink_metadata(&p)?.is_dir() {
+                        fs::remove_dir_all(&p)
                     } else {
-                        fs::remove_file(p)
+                        fs::remove_file(&p)
                     }
                 })
                 .map(|()| done.push(archive.join(e)))
@@ -151,29 +226,25 @@ fn apply(
             Ok(done)
         }
         Change::Mkdir(d) => {
-            let p = inside(d);
             // Nested names ("a/b") as F7 allows outside; an existing one is an error.
             retry(h, &archive.join(d), || {
-                let p = p.as_ref().ok_or_else(bad)?;
-                if fs::symlink_metadata(p).is_ok() {
+                let p = inside(root, d, true)?;
+                if fs::symlink_metadata(&p).is_ok() {
                     return Err(io::Error::from(io::ErrorKind::AlreadyExists));
                 }
-                fs::create_dir_all(p)
+                fs::create_dir_all(&p)
             })?;
             Ok(vec![archive.to_path_buf()])
         }
         Change::Rename { from, to } => {
-            let (a, b) = (inside(from), inside(to));
             retry(h, &archive.join(to), || {
-                let (a, b) = (a.as_ref().ok_or_else(bad)?, b.as_ref().ok_or_else(bad)?);
-                ops::rename_noreplace(a, b)
+                ops::rename_noreplace(&inside(root, from, false)?, &inside(root, to, true)?)
             })?;
             Ok(vec![archive.to_path_buf()])
         }
         Change::Replace { entry, file } => {
-            let p = inside(entry);
             retry(h, &archive.join(entry), || {
-                fs::copy(file, p.as_ref().ok_or_else(bad)?).map(drop)
+                fs::copy(file, inside(root, entry, true)?).map(drop)
             })?;
             Ok(vec![archive.to_path_buf()])
         }
@@ -513,5 +584,101 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(fs::read(&a).unwrap(), before);
+    }
+
+    #[test]
+    fn regression_links_inside_never_lead_outside() {
+        let d = tempfile::tempdir().unwrap();
+        let victim = d.path().join("victim.txt");
+        fs::write(&victim, "precious").unwrap();
+        let outside = d.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        let src = d.path().join("src");
+        fs::create_dir(&src).unwrap();
+        std::os::unix::fs::symlink(&victim, src.join("ln")).unwrap();
+        std::os::unix::fs::symlink(&outside, src.join("dl")).unwrap();
+        let a = d.path().join("l.tar");
+        let r = archive::pack(
+            Format::Tar,
+            &src,
+            &[(vec![src.join("ln"), src.join("dl")], a.clone())],
+            &mut Script::default(),
+        );
+        assert!(!r.cancelled);
+        let edited = d.path().join("edited");
+        fs::write(&edited, "evil").unwrap();
+        let changes = [
+            Change::Replace {
+                entry: "ln".into(),
+                file: edited.clone(),
+            },
+            Change::Mkdir("dl/new".into()),
+            Change::Rename {
+                from: "ln".into(),
+                to: "dl/x".into(),
+            },
+            Change::Add {
+                sources: vec![edited.clone()],
+                inner: "dl".into(),
+            },
+            Change::Delete(vec!["dl/anything".into()]),
+        ];
+        for c in changes {
+            let before = fs::read(&a).unwrap();
+            let r = modify(&a, &c, &mut Script::default());
+            assert!(r.completed.is_empty(), "{c:?}");
+            assert_eq!(fs::read(&a).unwrap(), before, "{c:?}");
+        }
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
+        assert!(fs::read_dir(&outside).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn regression_symlinked_archive_stays_a_link() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let link = d.path().join("link.zip");
+        std::os::unix::fs::symlink(&a, &link).unwrap();
+        let r = modify(&link, &Change::Mkdir("x".into()), &mut Script::default());
+        assert_eq!(r.completed, std::slice::from_ref(&link));
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(contents(&a).contains(&"x/".to_string()));
+    }
+
+    #[test]
+    fn regression_zip_names_in_a_legacy_encoding_are_kept() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("dos.zip");
+        let mut z = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        z.start_file("aXain.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        z.write_all(b"x").unwrap();
+        z.finish().unwrap();
+        // cp866 "п" in place of X, without the UTF-8 flag (as Windows zips have it).
+        let bytes = fs::read(&a).unwrap();
+        let patched: Vec<u8> = bytes
+            .windows(9)
+            .enumerate()
+            .fold(bytes.clone(), |mut v, (i, w)| {
+                if w == b"aXain.txt" {
+                    v[i + 1] = 0xAF;
+                }
+                v
+            });
+        fs::write(&a, &patched).unwrap();
+        let mut h = Script::default();
+        assert!(
+            modify(&a, &Change::Mkdir("x".into()), &mut h)
+                .completed
+                .is_empty()
+        );
+        assert_eq!(h.errors, 1); // told why
+        assert_eq!(fs::read(&a).unwrap(), patched);
     }
 }
