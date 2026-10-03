@@ -878,7 +878,7 @@ impl App {
                 self.refresh_mounts();
                 match result {
                     Ok(path) => {
-                        self.status = None;
+                        self.clear_busy();
                         return self.go_to(side, path);
                     }
                     Err(e) => self.say(StatusKind::Error, mount_error(&e)),
@@ -890,7 +890,7 @@ impl App {
                     self.say(StatusKind::Error, mount_error(&e));
                     return Task::none();
                 }
-                self.status = None;
+                self.clear_busy();
                 // ponytail: only the active tab of each pane moves; other tabs inside show an error.
                 let inside: Vec<usize> = (0..2)
                     .filter(|&s| self.panes[s].active().target().starts_with(&root))
@@ -2177,6 +2177,18 @@ impl App {
         self.status = Some(Status { kind, text });
     }
 
+    /// A background job finished fine: drop its "working…", not a newer message.
+    // ponytail: two mounts at once share one Busy slot; the first result clears it.
+    fn clear_busy(&mut self) {
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.kind == StatusKind::Busy)
+        {
+            self.status = None;
+        }
+    }
+
     /// The status bar text (tests).
     #[cfg(test)]
     fn msg(&self) -> Option<&str> {
@@ -2899,7 +2911,7 @@ mod tests {
             "{err}"
         );
         let _ = app.update(Message::Key(Action::Down));
-        assert!(app.msg().is_none());
+        assert!(app.panes[0].active().error.is_none());
     }
 
     #[test]
@@ -4225,6 +4237,17 @@ mod tests {
         }
 
         #[test]
+        fn mount_result_keeps_a_newer_message() {
+            let mut app = app_with(Config::default(), State::default());
+            app.say(StatusKind::Busy, fl!("mounting"));
+            app.say(StatusKind::Info, fl!("copied", n = 3)); // F9 while mounting
+            let _ = app.update(Message::Mounted(0, Ok(PathBuf::from("/media/x"))));
+            assert_eq!(app.msg(), Some(fl!("copied", n = 3).as_str()));
+            let _ = app.update(Message::Unmounted("/media/x".into(), Ok(())));
+            assert_eq!(app.msg(), Some(fl!("copied", n = 3).as_str()));
+        }
+
+        #[test]
         fn working_message_outlives_the_next_key() {
             let mut app = app_with(Config::default(), State::default());
             app.say(StatusKind::Busy, fl!("connecting"));
@@ -4360,6 +4383,7 @@ mod tests {
             app.panes[0].active_mut().pending = None;
             let _ = app.update(Message::Mounted(0, Err(MountError::WrongPassword)));
             assert_eq!(app.msg(), Some(fl!("mount-wrong-password").as_str()));
+            app.say(StatusKind::Busy, fl!("connecting")); // the retry
             let _ = app.update(Message::Mounted(0, Ok(PathBuf::from("/media/x"))));
             assert_eq!(pending_path(&app), Some(PathBuf::from("/media/x")));
             assert_eq!(app.msg(), None);

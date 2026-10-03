@@ -83,6 +83,10 @@ pub fn details(e: &Entry, tz: &TimeZone, owners: &crate::owners::Owners) -> Stri
     if e.name == crate::panel::PARENT {
         return String::new();
     }
+    // stat failed (dir readable but not searchable): nothing but the name is known.
+    if e.mode == 0 && e.owner.is_none() {
+        return e.name.clone();
+    }
     let mut parts = vec![match &e.target {
         Some(t) => format!("{} → {}", e.name, t.display()),
         None => e.name.clone(),
@@ -228,5 +232,8 @@ mod tests {
         l.target = Some("/usr/lib/x".into());
         assert!(details(&l, &tz, &o).starts_with("lib → /usr/lib/x   1 204 567"));
         assert_eq!(details(&full("..", Kind::Dir), &tz, &o), "");
+        let mut unreadable = full("secret", Kind::File); // stat failed (dir r-- without x)
+        (unreadable.mode, unreadable.owner) = (0, None);
+        assert_eq!(details(&unreadable, &tz, &o), "secret");
     }
 }

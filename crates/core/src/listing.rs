@@ -112,7 +112,7 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
             kind,
             is_link,
             mode: meta.permissions().mode(),
-            owner: Some((lmeta.uid(), lmeta.gid())),
+            owner: Some((meta.uid(), meta.gid())), // same metadata as size / mode
             target: is_link.then(|| fs::read_link(item.path()).ok()).flatten(),
         });
     }

@@ -284,11 +284,18 @@ fn status_bar(app: &App) -> Element<'_, Message> {
         .current()
         .map(|e| format::details(e, &app.tz, &app.owners))
         .unwrap_or_default();
+    // Both sides bounded: a long file name must not squeeze the message out.
     row![
-        container(msg).width(Length::Fill).clip(true),
-        text(details)
-            .size(TEXT)
-            .wrapping(cosmic::iced::widget::text::Wrapping::None),
+        container(msg).width(Length::FillPortion(2)).clip(true),
+        container(
+            text(details)
+                .size(TEXT)
+                .wrapping(Wrapping::None)
+                .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
+        )
+        .width(Length::FillPortion(3))
+        .align_x(Alignment::End)
+        .clip(true),
     ]
     .spacing(16)
     .padding([2, 8])
