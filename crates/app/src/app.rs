@@ -208,6 +208,10 @@ pub enum Message {
     /// Cycle row i's arrow: → ← none.
     SyncFlip(usize),
     SyncRun,
+    /// Compare result for the diff dialog with this id.
+    DiffReady(u64, Arc<Result<shagoff_core::diff::Outcome, String>>),
+    DiffNext,
+    DiffPrev,
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -377,6 +381,13 @@ impl App {
                         _ => {}
                     }
                     return Task::none();
+                }
+                if let Some(Dialog::Diff(_)) = &self.dialog {
+                    return match action {
+                        Action::Down => self.diff_step(1),
+                        Action::Up => self.diff_step(-1),
+                        _ => Task::none(),
+                    };
                 }
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
                     match action {
@@ -649,6 +660,17 @@ impl App {
                 }
             }
             Message::SyncRun => return self.start_sync(),
+            Message::DiffReady(id, out) => {
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && d.id == id
+                {
+                    d.result = Some(out);
+                    d.block = 0;
+                    return self.diff_scroll();
+                }
+            }
+            Message::DiffNext => return self.diff_step(1),
+            Message::DiffPrev => return self.diff_step(-1),
             Message::DialogSubmit => return self.submit_dialog(),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -880,6 +902,10 @@ impl App {
                 self.dialog = Some(d);
                 return self.start_compare(); // TC compares right away
             }
+            if matches!(d, Dialog::Diff(_)) {
+                self.dialog = Some(d);
+                return self.start_diff();
+            }
             let focus = matches!(
                 d,
                 Dialog::Mask { .. }
@@ -1028,6 +1054,8 @@ impl App {
                     return self.load(side, path, None);
                 }
             }
+            // Reached only when `dialog_for` found no pair of files.
+            Action::CompareFiles => t.error = Some(fl!("diff-pick-two")),
             Action::CompareLists => {
                 let (l, r) = shagoff_core::sync::compare_lists(
                     self.panes[0].active().panel.entries(),
@@ -1286,6 +1314,17 @@ impl App {
                     in_list: false,
                 })))
             }
+            Action::CompareFiles => {
+                let (left, right) = self.diff_pair(side)?;
+                Some(Dialog::Diff(Box::new(dialogs::DiffDlg {
+                    left,
+                    right,
+                    id: 0,
+                    result: None,
+                    block: 0,
+                    scroll: widget::Id::unique(),
+                })))
+            }
             Action::SyncDirs => Some(Dialog::Sync(Box::new(dialogs::SyncDlg {
                 side,
                 left: self.panes[0].active().target(),
@@ -1418,6 +1457,11 @@ impl App {
                 self.dialog = Some(d);
                 self.start_sync()
             }
+            // Read-only view: Enter does nothing.
+            d @ Dialog::Diff(_) => {
+                self.dialog = Some(d);
+                Task::none()
+            }
             d @ Dialog::Find(_) => {
                 self.dialog = Some(d);
                 self.start_find()
@@ -1507,6 +1551,77 @@ impl App {
             }
         };
         self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
+    }
+
+    /// Ctrl+Shift+D: two marked files of this panel, else the files under both cursors.
+    fn diff_pair(&self, side: usize) -> Option<(PathBuf, PathBuf)> {
+        let file = |s: usize| {
+            let p = &self.panes[s].active().panel;
+            p.current()
+                .filter(|e| !e.is_dir() && e.name != PARENT)
+                .map(|e| p.cwd().join(&e.os_name))
+        };
+        let panel = &self.panes[side].active().panel;
+        let marked: Vec<PathBuf> = panel
+            .entries()
+            .iter()
+            .filter(|e| panel.is_marked(e) && !e.is_dir())
+            .map(|e| panel.cwd().join(&e.os_name))
+            .collect();
+        match marked.as_slice() {
+            [a, b] => Some((a.clone(), b.clone())),
+            _ => Some((file(0)?, file(1)?)),
+        }
+    }
+
+    fn start_diff(&mut self) -> Task<Message> {
+        let id = self.next_id();
+        let Some(Dialog::Diff(d)) = &mut self.dialog else {
+            return Task::none();
+        };
+        d.id = id;
+        let (a, b) = (d.left.clone(), d.right.clone());
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    shagoff_core::diff::compare(&a, &b).map_err(|e| e.to_string())
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            move |out| cosmic::Action::App(Message::DiffReady(id, Arc::new(out))),
+        )
+    }
+
+    /// Next / previous block of differences, scrolled into view.
+    fn diff_step(&mut self, delta: isize) -> Task<Message> {
+        let Some(Dialog::Diff(d)) = &mut self.dialog else {
+            return Task::none();
+        };
+        let n = d.blocks().len();
+        if n == 0 {
+            return Task::none();
+        }
+        d.block = d.block.saturating_add_signed(delta).min(n - 1);
+        self.diff_scroll()
+    }
+
+    fn diff_scroll(&self) -> Task<Message> {
+        let Some(Dialog::Diff(d)) = &self.dialog else {
+            return Task::none();
+        };
+        let Some(&row) = d.blocks().get(d.block) else {
+            return Task::none();
+        };
+        // A couple of rows of context above the block.
+        let y = row.saturating_sub(2) as f32 * dialogs::DIFF_ROW_H;
+        scrollable::scroll_to(
+            d.scroll.clone(),
+            AbsoluteOffset {
+                x: Some(0.0),
+                y: Some(y),
+            },
+        )
     }
 
     /// (Re)compare the sync dialog's dirs in the background; an older compare is stopped.
@@ -3559,5 +3674,68 @@ mod tests {
         let _ = app.update(Message::Key(Action::CompareLists));
         assert!(marked(&app, 0).is_empty() && marked(&app, 1).is_empty());
         assert!(app.panes[0].active().error.is_some()); // "identical" note in the status line
+    }
+
+    fn diff_dlg(app: &mut App) -> &mut dialogs::DiffDlg {
+        match &mut app.dialog {
+            Some(Dialog::Diff(d)) => d,
+            _ => panic!("no diff dialog"),
+        }
+    }
+
+    #[test]
+    fn ctrl_shift_d_two_marked_in_one_panel() {
+        let (tmp, mut app) = sync_setup(); // l: a, only_l
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::MarkDown));
+        let _ = app.update(Message::Key(Action::MarkDown));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let d = diff_dlg(&mut app);
+        assert_eq!(
+            (d.left.clone(), d.right.clone()),
+            (tmp.path().join("l/a"), tmp.path().join("l/only_l"))
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_d_cursor_pair() {
+        let (tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::Down)); // left: a
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down)); // right: a
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let d = diff_dlg(&mut app);
+        assert_eq!(
+            (d.left.clone(), d.right.clone()),
+            (tmp.path().join("l/a"), tmp.path().join("r/a"))
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_d_without_files_says_so() {
+        let (_tmp, mut app) = sync_setup(); // cursors on ".."
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        assert!(app.dialog.is_none());
+        assert!(app.panes[0].active().error.is_some());
+    }
+
+    #[test]
+    fn diff_next_prev_clamp_and_stale_ignored() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let id = diff_dlg(&mut app).id;
+        let (rows, blocks) = shagoff_core::diff::rows("a\nb\nc\nd\n", "A\nb\nC\nd\n");
+        let out = Arc::new(Ok(shagoff_core::diff::Outcome::Text { rows, blocks }));
+        let _ = app.update(Message::DiffReady(id + 1, out.clone()));
+        assert!(diff_dlg(&mut app).result.is_none());
+        let _ = app.update(Message::DiffReady(id, out));
+        let _ = app.update(Message::Key(Action::Up));
+        assert_eq!(diff_dlg(&mut app).block, 0);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Down));
+        assert_eq!(diff_dlg(&mut app).block, 1); // two blocks: clamped
     }
 }

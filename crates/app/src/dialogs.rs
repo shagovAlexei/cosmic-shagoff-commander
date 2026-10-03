@@ -7,6 +7,7 @@ use cosmic::iced::widget::text::Wrapping;
 use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
 use shagoff_core::archive::Format;
+use shagoff_core::diff;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
@@ -78,6 +79,33 @@ pub enum Dialog {
     Find(Box<Find>),
     /// Ctrl+Shift+S.
     Sync(Box<SyncDlg>),
+    /// Ctrl+Shift+D.
+    Diff(Box<DiffDlg>),
+}
+
+pub struct DiffDlg {
+    pub left: PathBuf,
+    pub right: PathBuf,
+    /// Results of other compares are dropped.
+    pub id: u64,
+    /// `None` while comparing. `Arc`: `Message` must be `Clone` and the rows are large.
+    pub result: Option<Arc<Result<diff::Outcome, String>>>,
+    /// Current block of differences (index into `blocks`).
+    pub block: usize,
+    pub scroll: widget::Id,
+}
+
+/// Diff rows have one fixed height, so a block's scroll offset is `row * DIFF_ROW_H`.
+pub const DIFF_ROW_H: f32 = 22.0;
+const DIFF_SHOWN: usize = 10_000;
+
+impl DiffDlg {
+    pub fn blocks(&self) -> &[usize] {
+        match self.result.as_deref() {
+            Some(Ok(diff::Outcome::Text { blocks, .. })) => blocks,
+            _ => &[],
+        }
+    }
 }
 
 pub struct SyncDlg {
@@ -121,6 +149,25 @@ pub enum SyncOpt {
     Content,
     IgnoreDate,
     ShowSame,
+}
+
+/// Deleted (left only), inserted (right only), changed: tinted, readable in light and dark themes.
+fn diff_style(kind: diff::Kind) -> cosmic::theme::Container<'static> {
+    cosmic::theme::Container::custom(move |t| {
+        let c = t.cosmic();
+        let tint = match kind {
+            diff::Kind::Same => return Default::default(),
+            diff::Kind::Deleted => c.destructive_color(),
+            diff::Kind::Inserted => c.success_color(),
+            diff::Kind::Changed => c.warning_color(),
+        };
+        let mut bg = cosmic::iced::Color::from(tint);
+        bg.a = 0.25;
+        cosmic::iced::widget::container::Style {
+            background: Some(bg.into()),
+            ..Default::default()
+        }
+    })
 }
 
 /// Result lists grow with their rows up to a cap, so an empty list leaves no blank area and a
@@ -612,6 +659,93 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                         widget::scrollable(list).height(list_height(f.results.len())),
                     ]
                     .spacing(12),
+                )
+                .into()
+        }
+        Dialog::Diff(d) => {
+            let name = |p: &PathBuf| p.display().to_string();
+            let mut list = column![];
+            let status = match d.result.as_deref() {
+                None => fl!("diff-running"),
+                Some(Err(e)) => e.clone(),
+                Some(Ok(diff::Outcome::Binary { same: true })) => fl!("diff-binary-same"),
+                Some(Ok(diff::Outcome::Binary { same: false })) => fl!("diff-binary-differ"),
+                Some(Ok(diff::Outcome::Text { rows, blocks })) => {
+                    let mono = |s: String| {
+                        widget::text(s)
+                            .font(cosmic::font::mono())
+                            .wrapping(Wrapping::None)
+                    };
+                    let side = |c: &Option<(usize, String)>| match c {
+                        Some((n, t)) => row![
+                            mono(format!("{n:>5} ")).width(Length::Fixed(56.0)),
+                            mono(t.replace('\t', "    ")).width(Length::Fill),
+                        ],
+                        None => row![],
+                    };
+                    for r in rows.iter().take(DIFF_SHOWN) {
+                        let line = row![
+                            widget::container(side(&r.left)).width(Length::FillPortion(1)),
+                            widget::container(side(&r.right)).width(Length::FillPortion(1)),
+                        ]
+                        .spacing(8);
+                        list = list.push(
+                            widget::container(line)
+                                .height(Length::Fixed(DIFF_ROW_H))
+                                .width(Length::Fill)
+                                .class(diff_style(r.kind)),
+                        );
+                    }
+                    let more = rows.len().saturating_sub(DIFF_SHOWN);
+                    if more > 0 {
+                        list = list.push(widget::text(fl!("find-more", n = more)));
+                    }
+                    match blocks.len() {
+                        0 => fl!("diff-same"),
+                        n => fl!(
+                            "diff-count",
+                            i = (d.block + 1).to_string(),
+                            n = n.to_string()
+                        ),
+                    }
+                }
+            };
+            let nav = !d.blocks().is_empty();
+            let buttons = row![
+                widget::button::standard(fl!("diff-prev"))
+                    .on_press_maybe(nav.then_some(Message::DiffPrev)),
+                widget::button::standard(fl!("diff-next"))
+                    .on_press_maybe(nav.then_some(Message::DiffNext)),
+                cancel,
+            ]
+            .spacing(8);
+            widget::dialog()
+                .title(fl!("diff-title"))
+                .width(Length::Fill)
+                .max_width(1400.0)
+                .control(
+                    column![
+                        row![
+                            widget::text(name(&d.left))
+                                .width(Length::FillPortion(1))
+                                .wrapping(Wrapping::WordOrGlyph),
+                            widget::text(name(&d.right))
+                                .width(Length::FillPortion(1))
+                                .wrapping(Wrapping::WordOrGlyph),
+                        ]
+                        .spacing(8),
+                        // All buttons above the text: a short window clips the dialog's bottom row.
+                        buttons,
+                        widget::text(status),
+                        widget::scrollable(list)
+                            .id(d.scroll.clone())
+                            .direction(cosmic::iced::widget::scrollable::Direction::Both {
+                                vertical: Default::default(),
+                                horizontal: Default::default(),
+                            })
+                            .height(Length::Fixed(260.0)),
+                    ]
+                    .spacing(10),
                 )
                 .into()
         }

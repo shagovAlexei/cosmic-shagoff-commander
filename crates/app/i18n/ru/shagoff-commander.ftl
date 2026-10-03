@@ -111,3 +111,12 @@ sync-run = Синхронизировать
 sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
 syncing = Синхронизация
 compare-identical = Каталоги одинаковые
+diff-title = Сравнение по содержимому
+diff-running = Сравнение…
+diff-same = Файлы одинаковые
+diff-count = Отличие { $i } из { $n }
+diff-binary-same = Двоичные файлы, одинаковые
+diff-binary-differ = Двоичные файлы, различаются
+diff-next = Следующее отличие
+diff-prev = Предыдущее
+diff-pick-two = Выберите два файла: два отмеченных в одной панели или по одному под курсором в каждой
