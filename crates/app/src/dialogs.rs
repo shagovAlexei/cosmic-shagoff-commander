@@ -10,6 +10,7 @@ use shagoff_core::archive::Format;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
+use shagoff_core::sync::{self, Dir, State};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +76,57 @@ pub enum Dialog {
     },
     /// Alt+F7. Boxed: the form and results are large.
     Find(Box<Find>),
+    /// Ctrl+Shift+S.
+    Sync(Box<SyncDlg>),
+}
+
+pub struct SyncDlg {
+    pub side: usize,
+    pub left: PathBuf,
+    pub right: PathBuf,
+    pub recursive: bool,
+    pub content: bool,
+    pub ignore_date: bool,
+    pub hidden: bool,
+    pub show_same: bool,
+    pub rows: Vec<sync::Row>,
+    /// Results of other compares are dropped.
+    pub id: u64,
+    /// Set while a compare runs.
+    pub running: Option<Arc<AtomicBool>>,
+}
+
+impl SyncDlg {
+    pub fn options(&self) -> sync::Options {
+        sync::Options {
+            recursive: self.recursive,
+            content: self.content,
+            ignore_date: self.ignore_date,
+            hidden: self.hidden,
+        }
+    }
+}
+
+impl Drop for SyncDlg {
+    fn drop(&mut self) {
+        if let Some(s) = &self.running {
+            s.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncOpt {
+    Recursive,
+    Content,
+    IgnoreDate,
+    ShowSame,
+}
+
+/// Result lists grow with their rows up to a cap, so an empty list leaves no blank area and a
+/// full one still fits a short window.
+fn list_height(rows: usize) -> Length {
+    Length::Fixed((rows as f32 * 36.0).min(240.0))
 }
 
 /// Rows kept and shown; the search still counts everything.
@@ -555,13 +607,94 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                         widget::checkbox(f.case_sensitive)
                             .label(fl!("find-case"))
                             .on_toggle(|_| Message::FindCase),
-                        row![run, go].spacing(8),
+                        row![run, go, cancel].spacing(8),
                         widget::text(status).wrapping(Wrapping::WordOrGlyph),
-                        widget::scrollable(list).height(Length::Fixed(240.0)),
+                        widget::scrollable(list).height(list_height(f.results.len())),
                     ]
                     .spacing(12),
                 )
-                .secondary_action(cancel)
+                .into()
+        }
+        Dialog::Sync(s) => {
+            let info = |i: &Option<sync::Info>| match i {
+                None => String::new(),
+                Some(i) if i.dir => "<DIR>".into(),
+                Some(i) => format!("{}  {}", format::size(i.size), format::date(i.mtime, tz)),
+            };
+            let (mut r, mut l, mut d, mut same) = (0, 0, 0, 0);
+            let mut list = column![].spacing(2);
+            let mut shown = 0;
+            for (i, row) in s.rows.iter().enumerate() {
+                match (row.dir, row.state) {
+                    (Dir::ToRight, _) => r += 1,
+                    (Dir::ToLeft, _) => l += 1,
+                    (Dir::None, State::Same) => same += 1,
+                    (Dir::None, _) => d += 1,
+                }
+                if (row.state == State::Same && !s.show_same) || shown >= FIND_SHOWN {
+                    continue;
+                }
+                shown += 1;
+                let arrow = match (row.dir, row.state) {
+                    (Dir::ToRight, _) => "→",
+                    (Dir::ToLeft, _) => "←",
+                    (Dir::None, State::Same) => "=",
+                    (Dir::None, State::Differ) => "≠",
+                    (Dir::None, _) => "·",
+                };
+                list = list.push(
+                    row![
+                        widget::text(row.rel.display().to_string())
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .width(Length::FillPortion(3)),
+                        widget::text(info(&row.left)).width(Length::FillPortion(2)),
+                        widget::button::standard(arrow).on_press(Message::SyncFlip(i)),
+                        widget::text(info(&row.right)).width(Length::FillPortion(2)),
+                    ]
+                    .spacing(8),
+                );
+            }
+            let opt = |label: String, on: bool, o: SyncOpt| {
+                widget::checkbox(on)
+                    .label(label)
+                    .on_toggle(move |_| Message::SyncOpt(o))
+            };
+            let compare = match &s.running {
+                Some(_) => widget::button::standard(fl!("find-stop")).on_press(Message::SyncStop),
+                None => {
+                    widget::button::standard(fl!("sync-compare")).on_press(Message::SyncCompare)
+                }
+            };
+            let run = widget::button::suggested(fl!("sync-run"))
+                .on_press_maybe((r + l > 0 && s.running.is_none()).then_some(Message::SyncRun));
+            widget::dialog()
+                .title(fl!("sync-dirs"))
+                .width(Length::Fill)
+                .max_width(1100.0)
+                .control(
+                    column![
+                        widget::text(format!("{}   ⇄   {}", s.left.display(), s.right.display()))
+                            .wrapping(Wrapping::WordOrGlyph),
+                        row![
+                            opt(fl!("sync-subdirs"), s.recursive, SyncOpt::Recursive),
+                            opt(fl!("sync-content"), s.content, SyncOpt::Content),
+                            opt(fl!("sync-ignore-date"), s.ignore_date, SyncOpt::IgnoreDate),
+                            opt(fl!("sync-show-same"), s.show_same, SyncOpt::ShowSame),
+                        ]
+                        .spacing(16),
+                        // All buttons above the list: a short window clips the dialog's bottom row.
+                        row![compare, run, cancel].spacing(8),
+                        widget::text(fl!(
+                            "sync-summary",
+                            r = r.to_string(),
+                            l = l.to_string(),
+                            d = d.to_string(),
+                            s = same.to_string()
+                        )),
+                        widget::scrollable(list).height(list_height(shown)),
+                    ]
+                    .spacing(12),
+                )
                 .into()
         }
         Dialog::Error { path, error, .. } => widget::dialog()
@@ -592,6 +725,7 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
         OpKind::Pack => fl!("packing"),
         OpKind::Unpack => fl!("unpacking"),
         OpKind::Extract => fl!("extracting"),
+        OpKind::Sync => fl!("syncing"),
     };
     let counts = match job.kind {
         OpKind::Delete => fl!(

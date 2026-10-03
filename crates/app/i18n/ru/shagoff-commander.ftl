@@ -101,3 +101,13 @@ find-stop = Стоп
 find-go = Перейти к файлу
 find-count = Найдено: { $n }
 find-more = … и ещё { $n }
+sync-dirs = Синхронизация каталогов
+sync-subdirs = С подкаталогами
+sync-content = По содержимому
+sync-ignore-date = Без учёта даты
+sync-show-same = Показывать одинаковые
+sync-compare = Сравнить
+sync-run = Синхронизировать
+sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
+syncing = Синхронизация
+compare-identical = Каталоги одинаковые

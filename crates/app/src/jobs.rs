@@ -29,6 +29,11 @@ pub enum Job {
         dest: PathBuf,
         own_dir: bool,
     },
+    /// Ctrl+Shift+S: copies by the dialog's arrows; existing targets ask as for F5.
+    Sync {
+        to_right: Vec<(PathBuf, PathBuf)>,
+        to_left: Vec<(PathBuf, PathBuf)>,
+    },
     /// F5 / Ctrl+C / Enter in an archive panel: `names` of the dir `inner` into `dest`.
     Extract {
         archive: PathBuf,
@@ -140,6 +145,18 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
                 dest,
                 own_dir,
             } => archive::unpack(&archives, &dest, own_dir, &mut h),
+            Job::Sync { to_right, to_left } => {
+                let a = ops::transfer(Method::Copy, &to_right, &mut h);
+                if a.cancelled {
+                    a
+                } else {
+                    let b = ops::transfer(Method::Copy, &to_left, &mut h);
+                    Report {
+                        cancelled: b.cancelled,
+                        completed: a.completed.into_iter().chain(b.completed).collect(),
+                    }
+                }
+            }
             Job::Extract {
                 archive,
                 inner,
@@ -150,4 +167,39 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });
     (cancel, rx)
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use cosmic::iced::futures::{StreamExt, executor::block_on};
+
+    #[test]
+    fn regression_sync_asks_before_replacing_and_deletes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let (l, r) = (d.path().join("l"), d.path().join("r"));
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a"), "new").unwrap();
+        std::fs::write(r.join("a"), "old").unwrap();
+        std::fs::write(r.join("extra"), "keep").unwrap();
+        let job = Job::Sync {
+            to_right: vec![(l.join("a"), r.join("a"))],
+            to_left: vec![],
+        };
+        let (_cancel, mut rx) = spawn(job);
+        let asked = block_on(async {
+            let mut asked = false;
+            while let Some(e) = rx.next().await {
+                if let Event::Conflict { reply, .. } = e {
+                    asked = true;
+                    let _ = reply.send(Resolution::Skip);
+                }
+            }
+            asked
+        });
+        assert!(asked);
+        assert_eq!(std::fs::read_to_string(r.join("a")).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(r.join("extra")).unwrap(), "keep");
+    }
 }
