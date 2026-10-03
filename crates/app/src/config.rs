@@ -77,6 +77,10 @@ pub struct Config {
     pub internal_viewer: bool,
     /// Ctrl+F: addresses connected to, last first, without passwords.
     pub connections: Vec<String>,
+    /// Command line under the panels (TC `path>`).
+    pub show_cmdline: bool,
+    /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
+    pub terminal: Vec<String>,
 }
 
 /// A favourite dir (Ctrl+D).
@@ -101,6 +105,8 @@ impl Default for Config {
             show_fkeys: true,
             internal_viewer: true,
             connections: Vec::new(),
+            show_cmdline: true,
+            terminal: vec!["cosmic-term".into(), "-e".into()],
         }
     }
 }
@@ -113,6 +119,8 @@ pub struct State {
     pub active: usize,
     /// Alt+F7: last search settings.
     pub find: FindPrefs,
+    /// Command line history, last first.
+    pub commands: Vec<String>,
 }
 
 /// What the find dialog opens with (the dir always comes from the panel).

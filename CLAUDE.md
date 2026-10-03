@@ -47,7 +47,7 @@ The workspace has two crates.
 - **`crates/app` (`shagoff-commander`)** is the libcosmic UI.
   - `app.rs`: `App { panes: [Pane; 2], active }`.
   - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error.
-  - `view/`: drive buttons, tabs, path line, column table; `footer`: one status line (each pane's totals under it, the message or cursor entry details in the active half) above the F-key bar.
+  - `view/`: drive buttons, tabs, path line, column table; `footer`: one status line (each pane's totals under it, the message or cursor entry details in the active half), the command line (`path>`, `App::cmdline`; logic in `core::cmdline`: `cd`, quoting, history) and the F-key bar.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
   - `drawer.rs` + `help.rs`: side drawer (libcosmic context drawer) with help (F1), about (libcosmic `about` feature; `DONATE_URL` for the future Stripe Payment Link) and settings (Ctrl+,). Settings write the whole `Config` and go through `App::apply_config`, the same path as a hand edit seen by the config watcher.
   - `lister.rs`: F3 viewer shown in place of the panels (`App::lister`); text / hex / image modes, search, N/P. Logic (line index, hex rows, search, mode detection) in `core::lister`. Its letter keys (`1 3 4 N P Q`) come from `keymap::lister_key`, tried only after the main table found nothing.
@@ -61,7 +61,7 @@ Data flow: key or button → keymap → `Action` → `App::update`. From there, 
 - directory change → `spawn_blocking(scan)` → `Message::Listed`;
 - file operation → dialog → `ops` task → events → rescan both panes.
 
-Implemented so far (MVP done): `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `multirename`, `ops`, `archive`, `search`, `sync`, `diff`, `drives`, `mount`, `session`, `launch`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with a generation check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). `config.rs` and `watcher.rs` are in; drive buttons, F3/F4 and Alt+F1/F2 too. Modules appear phase by phase, so check the tree before assuming one exists.
+Implemented so far (MVP done): `crates/core` (`listing`, `sort`, `panel`, `format`, `viewport`, `tabs`, `mask`, `multirename`, `ops`, `archive`, `search`, `sync`, `diff`, `drives`, `mount`, `session`, `launch`, `cmdline`); `crates/app` (`app.rs` two panes of `Tabs<Tab>` (scan results routed by tab id) + background scan with a generation check, `keymap.rs`, `view.rs` virtualized list). Marks and file operations (F5/F6/F7/F8, rename, progress/conflict/error dialogs) are in; `dialogs.rs` holds the `Dialog` enum + views, `jobs.rs` runs `ops` on a worker thread (events over a futures channel, answers over `std::sync::mpsc`, cancel = `AtomicBool`). `config.rs` and `watcher.rs` are in; drive buttons, F3/F4 and Alt+F1/F2 too. Modules appear phase by phase, so check the tree before assuming one exists.
 
 ## Conventions
 

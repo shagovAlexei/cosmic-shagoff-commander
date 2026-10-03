@@ -374,6 +374,8 @@ pub enum ListKind {
     Drives,
     History,
     Hotlist,
+    /// Command line history (Alt+F8).
+    Commands,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -559,6 +561,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 ListKind::Drives => fl!("drives"),
                 ListKind::History => fl!("history"),
                 ListKind::Hotlist => fl!("hotlist"),
+                ListKind::Commands => fl!("cmd-history"),
             };
             widget::dialog()
                 .title(title)
