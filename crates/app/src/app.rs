@@ -296,6 +296,10 @@ impl Application for App {
         Subscription::batch(subs)
     }
 
+    fn header_start(&self) -> Vec<Element<'_, Message>> {
+        vec![crate::menu::bar(self.config.show_hidden)]
+    }
+
     fn view(&self) -> Element<'_, Message> {
         crate::view::view(self)
     }

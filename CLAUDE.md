@@ -47,6 +47,7 @@ The workspace has two crates.
   - tabs: each pane is a `core::tabs::Tabs<Tab>`, where `Tab` (in `app.rs`) = `core::Panel` + scroll state + pending scan + error.
   - `view/`: drive buttons, tabs, path line, column table, status line, F-key bar.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
+  - `menu.rs`: main menu in the header bar; items send the same `Action` as their key. Its key table (shown next to items) is checked against `keymap::action` by a test.
   - `dialogs.rs`: modal dialogs.
   - `watcher.rs`: `notify` on the active tab's cwd of each pane, debounced; ignores open/read events (our own scan opens the dir). Paused while a file operation runs.
   - `config.rs`: cosmic-config `Config` (settings, `~/.config/cosmic/<APP_ID>/v1/`, applied live) and `State` (tabs, `~/.local/state/cosmic/<APP_ID>/v1/`, written when it changes). `App::build` takes both, so tests never touch disk.
