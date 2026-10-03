@@ -1,6 +1,8 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State};
-use crate::dialogs::{self, Dialog, FindField, InputOp, ListItem, ListKind, MrField, Toggle};
+use crate::dialogs::{
+    self, Dialog, FindField, InputOp, ListItem, ListKind, MrField, SyncOpt, Toggle,
+};
 use crate::fl;
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action};
@@ -104,6 +106,7 @@ pub enum OpKind {
     Pack,
     Unpack,
     Extract,
+    Sync,
 }
 
 /// A file operation in progress (the progress dialog's data).
@@ -197,6 +200,14 @@ pub enum Message {
     Find(crate::find::FindEvent),
     /// Go to result i of the find dialog.
     FindPick(usize),
+    SyncOpt(SyncOpt),
+    SyncCompare,
+    SyncStop,
+    /// Compare result for the sync dialog with this id.
+    SyncCompared(u64, Vec<shagoff_core::sync::Row>),
+    /// Cycle row i's arrow: → ← none.
+    SyncFlip(usize),
+    SyncRun,
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -594,6 +605,46 @@ impl App {
             }
             Message::Find(e) => self.on_find_event(e),
             Message::FindPick(i) => return self.find_pick(i),
+            Message::SyncOpt(o) => {
+                if let Some(Dialog::Sync(s)) = &mut self.dialog {
+                    let flag = match o {
+                        SyncOpt::Recursive => &mut s.recursive,
+                        SyncOpt::Content => &mut s.content,
+                        SyncOpt::IgnoreDate => &mut s.ignore_date,
+                        SyncOpt::ShowSame => &mut s.show_same,
+                    };
+                    *flag = !*flag;
+                }
+            }
+            Message::SyncCompare => return self.start_compare(),
+            Message::SyncStop => {
+                if let Some(Dialog::Sync(s)) = &self.dialog
+                    && let Some(f) = &s.running
+                {
+                    f.store(true, Ordering::Relaxed);
+                }
+            }
+            Message::SyncCompared(id, rows) => {
+                if let Some(Dialog::Sync(s)) = &mut self.dialog
+                    && s.id == id
+                {
+                    s.rows = rows;
+                    s.running = None;
+                }
+            }
+            Message::SyncFlip(i) => {
+                use shagoff_core::sync::Dir;
+                if let Some(Dialog::Sync(s)) = &mut self.dialog
+                    && let Some(row) = s.rows.get_mut(i)
+                {
+                    row.dir = match row.dir {
+                        Dir::ToRight => Dir::ToLeft,
+                        Dir::ToLeft => Dir::None,
+                        Dir::None => Dir::ToRight,
+                    };
+                }
+            }
+            Message::SyncRun => return self.start_sync(),
             Message::DialogSubmit => return self.submit_dialog(),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -821,6 +872,10 @@ impl App {
             return Task::none();
         }
         if let Some(d) = self.dialog_for(side, action) {
+            if matches!(d, Dialog::Sync(_)) {
+                self.dialog = Some(d);
+                return self.start_compare(); // TC compares right away
+            }
             let focus = matches!(
                 d,
                 Dialog::Mask { .. }
@@ -969,6 +1024,15 @@ impl App {
                     return self.load(side, path, None);
                 }
             }
+            Action::CompareLists => {
+                let (l, r) = shagoff_core::sync::compare_lists(
+                    self.panes[0].active().panel.entries(),
+                    self.panes[1].active().panel.entries(),
+                );
+                self.panes[0].active_mut().panel.mark_names(&l);
+                self.panes[1].active_mut().panel.mark_names(&r);
+                return Task::none();
+            }
             Action::SwapPanes => {
                 self.panes.swap(0, 1);
                 self.space.swap(0, 1);
@@ -1003,6 +1067,7 @@ impl App {
             | Action::Pack
             | Action::Unpack
             | Action::FindFiles
+            | Action::SyncDirs
             | Action::Mkdir
             | Action::Delete
             | Action::DeletePermanent => {}
@@ -1213,6 +1278,19 @@ impl App {
                     in_list: false,
                 })))
             }
+            Action::SyncDirs => Some(Dialog::Sync(Box::new(dialogs::SyncDlg {
+                side,
+                left: self.panes[0].active().target(),
+                right: self.panes[1].active().target(),
+                recursive: true,
+                content: false,
+                ignore_date: false,
+                hidden: panel.show_hidden(),
+                show_same: false,
+                rows: Vec::new(),
+                id: 0,
+                running: None,
+            }))),
             Action::Unpack => {
                 let archives: Vec<PathBuf> = panel
                     .targets()
@@ -1328,6 +1406,10 @@ impl App {
                 };
                 self.start_job(side, OpKind::Unpack, job, None)
             }
+            d @ Dialog::Sync(_) => {
+                self.dialog = Some(d);
+                self.start_sync()
+            }
             d @ Dialog::Find(_) => {
                 self.dialog = Some(d);
                 self.start_find()
@@ -1417,6 +1499,45 @@ impl App {
             }
         };
         self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
+    }
+
+    /// (Re)compare the sync dialog's dirs in the background; an older compare is stopped.
+    fn start_compare(&mut self) -> Task<Message> {
+        let id = self.next_id();
+        let Some(Dialog::Sync(s)) = &mut self.dialog else {
+            return Task::none();
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        if let Some(old) = s.running.replace(stop.clone()) {
+            old.store(true, Ordering::Relaxed);
+        }
+        s.id = id;
+        let (l, r, o) = (s.left.clone(), s.right.clone(), s.options());
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || shagoff_core::sync::compare(&l, &r, &o, &stop))
+                    .await
+                    .unwrap_or_default()
+            },
+            move |rows| cosmic::Action::App(Message::SyncCompared(id, rows)),
+        )
+    }
+
+    /// Copy by the arrows; the dialog closes, both panes reload after the job.
+    fn start_sync(&mut self) -> Task<Message> {
+        let Some(Dialog::Sync(s)) = &self.dialog else {
+            return Task::none();
+        };
+        if s.running.is_some() {
+            return Task::none();
+        }
+        let (to_right, to_left) = shagoff_core::sync::plan(&s.left, &s.right, &s.rows);
+        if to_right.is_empty() && to_left.is_empty() {
+            return Task::none();
+        }
+        let side = s.side;
+        self.dialog = None;
+        self.start_job(side, OpKind::Sync, Job::Sync { to_right, to_left }, None)
     }
 
     /// (Re)start the search of the open find dialog; the previous one is stopped.
@@ -1559,7 +1680,9 @@ impl App {
             | Action::DeletePermanent
             | Action::ClipCut
             | Action::ClipPaste => inside(side),
-            Action::Move | Action::Pack | Action::Unpack => inside(side) || inside(1 - side),
+            Action::Move | Action::Pack | Action::Unpack | Action::SyncDirs => {
+                inside(side) || inside(1 - side)
+            }
             Action::Copy => inside(1 - side),
             Action::ClipCopy => inside(side) && inside(1 - side),
             _ => false,
@@ -3275,5 +3398,110 @@ mod tests {
             (f.mask.as_str(), f.text.as_str(), f.case_sensitive),
             ("*.ini", "port", true)
         );
+    }
+
+    /// tmp/l: a (new), only_l; tmp/r: a (old), only_r. Pane 0 = l, pane 1 = r.
+    fn sync_setup() -> (tempfile::TempDir, App) {
+        let tmp = tempfile::tempdir().unwrap();
+        let (l, r) = (tmp.path().join("l"), tmp.path().join("r"));
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        for (p, t) in [
+            (l.join("a"), None),
+            (r.join("a"), Some(old)),
+            (l.join("only_l"), None),
+            (r.join("only_r"), None),
+        ] {
+            std::fs::write(&p, "x").unwrap();
+            if let Some(t) = t {
+                std::fs::File::options()
+                    .write(true)
+                    .open(&p)
+                    .unwrap()
+                    .set_modified(t)
+                    .unwrap();
+            }
+        }
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, &l);
+        listed_at(&mut app, 1, &r);
+        (tmp, app)
+    }
+
+    fn marked(app: &App, side: usize) -> Vec<String> {
+        let p = &app.panes[side].active().panel;
+        p.entries()
+            .iter()
+            .filter(|e| p.is_marked(e))
+            .map(|e| e.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn shift_f2_marks_both_panels() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::CompareLists));
+        assert_eq!(marked(&app, 0), ["a", "only_l"]);
+        assert_eq!(marked(&app, 1), ["only_r"]);
+    }
+
+    fn sync_dlg(app: &mut App) -> &mut dialogs::SyncDlg {
+        match &mut app.dialog {
+            Some(Dialog::Sync(s)) => s,
+            _ => panic!("no sync dialog"),
+        }
+    }
+
+    fn compared(app: &mut App) {
+        let s = sync_dlg(app);
+        let o = s.options();
+        let rows = shagoff_core::sync::compare(
+            &s.left,
+            &s.right,
+            &o,
+            &std::sync::atomic::AtomicBool::new(false),
+        );
+        let id = s.id;
+        let _ = app.update(Message::SyncCompared(id, rows));
+    }
+
+    #[test]
+    fn ctrl_shift_s_opens_sync_and_runs() {
+        let (tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        assert_eq!(sync_dlg(&mut app).left, tmp.path().join("l"));
+        compared(&mut app);
+        assert_eq!(sync_dlg(&mut app).rows.len(), 3);
+        let _ = app.update(Message::SyncRun);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Sync));
+    }
+
+    #[test]
+    fn stale_compare_ignored_and_flip_cycles() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let id = sync_dlg(&mut app).id;
+        let _ = app.update(Message::SyncCompared(id + 1, vec![]));
+        assert!(sync_dlg(&mut app).running.is_some() || sync_dlg(&mut app).rows.is_empty());
+        compared(&mut app);
+        use shagoff_core::sync::Dir;
+        assert_eq!(sync_dlg(&mut app).rows[0].dir, Dir::ToRight); // "a": left newer
+        let _ = app.update(Message::SyncFlip(0));
+        assert_eq!(sync_dlg(&mut app).rows[0].dir, Dir::ToLeft);
+        let _ = app.update(Message::SyncFlip(0));
+        assert_eq!(sync_dlg(&mut app).rows[0].dir, Dir::None);
+        let _ = app.update(Message::SyncFlip(0));
+        assert_eq!(sync_dlg(&mut app).rows[0].dir, Dir::ToRight);
+    }
+
+    #[test]
+    fn sync_with_archive_panel_is_read_only() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 1, &a);
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        assert!(app.dialog.is_none());
+        assert!(app.panes[0].active().error.is_some());
     }
 }

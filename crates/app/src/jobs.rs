@@ -29,6 +29,11 @@ pub enum Job {
         dest: PathBuf,
         own_dir: bool,
     },
+    /// Ctrl+Shift+S: copies by the dialog's arrows; an older target is replaced without asking.
+    Sync {
+        to_right: Vec<(PathBuf, PathBuf)>,
+        to_left: Vec<(PathBuf, PathBuf)>,
+    },
     /// F5 / Ctrl+C / Enter in an archive panel: `names` of the dir `inner` into `dest`.
     Extract {
         archive: PathBuf,
@@ -105,6 +110,24 @@ impl Handler for ChannelHandler {
     }
 }
 
+/// Sync: the direction was chosen in the dialog, so a conflict means "replace".
+struct Replacing<'a>(&'a mut dyn Handler);
+
+impl Handler for Replacing<'_> {
+    fn progress(&mut self, done: u64, total: u64, current: &Path) {
+        self.0.progress(done, total, current);
+    }
+    fn conflict(&mut self, _: &FileInfo, _: &FileInfo) -> Resolution {
+        Resolution::Replace
+    }
+    fn error(&mut self, path: &Path, err: &std::io::Error) -> ErrorChoice {
+        self.0.error(path, err)
+    }
+    fn cancelled(&self) -> bool {
+        self.0.cancelled()
+    }
+}
+
 /// Start `job` on its own thread. Returns the cancel flag and the event stream (ends after `Finished`).
 pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
     let (tx, rx) = fmpsc::unbounded();
@@ -140,6 +163,19 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
                 dest,
                 own_dir,
             } => archive::unpack(&archives, &dest, own_dir, &mut h),
+            Job::Sync { to_right, to_left } => {
+                let mut h = Replacing(&mut h);
+                let a = ops::transfer(Method::Copy, &to_right, &mut h);
+                if a.cancelled {
+                    a
+                } else {
+                    let b = ops::transfer(Method::Copy, &to_left, &mut h);
+                    Report {
+                        cancelled: b.cancelled,
+                        completed: a.completed.into_iter().chain(b.completed).collect(),
+                    }
+                }
+            }
             Job::Extract {
                 archive,
                 inner,
@@ -150,4 +186,34 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });
     (cancel, rx)
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use cosmic::iced::futures::{StreamExt, executor::block_on};
+
+    #[test]
+    fn sync_replaces_without_asking_and_deletes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let (l, r) = (d.path().join("l"), d.path().join("r"));
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a"), "new").unwrap();
+        std::fs::write(r.join("a"), "old").unwrap();
+        std::fs::write(r.join("extra"), "keep").unwrap();
+        let job = Job::Sync {
+            to_right: vec![(l.join("a"), r.join("a"))],
+            to_left: vec![],
+        };
+        let (_cancel, rx) = spawn(job);
+        let events: Vec<Event> = block_on(rx.collect());
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, Event::Conflict { .. } | Event::Error { .. }))
+        );
+        assert_eq!(std::fs::read_to_string(r.join("a")).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(r.join("extra")).unwrap(), "keep");
+    }
 }

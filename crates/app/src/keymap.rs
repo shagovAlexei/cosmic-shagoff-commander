@@ -63,6 +63,10 @@ pub enum Action {
     Unpack,
     /// Alt+F7: find files.
     FindFiles,
+    /// Shift+F2: mark what differs between the two panels.
+    CompareLists,
+    /// Ctrl+Shift+S: synchronize the two panels' dirs.
+    SyncDirs,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -118,6 +122,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F5, false, false) => Action::Copy,
             (Named::F6, false, false) => Action::Move,
             (Named::F6, false, true) | (Named::F2, false, false) => Action::Rename,
+            (Named::F2, false, true) => Action::CompareLists,
             (Named::F7, false, false) => Action::Mkdir,
             (Named::F8 | Named::Delete, false, false) => Action::Delete,
             (Named::F8 | Named::Delete, false, true) => Action::DeletePermanent,
@@ -132,6 +137,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
         (Physical::Code(Code::KeyH), true, false) => Some(Action::ToggleHidden),
         (Physical::Code(Code::KeyS), true, false) => Some(Action::QuickFilter),
+        (Physical::Code(Code::KeyS), true, true) => Some(Action::SyncDirs),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
         (Physical::Code(Code::KeyC), true, false) => Some(Action::ClipCopy),
@@ -365,5 +371,19 @@ mod tests {
     #[test]
     fn alt_f7_finds() {
         assert_eq!(named(Named::F7, Modifiers::ALT), Some(Action::FindFiles));
+    }
+
+    #[test]
+    fn compare_and_sync_keys() {
+        assert_eq!(
+            named(Named::F2, Modifiers::SHIFT),
+            Some(Action::CompareLists)
+        );
+        let s = action(
+            &Key::Character("S".into()),
+            Physical::Code(Code::KeyS),
+            Modifiers::CTRL | Modifiers::SHIFT,
+        );
+        assert_eq!(s, Some(Action::SyncDirs));
     }
 }

@@ -100,3 +100,12 @@ find-stop = Stop
 find-go = Go to file
 find-count = Found: { $n }
 find-more = … and { $n } more
+sync-dirs = Synchronize directories
+sync-subdirs = Subdirectories
+sync-content = By content
+sync-ignore-date = Ignore date
+sync-show-same = Show equal
+sync-compare = Compare
+sync-run = Synchronize
+sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
+syncing = Synchronizing
