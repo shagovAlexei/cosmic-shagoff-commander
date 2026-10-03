@@ -103,6 +103,7 @@ pub enum OpKind {
     Delete,
     Pack,
     Unpack,
+    Extract,
 }
 
 /// A file operation in progress (the progress dialog's data).
@@ -115,6 +116,8 @@ pub struct Running {
     cancel: Arc<AtomicBool>,
     /// Name to put the source pane's cursor on afterwards (rename).
     focus: Option<String>,
+    /// Enter / F3 in an archive: argv to run on the extracted file once the job succeeds.
+    open: Option<(Vec<OsString>, PathBuf)>,
 }
 
 /// Quick search (Alt+letter) or filter (Ctrl+S) field, shown instead of the pane's status line.
@@ -227,6 +230,7 @@ impl Application for App {
         let (ch, sh) = (config::config_handler(), config::state_handler());
         let (cfg, state): (Config, State) = (config::read(ch.as_ref()), config::read(sh.as_ref()));
         let saved = state.clone();
+        archive::clean_temp(&archive::temp_root()); // left by crashed runs; not in `build` (tests)
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
         app.saved = saved;
         (app.config_handler, app.state_handler) = (ch, sh);
@@ -629,7 +633,11 @@ impl App {
                     return self.apply_hidden();
                 }
             }
-            Message::Exit => return cosmic::iced::exit(),
+            Message::Exit => {
+                let mine = archive::temp_root().join(std::process::id().to_string());
+                let _ = std::fs::remove_dir_all(mine);
+                return cosmic::iced::exit();
+            }
         }
         Task::none()
     }
@@ -740,6 +748,10 @@ impl App {
             Action::QuickFilter => return self.quick_filter(side),
             _ => {}
         }
+        if self.read_only(side, action) {
+            self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
+            return Task::none();
+        }
         if let Some(d) = self.dialog_for(side, action) {
             let focus = matches!(
                 d,
@@ -780,6 +792,29 @@ impl App {
                 if let Some((path, focus)) = panel.enter_path() {
                     return self.load(side, path, focus);
                 }
+                let cwd = panel.cwd().to_path_buf();
+                let current = panel.current().map(|e| (e.os_name.clone(), e.name.clone()));
+                if let Some((os_name, name)) = current {
+                    match archive::split_path(&cwd) {
+                        Some((arc, inner)) => {
+                            return self.open_from_archive(
+                                side,
+                                arc,
+                                inner,
+                                os_name,
+                                &[],
+                                &["xdg-open"],
+                            );
+                        }
+                        // Not inside one already: archives inside archives open as files.
+                        None if Format::detect(&name).is_some_and(Format::is_tree) => {
+                            return self.load(side, cwd.join(os_name), None);
+                        }
+                        None => {}
+                    }
+                }
+                let t = self.panes[side].active_mut();
+                let panel = &t.panel;
                 let file = panel.current().map(|e| panel.cwd().join(&e.os_name));
                 if let Some(file) = file
                     && let Err(err) = spawn_detached(&launch::command(&[], &["xdg-open"], &file))
@@ -813,6 +848,25 @@ impl App {
                 return self.apply_hidden();
             }
             Action::View | Action::Edit => {
+                let cwd = panel.cwd().to_path_buf();
+                let current = panel
+                    .current()
+                    .filter(|e| !e.is_dir() && e.name != PARENT)
+                    .map(|e| e.os_name.clone());
+                if let (Some(os_name), Some((arc, inner))) = (current, archive::split_path(&cwd)) {
+                    // Edit is refused by `read_only` before getting here.
+                    let viewer = self.config.viewer.clone();
+                    return self.open_from_archive(
+                        side,
+                        arc,
+                        inner,
+                        os_name,
+                        &viewer,
+                        &["xdg-open"],
+                    );
+                }
+                let t = self.panes[side].active_mut();
+                let panel = &t.panel;
                 let file = panel
                     .current()
                     .filter(|e| !e.is_dir() && e.name != PARENT)
@@ -854,6 +908,13 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::HistoryList | Action::Hotlist => {}
+            Action::ClipCopy if archive::split_path(panel.cwd()).is_some() => {
+                // No real paths to put on the clipboard: extract into the other panel right away.
+                let paths = panel.targets();
+                let cwd = panel.cwd().to_path_buf();
+                let dest = self.panes[1 - side].active().target();
+                return self.start_extract(side, &cwd, &paths, dest);
+            }
             Action::ClipCopy | Action::ClipCut => {
                 let paths = panel.targets();
                 if !paths.is_empty() {
@@ -1137,6 +1198,10 @@ impl App {
             Dialog::Pack(p) => {
                 let cwd = self.panes[p.side].active().target();
                 let path = cwd.join(p.path.trim());
+                if archive::split_path(&path).is_some() {
+                    self.panes[p.side].active_mut().error = Some(fl!("archive-read-only"));
+                    return Task::none();
+                }
                 let groups = archive::groups(&p.sources, &p.base, &path, p.format, p.separate);
                 // Cursor on the new archive when it lands in this panel.
                 let focus = match groups.as_slice() {
@@ -1160,6 +1225,10 @@ impl App {
                 own_dir,
             } => {
                 let dest = self.panes[side].active().target().join(path.trim());
+                if archive::split_path(&dest).is_some() {
+                    self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
+                    return Task::none();
+                }
                 let job = Job::Unpack {
                     archives,
                     dest,
@@ -1215,6 +1284,13 @@ impl App {
     ) -> Task<Message> {
         // While a navigation is in flight the rows still show the dir being left; aim at where the tab is going.
         let cwd = self.panes[side].active().target();
+        if op != InputOp::Rename && archive::split_path(&cwd.join(input)).is_some() {
+            self.panes[side].active_mut().error = Some(fl!("archive-read-only"));
+            return Task::none();
+        }
+        if op == InputOp::Copy && archive::split_path(&cwd).is_some() {
+            return self.start_extract(side, &cwd, &sources, cwd.join(input));
+        }
         let (method, kind) = match op {
             InputOp::Copy => (Method::Copy, OpKind::Copy),
             _ => (Method::Move, OpKind::Move),
@@ -1239,6 +1315,85 @@ impl App {
         self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
     }
 
+    /// Copy `paths` (inside the archive dir `cwd`) out into the real dir `dest`.
+    fn start_extract(
+        &mut self,
+        side: usize,
+        cwd: &Path,
+        paths: &[PathBuf],
+        dest: PathBuf,
+    ) -> Task<Message> {
+        let Some((archive, inner)) = archive::split_path(cwd) else {
+            return Task::none();
+        };
+        if paths.is_empty() || archive::split_path(&dest).is_some() {
+            return Task::none();
+        }
+        let names = paths
+            .iter()
+            .filter_map(|p| p.file_name())
+            .map(PathBuf::from)
+            .collect();
+        let job = Job::Extract {
+            archive,
+            inner,
+            names,
+            dest,
+        };
+        self.start_job(side, OpKind::Extract, job, None)
+    }
+
+    /// Enter / F3 on a file inside an archive: extract it to a fresh temp dir, then open it.
+    fn open_from_archive(
+        &mut self,
+        side: usize,
+        archive: PathBuf,
+        inner: PathBuf,
+        name: OsString,
+        prog: &[String],
+        default: &[&str],
+    ) -> Task<Message> {
+        let dir = match archive::fresh_temp_dir(&archive::temp_root()) {
+            Ok(d) => d,
+            Err(e) => {
+                self.panes[side].active_mut().error = Some(fl!("open-failed", err = e.to_string()));
+                return Task::none();
+            }
+        };
+        let file = dir.join(&name);
+        let argv = launch::command(prog, default, &file);
+        let job = Job::Extract {
+            archive,
+            inner,
+            names: vec![PathBuf::from(name)],
+            dest: dir,
+        };
+        let task = self.start_job(side, OpKind::Extract, job, None);
+        if let Some(j) = &mut self.job {
+            j.open = Some((argv, file));
+        }
+        task
+    }
+
+    /// Actions that would change an archive (this panel inside one, or the other one as target).
+    fn read_only(&self, side: usize, action: Action) -> bool {
+        let inside = |s: usize| archive::split_path(&self.panes[s].active().target()).is_some();
+        match action {
+            Action::Edit
+            | Action::Rename
+            | Action::MultiRename
+            | Action::Mkdir
+            | Action::Delete
+            | Action::DeletePermanent
+            | Action::ClipCut
+            | Action::ClipPaste => inside(side),
+            Action::Move | Action::Pack | Action::Unpack => inside(side) || inside(1 - side),
+            Action::Copy => inside(1 - side),
+            Action::ClipCopy => inside(side) && inside(1 - side),
+            _ => false,
+        }
+    }
+
     fn start_delete(&mut self, side: usize, permanent: bool, paths: Vec<PathBuf>) -> Task<Message> {
         self.start_job(side, OpKind::Delete, Job::Delete { paths, permanent }, None)
     }
@@ -1259,6 +1414,7 @@ impl App {
             current: String::new(),
             cancel,
             focus,
+            open: None,
         });
         Task::run(events, |e| cosmic::Action::App(Message::Op(e)))
     }
@@ -1301,6 +1457,13 @@ impl App {
             return Task::none();
         };
         let side = job.side;
+        if let Some((argv, file)) = &job.open
+            && !report.cancelled
+            && file.exists()
+            && let Err(err) = spawn_detached(argv)
+        {
+            self.panes[side].active_mut().error = Some(fl!("open-failed", err = err.to_string()));
+        }
         self.panes[side]
             .active_mut()
             .panel
@@ -2701,5 +2864,88 @@ mod tests {
         ));
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Unpack));
+    }
+
+    /// tmp/a.zip with d/f.txt and top.txt; pane 0 lists tmp (cursor on a.zip), pane 1 lists tmp/out.
+    fn zip_setup() -> (tempfile::TempDir, App, PathBuf) {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&a).unwrap());
+        for n in ["d/f.txt", "top.txt"] {
+            z.start_file(n, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(b"x").unwrap();
+        }
+        z.finish().unwrap();
+        std::fs::create_dir(tmp.path().join("out")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        listed_at(&mut app, 1, &tmp.path().join("out"));
+        let _ = app.update(Message::Key(Action::End)); // "..", out/, a.zip
+        (tmp, app, a)
+    }
+
+    #[test]
+    fn enter_on_archive_goes_inside_and_back() {
+        let (tmp, mut app, a) = zip_setup();
+        let _ = app.update(Message::Key(Action::Enter));
+        assert_eq!(app.panes[0].active().target(), a);
+        listed_at(&mut app, 0, &a);
+        let names: Vec<&str> = app.panes[0]
+            .active()
+            .panel
+            .entries()
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(
+            names.contains(&"d") && names.contains(&"top.txt"),
+            "{names:?}"
+        );
+        let _ = app.update(Message::Key(Action::Parent));
+        assert_eq!(app.panes[0].active().target(), tmp.path());
+    }
+
+    #[test]
+    fn f8_inside_archive_is_read_only() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Delete));
+        assert!(app.dialog.is_none() && app.job.is_none());
+        assert!(app.panes[0].active().error.is_some());
+    }
+
+    #[test]
+    fn f5_inside_archive_starts_extract() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Copy));
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Extract));
+    }
+
+    #[test]
+    fn f5_into_archive_panel_is_read_only() {
+        let (tmp, mut app, a) = zip_setup();
+        std::fs::write(tmp.path().join("out/x"), "1").unwrap();
+        listed_at(&mut app, 0, &tmp.path().join("out"));
+        listed_at(&mut app, 1, &a);
+        let _ = app.update(Message::Key(Action::Down)); // x
+        let _ = app.update(Message::Key(Action::Copy));
+        assert!(app.dialog.is_none() && app.job.is_none());
+        assert!(app.panes[0].active().error.is_some());
+    }
+
+    #[test]
+    fn ctrl_c_inside_archive_extracts() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::ClipCopy));
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Extract));
     }
 }

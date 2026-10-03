@@ -4413,6 +4413,7 @@ dependencies = [
  "simple_logger",
  "tempfile",
  "tokio",
+ "zip",
 ]
 
 [[package]]

@@ -89,3 +89,5 @@ pack-separate = Отдельный архив для каждого файла
 unpack-own-dir = Каждый архив — в свою папку
 packing = Упаковка
 unpacking = Распаковка
+archive-read-only = Архив только для чтения
+extracting = Извлечение

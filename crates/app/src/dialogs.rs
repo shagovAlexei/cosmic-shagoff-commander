@@ -488,6 +488,7 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
         OpKind::Delete => fl!("deleting"),
         OpKind::Pack => fl!("packing"),
         OpKind::Unpack => fl!("unpacking"),
+        OpKind::Extract => fl!("extracting"),
     };
     let counts = match job.kind {
         OpKind::Delete => fl!(
