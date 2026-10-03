@@ -1,7 +1,7 @@
 //! Compare two dirs (Shift+F2 marks, Ctrl+Shift+S sync dialog) and plan the copies.
 
 use crate::listing::Entry;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -113,41 +113,80 @@ pub fn next_dir(row: &Row) -> Dir {
 /// a dir on one side only is one row. Stops early when `stop` is set.
 pub fn compare(left: &Path, right: &Path, o: &Options, stop: &AtomicBool) -> Vec<Row> {
     let mut out = Vec::new();
-    walk(left, right, Path::new(""), o, stop, &mut out);
+    walk(left, right, Path::new(""), (true, true), o, stop, &mut out);
     out
 }
 
-fn list(dir: &Path, hidden: bool) -> BTreeMap<OsString, Info> {
-    let Ok(rd) = fs::read_dir(dir) else {
-        return BTreeMap::new();
-    };
-    rd.flatten()
-        .filter(|e| hidden || !e.file_name().to_string_lossy().starts_with('.'))
-        .filter_map(|e| {
-            let m = e.metadata().ok()?; // does not follow symlinks
-            let ft = m.file_type();
-            (ft.is_dir() || ft.is_file() || ft.is_symlink()).then(|| {
-                let info = Info {
-                    size: if m.is_dir() { 0 } else { m.len() },
-                    mtime: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                    dir: m.is_dir(),
-                    link: ft.is_symlink(),
-                };
-                (e.file_name(), info)
-            })
-        })
-        .collect()
+/// A dir's entries, and the names whose metadata could not be read. `None`: the dir itself
+/// can't be read (gone, no permission) — then nothing below it is known.
+fn list(dir: &Path, hidden: bool) -> Option<(BTreeMap<OsString, Info>, BTreeSet<OsString>)> {
+    let mut map = BTreeMap::new();
+    let mut unknown = BTreeSet::new();
+    for e in fs::read_dir(dir).ok()? {
+        let e = e.ok()?;
+        let name = e.file_name();
+        if !hidden && name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let Ok(m) = e.metadata() else {
+            unknown.insert(name); // does not follow symlinks
+            continue;
+        };
+        let ft = m.file_type();
+        if ft.is_dir() || ft.is_file() || ft.is_symlink() {
+            let info = Info {
+                size: if m.is_dir() { 0 } else { m.len() },
+                mtime: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                dir: m.is_dir(),
+                link: ft.is_symlink(),
+            };
+            map.insert(name, info);
+        }
+    }
+    Some((map, unknown))
 }
 
-fn walk(left: &Path, right: &Path, rel: &Path, o: &Options, stop: &AtomicBool, out: &mut Vec<Row>) {
-    let (l, r) = (
-        list(&left.join(rel), o.hidden),
-        list(&right.join(rel), o.hidden),
-    );
+/// `exists`: which sides have this dir (a dir opened on one side has no counterpart).
+fn walk(
+    left: &Path,
+    right: &Path,
+    rel: &Path,
+    exists: (bool, bool),
+    o: &Options,
+    stop: &AtomicBool,
+    out: &mut Vec<Row>,
+) {
+    let read = |root: &Path, there: bool| {
+        if there {
+            list(&root.join(rel), o.hidden)
+        } else {
+            Some(Default::default())
+        }
+    };
+    // A side that can't be read would make everything on the other side look one-sided —
+    // mirror would delete it all. One row without an arrow instead, nothing below.
+    let (Some((l, lu)), Some((r, ru))) = (read(left, exists.0), read(right, exists.1)) else {
+        out.push(Row {
+            rel: if rel.as_os_str().is_empty() {
+                ".".into()
+            } else {
+                rel.to_path_buf()
+            },
+            left: None,
+            right: None,
+            state: State::Differ,
+            dir: Dir::None,
+        });
+        return;
+    };
     let mut names: Vec<&OsString> = l.keys().chain(r.keys()).collect();
     names.sort();
     names.dedup();
     for name in names {
+        // Unknown on one side: no guess about it at all.
+        if lu.contains(name) || ru.contains(name) {
+            continue;
+        }
         if stop.load(Ordering::Relaxed) {
             return;
         }
@@ -157,14 +196,28 @@ fn walk(left: &Path, right: &Path, rel: &Path, o: &Options, stop: &AtomicBool, o
         let state = match (a, b) {
             (Some(a), Some(b)) if a.dir && b.dir => {
                 if o.recursive {
-                    walk(left, right, &path, o, stop, out);
+                    walk(left, right, &path, (true, true), o, stop, out);
                 }
                 continue;
             }
             // With a mask a dir on one side is opened: only its matching files are copied.
             _ if one_sided_dir && o.mask.is_some() => {
                 if o.recursive {
-                    walk(left, right, &path, o, stop, out);
+                    walk(left, right, &path, (a.is_some(), b.is_some()), o, stop, out);
+                } else {
+                    // Not opened: shown, but copying it whole would ignore the mask.
+                    let state = if a.is_some() {
+                        State::LeftOnly
+                    } else {
+                        State::RightOnly
+                    };
+                    out.push(Row {
+                        rel: path,
+                        left: a,
+                        right: b,
+                        state,
+                        dir: Dir::None,
+                    });
                 }
                 continue;
             }
@@ -671,5 +724,50 @@ mod tests {
             cycle(row(false, true)),
             [Dir::ToLeft, Dir::Delete, Dir::None, Dir::ToLeft]
         );
+    }
+
+    #[test]
+    fn regression_mirror_unreadable_left_deletes_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_d, l, r) = pair();
+        put(&l.join("sub/a"), "1", 1000);
+        put(&r.join("sub/a"), "1", 1000);
+        put(&r.join("sub/b"), "1", 1000);
+        fs::set_permissions(l.join("sub"), fs::Permissions::from_mode(0o000)).unwrap();
+        let o = Options {
+            mirror: true,
+            ..opts()
+        };
+        let rows = compare(&l, &r, &o, &AtomicBool::new(false));
+        fs::set_permissions(l.join("sub"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(plan(&l, &r, &rows).delete.is_empty(), "{rows:?}");
+        // The unreadable dir is one row without an arrow, so the user sees why.
+        let sub = rows.iter().find(|x| x.rel == Path::new("sub")).unwrap();
+        assert_eq!((sub.state, sub.dir), (State::Differ, Dir::None));
+    }
+
+    #[test]
+    fn regression_mirror_with_missing_left_root_deletes_nothing() {
+        let (_d, l, r) = pair();
+        put(&r.join("b"), "1", 1000);
+        fs::remove_dir(&l).unwrap();
+        let o = Options {
+            mirror: true,
+            ..opts()
+        };
+        let rows = compare(&l, &r, &o, &AtomicBool::new(false));
+        assert!(plan(&l, &r, &rows).delete.is_empty(), "{rows:?}");
+    }
+
+    #[test]
+    fn mask_without_subdirs_keeps_one_sided_dir_without_arrow() {
+        let (_d, l, r) = pair();
+        put(&l.join("only/b.rs"), "1", 1000);
+        let o = Options {
+            mask: Some(crate::mask::Mask::parse("*.rs")),
+            recursive: false,
+            ..opts()
+        };
+        assert_eq!(arrows(&l, &r, &o), [("only".into(), Dir::None)]);
     }
 }

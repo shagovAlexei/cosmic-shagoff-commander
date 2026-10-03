@@ -281,3 +281,6 @@
 | `regression_feed_uses_the_dir_searched_not_the_edited_field` | «В панель» брал каталог из исправленного поля «Где»: F7/F5/Alt+F5 писали не туда | 22 |
 | `regression_huge_days_does_not_panic` | Огромное «не старше, дней» роняло программу | 22 |
 | `regression_going_to_the_searched_dir_leaves_results` | Переход в каталог поиска (диск, Ctrl+\, история) оставлял результаты | 22 |
+| `regression_mirror_unreadable_left_deletes_nothing` | Зеркало: нечитаемый каталог слева — всё справа под ним помечалось к удалению | 23 |
+| `regression_mirror_with_missing_left_root_deletes_nothing` | Зеркало: пропавший левый каталог (вынули флешку) — всё справа к удалению | 23 |
+| `regression_editing_the_mask_drops_rows_and_confirmation` | Маска, изменённая без Enter, оставляла старые строки и подтверждение удаления | 23 |

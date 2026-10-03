@@ -907,7 +907,10 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     (Dir::None, State::Same) => same += 1,
                     (Dir::None, _) => d += 1,
                 }
-                if (row.state == State::Same && !s.show_same) || shown >= FIND_SHOWN {
+                // ✕ rows are always listed: nothing is deleted unseen.
+                if (row.state == State::Same && !s.show_same)
+                    || (shown >= FIND_SHOWN && row.dir != Dir::Delete)
+                {
                     continue;
                 }
                 shown += 1;
@@ -958,7 +961,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             let summary = match (x, s.confirm) {
                 (0, _) => summary,
                 (x, false) => format!("{summary}, ✕ {x}"),
-                (x, true) => fl!("sync-confirm-delete", n = x),
+                (x, true) => format!("{summary}. {}", fl!("sync-confirm-delete", n = x)),
             };
             widget::dialog()
                 .title(fl!("sync-dirs"))

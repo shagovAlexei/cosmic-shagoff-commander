@@ -793,6 +793,9 @@ impl App {
             Message::SyncMask(m) => {
                 if let Some(Dialog::Sync(s)) = &mut self.dialog {
                     s.mask = m;
+                    // The rows were for the old mask: nothing to run until compared again.
+                    s.rows.clear();
+                    s.confirm = false;
                 }
             }
             Message::SyncStop => {
@@ -5001,6 +5004,18 @@ mod tests {
         // A new compare drops the confirmation.
         compared(&mut app);
         assert!(!sync_dlg(&mut app).confirm);
+    }
+
+    #[test]
+    fn regression_editing_the_mask_drops_rows_and_confirmation() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let _ = app.update(Message::SyncOpt(SyncOpt::Mirror));
+        compared(&mut app);
+        let _ = app.update(Message::SyncRun); // armed
+        let _ = app.update(Message::SyncMask("*.rs".into()));
+        let s = sync_dlg(&mut app);
+        assert!(!s.confirm && s.rows.is_empty());
     }
 
     #[test]
