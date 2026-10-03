@@ -243,6 +243,24 @@ struct Stage<'a> {
     skipped: bool,
     /// Applied after all entries: writing into a dir changes its mtime, a `r-x` mode blocks writing.
     dirs: Vec<(PathBuf, Option<u32>, Option<SystemTime>)>,
+    /// Extract: only entries under `inner/<name>`, written relative to `inner`.
+    select: Option<&'a Select>,
+}
+
+/// F5 from an archive panel: the chosen entries of the dir `inner`.
+struct Select {
+    inner: PathBuf,
+    names: Vec<PathBuf>,
+}
+
+impl Select {
+    fn pick(&self, rel: &Path) -> Option<PathBuf> {
+        let r = rel.strip_prefix(&self.inner).ok()?;
+        self.names
+            .iter()
+            .any(|n| r.starts_with(n))
+            .then(|| r.to_path_buf())
+    }
 }
 
 impl Stage<'_> {
@@ -266,6 +284,13 @@ impl Stage<'_> {
                 return Ok(());
             }
             return self.refuse(name, "unsafe path in archive");
+        };
+        let rel = match self.select {
+            None => rel,
+            Some(sel) => match sel.pick(&rel) {
+                Some(r) => r,
+                None => return Ok(()), // not chosen
+            },
         };
         if !self.parents(&rel)? {
             return self.refuse(name, "path goes through a link in the archive");
@@ -295,6 +320,10 @@ impl Stage<'_> {
             Kind::Symlink(target) => symlink(target, &dst)?,
             Kind::Hardlink(target) => {
                 let src = safe_path(&target)
+                    .and_then(|t| match self.select {
+                        None => Some(t),
+                        Some(sel) => sel.pick(&t),
+                    })
                     .filter(|t| self.parents(t).unwrap_or(false))
                     .map(|t| self.root.join(t));
                 match src.and_then(|s| {
@@ -765,9 +794,64 @@ fn make_staging(dest: &Path) -> io::Result<PathBuf> {
     }
 }
 
+/// One archive to read in a `run`.
+struct Unit {
+    archive: PathBuf,
+    /// Subdir of staging for "each archive into its own folder".
+    sub: Option<PathBuf>,
+    select: Option<Select>,
+    /// Reported as `completed` when the archive was read without skips.
+    done: Vec<PathBuf>,
+}
+
 /// Alt+F9: every archive into one staging dir in `dest` (`staging/<stem>` with `own_dir`), then one
 /// `transfer(Move)` puts the top-level entries in place. `completed` = archives unpacked without skips.
 pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Handler) -> Report {
+    let units: Vec<Unit> = archives
+        .iter()
+        .map(|a| {
+            let name = a
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            // A stem like ".." ("...tar") must not climb out of staging: use the whole name then.
+            let sub = own_dir.then(|| match safe_path(Path::new(stem(&name))) {
+                Some(s) if s.components().count() == 1 => s,
+                _ => PathBuf::from(&name),
+            });
+            Unit {
+                archive: a.clone(),
+                sub,
+                select: None,
+                done: vec![a.clone()],
+            }
+        })
+        .collect();
+    run(&units, dest, h)
+}
+
+/// F5 / Ctrl+C / Enter in an archive panel: `names` (relative to the dir `inner`) into `dest`.
+/// `completed` = their paths through the archive (`archive/inner/name`) when nothing was skipped.
+pub fn extract(
+    archive: &Path,
+    inner: &Path,
+    names: &[PathBuf],
+    dest: &Path,
+    h: &mut dyn Handler,
+) -> Report {
+    let unit = Unit {
+        archive: archive.to_path_buf(),
+        sub: None,
+        select: Some(Select {
+            inner: inner.to_path_buf(),
+            names: names.to_vec(),
+        }),
+        done: names.iter().map(|n| archive.join(inner).join(n)).collect(),
+    };
+    run(std::slice::from_ref(&unit), dest, h)
+}
+
+fn run(units: &[Unit], dest: &Path, h: &mut dyn Handler) -> Report {
     let mut report = Report::default();
     let staging = match attempt(h, dest, || {
         fs::create_dir_all(dest)?;
@@ -779,7 +863,8 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
             return report;
         }
     };
-    'archives: for a in archives {
+    'archives: for u in units {
+        let a = &u.archive;
         let name = a
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -787,14 +872,9 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
         let Some(f) = Format::detect(&name) else {
             continue;
         };
-        let root = if own_dir {
-            // A stem like ".." ("...tar") must not climb out of staging: use the whole name then.
-            match safe_path(Path::new(stem(&name))) {
-                Some(s) if s.components().count() == 1 => staging.join(s),
-                _ => staging.join(&name),
-            }
-        } else {
-            staging.clone()
+        let root = match &u.sub {
+            Some(sub) => staging.join(sub),
+            None => staging.clone(),
         };
         loop {
             let pos = Rc::new(Cell::new(0));
@@ -807,6 +887,7 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
                     total: 0,
                     skipped: false,
                     dirs: Vec::new(),
+                    select: u.select.as_ref(),
                 };
                 let result = File::open(a).map_err(Stop::from).and_then(|file| {
                     st.total = file.metadata()?.len();
@@ -819,7 +900,7 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
             match result {
                 Ok(()) => {
                     if !skipped {
-                        report.completed.push(a.clone());
+                        report.completed.extend(u.done.iter().cloned());
                     }
                     break;
                 }
@@ -2206,5 +2287,120 @@ mod tests {
             listed(&list(&z, Path::new(""), true).unwrap()),
             [("only.txt".into(), false)]
         );
+    }
+
+    fn ex(a: &Path, inner: &str, names: &[&str], dest: &Path, h: &mut Script) -> Report {
+        let names: Vec<PathBuf> = names.iter().map(PathBuf::from).collect();
+        extract(a, Path::new(inner), &names, dest, h)
+    }
+
+    #[test]
+    fn extract_one_file() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        let r = ex(&z, "docs", &["a.txt"], &out, &mut Script::default());
+        assert_eq!(names(&out), ["a.txt"]);
+        assert_eq!(fs::read_to_string(out.join("a.txt")).unwrap(), "aa");
+        assert_eq!(r.completed, [z.join("docs/a.txt")]);
+    }
+
+    #[test]
+    fn extract_dir_subtree() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        ex(&z, "", &["docs"], &out, &mut Script::default());
+        assert_eq!(names(&out), ["docs"]);
+        assert_eq!(
+            fs::read_to_string(out.join("docs/img/p.png")).unwrap(),
+            "png"
+        );
+    }
+
+    #[test]
+    fn extract_two_names() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        ex(
+            &z,
+            "",
+            &["top.txt", ".hidden"],
+            &out,
+            &mut Script::default(),
+        );
+        assert_eq!(names(&out), [".hidden", "top.txt"]);
+    }
+
+    #[test]
+    fn extract_conflict_skip() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        fs::create_dir(&out).unwrap();
+        fs::write(out.join("top.txt"), "mine").unwrap();
+        let mut h = Script {
+            conflicts: vec![Resolution::Skip],
+            ..Default::default()
+        };
+        ex(&z, "", &["top.txt"], &out, &mut h);
+        assert_eq!(fs::read_to_string(out.join("top.txt")).unwrap(), "mine");
+        assert_eq!(names(&out), ["top.txt"]);
+    }
+
+    #[test]
+    fn extract_cancel_leaves_no_staging() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let out = d.path().join("out");
+        let r = ex(
+            &z,
+            "",
+            &["docs"],
+            &out,
+            &mut Script {
+                cancel: true,
+                ..Default::default()
+            },
+        );
+        assert!(r.cancelled);
+        assert!(names(&out).is_empty());
+    }
+
+    #[test]
+    fn extract_selected_evil_entry_stays_inside() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = d.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        let a = d.path().join("e.tar");
+        evil_tar(
+            &a,
+            &[
+                (
+                    "sel/ln",
+                    tar::EntryType::Symlink,
+                    outside.to_str().unwrap(),
+                    b"",
+                ),
+                ("sel/ln/pwned", tar::EntryType::Regular, "", b"x"),
+                ("sel/ok", tar::EntryType::Regular, "", b"1"),
+                ("other", tar::EntryType::Regular, "", b"2"),
+            ],
+        );
+        let out = d.path().join("out");
+        let mut h = Script {
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        ex(&a, "", &["sel"], &out, &mut h);
+        assert!(!outside.join("pwned").exists());
+        assert_eq!(names(&out), ["sel"]);
+        assert_eq!(fs::read_to_string(out.join("sel/ok")).unwrap(), "1");
     }
 }
