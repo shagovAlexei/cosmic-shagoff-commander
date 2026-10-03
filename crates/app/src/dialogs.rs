@@ -93,6 +93,11 @@ pub enum Dialog {
         side: usize,
         url: String,
         password: String,
+        /// Saved addresses when the dialog opened.
+        saved: Vec<String>,
+        /// "Browse network": (name, address).
+        found: Vec<(String, String)>,
+        browsing: bool,
     },
 }
 
@@ -685,24 +690,60 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .secondary_action(cancel)
                 .into()
         }
-        Dialog::Connect { url, password, .. } => widget::dialog()
-            .title(fl!("connect"))
-            .control(
-                column![
-                    widget::text::caption(fl!("connect-url")),
-                    field(url),
-                    widget::text::caption(fl!("connect-password")),
-                    widget::secure_input("", password.as_str(), None, true)
-                        .on_input(Message::ConnectPassword)
-                        .on_submit(|_| Message::DialogSubmit),
-                ]
-                .spacing(4),
-            )
-            .primary_action(
-                widget::button::suggested(fl!("connect-go")).on_press(Message::DialogSubmit),
-            )
-            .secondary_action(cancel)
-            .into(),
+        Dialog::Connect {
+            url,
+            password,
+            saved,
+            found,
+            browsing,
+            ..
+        } => {
+            let mut col = column![
+                widget::text::caption(fl!("connect-url")),
+                field(url),
+                widget::text::caption(fl!("connect-password")),
+                widget::secure_input("", password.as_str(), None, true)
+                    .on_input(Message::ConnectPassword)
+                    .on_submit(|_| Message::DialogSubmit),
+            ]
+            .spacing(4);
+            let pick = |label: String, url: &str| {
+                widget::button::text(label)
+                    .on_press(Message::ConnectPick(url.to_string()))
+                    .width(Length::Fill)
+            };
+            if !saved.is_empty() {
+                col = col.push(widget::text::caption(fl!("connect-saved")));
+                for (i, s) in saved.iter().enumerate() {
+                    col = col.push(
+                        row![
+                            pick(s.clone(), s),
+                            widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                                .on_press(Message::ConnectForget(i)),
+                        ]
+                        .align_y(cosmic::iced::Alignment::Center),
+                    );
+                }
+            }
+            let browse = widget::button::standard(if *browsing {
+                fl!("connect-browsing")
+            } else {
+                fl!("connect-browse")
+            })
+            .on_press_maybe((!browsing).then_some(Message::ConnectBrowse));
+            col = col.push(browse);
+            for (name, u) in found {
+                col = col.push(pick(format!("{name}   {u}"), u));
+            }
+            widget::dialog()
+                .title(fl!("connect"))
+                .control(widget::scrollable(col).height(Length::Shrink))
+                .primary_action(
+                    widget::button::suggested(fl!("connect-go")).on_press(Message::DialogSubmit),
+                )
+                .secondary_action(cancel)
+                .into()
+        }
         Dialog::Unpack {
             archives,
             path,
