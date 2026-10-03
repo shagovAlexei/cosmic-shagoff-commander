@@ -59,11 +59,9 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             K::Letter(Code::KeyM, "m"),
             a(Action::MultiRename),
         ),
-        (
-            vec![Ctrl, Shift],
-            K::Letter(Code::KeyD, "d"),
-            a(Action::CompareFiles),
-        ),
+        (vec![], K::Named(Named::F11), a(Action::CompareFiles)),
+        (vec![], K::Named(Named::F9), a(Action::CopyNames)),
+        (vec![], K::Named(Named::F10), a(Action::CopyPaths)),
         (vec![Alt], K::Named(Named::F4), MenuAct::Exit),
         (
             vec![],
@@ -197,6 +195,9 @@ fn menus(show_hidden: bool) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-invert"), Action::Invert),
                 menu::Item::Divider,
                 b(fl!("menu-compare-lists"), Action::CompareLists),
+                menu::Item::Divider,
+                b(fl!("menu-copy-names"), Action::CopyNames),
+                b(fl!("menu-copy-paths"), Action::CopyPaths),
             ],
         ),
         (
@@ -251,6 +252,7 @@ fn menus(show_hidden: bool) -> Vec<(String, Vec<Item>)> {
             vec![
                 b(fl!("menu-help"), Action::Help),
                 menu::Item::Divider,
+                b(fl!("donate-title"), Action::Donate),
                 b(fl!("menu-about"), Action::About),
             ],
         ),
@@ -347,7 +349,7 @@ mod tests {
                     menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => a,
                     _ => continue,
                 };
-                if act == MenuAct::Key(Action::About) {
+                if matches!(act, MenuAct::Key(Action::About | Action::Donate)) {
                     continue; // no key, as in TC
                 }
                 assert!(binds.values().any(|b| *b == act), "{title}: {act:?}");

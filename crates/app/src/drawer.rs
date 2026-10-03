@@ -19,6 +19,7 @@ pub const DONATE_URL: Option<&str> = None;
 pub enum Drawer {
     Help,
     About,
+    Donate,
     Settings(SettingsForm),
 }
 
@@ -68,17 +69,31 @@ pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
         }
         Drawer::About => {
             let content = widget::column::with_children(vec![
-                widget::about(&app.about, |url| Message::OpenUrl(url.to_string())),
                 donate(),
+                widget::about(&app.about, |url| Message::OpenUrl(url.to_string())),
             ])
             .spacing(24);
             context_drawer::context_drawer(content, Message::CloseDrawer).title(fl!("menu-about"))
         }
+        Drawer::Donate => context_drawer::context_drawer(donate(), Message::CloseDrawer)
+            .title(fl!("donate-title")),
         Drawer::Settings(form) => {
             context_drawer::context_drawer(settings_view(app, form), Message::CloseDrawer)
                 .title(fl!("settings-title"))
         }
     }
+}
+
+/// The keys of a help row: each alternative ("F8, Delete", "Ctrl+C / Ctrl+X") its own label,
+/// stacked, so long rows fit the drawer.
+fn keys_view(keys: &'static str) -> Element<'static, Message> {
+    let mut col = widget::column::with_capacity(3)
+        .spacing(4)
+        .align_x(Alignment::End);
+    for k in keys.split(", ").flat_map(|k| k.split(" / ")) {
+        col = col.push(key_label(k));
+    }
+    col.into()
 }
 
 /// A key as a small rounded label.
@@ -115,7 +130,7 @@ fn help() -> Element<'static, Message> {
     for (title, rows) in crate::help::sections() {
         let mut s = settings::section().title(title);
         for (keys, what, _) in rows {
-            s = s.add(settings::item(what, key_label(keys)));
+            s = s.add(settings::item(what, keys_view(keys)));
         }
         col = col.push(s);
     }

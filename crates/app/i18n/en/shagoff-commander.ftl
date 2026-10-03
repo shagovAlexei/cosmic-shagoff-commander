@@ -237,3 +237,7 @@ settings-editor = Editor (F4)
 settings-archives = Archives
 settings-pack-format = Default pack format
 settings-title = Settings
+fkey-rename = F2 Rename
+copied = Copied to the clipboard: { $n }
+menu-copy-names = Copy names to clipboard
+menu-copy-paths = Copy names with path

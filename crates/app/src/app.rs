@@ -1002,9 +1002,18 @@ impl App {
             Action::QuickSearch(c) => return self.quick_search(side, c),
             Action::QuickFilter => return self.quick_filter(side),
             Action::Disconnect => return self.disconnect(side),
-            Action::Help | Action::About | Action::Settings => {
+            Action::Help | Action::About | Action::Settings | Action::Donate => {
                 self.toggle_drawer(action);
                 return Task::none();
+            }
+            Action::CopyNames | Action::CopyPaths => {
+                let paths = self.panes[side].active().panel.targets();
+                if paths.is_empty() {
+                    return Task::none();
+                }
+                let text = shagoff_core::clipboard::names_text(&paths, action == Action::CopyPaths);
+                self.panes[side].active_mut().error = Some(fl!("copied", n = paths.len()));
+                return cosmic::iced::clipboard::write(text);
             }
             _ => {}
         }
@@ -1172,7 +1181,10 @@ impl App {
             | Action::Disconnect
             | Action::Help
             | Action::About
-            | Action::Settings => {} // handled above
+            | Action::Settings
+            | Action::Donate
+            | Action::CopyNames
+            | Action::CopyPaths => {} // handled above
             Action::Connect => {} // always a dialog
             Action::HistoryBack | Action::HistoryForward => {
                 let history = &mut self.panes[side].active_mut().history;
@@ -2140,6 +2152,7 @@ impl App {
         let d = match action {
             Action::Help => Drawer::Help,
             Action::About => Drawer::About,
+            Action::Donate => Drawer::Donate,
             _ => Drawer::Settings(SettingsForm {
                 viewer: self.config.viewer.join(" "),
                 editor: self.config.editor.join(" "),
@@ -4140,6 +4153,28 @@ mod tests {
             assert_eq!(app.drawer, Some(Drawer::About));
             let _ = app.update(Message::Key(Action::About));
             assert_eq!(app.drawer, None);
+        }
+
+        #[test]
+        fn donate_has_its_own_drawer() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::Donate));
+            assert_eq!(app.drawer, Some(Drawer::Donate));
+        }
+
+        #[test]
+        fn f9_copies_names_and_says_so() {
+            let d = tempfile::tempdir().unwrap();
+            std::fs::write(d.path().join("a.txt"), "").unwrap();
+            let mut app = app_with(Config::default(), State::default());
+            let entries = listing::scan(d.path(), false).unwrap();
+            let panel = &mut app.panes[0].active_mut().panel;
+            panel.set_listing(d.path().to_path_buf(), entries, Some("a.txt"));
+            let _ = app.update(Message::Key(Action::CopyNames));
+            assert_eq!(
+                app.panes[0].active().error.as_deref(),
+                Some(fl!("copied", n = 1).as_str())
+            );
         }
 
         #[test]

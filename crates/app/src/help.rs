@@ -64,10 +64,12 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+M", fl!("menu-multi-rename"), Action::MultiRename),
                 o("Ctrl+C / Ctrl+X / Ctrl+V", fl!("help-clipboard")),
                 r(
-                    "Ctrl+Shift+D",
+                    "F11, Ctrl+Shift+D",
                     fl!("menu-compare-files"),
                     Action::CompareFiles,
                 ),
+                r("F9", fl!("menu-copy-names"), Action::CopyNames),
+                r("F10", fl!("menu-copy-paths"), Action::CopyPaths),
             ],
         ),
         (

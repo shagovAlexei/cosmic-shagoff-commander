@@ -71,6 +71,18 @@ pub fn decode(mime: &str, data: &[u8]) -> Option<(Kind, Vec<PathBuf>)> {
     Some((kind, paths))
 }
 
+/// F9 / F10: names (or full paths) as text, one per line.
+pub fn names_text(paths: &[PathBuf], full: bool) -> String {
+    paths
+        .iter()
+        .map(|p| match p.file_name() {
+            Some(n) if !full => n.to_string_lossy().into_owned(),
+            _ => p.to_string_lossy().into_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +149,13 @@ mod tests {
         assert_eq!(decode(GNOME, b""), None);
         assert_eq!(decode("text/plain", b"/tmp/x"), None);
         assert_eq!(decode(URI_LIST, b"not a uri"), None);
+    }
+
+    #[test]
+    fn names_as_text() {
+        let p = [PathBuf::from("/a/b.txt"), PathBuf::from("/a/c d")];
+        assert_eq!(names_text(&p, false), "b.txt\nc d");
+        assert_eq!(names_text(&p, true), "/a/b.txt\n/a/c d");
+        assert_eq!(names_text(&[], false), "");
     }
 }

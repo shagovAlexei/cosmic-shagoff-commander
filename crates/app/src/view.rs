@@ -261,6 +261,7 @@ pub fn fkey_bar() -> Element<'static, Message> {
     };
     row![
         key(fl!("fkey-help"), Action::Help),
+        key(fl!("fkey-rename"), Action::Rename),
         key(fl!("fkey-view"), Action::View),
         key(fl!("fkey-edit"), Action::Edit),
         key(fl!("fkey-copy"), Action::Copy),

@@ -75,6 +75,11 @@ pub enum Action {
     Settings,
     /// Menu only: about the program.
     About,
+    /// Menu only: support the project.
+    Donate,
+    /// F9 / F10: names / full paths of the targets to the clipboard as text.
+    CopyNames,
+    CopyPaths,
     /// Ctrl+F: connect to a network location (TC: FTP connect).
     Connect,
     /// Ctrl+Shift+F: unmount / eject the drive of the active panel (TC: FTP disconnect).
@@ -130,6 +135,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
             (Named::ArrowUp, false, true) => Action::MarkUp,
             (Named::F1, false, false) => Action::Help,
+            (Named::F9, false, false) => Action::CopyNames,
+            (Named::F10, false, false) => Action::CopyPaths,
+            (Named::F11, false, false) => Action::CompareFiles,
             (Named::F3, false, false) => Action::View,
             (Named::F4, false, false) => Action::Edit,
             (Named::F5, false, false) => Action::Copy,
@@ -202,6 +210,13 @@ mod tests {
         assert_eq!(named(Named::Enter, NONE), Some(Action::Enter));
         assert_eq!(named(Named::Backspace, NONE), Some(Action::Parent));
         assert_eq!(named(Named::PageUp, CTRL), Some(Action::Parent));
+    }
+
+    #[test]
+    fn f9_f10_copy_names_f11_compares() {
+        assert_eq!(named(Named::F9, NONE), Some(Action::CopyNames));
+        assert_eq!(named(Named::F10, NONE), Some(Action::CopyPaths));
+        assert_eq!(named(Named::F11, NONE), Some(Action::CompareFiles));
     }
 
     #[test]

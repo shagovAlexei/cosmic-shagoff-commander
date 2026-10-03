@@ -238,3 +238,7 @@ settings-editor = Правка (F4)
 settings-archives = Архивы
 settings-pack-format = Формат упаковки по умолчанию
 settings-title = Настройки
+fkey-rename = F2 Переим.
+copied = Скопировано в буфер обмена: { $n }
+menu-copy-names = Копировать имена в буфер
+menu-copy-paths = Копировать имена с путём
