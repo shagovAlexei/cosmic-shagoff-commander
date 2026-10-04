@@ -29,15 +29,26 @@ pub enum Resolution {
     Cancel,
 }
 
-/// First free `name (N).ext` next to `dst`: `a.txt` → `a (1).txt`; `.bashrc` → `.bashrc (1)`.
+/// First free `name (N).ext` next to `dst`: `a.txt` → `a (1).txt`; `a.tar.gz` → `a (1).tar.gz` (still
+/// an archive); `.bashrc` → `.bashrc (1)`. Bytes, not UTF-8: a non-UTF-8 name keeps its bytes.
 pub fn unique_name(dst: &Path) -> PathBuf {
-    let name = dst.file_name().unwrap_or_default().to_string_lossy();
-    let (stem, ext) = match name.rfind('.') {
-        Some(i) if i > 0 => (&name[..i], &name[i..]),
-        _ => (&name[..], ""),
+    use std::os::unix::ffi::OsStrExt;
+    let name = dst.file_name().unwrap_or_default().as_bytes();
+    let mut cut = match name.iter().rposition(|&b| b == b'.') {
+        Some(i) if i > 0 => i,
+        _ => name.len(),
     };
+    if name[..cut].ends_with(b".tar") && cut > 4 {
+        cut -= 4;
+    }
+    let (stem, ext) = name.split_at(cut);
     (1..)
-        .map(|n| dst.with_file_name(format!("{stem} ({n}){ext}")))
+        .map(|n| {
+            let mut new = stem.to_vec();
+            new.extend_from_slice(format!(" ({n})").as_bytes());
+            new.extend_from_slice(ext);
+            dst.with_file_name(std::ffi::OsStr::from_bytes(&new))
+        })
         .find(|p| fs::symlink_metadata(p).is_err())
         .expect("some number is free")
 }
@@ -874,7 +885,14 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = |n: &str| d.path().join(n);
         assert_eq!(unique_name(&p("a.txt")), p("a (1).txt"));
-        assert_eq!(unique_name(&p("a.tar.gz")), p("a.tar (1).gz"));
+        assert_eq!(unique_name(&p("a.tar.gz")), p("a (1).tar.gz"));
+        assert_eq!(unique_name(&p(".tar.gz")), p(".tar (1).gz"));
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let raw = d.path().join(std::ffi::OsStr::from_bytes(b"\xff.txt"));
+            let want = d.path().join(std::ffi::OsStr::from_bytes(b"\xff (1).txt"));
+            assert_eq!(unique_name(&raw), want);
+        }
         assert_eq!(unique_name(&p("README")), p("README (1)"));
         assert_eq!(unique_name(&p(".bashrc")), p(".bashrc (1)"));
         write(&p("a (1).txt"), "");
