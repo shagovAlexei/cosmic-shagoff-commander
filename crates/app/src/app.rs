@@ -29,7 +29,6 @@ use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution
 use shagoff_core::panel::{self, PARENT, Panel};
 use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
-use shagoff_core::sort::SortKey;
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
 use std::collections::HashSet;
@@ -288,7 +287,8 @@ pub enum Message {
     },
     Click(usize, usize),
     DoubleClick(usize, usize),
-    Header(usize, SortKey),
+    /// A button of one pane (column header, `\\`, `..`): that pane becomes active and acts.
+    PaneKey(usize, Action),
     /// side, scroll offset y, viewport height (of the active tab)
     Scrolled(usize, f32, f32),
     /// side, real size of the pane's list (from a sensor: on_scroll misses resizes)
@@ -766,10 +766,10 @@ impl App {
                 self.panes[side].active_mut().panel.set_cursor(i);
                 return self.act(side, Action::Enter);
             }
-            Message::Header(side, key) => {
+            Message::PaneKey(side, action) => {
                 self.search = None;
                 self.active = side;
-                return self.act(side, Action::Sort(key));
+                return self.act(side, action);
             }
             Message::Scrolled(side, offset, height) => {
                 // Wheel / scrollbar: the view moves freely, the cursor stays where it is.

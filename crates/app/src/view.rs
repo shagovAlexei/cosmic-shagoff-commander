@@ -2,6 +2,7 @@
 //! (each pane's half), the command line and the F-keys in the footer.
 
 use crate::app::{App, Message, StatusKind, Tab};
+use crate::config::Skin;
 use crate::fl;
 use crate::keymap::Action;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
@@ -27,10 +28,78 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if let Some(l) = &app.lister {
         return crate::lister::view(l);
     }
-    row![pane(app, 0), pane(app, 1)]
+    let panes = row![pane(app, 0), pane(app, 1)]
         .spacing(4)
-        .height(Length::Fill)
+        .height(Length::Fill);
+    match app.config.skin {
+        Skin::Classic => column![toolbar(), panes].into(),
+        Skin::Modern => panes.into(),
+    }
+}
+
+/// Classic skin: TC's button bar under the menu; each button sends the same `Action` as its key.
+fn toolbar() -> Element<'static, Message> {
+    use cosmic::widget::tooltip::{Position, tooltip};
+    let tool = |icon: &'static str, tip: String, action: Action| -> Element<'static, Message> {
+        tooltip(
+            button::icon(widget::icon::from_name(icon).size(16)).on_press(Message::Key(action)),
+            text(tip).size(TEXT),
+            Position::Bottom,
+        )
         .into()
+    };
+    let gap = || widget::Space::new().width(Length::Fixed(10.0)).into();
+    widget::row::with_children(vec![
+        tool("view-refresh-symbolic", fl!("menu-reload"), Action::Reload),
+        tool("view-list-symbolic", fl!("menu-full"), Action::ViewFull),
+        tool("view-grid-symbolic", fl!("menu-brief"), Action::ViewBrief),
+        tool(
+            "view-reveal-symbolic",
+            fl!("menu-hidden"),
+            Action::ToggleHidden,
+        ),
+        gap(),
+        tool(
+            "object-flip-horizontal-symbolic",
+            fl!("menu-swap"),
+            Action::SwapPanes,
+        ),
+        tool("folder-new-symbolic", fl!("menu-mkdir"), Action::Mkdir),
+        tool(
+            "system-search-symbolic",
+            fl!("menu-find"),
+            Action::FindFiles,
+        ),
+        tool(
+            "view-dual-symbolic",
+            fl!("menu-compare-lists"),
+            Action::CompareLists,
+        ),
+        tool(
+            "emblem-synchronizing-symbolic",
+            fl!("menu-sync"),
+            Action::SyncDirs,
+        ),
+        gap(),
+        tool("package-x-generic-symbolic", fl!("menu-pack"), Action::Pack),
+        tool("document-open-symbolic", fl!("menu-unpack"), Action::Unpack),
+        gap(),
+        tool(
+            "network-server-symbolic",
+            fl!("menu-connect"),
+            Action::Connect,
+        ),
+        tool("starred-symbolic", fl!("menu-hotlist"), Action::Hotlist),
+        tool(
+            "emblem-system-symbolic",
+            fl!("menu-settings"),
+            Action::Settings,
+        ),
+    ])
+    .spacing(2)
+    .padding([0, 6, 2, 6])
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn pane(app: &App, side: usize) -> Element<'_, Message> {
@@ -57,12 +126,16 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .on_show(move |size| Message::Resized(side, size))
         .on_resize(move |size| Message::Resized(side, size));
 
-    let mut col = column![drive_bar(app, side)];
+    let drives = match app.config.skin {
+        Skin::Classic => drive_list(app, side),
+        Skin::Modern => drive_bar(app, side),
+    };
+    let mut col = column![drives];
     if tabs.items().len() > 1 {
         col = col.push(tab_bar(side, tabs, active));
     }
     col.push(path)
-        .push(header(side, p.panel.sort()))
+        .push(header(side, p.panel.sort(), app.config.skin))
         .push(list)
         .width(Length::Fill)
         .into()
@@ -140,6 +213,33 @@ fn name_cell(e: &Entry, label: String) -> Element<'static, Message> {
         .into()
 }
 
+/// Classic skin, as in TC: the drive in a drop-down, `\\` (root) and `..` (up), free space.
+fn drive_list(app: &App, side: usize) -> Element<'_, Message> {
+    let current = drives::containing(&app.drives, app.panes[side].active().panel.cwd());
+    let labels: Vec<String> = app.drives.iter().map(|d| d.label.clone()).collect();
+    let paths: Vec<std::path::PathBuf> = app.drives.iter().map(|d| d.path.clone()).collect();
+    let small = |label: &'static str, action: Action| {
+        button::text(label)
+            .padding([0, 8])
+            .on_press(Message::PaneKey(side, action))
+    };
+    let mut bar = row![
+        widget::dropdown(labels, current, move |i| Message::Drive(
+            side,
+            paths[i].clone()
+        )),
+        small("\\", Action::Root),
+        small("..", Action::Parent),
+        widget::Space::new().width(Length::Fill),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+    if let Some((free, total)) = app.space[side] {
+        bar = bar.push(text(fl!("disk-free", free = human(free), total = human(total))).size(TEXT));
+    }
+    container(bar).padding([2, 6]).into()
+}
+
 /// Drive buttons (the one holding cwd highlighted) and free space on the current disk.
 // ponytail: many drives overflow the row; wrap in a horizontal scrollable when they stop fitting.
 fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
@@ -191,7 +291,8 @@ fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Mess
 }
 
 /// Column headers on the same grid as `file_row` (padding 6, spacing 6), so labels sit over their columns.
-fn header(side: usize, sort: Sort) -> Element<'static, Message> {
+/// Classic: on a bar with a rule in each gap, like TC's header buttons.
+fn header(side: usize, sort: Sort, skin: Skin) -> Element<'static, Message> {
     let cell = |label: String, key: SortKey, width: Length, align: Alignment| {
         let arrow = match (sort.key == key, sort.asc) {
             (true, true) => " ▲",
@@ -199,26 +300,57 @@ fn header(side: usize, sort: Sort) -> Element<'static, Message> {
             _ => "",
         };
         mouse_area(cell(format!("{label}{arrow}")).width(width).align_x(align))
-            .on_press(Message::Header(side, key))
+            .on_press(Message::PaneKey(side, Action::Sort(key)))
     };
     let start = Alignment::Start;
-    container(
-        row![
-            cell(fl!("col-name"), SortKey::Name, Length::Fill, start),
-            cell(fl!("col-ext"), SortKey::Ext, Length::Fixed(W_EXT), start),
-            cell(
-                fl!("col-size"),
-                SortKey::Size,
-                Length::Fixed(W_SIZE),
-                Alignment::End
-            ),
-            cell(fl!("col-date"), SortKey::Date, Length::Fixed(W_DATE), start),
-            self::cell(fl!("col-attr")).width(Length::Fixed(W_ATTR)),
-        ]
-        .spacing(6),
-    )
-    .padding([2, 6])
-    .into()
+    let cells: Vec<Element<'static, Message>> = vec![
+        cell(fl!("col-name"), SortKey::Name, Length::Fill, start).into(),
+        cell(fl!("col-ext"), SortKey::Ext, Length::Fixed(W_EXT), start).into(),
+        cell(
+            fl!("col-size"),
+            SortKey::Size,
+            Length::Fixed(W_SIZE),
+            Alignment::End,
+        )
+        .into(),
+        cell(fl!("col-date"), SortKey::Date, Length::Fixed(W_DATE), start).into(),
+        self::cell(fl!("col-attr"))
+            .width(Length::Fixed(W_ATTR))
+            .into(),
+    ];
+    let row = match skin {
+        Skin::Modern => widget::row::with_children(cells).spacing(6),
+        Skin::Classic => {
+            // The 6 px gap holds a centred rule: the grid stays the rows' grid.
+            let mut out = Vec::with_capacity(cells.len() * 2);
+            for (i, c) in cells.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(
+                        container(widget::divider::vertical::default())
+                            .width(Length::Fixed(6.0))
+                            .height(Length::Fixed(16.0))
+                            .center_x(Length::Fixed(6.0))
+                            .into(),
+                    );
+                }
+                out.push(c);
+            }
+            widget::row::with_children(out).align_y(Alignment::Center)
+        }
+    };
+    let bar = container(row).padding([2, 6]).width(Length::Fill);
+    match skin {
+        Skin::Modern => bar.into(),
+        Skin::Classic => bar.class(header_style()).into(),
+    }
+}
+
+/// Classic header bar: the theme's component (button) background.
+fn header_style() -> theme::Container<'static> {
+    theme::Container::custom(|t| container::Style {
+        background: Some(Color::from(t.cosmic().primary_component_color()).into()),
+        ..Default::default()
+    })
 }
 
 fn file_row<'a>(
