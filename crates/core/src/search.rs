@@ -84,8 +84,8 @@ impl Query {
     }
 
     /// Matches inside `archive`, as paths through it (`/x/a.zip/docs/f.txt` — a panel opens them).
-    fn in_archive(&self, archive: &Path, found: &mut dyn FnMut(PathBuf)) {
-        let Ok(items) = crate::archive::members(archive) else {
+    fn in_archive(&self, archive: &Path, stop: &AtomicBool, found: &mut dyn FnMut(PathBuf)) {
+        let Ok(items) = crate::archive::members(archive, stop) else {
             return;
         };
         for (inner, dir, size, mtime) in items {
@@ -186,7 +186,7 @@ pub fn find(
             && !q.reads_content()
             && crate::archive::Format::detect(&name).is_some_and(|f| f.is_tree())
         {
-            q.in_archive(&path, found);
+            q.in_archive(&path, stop, found);
         }
     }
 }
@@ -345,6 +345,8 @@ mod tests {
         q.min_size = None;
         q.hidden = true;
         assert_eq!(run(d.path(), &q).len(), 3);
+        // Stop reaches into reading an archive's index
+        assert!(crate::archive::members(&a, &AtomicBool::new(true)).is_err());
         // content search does not open archives
         q.text = Some("fn".into());
         assert!(run(d.path(), &q).is_empty());

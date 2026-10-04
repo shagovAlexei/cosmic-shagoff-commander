@@ -288,6 +288,7 @@ archive-edit-link = Ссылку внутри архива править нел
 find-name-regex = Имя — регулярное выражение
 find-name-regex-label = Имя (регулярное выражение)
 find-archives = Искать в архивах (по именам)
+find-feed-archives = Найденное в архивах ({ $n }) в панель не попадает
 find-regex = Регулярное выражение
 find-min-size = Размер от, КБ
 find-max-size = Размер до, КБ

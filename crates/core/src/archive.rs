@@ -164,6 +164,7 @@ use std::fs::{self, File, Permissions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -571,7 +572,10 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
 /// Every entry of a tree archive as (inner path, is dir, size, mtime), for Alt+F7. Read afresh, not
 /// through the one-archive cache: a search would evict the archive the panel is showing.
 // ponytail: dirs that exist only as parents of entries are not listed.
-pub fn members(archive: &Path) -> io::Result<Vec<(PathBuf, bool, u64, SystemTime)>> {
+pub fn members(
+    archive: &Path,
+    stop: &AtomicBool,
+) -> io::Result<Vec<(PathBuf, bool, u64, SystemTime)>> {
     let name = archive
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -579,7 +583,7 @@ pub fn members(archive: &Path) -> io::Result<Vec<(PathBuf, bool, u64, SystemTime
     let f = Format::detect(&name)
         .filter(|f| f.is_tree())
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-    Ok(read_index(f, archive)?
+    Ok(read_index(f, archive, stop)?
         .into_iter()
         .map(|i| (i.path, i.dir, i.size, i.mtime))
         .collect())
@@ -603,7 +607,15 @@ struct Item {
     mode: Option<u32>,
 }
 
-fn read_index(f: Format, archive: &Path) -> io::Result<Vec<Item>> {
+/// `stop` is checked per entry (a big .tar.gz is decompressed whole to list it); the 7z header is
+/// read in one go.
+fn read_index(f: Format, archive: &Path, stop: &AtomicBool) -> io::Result<Vec<Item>> {
+    let stopped = || -> io::Result<()> {
+        match stop.load(Ordering::Relaxed) {
+            true => Err(io::ErrorKind::Interrupted.into()),
+            false => Ok(()),
+        }
+    };
     let mut out = Vec::new();
     let mut push = |name: &Path,
                     dir: bool,
@@ -628,6 +640,7 @@ fn read_index(f: Format, archive: &Path) -> io::Result<Vec<Item>> {
         Format::Zip => {
             let mut z = zip::ZipArchive::new(file)?;
             for i in 0..z.len() {
+                stopped()?;
                 let e = z.by_index_raw(i)?;
                 let mtime = e.last_modified().and_then(from_zip_time);
                 push(
@@ -680,6 +693,7 @@ fn read_index(f: Format, archive: &Path) -> io::Result<Vec<Item>> {
             };
             let mut a = tar::Archive::new(r);
             for e in a.entries()? {
+                stopped()?;
                 let e = e?;
                 let h = e.header();
                 let t = h.entry_type();
@@ -723,7 +737,7 @@ fn index(archive: &Path) -> io::Result<Index> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let f = Format::detect(&name).ok_or_else(|| io::Error::from(io::ErrorKind::NotADirectory))?;
-    let i: Index = Arc::new(read_index(f, archive)?);
+    let i: Index = Arc::new(read_index(f, archive, &AtomicBool::new(false))?);
     *cache = Some((archive.to_path_buf(), size, mtime, i.clone()));
     Ok(i)
 }

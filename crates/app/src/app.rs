@@ -2756,7 +2756,12 @@ impl App {
             return Task::none();
         };
         let paths = Arc::new(f.results.clone());
+        // Only real files can be listed and operated on; say what was left out.
+        let in_archives = paths.iter().filter(|p| inside_archive(p)).count();
         self.dialog = None; // stops the search
+        if in_archives > 0 {
+            self.say(StatusKind::Info, fl!("find-feed-archives", n = in_archives));
+        }
         self.active = side;
         self.leave_locked(side);
         self.panes[side].active_mut().results = Some((root.clone(), paths));
@@ -3802,6 +3807,17 @@ fn read_listing(
 }
 
 /// The dialog's search fields as a query (`hidden` is the panel's).
+/// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
+/// name only — a stat per result would stall on a million of them.
+fn inside_archive(p: &Path) -> bool {
+    p.ancestors().skip(1).any(|a| {
+        a.file_name()
+            .and_then(|n| n.to_str())
+            .and_then(Format::detect)
+            .is_some_and(Format::is_tree)
+    })
+}
+
 fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Query, String> {
     let number = |s: &str, what: String| -> Result<Option<u64>, String> {
         let s = s.trim();
@@ -3830,7 +3846,8 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
         ),
         _ => None,
     };
-    let name_regex = match f.name_regex {
+    // `*` (the mask's default) and nothing mean any name, not a broken regex.
+    let name_regex = match f.name_regex && !matches!(f.mask.trim(), "" | "*") {
         true => Some(
             shagoff_core::search::name_regex(f.mask.trim())
                 .map_err(|e| fl!("find-bad-regex", err = e))?,
@@ -5521,6 +5538,10 @@ mod tests {
             panic!("no dialog");
         };
         assert!(f.error.is_some() && f.stop.is_none()); // a bad name regex does not start
+        // `*` with the regex box on: any name, not an error
+        let _ = app.update(Message::FindInput(FindField::Mask, "*".into()));
+        let _ = app.update(Message::FindStart);
+        assert!(find_dialog(&mut app).error.is_none());
         let _ = app.update(Message::FindInput(FindField::Mask, r"\.rs$".into()));
         let _ = app.update(Message::FindStart);
         app.dialog = None;
@@ -5537,6 +5558,15 @@ mod tests {
             panic!("no dialog");
         };
         assert!(f.name_regex && f.archives && f.min_size == "5");
+    }
+
+    #[test]
+    fn found_inside_archives_by_name() {
+        assert!(inside_archive(Path::new("/x/a.zip/docs/f.txt")));
+        assert!(inside_archive(Path::new("/x/b.tar.gz/f")));
+        assert!(!inside_archive(Path::new("/x/a.zip"))); // the archive itself is a file
+        assert!(!inside_archive(Path::new("/x/notes.gz/f"))); // .gz is no folder
+        assert!(!inside_archive(Path::new("/x/docs/f.txt")));
     }
 
     #[test]
