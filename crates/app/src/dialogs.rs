@@ -10,7 +10,7 @@ use shagoff_core::archive::Format;
 use shagoff_core::diff;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
-use shagoff_core::ops::{ErrorChoice, FileInfo, Resolution};
+use shagoff_core::ops::{self, ErrorChoice, FileInfo, Resolution};
 use shagoff_core::sync::{self, Dir, State};
 use std::collections::HashSet;
 use std::ops::Range;
@@ -54,6 +54,8 @@ pub enum Dialog {
         src: FileInfo,
         dst: FileInfo,
         reply: mpsc::Sender<Resolution>,
+        /// "Rename": the name to write this file under; starts as the first free `name (N).ext`.
+        name: String,
     },
     Error {
         path: PathBuf,
@@ -397,6 +399,7 @@ impl Dialog {
             Dialog::Pack(p) => Some(&mut p.path),
             Dialog::Unpack { path, .. } => Some(path),
             Dialog::Connect { url, .. } => Some(url),
+            Dialog::Conflict { name, .. } => Some(name),
             _ => None,
         }
     }
@@ -490,7 +493,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .secondary_action(cancel)
                 .into()
         }
-        Dialog::Conflict { src, dst, .. } => {
+        Dialog::Conflict { src, dst, name, .. } => {
             let line = |key: &str, f: &FileInfo| {
                 let (size, date) = (format::size(f.size), format::date(f.mtime, tz));
                 match key {
@@ -521,6 +524,18 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                             answer(fl!("replace-older"), Resolution::ReplaceOlder),
                         ]
                         .spacing(8),
+                        row![
+                            widget::text_input("", name.as_str())
+                                .on_input(Message::DialogInput)
+                                .width(Length::Fill),
+                            widget::button::standard(fl!("rename-to")).on_press_maybe(
+                                ops::valid_name(name)
+                                    .then(|| Message::Resolve(Resolution::Rename(name.clone())))
+                            ),
+                            answer(fl!("rename-all"), Resolution::RenameAll),
+                        ]
+                        .spacing(8)
+                        .align_y(cosmic::iced::Alignment::Center),
                     ]
                     .spacing(8),
                 )
