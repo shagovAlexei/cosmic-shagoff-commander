@@ -136,20 +136,28 @@ pub fn guess(bytes: &[u8]) -> Encoding {
     if valid || decode(bytes).is_some() {
         return Encoding::Auto;
     }
+    // Lowercase Russian letters right after another Russian letter: words come in runs, while
+    // Latin-1 accents (`café`) are single high bytes between ASCII letters.
+    let cyr = |c: char| matches!(c, 'а'..='я' | 'А'..='Я' | 'ё' | 'Ё');
     let score = |enc| {
-        decode_as(sample, enc)
-            .map(|b| {
-                String::from_utf8_lossy(&b)
-                    .chars()
-                    .filter(|c| matches!(c, 'а'..='я' | 'ё'))
-                    .count()
-            })
-            .unwrap_or(0)
+        let text = decode_as(sample, enc).unwrap_or_default();
+        let text = String::from_utf8_lossy(&text);
+        let mut prev = ' ';
+        let mut n = 0;
+        for c in text.chars() {
+            if cyr(prev) && matches!(c, 'а'..='я' | 'ё') {
+                n += 1;
+            }
+            prev = c;
+        }
+        n
     };
-    [Encoding::Cp1251, Encoding::Koi8r, Encoding::Cp866]
+    let high = sample.iter().filter(|&&b| b >= 0x80).count();
+    // Cp1251 last: `max_by_key` keeps the last of equal scores, and it is the likeliest.
+    [Encoding::Cp866, Encoding::Koi8r, Encoding::Cp1251]
         .into_iter()
         .map(|e| (score(e), e))
-        .filter(|&(n, _)| n > 0)
+        .filter(|&(n, _)| n > 0 && n * 3 >= high)
         .max_by_key(|&(n, _)| n)
         .map_or(Encoding::Auto, |(_, e)| e)
 }
@@ -394,6 +402,9 @@ mod tests {
         assert_eq!(enc(&koi8), Encoding::Koi8r);
         assert_eq!(enc(&cp866), Encoding::Cp866);
         assert_eq!(enc(b"\xff\xfe\x00\x00"), Encoding::Auto); // UTF-16 BOM
+        // ties go to 1251; Western accents stay as they were
+        assert_eq!(enc(b"\xe4\xe0"), Encoding::Cp1251); // "да"
+        assert_eq!(enc(b"caf\xe9 na\xefve G\xf6\xdfe"), Encoding::Auto);
         // a UTF-8 char cut at the end of the sample is still UTF-8
         assert_eq!(enc(&"я".as_bytes()[..1]), Encoding::Auto);
     }
