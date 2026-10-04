@@ -145,6 +145,17 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             ],
         ),
         (
+            fl!("help-mouse"),
+            vec![
+                o("LMB", fl!("help-mouse-click")),
+                o("Ctrl+LMB", fl!("help-mouse-mark")),
+                o("LMB ×2", fl!("help-mouse-open")),
+                o("RMB", fl!("help-mouse-menu")),
+                o("RMB ↓", fl!("help-mouse-menu-dir")),
+                o("RMB / MMB", fl!("help-mouse-tab")),
+            ],
+        ),
+        (
             fl!("help-lister"),
             vec![
                 o("↑ ↓ PgUp PgDn Home End, ← →", fl!("help-lister-scroll")),
