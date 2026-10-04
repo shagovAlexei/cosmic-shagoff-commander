@@ -105,6 +105,8 @@ pub enum Action {
     TabRename,
     /// Ctrl+Shift+W: close the panel's other tabs but the locked ones.
     CloseOtherTabs,
+    /// Alt+Enter: properties and permission bits of the selection.
+    Properties,
     /// ←/→: the next column in Brief view; nothing in Full.
     Left,
     Right,
@@ -130,6 +132,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Action::HistoryBack),
             Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
             Key::Named(Named::ArrowDown) if mods == Modifiers::ALT => Some(Action::HistoryList),
+            Key::Named(Named::Enter) if mods == Modifiers::ALT => Some(Action::Properties),
             Key::Character(s) if mods == Modifiers::ALT => {
                 let mut chars = s.chars();
                 match (chars.next(), chars.next()) {
@@ -285,6 +288,10 @@ mod tests {
         assert_eq!(named(Named::PageDown, NONE), Some(Action::PageDown));
         assert_eq!(named(Named::Home, NONE), Some(Action::Home));
         assert_eq!(named(Named::End, NONE), Some(Action::End));
+        assert_eq!(
+            named(Named::Enter, Modifiers::ALT),
+            Some(Action::Properties)
+        );
         assert_eq!(named(Named::ArrowLeft, NONE), Some(Action::Left));
         assert_eq!(named(Named::ArrowRight, NONE), Some(Action::Right));
         assert_eq!(named(Named::F1, CTRL), Some(Action::ViewBrief));
@@ -368,7 +375,7 @@ mod tests {
         const SHIFT: Modifiers = Modifiers::SHIFT;
         const ALT: Modifiers = Modifiers::ALT;
         assert_eq!(named(Named::Tab, SHIFT), None);
-        assert_eq!(named(Named::Enter, ALT), None);
+        assert_eq!(named(Named::Enter, ALT.union(SHIFT)), None);
         assert_eq!(named(Named::PageDown, SHIFT), None);
         assert_eq!(named(Named::F3, CTRL.union(ALT)), None);
         assert_eq!(chr("R", Code::KeyR, CTRL.union(SHIFT)), None);
@@ -442,7 +449,7 @@ mod tests {
         assert_eq!(named(Named::F1, ALT), Some(Action::Drives(0)));
         assert_eq!(named(Named::F2, ALT), Some(Action::Drives(1)));
         assert_eq!(named(Named::F1, ALT | Modifiers::SHIFT), None);
-        assert_eq!(named(Named::Enter, ALT), None);
+        assert_eq!(named(Named::Enter, ALT), Some(Action::Properties)); // phase 34
         assert_eq!(named(Named::F4, ALT), None); // Alt+F4 stays with the compositor
         assert_eq!(chr("a", Code::KeyA, ALT), Some(Action::QuickSearch('a')));
         assert_eq!(named(Named::F1, Modifiers::LOGO), None);

@@ -341,6 +341,13 @@ pub enum Message {
     FindRegex,
     FindNameRegex,
     FindArchives,
+    /// Alt+Enter: toggle a permission bit / "also inside folders".
+    PropsBit(u32),
+    PropsRecursive,
+    /// id, usage counted in the background (`None` = stopped).
+    PropsUsage(u64, Option<shagoff_core::props::Usage>),
+    /// chmod finished: (side, what failed).
+    PropsDone(usize, Vec<String>),
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
     FindFeed,
     Op(jobs::Event),
@@ -654,7 +661,9 @@ impl App {
                 }
                 if let Some(d) = &self.dialog {
                     // Modal: panels must not move. Enter confirms a dialog without a text field.
-                    if action == Action::Enter && matches!(d, Dialog::ConfirmDelete { .. }) {
+                    if action == Action::Enter
+                        && matches!(d, Dialog::ConfirmDelete { .. } | Dialog::Props(_))
+                    {
                         return self.submit_dialog();
                     }
                     // Tab is not taken by text fields; walk the multi-rename form with it.
@@ -893,6 +902,41 @@ impl App {
                     f.archives = !f.archives;
                     f.in_list = false;
                 }
+            }
+            Message::PropsBit(b) => {
+                if let Some(Dialog::Props(p)) = &mut self.dialog {
+                    p.mode ^= b;
+                }
+            }
+            Message::PropsRecursive => {
+                if let Some(Dialog::Props(p)) = &mut self.dialog {
+                    p.recursive = !p.recursive;
+                }
+            }
+            Message::PropsUsage(id, usage) => {
+                if let Some(Dialog::Props(p)) = &mut self.dialog
+                    && p.id == id
+                {
+                    p.usage = usage;
+                }
+            }
+            Message::PropsDone(side, failed) => {
+                match failed.first() {
+                    None => self.say(StatusKind::Info, fl!("props-changed")),
+                    Some(err) => {
+                        let msg = fl!("props-failed", n = failed.len(), err = err.clone());
+                        self.say(StatusKind::Error, msg);
+                    }
+                }
+                // Both: the other panel may show the same dir.
+                let tasks: Vec<_> = [side, 1 - side]
+                    .into_iter()
+                    .map(|s| {
+                        let dir = self.panes[s].active().target();
+                        self.reload(s, dir, None)
+                    })
+                    .collect();
+                return Task::batch(tasks);
             }
             Message::FindFeed => return self.find_feed(),
             Message::FindStart => return self.start_find(),
@@ -1615,6 +1659,10 @@ impl App {
                 self.dialog = Some(d);
                 return self.start_diff();
             }
+            if matches!(d, Dialog::Props(_)) {
+                self.dialog = Some(d);
+                return self.start_usage();
+            }
             if let Dialog::List {
                 kind: ListKind::Drives,
                 side: s,
@@ -1862,6 +1910,7 @@ impl App {
             Action::ClipPaste => return clip::take(),
             Action::Copy
             | Action::CopySame
+            | Action::Properties
             | Action::Move
             | Action::Rename
             | Action::MultiRename
@@ -1991,6 +2040,10 @@ impl App {
                     sources,
                     dir_input(self.panes[1 - side].active().panel.cwd()),
                 ))
+            }
+            Action::Properties => {
+                let paths = panel.targets();
+                (!paths.is_empty()).then(|| self.props_dialog(side, paths))
             }
             Action::CopySame => {
                 let e = panel.current().filter(|e| e.name != PARENT)?;
@@ -2229,6 +2282,27 @@ impl App {
             return Task::none();
         };
         match d {
+            Dialog::Props(p) => {
+                // Only the toggled bits: entries with other modes keep the rest.
+                let (set, clear) = (p.mode & !p.initial, p.initial & !p.mode);
+                if set == 0 && clear == 0 {
+                    return Task::none();
+                }
+                let (side, paths, recursive) = (p.side, p.paths.clone(), p.recursive);
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            shagoff_core::props::chmod(&paths, set, clear, recursive)
+                                .into_iter()
+                                .map(|(p, e)| format!("{}: {e}", p.display()))
+                                .collect()
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    move |failed| cosmic::Action::App(Message::PropsDone(side, failed)),
+                )
+            }
             Dialog::Mask {
                 side,
                 select,
@@ -2680,6 +2754,73 @@ impl App {
         self.start_job(side, OpKind::Sync, job, None)
     }
 
+    /// Alt+Enter: facts about the selection and its bits (of the first entry that has any).
+    fn props_dialog(&self, side: usize, paths: Vec<PathBuf>) -> Dialog {
+        use std::os::unix::fs::MetadataExt;
+        let mut facts = Vec::new();
+        let metas: Vec<_> = paths
+            .iter()
+            .map(|p| std::fs::symlink_metadata(p).ok())
+            .collect();
+        if let [path] = paths.as_slice() {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            facts.push((fl!("props-name"), name.into_owned()));
+            if let Some(m) = &metas[0] {
+                let kind = if m.is_dir() {
+                    fl!("props-folder")
+                } else if m.file_type().is_symlink() {
+                    let to = std::fs::read_link(path).unwrap_or_default();
+                    format!("{} {}", fl!("props-link"), to.display())
+                } else {
+                    let ext = path.extension().unwrap_or_default().to_string_lossy();
+                    format::mime_type(&ext).unwrap_or_else(|| "—".into())
+                };
+                facts.push((fl!("props-type"), kind));
+                let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                facts.push((fl!("props-modified"), format::date(mtime, &self.tz)));
+                let owner = self.owners.name(m.uid(), m.gid());
+                facts.push((fl!("props-owner-line"), owner));
+            }
+        } else {
+            facts.push((fl!("props-selected"), fl!("props-items", n = paths.len())));
+        }
+        let initial = paths
+            .iter()
+            .find_map(|p| shagoff_core::props::mode(p))
+            .unwrap_or(0);
+        let has_dir = metas.iter().flatten().any(|m| m.is_dir());
+        Dialog::Props(Box::new(dialogs::Props {
+            side,
+            paths,
+            facts,
+            initial,
+            mode: initial,
+            has_dir,
+            recursive: false,
+            usage: None,
+            id: 0, // set by `start_usage`
+            stop: Arc::new(AtomicBool::new(false)),
+        }))
+    }
+
+    /// Count the open properties dialog's selection in the background.
+    fn start_usage(&mut self) -> Task<Message> {
+        let id = self.next_id();
+        let Some(Dialog::Props(p)) = &mut self.dialog else {
+            return Task::none();
+        };
+        p.id = id;
+        let (paths, stop) = (p.paths.clone(), p.stop.clone());
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || shagoff_core::props::usage(&paths, &stop))
+                    .await
+                    .unwrap_or_default()
+            },
+            move |u| cosmic::Action::App(Message::PropsUsage(id, u)),
+        )
+    }
+
     /// (Re)start the search of the open find dialog; the previous one is stopped.
     fn start_find(&mut self) -> Task<Message> {
         let id = self.next_id();
@@ -2990,9 +3131,11 @@ impl App {
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
             // Shift+F5 inside one copies from the archive into itself.
-            Action::MultiRename | Action::ClipCut | Action::ClipPaste | Action::CopySame => {
-                inside(side)
-            }
+            Action::MultiRename
+            | Action::ClipCut
+            | Action::ClipPaste
+            | Action::CopySame
+            | Action::Properties => inside(side),
             Action::Pack | Action::Unpack | Action::SyncDirs => inside(side) || inside(1 - side),
             Action::Copy | Action::Move | Action::ClipCopy => inside(side) && inside(1 - side),
             _ => false,
@@ -5558,6 +5701,44 @@ mod tests {
             panic!("no dialog");
         };
         assert!(f.name_regex && f.archives && f.min_size == "5");
+    }
+
+    #[test]
+    fn alt_enter_shows_bits_and_facts_of_the_cursor_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "x").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Properties));
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert_eq!((p.initial, p.mode, p.has_dir), (0o640, 0o640, false));
+        assert!(p.facts.iter().any(|(_, v)| v == "a.rs"));
+        assert!(p.facts.iter().any(|(_, v)| v == "text/x-rust"));
+        assert!(p.id > 0); // counting started
+        let id = p.id;
+        let _ = app.update(Message::PropsBit(0o100));
+        let u = shagoff_core::props::Usage {
+            bytes: 1,
+            files: 1,
+            dirs: 0,
+        };
+        let _ = app.update(Message::PropsUsage(id + 1, Some(u))); // stale
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert_eq!((p.mode, p.usage), (0o740, None));
+        let _ = app.update(Message::Key(Action::Enter)); // applies
+        assert!(app.dialog.is_none());
+        // on ".." there is nothing to show
+        let _ = app.update(Message::Key(Action::Home));
+        let _ = app.update(Message::Key(Action::Properties));
+        assert!(app.dialog.is_none());
     }
 
     #[test]
