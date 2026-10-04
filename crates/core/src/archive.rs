@@ -568,6 +568,23 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
     }
 }
 
+/// Every entry of a tree archive as (inner path, is dir, size, mtime), for Alt+F7. Read afresh, not
+/// through the one-archive cache: a search would evict the archive the panel is showing.
+// ponytail: dirs that exist only as parents of entries are not listed.
+pub fn members(archive: &Path) -> io::Result<Vec<(PathBuf, bool, u64, SystemTime)>> {
+    let name = archive
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let f = Format::detect(&name)
+        .filter(|f| f.is_tree())
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    Ok(read_index(f, archive)?
+        .into_iter()
+        .map(|i| (i.path, i.dir, i.size, i.mtime))
+        .collect())
+}
+
 /// Formats that open as folders (single-stream .gz etc. are plain files).
 impl Format {
     pub fn is_tree(self) -> bool {
