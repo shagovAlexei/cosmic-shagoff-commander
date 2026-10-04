@@ -52,7 +52,7 @@ The workspace has two crates.
   - `keymap.rs`: one `KeyBind → Action` table with TC defaults. F-key buttons dispatch the same `Action`.
   - `drawer.rs` + `help.rs`: side drawer (libcosmic context drawer) with help (F1), about (libcosmic `about` feature; `DONATE_URL` for the future Stripe Payment Link) and settings (Ctrl+,). Settings write the whole `Config` and go through `App::apply_config`, the same path as a hand edit seen by the config watcher.
   - `lister.rs`: F3 viewer shown in place of the panels (`App::lister`); text / hex / image modes, search, N/P. Logic (line index, hex rows, search, mode detection) in `core::lister`. Its letter keys (`1 3 4 N P Q`) come from `keymap::lister_key`, tried only after the main table found nothing.
-  - `menu.rs`: main menu in the header bar; items send the same `Action` as their key. Its key table (shown next to items) is checked against `keymap::action` by a test.
+  - `menu.rs`: main menu in the header bar and the right-click menus (`menu::context(Ctx)` for a row, the dir, a tab); items send the same `Action` as their key. Its key table (shown next to items) is checked against `keymap::action` by a test. Context menus are Wayland popups (`on_surface_action` → `Message::Surface`); `on_close_requested` must only exit for the main window, popups close through it too.
   - `dialogs.rs`: modal dialogs.
   - `watcher.rs`: `notify` on the active tab's cwd of each pane, debounced; ignores open/read events (our own scan opens the dir). Paused while a file operation runs.
   - `config.rs`: cosmic-config `Config` (settings, `~/.config/cosmic/<APP_ID>/v1/`, applied live) and `State` (tabs, `~/.local/state/cosmic/<APP_ID>/v1/`, written when it changes). `App::build` takes both, so tests never touch disk.

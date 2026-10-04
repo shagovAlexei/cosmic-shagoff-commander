@@ -211,7 +211,6 @@ help-mark = Отметить файл под курсором
 help-compare-lists = Отметить различия между панелями
 help-files = Файлы
 help-delete = Удалить в корзину
-help-clipboard = Копировать, вырезать, вставить файлы (совместимо с COSMIC Files)
 help-archives = Архивы
 help-archive-enter = Архив открывается как папка (только чтение)
 help-search = Поиск и сравнение
@@ -376,3 +375,9 @@ props-recursive = И всё внутри каталогов
 props-apply = Применить
 props-changed = Права изменены
 props-failed = Не удалось изменить { $n }: { $err }
+
+# Контекстное меню
+menu-open = Открыть
+menu-clip-cut = Вырезать
+menu-clip-copy = Копировать в буфер
+menu-clip-paste = Вставить

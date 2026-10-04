@@ -5,6 +5,7 @@
 #   headless.sh start [WxH]        start headless sway (default 1036x530) + the app (debug build)
 #   headless.sh panes LEFT RIGHT   restart the app with these dirs in the two panes
 #   headless.sh key ARGS...        wtype ARGS (e.g. -k F7, -M shift -k F2 -m shift)
+#   headless.sh click X Y [right|middle|none]  mouse at (X, Y), click (built from ./vpointer once)
 #   headless.sh shot NAME          screenshot to $DIR/NAME.png
 #   headless.sh stop
 #
@@ -44,6 +45,10 @@ panes)
     printf '((tabs: ["%s"], active: 0), (tabs: ["%s"], active: 0))\n' "$2" "$3" >"$DIR/state/cosmic/$APP/v1/panes"
     app ;;
 key) shift; WAYLAND_DISPLAY="$(sock)" wtype -s 300 "$@" -s 300 ;;
+click)
+    vp="$ROOT/.claude/skills/shagoff-feature/vpointer"
+    [ -x "$vp/target/release/vpointer" ] || (cd "$vp" && cargo build -q --release --offline)
+    WAYLAND_DISPLAY="$(sock)" "$vp/target/release/vpointer" "$2" "$3" "${4:-left}"; sleep 0.5 ;;
 shot) WAYLAND_DISPLAY="$(sock)" grim "$DIR/$2.png"; echo "$DIR/$2.png" ;;
 stop) kill_pid app; kill_pid sway ;;
 *) sed -n '2,15p' "$0"; exit 1 ;;

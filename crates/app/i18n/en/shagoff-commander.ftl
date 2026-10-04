@@ -210,7 +210,6 @@ help-mark = Mark the file under the cursor
 help-compare-lists = Mark what differs between the panels
 help-files = Files
 help-delete = Delete to the trash
-help-clipboard = Copy, cut, paste files (compatible with COSMIC Files)
 help-archives = Archives
 help-archive-enter = An archive opens like a folder (read-only)
 help-search = Search and compare
@@ -375,3 +374,9 @@ props-recursive = Also everything inside the folders
 props-apply = Apply
 props-changed = Permissions changed
 props-failed = Could not change { $n } of them: { $err }
+
+# Right-click menu
+menu-open = Open
+menu-clip-cut = Cut
+menu-clip-copy = Copy to clipboard
+menu-clip-paste = Paste
