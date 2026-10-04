@@ -28,12 +28,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if let Some(l) = &app.lister {
         return crate::lister::view(l);
     }
-    let panes = row![pane(app, 0), pane(app, 1)]
-        .spacing(4)
-        .height(Length::Fill);
+    let panes = row![pane(app, 0), pane(app, 1)].height(Length::Fill);
     match app.config.skin {
-        Skin::Classic => column![toolbar(), panes].into(),
-        Skin::Modern => panes.into(),
+        Skin::Classic => column![toolbar(), panes.spacing(4)].into(),
+        Skin::Modern => panes.spacing(8).padding([4, 8, 0, 8]).into(),
     }
 }
 
@@ -111,13 +109,18 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         Some(_) => fl!("find-results", dir = p.panel.cwd().display().to_string()),
         None => p.panel.cwd().display().to_string(),
     };
-    let path = container(text(title).size(TEXT))
-        .padding([2, 6])
-        .width(Length::Fill)
-        .class(bar_style(active));
+    let skin = app.config.skin;
+    let path: Element<'_, Message> = match (skin, &p.results) {
+        (Skin::Modern, None) => breadcrumbs(side, p.panel.cwd(), active),
+        _ => container(text(title).size(TEXT))
+            .padding([2, 6])
+            .width(Length::Fill)
+            .class(bar_style(active))
+            .into(),
+    };
 
     let list = if p.brief {
-        brief_list(side, p, active, app.row_h())
+        brief_list(side, p, active, skin)
     } else {
         full_list(app, side, p, active)
     };
@@ -134,11 +137,81 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     if tabs.items().len() > 1 {
         col = col.push(tab_bar(side, tabs, active));
     }
-    col.push(path)
-        .push(header(side, p.panel.sort(), app.config.skin))
+    let col = col
+        .push(path)
+        .push(header(side, p.panel.sort(), skin))
         .push(list)
-        .width(Length::Fill)
-        .into()
+        .width(Length::Fill);
+    match skin {
+        Skin::Classic => col.into(),
+        Skin::Modern => container(col.spacing(2))
+            .padding(6)
+            .class(card_style(active))
+            .into(),
+    }
+}
+
+/// Modern skin: the path as clickable parts, `/ › home › shag`; the last part is where we are.
+fn breadcrumbs(side: usize, cwd: &std::path::Path, active: bool) -> Element<'static, Message> {
+    let mut parts: Vec<(String, std::path::PathBuf)> = cwd
+        .ancestors()
+        .map(|a| (format::dir_title(a), a.to_path_buf()))
+        .collect();
+    parts.reverse();
+    let last = parts.len().saturating_sub(1);
+    let mut items: Vec<Element<'static, Message>> = Vec::new();
+    for (i, (label, path)) in parts.into_iter().enumerate() {
+        if i > 0 {
+            items.push(text("›").size(TEXT).into());
+        }
+        let b = if i == last && active {
+            button::suggested(label)
+        } else if i == last {
+            button::standard(label)
+        } else {
+            button::text(label)
+        };
+        items.push(
+            b.padding([0, 6])
+                .on_press(Message::Drive(side, path))
+                .into(),
+        );
+    }
+    // A deep path scrolls sideways, kept at its end: the dir we are in stays visible.
+    widget::scrollable(
+        widget::row::with_children(items)
+            .spacing(2)
+            .align_y(Alignment::Center),
+    )
+    .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
+        cosmic::iced::widget::scrollable::Scrollbar::new()
+            .width(2)
+            .scroller_width(2),
+    ))
+    .anchor_right()
+    .width(Length::Fill)
+    .into()
+}
+
+/// Modern skin: each pane is a rounded card; the active one has an accent border.
+fn card_style(active: bool) -> theme::Container<'static> {
+    theme::Container::custom(move |t| {
+        let c = t.cosmic();
+        let border = if active {
+            c.accent_color()
+        } else {
+            c.primary_container_divider()
+        };
+        container::Style {
+            background: Some(Color::from(c.primary_container_color()).into()),
+            border: cosmic::iced::Border {
+                color: border.into(),
+                width: 1.0,
+                radius: c.corner_radii.radius_m.into(),
+            },
+            ..Default::default()
+        }
+    })
 }
 
 /// Full view: virtualized rows in a vertical scrollable.
@@ -167,7 +240,8 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
 }
 
 /// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
-fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, row_h: f32) -> Element<'a, Message> {
+fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, skin: Skin) -> Element<'a, Message> {
+    let row_h = skin.row_h();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
     let (rows, cols) = p.brief_grid(row_h);
     let mut grid = row![].spacing(2);
@@ -179,12 +253,17 @@ fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, row_h: f32) -> Element<
             } else {
                 e.name.clone()
             };
-            let cell = container(name_cell(e, label))
+            let cell = container(name_cell(e, label, skin))
                 .padding([0, 6])
                 .height(Length::Fixed(row_h))
                 .width(Length::Fill)
                 .clip(true)
-                .class(cursor_style(i == cursor, active, p.panel.is_marked(e)));
+                .class(cursor_style(
+                    i == cursor,
+                    active,
+                    p.panel.is_marked(e),
+                    skin,
+                ));
             list = list.push(
                 mouse_area(cell)
                     .on_press(Message::Click(side, i))
@@ -199,13 +278,16 @@ fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, row_h: f32) -> Element<
 }
 
 /// Theme icon by type, then the name (cut with "…").
-fn name_cell(e: &Entry, label: String) -> Element<'static, Message> {
+fn name_cell(e: &Entry, label: String, skin: Skin) -> Element<'static, Message> {
     let (name, generic) = format::icon_name(e);
     let icon = widget::icon::from_name(name)
         .fallback(Some(widget::icon::IconFallback::Names(vec![
             generic.into(),
         ])))
-        .size(16)
+        .size(match skin {
+            Skin::Classic => 16,
+            Skin::Modern => 20,
+        })
         .icon();
     row![icon, cell(label)]
         .spacing(4)
@@ -279,7 +361,12 @@ fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Mess
         let label = container(cell(t.title()))
             .padding([2, 8])
             .max_width(160.0)
-            .class(cursor_style(i == tabs.active_index(), pane_active, false));
+            .class(cursor_style(
+                i == tabs.active_index(),
+                pane_active,
+                false,
+                Skin::Classic,
+            ));
         bar = bar.push(
             mouse_area(label)
                 .on_press(Message::SelectTab(side, i))
@@ -363,10 +450,11 @@ fn file_row<'a>(
     is_marked: bool,
 ) -> Element<'a, Message> {
     let is_parent = e.name == PARENT;
-    let size = if e.is_dir() {
-        "<DIR>".to_string()
-    } else {
-        format::size(e.size)
+    let size = match (e.is_dir(), app.config.skin) {
+        (true, _) => "<DIR>".to_string(),
+        (false, Skin::Classic) => format::size(e.size),
+        // Modern: "12,3 KB" — the exact bytes are in the status line.
+        (false, Skin::Modern) => human(e.size),
     };
     let (date, attrs) = if is_parent {
         (String::new(), String::new())
@@ -374,7 +462,7 @@ fn file_row<'a>(
         (format::date(e.mtime, &app.tz), format::perms(e.mode))
     };
     let cells = row![
-        container(name_cell(e, format::display_name(e))).width(Length::Fill),
+        container(name_cell(e, format::display_name(e), app.config.skin)).width(Length::Fill),
         cell(e.ext.clone()).width(Length::Fixed(W_EXT)),
         cell(size)
             .width(Length::Fixed(W_SIZE))
@@ -389,7 +477,7 @@ fn file_row<'a>(
         .height(Length::Fixed(app.row_h()))
         .width(Length::Fill)
         .clip(true)
-        .class(cursor_style(is_cursor, active, is_marked));
+        .class(cursor_style(is_cursor, active, is_marked, app.config.skin));
     mouse_area(row)
         .on_press(Message::Click(side, i))
         .on_double_click(Message::DoubleClick(side, i))
@@ -630,10 +718,18 @@ fn bar_style(active: bool) -> theme::Container<'static> {
 
 /// Cursor row: accent (dimmed in the inactive pane). Marked rows: red text; a marked row under the
 /// active cursor becomes a red bar instead — red text on the accent bar is unreadable in light accents.
-fn cursor_style(is_cursor: bool, active: bool, marked: bool) -> theme::Container<'static> {
+fn cursor_style(
+    is_cursor: bool,
+    active: bool,
+    marked: bool,
+    skin: Skin,
+) -> theme::Container<'static> {
     theme::Container::custom(move |t| {
         let c = t.cosmic();
         let mut style = container::Style::default();
+        if skin == Skin::Modern {
+            style.border.radius = c.corner_radii.radius_s.into();
+        }
         match (is_cursor, active, marked) {
             (true, true, true) => {
                 style.background = Some(Color::from(c.destructive_color()).into());
