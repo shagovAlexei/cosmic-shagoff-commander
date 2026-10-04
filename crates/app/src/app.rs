@@ -394,7 +394,11 @@ pub enum Message {
     Letter(ListerKey, char),
     /// x, y scroll offset, viewport height.
     ListerScrolled(f32, f32, f32),
-    ListerResized(f32),
+    ListerResized(Size),
+    /// Drop-down / A S K 8.
+    ListerEncoding(shagoff_core::lister::Encoding),
+    /// `W` / button.
+    ListerWrap,
     ListerMode(shagoff_core::lister::Mode),
     /// F7 / the Find button: show the search field.
     ListerSearch,
@@ -1055,6 +1059,8 @@ impl App {
                     ListerKey::Prev => self.lister_step(false),
                     ListerKey::Close => self.handle(Message::ListerClose),
                     ListerKey::FindPrev => self.lister_find(false, true),
+                    ListerKey::Encoding(e) => self.handle(Message::ListerEncoding(e)),
+                    ListerKey::Wrap => self.handle(Message::ListerWrap),
                 };
             }
             Message::ListerKey(_) => {}
@@ -1070,9 +1076,21 @@ impl App {
                     (l.offset, l.height) = ((x, y), h);
                 }
             }
-            Message::ListerResized(h) => {
+            Message::ListerResized(size) => {
                 if let Some(l) = &mut self.lister {
-                    l.height = h;
+                    l.resized(size.width, size.height);
+                }
+            }
+            Message::ListerEncoding(e) => {
+                if let Some(l) = &mut self.lister {
+                    l.set_encoding(e);
+                }
+            }
+            Message::ListerWrap => {
+                if let Some(l) = &mut self.lister {
+                    l.toggle_wrap();
+                    // The rows changed: the old offset points into other text.
+                    return lister_scroll(l, 0.0, 0.0);
                 }
             }
             Message::ListerMode(m) => {

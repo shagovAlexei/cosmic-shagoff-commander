@@ -253,6 +253,7 @@ menu-copy-paths = Копировать имена с путём
 
 # Просмотр (F3)
 lister-text = Текст (1)
+lister-wrap = Перенос (W)
 lister-hex = Hex (3)
 lister-image = Картинка (4)
 lister-loading = Чтение…
@@ -269,6 +270,8 @@ settings-internal-viewer = Встроенный просмотрщик (F3)
 help-lister = Просмотр (F3)
 help-lister-scroll = Прокрутка
 help-lister-modes = Текст / hex / картинка
+help-lister-wrap = Перенос длинных строк
+help-lister-encoding = Кодировка: Windows-1251 / DOS 866 / KOI8-R / UTF-8
 help-lister-step = Следующий / предыдущий файл
 help-lister-find = Поиск
 help-lister-again = Найти следующее / предыдущее
