@@ -303,9 +303,12 @@ pub struct Props {
     pub paths: Vec<PathBuf>,
     /// (label, value) lines above the bits: name, type, date, owner…
     pub facts: Vec<(String, String)>,
-    /// Bits as opened (of the first entry that has them) and as toggled since.
-    pub initial: u32,
+    /// Bits set on every entry, and as toggled since.
     pub mode: u32,
+    /// Bits that differ between the entries (shown as `?` until touched).
+    pub mixed: u32,
+    /// Bits the user toggled: exactly these are set or cleared on every entry.
+    pub touched: u32,
     /// A dir is selected: offer to change what is inside too.
     pub has_dir: bool,
     pub recursive: bool,
@@ -634,11 +637,16 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     .spacing(8),
                 );
             }
-            bits = bits.push(widget::text::caption(format!(
-                "{} ({:o})",
-                format::perms(p.mode),
-                p.mode & 0o7777
-            )));
+            let unknown = p.mixed & !p.touched;
+            let shown: String = format::perms(p.mode)
+                .chars()
+                .enumerate()
+                .map(|(i, c)| if unknown & (0o400 >> i) != 0 { '?' } else { c })
+                .collect();
+            bits = bits.push(widget::text::caption(match unknown {
+                0 => format!("{shown} ({:o})", p.mode & 0o7777),
+                _ => shown,
+            }));
             let mut control = column![body, bits].spacing(16);
             if p.has_dir {
                 control = control.push(

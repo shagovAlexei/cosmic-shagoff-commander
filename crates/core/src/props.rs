@@ -46,36 +46,63 @@ pub fn mode(p: &Path) -> Option<u32> {
 
 /// Turn on `set` and off `clear` (only the bits the user changed, so differing files keep the
 /// rest) on `paths`, and under dirs too when `recursive`. Symlinks are left alone (chmod would
-/// change their target). Returns what failed.
+/// change their target). Returns what failed, unreadable dirs included.
 pub fn chmod(
     paths: &[PathBuf],
     set: u32,
     clear: u32,
     recursive: bool,
 ) -> Vec<(PathBuf, io::Error)> {
+    enum Step {
+        Enter(PathBuf),
+        /// A dir's final mode, after its contents: taking away r / x first would lock them out.
+        Finish(PathBuf, u32),
+    }
     let mut failed = Vec::new();
-    let mut todo: Vec<PathBuf> = paths.to_vec();
-    while let Some(p) = todo.pop() {
-        let Ok(m) = fs::symlink_metadata(&p) else {
-            continue;
+    let apply = |p: &Path, old: u32, new: u32, failed: &mut Vec<(PathBuf, io::Error)>| {
+        if new != old
+            && let Err(e) = fs::set_permissions(p, fs::Permissions::from_mode(new))
+        {
+            failed.push((p.to_path_buf(), e));
+        }
+    };
+    let mut todo: Vec<Step> = paths.iter().rev().cloned().map(Step::Enter).collect();
+    while let Some(step) = todo.pop() {
+        let p = match step {
+            Step::Enter(p) => p,
+            Step::Finish(p, new) => {
+                let old = mode(&p).unwrap_or(new);
+                apply(&p, old, new, &mut failed);
+                continue;
+            }
+        };
+        let m = match fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(e) => {
+                failed.push((p, e));
+                continue;
+            }
         };
         if m.file_type().is_symlink() {
             continue;
         }
         let old = m.permissions().mode() & 0o7777;
         let new = (old & !clear) | (set & 0o7777);
-        // Before descending: a dir being made readable must be listable.
-        if new != old
-            && let Err(e) = fs::set_permissions(&p, fs::Permissions::from_mode(new))
-        {
-            failed.push((p.clone(), e));
+        if !(recursive && m.is_dir()) {
+            apply(&p, old, new, &mut failed);
+            continue;
         }
-        if recursive
-            && m.is_dir()
-            && let Ok(rd) = fs::read_dir(&p)
-        {
-            todo.extend(rd.flatten().map(|e| e.path()));
-        }
+        // Added bits first (a dir being opened up must be listable), the rest after its contents.
+        apply(&p, old, old | (set & 0o7777), &mut failed);
+        let kids = match fs::read_dir(&p) {
+            Ok(rd) => rd.flatten().map(|e| e.path()).collect::<Vec<_>>(),
+            Err(e) => {
+                failed.push((p.clone(), e));
+                Vec::new()
+            }
+        };
+        todo.push(Step::Finish(p, new));
+        todo.extend(kids.into_iter().map(Step::Enter));
     }
     failed
 }
@@ -123,6 +150,33 @@ mod tests {
         assert!(chmod(&[a.clone(), b.clone()], 0o100, 0o004, false).is_empty());
         assert_eq!((mode_of(&a), mode_of(&b)), (0o740, 0o700));
         assert_eq!(mode(&a), Some(0o740));
+    }
+
+    #[test]
+    fn chmod_recursive_closing_a_dir_still_reaches_inside() {
+        let d = tempfile::tempdir().unwrap();
+        let top = d.path().join("top");
+        fs::create_dir_all(top.join("sub")).unwrap();
+        fs::write(top.join("sub/f"), "").unwrap();
+        set(&top.join("sub/f"), 0o755);
+        // take r and x away from the owner on everything
+        let failed = chmod(std::slice::from_ref(&top), 0, 0o500, true);
+        assert!(failed.is_empty(), "{failed:?}");
+        set(&top, 0o700); // let the test look inside again
+        set(&top.join("sub"), 0o700);
+        assert_eq!(mode_of(&top.join("sub/f")), 0o255);
+    }
+
+    #[test]
+    fn chmod_reports_an_unreadable_dir() {
+        let d = tempfile::tempdir().unwrap();
+        let top = d.path().join("top");
+        fs::create_dir_all(top.join("locked")).unwrap();
+        set(&top.join("locked"), 0o300); // no r: cannot be listed
+        let failed = chmod(std::slice::from_ref(&top), 0o004, 0, true);
+        set(&top.join("locked"), 0o700);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, top.join("locked"));
     }
 
     #[test]

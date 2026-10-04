@@ -906,6 +906,7 @@ impl App {
             Message::PropsBit(b) => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
                     p.mode ^= b;
+                    p.touched |= b;
                 }
             }
             Message::PropsRecursive => {
@@ -2283,9 +2284,9 @@ impl App {
         };
         match d {
             Dialog::Props(p) => {
-                // Only the toggled bits: entries with other modes keep the rest.
-                let (set, clear) = (p.mode & !p.initial, p.initial & !p.mode);
-                if set == 0 && clear == 0 {
+                // Only the touched bits, as shown now: entries keep the rest of their own modes.
+                let (set, clear) = (p.mode & p.touched, !p.mode & p.touched & 0o7777);
+                if p.touched == 0 {
                     return Task::none();
                 }
                 let (side, paths, recursive) = (p.side, p.paths.clone(), p.recursive);
@@ -2784,17 +2785,20 @@ impl App {
         } else {
             facts.push((fl!("props-selected"), fl!("props-items", n = paths.len())));
         }
-        let initial = paths
+        let modes: Vec<u32> = paths
             .iter()
-            .find_map(|p| shagoff_core::props::mode(p))
-            .unwrap_or(0);
+            .filter_map(|p| shagoff_core::props::mode(p))
+            .collect();
+        let all = modes.iter().fold(0o7777, |a, m| a & m);
+        let any = modes.iter().fold(0, |a, m| a | m);
         let has_dir = metas.iter().flatten().any(|m| m.is_dir());
         Dialog::Props(Box::new(dialogs::Props {
             side,
             paths,
             facts,
-            initial,
-            mode: initial,
+            mode: if modes.is_empty() { 0 } else { all },
+            mixed: any & !all,
+            touched: 0,
             has_dir,
             recursive: false,
             usage: None,
@@ -5717,7 +5721,7 @@ mod tests {
         let Some(Dialog::Props(p)) = &app.dialog else {
             panic!("no dialog");
         };
-        assert_eq!((p.initial, p.mode, p.has_dir), (0o640, 0o640, false));
+        assert_eq!((p.mode, p.mixed, p.has_dir), (0o640, 0, false));
         assert!(p.facts.iter().any(|(_, v)| v == "a.rs"));
         assert!(p.facts.iter().any(|(_, v)| v == "text/x-rust"));
         assert!(p.id > 0); // counting started
@@ -5739,6 +5743,31 @@ mod tests {
         let _ = app.update(Message::Key(Action::Home));
         let _ = app.update(Message::Key(Action::Properties));
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn properties_of_files_with_different_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        for (n, m) in [("a.sh", 0o755), ("b.sh", 0o644)] {
+            let f = tmp.path().join(n);
+            std::fs::write(&f, "").unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(m)).unwrap();
+        }
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::SelectAll));
+        let _ = app.update(Message::Key(Action::Properties));
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        // set on both / differing
+        assert_eq!((p.mode, p.mixed), (0o644, 0o111));
+        let _ = app.update(Message::PropsBit(0o100)); // owner x: now on for both
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert_eq!((p.mode & 0o100, p.touched), (0o100, 0o100));
     }
 
     #[test]
