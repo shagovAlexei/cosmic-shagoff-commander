@@ -4471,6 +4471,7 @@ dependencies = [
  "jiff",
  "liblzma",
  "memchr",
+ "mime_guess",
  "regex",
  "rustix 1.1.5",
  "serde",

@@ -35,9 +35,57 @@ pub fn page_rows(row_h: f32, height: f32) -> usize {
         .max(1)
 }
 
+/// Brief view: narrowest column, px; the pane width is shared by as many as fit.
+pub const BRIEF_COL_W: f32 = 200.0;
+
+/// Brief view: rows per column that fit `height`, at least 1.
+pub fn brief_rows(row_h: f32, height: f32) -> usize {
+    ((height.max(0.0) / row_h) as usize).max(1)
+}
+
+/// Brief view: columns that fit `width`, at least 1.
+pub fn brief_cols(width: f32) -> usize {
+    ((width.max(0.0) / BRIEF_COL_W) as usize).max(1)
+}
+
+/// Brief view: first visible column keeping the cursor's column on screen, moved as little as
+/// possible from `first`, never past the point where the last column ends the screen.
+pub fn brief_first_col(len: usize, cursor: usize, rows: usize, cols: usize, first: usize) -> usize {
+    let col = cursor / rows;
+    let last_first = len.div_ceil(rows).saturating_sub(cols);
+    let first = if col < first {
+        col
+    } else if col >= first + cols {
+        col + 1 - cols
+    } else {
+        first
+    };
+    first.min(last_first)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brief_rows_and_cols_at_least_one() {
+        assert_eq!(brief_rows(20.0, 400.0), 20);
+        assert_eq!(brief_rows(20.0, 5.0), 1);
+        assert_eq!(brief_cols(450.0), 2);
+        assert_eq!(brief_cols(0.0), 1);
+    }
+
+    #[test]
+    fn brief_first_col_follows_cursor() {
+        // 10 rows, 3 columns on screen, 100 entries = 10 columns
+        assert_eq!(brief_first_col(100, 15, 10, 3, 0), 0); // column 1: on screen
+        assert_eq!(brief_first_col(100, 35, 10, 3, 0), 1); // column 3: shift by one
+        assert_eq!(brief_first_col(100, 5, 10, 3, 4), 0); // column 0: left of screen
+        assert_eq!(brief_first_col(100, 99, 10, 3, 0), 7);
+        // grown window: no empty columns left at the end
+        assert_eq!(brief_first_col(100, 99, 10, 5, 7), 5);
+        assert_eq!(brief_first_col(0, 0, 10, 3, 2), 0);
+    }
 
     #[test]
     fn visible_range_empty() {
