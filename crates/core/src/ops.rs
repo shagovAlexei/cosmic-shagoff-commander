@@ -15,14 +15,36 @@ pub enum Method {
     Rename,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Resolution {
     Replace,
     Skip,
     ReplaceAll,
     SkipAll,
     ReplaceOlder,
+    /// Write this one under the given name (same dir); asked again if that is taken too.
+    Rename(String),
+    /// Every conflict from now on: the first free `name (N).ext` (TC "keep both").
+    RenameAll,
     Cancel,
+}
+
+/// First free `name (N).ext` next to `dst`: `a.txt` → `a (1).txt`; `.bashrc` → `.bashrc (1)`.
+pub fn unique_name(dst: &Path) -> PathBuf {
+    let name = dst.file_name().unwrap_or_default().to_string_lossy();
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (&name[..], ""),
+    };
+    (1..)
+        .map(|n| dst.with_file_name(format!("{stem} ({n}){ext}")))
+        .find(|p| fs::symlink_metadata(p).is_err())
+        .expect("some number is free")
+}
+
+/// A name `Resolution::Rename` accepts: one path component.
+pub fn valid_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains('/')
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,6 +216,8 @@ enum Decision {
     Replace,
     Skip,
     Cancel,
+    /// Write to this path instead.
+    Rename(PathBuf),
 }
 
 struct Transfer<'a> {
@@ -221,11 +245,13 @@ impl Transfer<'_> {
         {
             return s;
         }
+        let mut dst = dst.to_path_buf();
         if self.method == Method::Move
-            && let Some(step) = self.rename(src, dst, &meta)
+            && let Some(step) = self.rename(src, &mut dst, &meta)
         {
             return step;
         }
+        let dst = dst.as_path();
         if self.method == Method::Rename {
             let size = tree_size(src);
             return match self.retry(src, || rename_noreplace(src, dst)) {
@@ -250,22 +276,23 @@ impl Transfer<'_> {
         }
     }
 
-    /// Move fast path. `None` = fall back to copy + delete (other device, or merging dirs).
-    fn rename(&mut self, src: &Path, dst: &Path, meta: &Metadata) -> Option<Step> {
+    /// Move fast path. `None` = fall back to copy + delete (other device, or merging dirs) into
+    /// `dst`, which a conflict answer may have changed to a new name.
+    fn rename(&mut self, src: &Path, dst: &mut PathBuf, meta: &Metadata) -> Option<Step> {
         let mut replacing = false;
-        if let Ok(dm) = fs::symlink_metadata(dst) {
+        if let Ok(dm) = fs::symlink_metadata(&*dst) {
             if meta.is_dir() || dm.is_dir() {
                 return None;
             }
-            match self.decide(src, meta, dst, &dm) {
-                Decision::Replace => replacing = true,
-                Decision::Skip => {
-                    self.done += meta.len();
-                    return Some(Step::Skipped);
+            match self.destination(src, meta, dst, meta.len()) {
+                Ok(d) => {
+                    replacing = d == *dst;
+                    *dst = d;
                 }
-                Decision::Cancel => return Some(Step::Cancel),
+                Err(step) => return Some(step),
             }
         }
+        let dst = dst.as_path();
         let size = tree_size(src);
         loop {
             match fs::rename(src, dst) {
@@ -325,9 +352,12 @@ impl Transfer<'_> {
                 Step::Cancel => return Step::Cancel,
             }
         }
-        // After the children (a read-only dir would block them); only on dirs we made — merging
-        // into an existing dir must not change its mode.
+        // After the children (a read-only dir would block them, writing them would bump the date);
+        // only on dirs we made — merging into an existing dir must not change it.
         if created {
+            if let (Ok(f), Ok(t)) = (File::open(dst), meta.modified()) {
+                let _ = f.set_modified(t);
+            }
             let _ = fs::set_permissions(dst, meta.permissions());
         }
         if !complete {
@@ -346,9 +376,10 @@ impl Transfer<'_> {
             Ok(t) => t,
             Err(s) => return s,
         };
-        if let Some(step) = self.resolve_existing(src, meta, dst, 0) {
-            return step;
-        }
+        let dst = &match self.destination(src, meta, dst, 0) {
+            Ok(d) => d,
+            Err(step) => return step,
+        };
         // Link at a fresh part name, then rename over: replacing stays atomic.
         let mut n = 0;
         let part = loop {
@@ -377,9 +408,10 @@ impl Transfer<'_> {
 
     fn file(&mut self, src: &Path, dst: &Path, meta: &Metadata) -> Step {
         let size = meta.len();
-        if let Some(step) = self.resolve_existing(src, meta, dst, size) {
-            return step;
-        }
+        let dst = &match self.destination(src, meta, dst, size) {
+            Ok(d) => d,
+            Err(step) => return step,
+        };
         let start = self.done;
         let part = loop {
             self.done = start;
@@ -416,28 +448,35 @@ impl Transfer<'_> {
         Step::Done
     }
 
-    /// If `dst` exists: ask (or apply the sticky policy). `None` = go ahead and replace.
-    fn resolve_existing(
+    /// Where to write: `dst` when free or approved for replacing, else what the conflict answer
+    /// (or the sticky policy) says — asked again while a chosen new name is taken too.
+    fn destination(
         &mut self,
         src: &Path,
         meta: &Metadata,
         dst: &Path,
         size: u64,
-    ) -> Option<Step> {
-        let dm = fs::symlink_metadata(dst).ok()?;
-        if dm.is_dir() {
-            return Some(self.clash(dst, size));
-        }
-        if self.approved.take_if(|p| p.as_path() == dst).is_some() {
-            return None;
-        }
-        match self.decide(src, meta, dst, &dm) {
-            Decision::Replace => None,
-            Decision::Skip => {
-                self.done += size;
-                Some(Step::Skipped)
+    ) -> Result<PathBuf, Step> {
+        let mut dst = dst.to_path_buf();
+        loop {
+            let Ok(dm) = fs::symlink_metadata(&dst) else {
+                return Ok(dst);
+            };
+            if dm.is_dir() {
+                return Err(self.clash(&dst, size));
             }
-            Decision::Cancel => Some(Step::Cancel),
+            if self.approved.take_if(|p| *p == dst).is_some() {
+                return Ok(dst);
+            }
+            match self.decide(src, meta, &dst, &dm) {
+                Decision::Replace => return Ok(dst),
+                Decision::Skip => {
+                    self.done += size;
+                    return Err(Step::Skipped);
+                }
+                Decision::Cancel => return Err(Step::Cancel),
+                Decision::Rename(new) => dst = new,
+            }
         }
     }
 
@@ -465,15 +504,18 @@ impl Transfer<'_> {
     }
 
     fn decide(&mut self, src: &Path, sm: &Metadata, dst: &Path, dm: &Metadata) -> Decision {
-        let answer = match self.policy {
-            Some(p) => p,
+        let answer = match &self.policy {
+            Some(p) => p.clone(),
             None => {
                 let r = self.h.conflict(&info(src, sm), &info(dst, dm));
                 if matches!(
                     r,
-                    Resolution::ReplaceAll | Resolution::SkipAll | Resolution::ReplaceOlder
+                    Resolution::ReplaceAll
+                        | Resolution::SkipAll
+                        | Resolution::ReplaceOlder
+                        | Resolution::RenameAll
                 ) {
-                    self.policy = Some(r);
+                    self.policy = Some(r.clone());
                 }
                 r
             }
@@ -485,6 +527,12 @@ impl Transfer<'_> {
                 Decision::Replace
             }
             Resolution::ReplaceOlder => Decision::Skip,
+            // The dialog only sends valid names; a bad one from elsewhere must not escape the dir.
+            Resolution::Rename(name) if valid_name(&name) => {
+                Decision::Rename(dst.with_file_name(name))
+            }
+            Resolution::Rename(_) => Decision::Skip,
+            Resolution::RenameAll => Decision::Rename(unique_name(dst)),
             Resolution::Cancel => Decision::Cancel,
         }
     }
@@ -819,6 +867,110 @@ mod tests {
         let (d, _, r) = conflict_case(vec![Resolution::Skip]);
         assert_eq!(read(&d.path().join("to/a")), "old");
         assert!(r.completed.is_empty());
+    }
+
+    #[test]
+    fn unique_name_first_free_number() {
+        let d = tempfile::tempdir().unwrap();
+        let p = |n: &str| d.path().join(n);
+        assert_eq!(unique_name(&p("a.txt")), p("a (1).txt"));
+        assert_eq!(unique_name(&p("a.tar.gz")), p("a.tar (1).gz"));
+        assert_eq!(unique_name(&p("README")), p("README (1)"));
+        assert_eq!(unique_name(&p(".bashrc")), p(".bashrc (1)"));
+        write(&p("a (1).txt"), "");
+        assert_eq!(unique_name(&p("a.txt")), p("a (2).txt"));
+        assert!(valid_name("b.txt") && !valid_name("") && !valid_name("..") && !valid_name("x/y"));
+    }
+
+    #[test]
+    fn conflict_rename_keeps_both_and_asks_again_when_taken() {
+        let (d, h, r) = conflict_case(vec![Resolution::Rename("b".into())]);
+        assert_eq!(read(&d.path().join("to/a")), "old");
+        assert_eq!(read(&d.path().join("to/b")), "new");
+        assert_eq!((h.asked, r.completed.len()), (1, 1));
+        // the chosen name is taken too: asked again, then renamed once more
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("a"), "new");
+        write(&d.path().join("to/a"), "old");
+        write(&d.path().join("to/b"), "keep");
+        let mut h = Script {
+            conflicts: vec![
+                Resolution::Rename("b".into()),
+                Resolution::Rename("c".into()),
+            ],
+            ..Default::default()
+        };
+        copy(&[d.path().join("a")], &d.path().join("to"), &mut h);
+        assert_eq!(h.asked, 2);
+        assert_eq!(read(&d.path().join("to/b")), "keep");
+        assert_eq!(read(&d.path().join("to/c")), "new");
+        // a name that would leave the dir is never used
+        let (d, _, r) = conflict_case(vec![Resolution::Rename("../x".into())]);
+        assert!(!d.path().join("x").exists() && r.completed.is_empty());
+    }
+
+    #[test]
+    fn rename_all_asks_once_and_numbers_each() {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["a.txt", "b.txt"] {
+            write(&d.path().join(n), "new");
+            write(&d.path().join("to").join(n), "old");
+        }
+        let mut h = Script {
+            conflicts: vec![Resolution::RenameAll],
+            ..Default::default()
+        };
+        copy(
+            &[d.path().join("a.txt"), d.path().join("b.txt")],
+            &d.path().join("to"),
+            &mut h,
+        );
+        assert_eq!(h.asked, 1);
+        assert_eq!(read(&d.path().join("to/a.txt")), "old");
+        assert_eq!(read(&d.path().join("to/a (1).txt")), "new");
+        assert_eq!(read(&d.path().join("to/b (1).txt")), "new");
+    }
+
+    #[test]
+    fn move_with_rename_takes_the_new_name() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("a"), "new");
+        write(&d.path().join("to/a"), "old");
+        let mut h = Script {
+            conflicts: vec![Resolution::Rename("b".into())],
+            ..Default::default()
+        };
+        let pairs = plan(&[d.path().join("a")], &d.path().join("to")).unwrap();
+        let r = transfer(Method::Move, &pairs, &mut h);
+        assert_eq!(r.completed.len(), 1);
+        assert!(!d.path().join("a").exists());
+        assert_eq!(read(&d.path().join("to/a")), "old");
+        assert_eq!(read(&d.path().join("to/b")), "new");
+    }
+
+    #[test]
+    fn copied_dir_keeps_its_date() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("src/sub/f"), "x");
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        for dir in ["src/sub", "src"] {
+            File::open(d.path().join(dir))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        }
+        copy(
+            &[d.path().join("src")],
+            &d.path().join("dst"),
+            &mut Script::default(),
+        );
+        for dir in ["dst", "dst/sub"] {
+            let m = fs::metadata(d.path().join(dir))
+                .unwrap()
+                .modified()
+                .unwrap();
+            assert_eq!(m, t, "{dir}");
+        }
     }
 
     #[test]
