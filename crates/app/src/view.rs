@@ -1,7 +1,7 @@
 //! TC layout: per pane a path line, column headers and a virtualized file list; one status line
 //! (each pane's half), the command line and the F-keys in the footer.
 
-use crate::app::{App, Message, ROW_H, StatusKind, Tab};
+use crate::app::{App, Message, StatusKind, Tab};
 use crate::fl;
 use crate::keymap::Action;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
@@ -48,7 +48,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .class(bar_style(active));
 
     let list = if p.brief {
-        brief_list(side, p, active)
+        brief_list(side, p, active, app.row_h())
     } else {
         full_list(app, side, p, active)
     };
@@ -71,8 +71,9 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
 /// Full view: virtualized rows in a vertical scrollable.
 fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
-    let range = viewport::visible_range(entries.len(), ROW_H, p.offset, p.height);
-    let mut list = column![widget::Space::new().height(range.start as f32 * ROW_H)];
+    let row_h = app.row_h();
+    let range = viewport::visible_range(entries.len(), row_h, p.offset, p.height);
+    let mut list = column![widget::Space::new().height(range.start as f32 * row_h)];
     for i in range.clone() {
         list = list.push(file_row(
             app,
@@ -84,7 +85,7 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
             p.panel.is_marked(&entries[i]),
         ));
     }
-    list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * ROW_H));
+    list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * row_h));
     scrollable(list)
         .id(app.scroll_ids[side].clone())
         .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
@@ -93,9 +94,9 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
 }
 
 /// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
-fn brief_list<'a>(side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
+fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, row_h: f32) -> Element<'a, Message> {
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
-    let (rows, cols) = p.brief_grid();
+    let (rows, cols) = p.brief_grid(row_h);
     let mut grid = row![].spacing(2);
     for c in p.col..p.col + cols {
         let mut list = column![];
@@ -107,7 +108,7 @@ fn brief_list<'a>(side: usize, p: &'a Tab, active: bool) -> Element<'a, Message>
             };
             let cell = container(name_cell(e, label))
                 .padding([0, 6])
-                .height(Length::Fixed(ROW_H))
+                .height(Length::Fixed(row_h))
                 .width(Length::Fill)
                 .clip(true)
                 .class(cursor_style(i == cursor, active, p.panel.is_marked(e)));
@@ -253,7 +254,7 @@ fn file_row<'a>(
     .align_y(Alignment::Center);
     let row = container(cells)
         .padding([0, 6])
-        .height(Length::Fixed(ROW_H))
+        .height(Length::Fixed(app.row_h()))
         .width(Length::Fill)
         .clip(true)
         .class(cursor_style(is_cursor, active, is_marked));

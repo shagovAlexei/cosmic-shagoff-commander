@@ -40,8 +40,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
-/// Fixed row height of the file list; the viewport math depends on it.
-pub const ROW_H: f32 = 22.0;
 // ponytail: list height is guessed until the scrollable reports its bounds (it does on the first event).
 const FALLBACK_LIST_H: f32 = 400.0;
 const FALLBACK_LIST_W: f32 = 500.0;
@@ -106,10 +104,10 @@ impl Tab {
         }
     }
 
-    /// Brief view: (rows per column, columns on screen).
-    pub fn brief_grid(&self) -> (usize, usize) {
+    /// Brief view: (rows per column, columns on screen) for rows `row_h` px high.
+    pub fn brief_grid(&self, row_h: f32) -> (usize, usize) {
         (
-            viewport::brief_rows(ROW_H, self.height),
+            viewport::brief_rows(row_h, self.height),
             viewport::brief_cols(self.width),
         )
     }
@@ -793,18 +791,19 @@ impl App {
                 }
             }
             Message::BriefWheel(side, delta) => {
+                let row_h = self.row_h();
                 let t = self.panes[side].active_mut();
                 // Touchpads send many small pixel steps: one column per row height of travel.
                 let y = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => y,
                     mouse::ScrollDelta::Pixels { y, .. } => {
                         t.wheel += y;
-                        let steps = (t.wheel / ROW_H).trunc();
-                        t.wheel -= steps * ROW_H;
+                        let steps = (t.wheel / row_h).trunc();
+                        t.wheel -= steps * row_h;
                         steps
                     }
                 };
-                let (rows, cols) = t.brief_grid();
+                let (rows, cols) = t.brief_grid(row_h);
                 let last = t.panel.entries().len().div_ceil(rows).saturating_sub(cols);
                 t.col = if y > 0.0 {
                     t.col.saturating_sub(1)
@@ -1528,6 +1527,11 @@ impl App {
         self.saved = state;
     }
 
+    /// File row height of the current skin; every scroll computation uses it.
+    pub fn row_h(&self) -> f32 {
+        self.config.skin.row_h()
+    }
+
     fn next_id(&mut self) -> u64 {
         self.next_id += 1;
         self.next_id
@@ -1690,13 +1694,14 @@ impl App {
                 Task::none()
             };
         }
+        let row_h = self.row_h();
         let t = self.panes[side].active_mut();
-        let (rows, cols) = t.brief_grid();
+        let (rows, cols) = t.brief_grid(row_h);
         let (brief, rows) = (t.brief, rows as isize);
         let page = if brief {
             rows * cols as isize
         } else {
-            viewport::page_rows(ROW_H, t.height) as isize
+            viewport::page_rows(row_h, t.height) as isize
         };
         let tab = t.id;
         let target = t.target();
@@ -3285,6 +3290,7 @@ impl App {
     /// `restore_scroll` applies it when that tab is shown.
     fn reveal(&mut self, side: usize, tab: u64) -> Task<Message> {
         let is_active = self.panes[side].active().id == tab;
+        let row_h = self.row_h();
         let Some(t) = self.panes[side]
             .items_mut()
             .iter_mut()
@@ -3293,12 +3299,12 @@ impl App {
             return Task::none();
         };
         if t.brief {
-            let (rows, cols) = t.brief_grid();
+            let (rows, cols) = t.brief_grid(row_h);
             let len = t.panel.entries().len();
             t.col = viewport::brief_first_col(len, t.panel.cursor(), rows, cols, t.col);
             return Task::none();
         }
-        match viewport::scroll_to_cursor(t.panel.cursor(), ROW_H, t.offset, t.height) {
+        match viewport::scroll_to_cursor(t.panel.cursor(), row_h, t.offset, t.height) {
             Some(y) => {
                 t.offset = y;
                 if is_active {
@@ -3419,6 +3425,7 @@ impl App {
                     .map_or(String::new(), |l| l.to_string());
             }
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
+            Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
             Setting::ShowCmdline(b) => c.show_cmdline = b,
             Setting::InternalViewer(b) => c.internal_viewer = b,
@@ -3473,6 +3480,17 @@ impl App {
         }
         if old.show_hidden != self.config.show_hidden {
             tasks.push(self.apply_hidden());
+        }
+        if old.skin != self.config.skin {
+            // Offsets are in pixels of the old row height: bring each cursor back into view.
+            for side in 0..2 {
+                let tab = self.panes[side].active().id;
+                let rows = old.skin.row_h();
+                let t = self.panes[side].active_mut();
+                t.offset = t.offset / rows * self.config.skin.row_h();
+                tasks.push(self.reveal(side, tab));
+                tasks.push(self.restore_scroll(side));
+            }
         }
         Task::batch(tasks)
     }
@@ -4581,6 +4599,9 @@ mod tests {
         );
     }
 
+    /// Row height of the default skin, for tests that size the list in rows.
+    const ROW: f32 = 20.0;
+
     /// Pane 0 listing 20 files, viewport `height` px tall, scrolled to the top.
     fn tall_list(height: f32) -> App {
         let mut app = app_with(Config::default(), State::default());
@@ -4600,9 +4621,30 @@ mod tests {
     }
 
     #[test]
+    fn default_skin_row_matches_the_tests() {
+        assert_eq!(config::Skin::default().row_h(), ROW);
+    }
+
+    #[test]
+    fn switching_skin_keeps_the_cursor_on_screen() {
+        let mut app = tall_list(4.5 * ROW);
+        let _ = app.update(Message::Key(Action::End)); // row 20
+        let _ = app.update(Message::Key(Action::Settings));
+        let _ = app.update(Message::Setting(crate::drawer::Setting::Skin(1)));
+        assert_eq!(app.config.skin, config::Skin::Modern);
+        let (t, row_h) = (app.panes[0].active(), app.row_h());
+        let bottom = 21.0 * row_h;
+        assert!(
+            t.offset <= 20.0 * row_h && t.offset + t.height >= bottom,
+            "offset {}",
+            t.offset
+        );
+    }
+
+    #[test]
     fn brief_view_moves_by_columns() {
-        // ".." + 20 files; 100 px = 4 rows, 500 px = 2 columns on screen
-        let mut app = tall_list(100.0);
+        // ".." + 20 files; 4.5 rows high = 4 rows, 500 px = 2 columns on screen
+        let mut app = tall_list(4.5 * ROW);
         let cur = |app: &App| app.panes[0].active().panel.cursor();
         let _ = app.update(Message::Key(Action::Right));
         assert_eq!(cur(&app), 0); // Full view: ← / → do nothing
@@ -4631,12 +4673,12 @@ mod tests {
 
     #[test]
     fn brief_columns_follow_a_resize_and_touchpad_steps_add_up() {
-        let mut app = tall_list(100.0); // 4 rows
+        let mut app = tall_list(4.5 * ROW); // 4 rows
         let _ = app.update(Message::Key(Action::ViewBrief));
         let _ = app.update(Message::Key(Action::End)); // entry 20, column 5
         assert_eq!(app.panes[0].active().col, 4);
         // taller: 10 rows → 3 columns, both fit; the old first column would hide the cursor
-        let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 220.0)));
+        let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 10.5 * ROW)));
         assert_eq!(app.panes[0].active().col, 1);
         let px = |y| Message::BriefWheel(0, mouse::ScrollDelta::Pixels { x: 0.0, y });
         let _ = app.update(px(5.0));
@@ -4651,7 +4693,11 @@ mod tests {
         let mut app = tall_list(100.0); // rows 0..4 full, row 4 cut at 100 px
         let _ = app.update(Message::Click(0, 4));
         let t = app.panes[0].active();
-        assert!(t.offset + t.height >= 5.0 * ROW_H, "offset {}", t.offset);
+        assert!(
+            t.offset + t.height >= 5.0 * app.row_h(),
+            "offset {}",
+            t.offset
+        );
     }
 
     #[test]
@@ -4660,7 +4706,11 @@ mod tests {
         let _ = app.update(Message::Click(0, 10));
         let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 100.0))); // window got smaller
         let t = app.panes[0].active();
-        assert!(t.offset + t.height >= 11.0 * ROW_H, "offset {}", t.offset);
+        assert!(
+            t.offset + t.height >= 11.0 * app.row_h(),
+            "offset {}",
+            t.offset
+        );
     }
 
     #[test]

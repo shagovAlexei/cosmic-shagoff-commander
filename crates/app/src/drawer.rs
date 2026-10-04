@@ -1,7 +1,7 @@
 //! Side drawer: help (F1), about, settings (Ctrl+,).
 
 use crate::app::{APP_ID, App, Message};
-use crate::config::{AppTheme, LANGUAGES, LastTab};
+use crate::config::{AppTheme, LANGUAGES, LastTab, Skin};
 use crate::fl;
 use cosmic::app::context_drawer::{self, ContextDrawer};
 use cosmic::iced::{Alignment, Length};
@@ -37,6 +37,8 @@ pub enum Setting {
     /// Index into [system, LANGUAGES…].
     Language(usize),
     Theme(usize),
+    /// Index into `Skin::ALL`.
+    Skin(usize),
     ShowFkeys(bool),
     ShowCmdline(bool),
     InternalViewer(bool),
@@ -172,6 +174,8 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
         fl!("settings-dark"),
     ];
     let theme = AppTheme::ALL.iter().position(|t| *t == c.app_theme);
+    let skins = vec![fl!("settings-skin-classic"), fl!("settings-skin-modern")];
+    let skin = Skin::ALL.iter().position(|s| *s == c.skin);
     let formats: Vec<&'static str> = Format::PACK.iter().map(|f| f.ext()).collect();
     let format = Format::PACK.iter().position(|f| f.ext() == c.pack_format);
     let input = |value: &'a str, placeholder: &'static str, f: fn(String) -> Setting| {
@@ -194,6 +198,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-theme"),
                 widget::dropdown(themes, theme, |i| Message::Setting(Setting::Theme(i))),
+            ))
+            .add(settings::item(
+                fl!("settings-skin"),
+                widget::dropdown(skins, skin, |i| Message::Setting(Setting::Skin(i))),
             ))
             .add(settings::item(
                 fl!("settings-fkeys"),
