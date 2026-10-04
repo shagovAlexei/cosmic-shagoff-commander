@@ -14,6 +14,8 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAct {
     Key(Action),
+    /// Context menu "Open": the entry, never a command typed in the command line (Enter's job).
+    Open,
     Exit,
 }
 
@@ -22,6 +24,7 @@ impl menu::Action for MenuAct {
     fn message(&self) -> Message {
         match *self {
             MenuAct::Key(a) => Message::Key(a),
+            MenuAct::Open => Message::OpenEntry,
             MenuAct::Exit => Message::Exit,
         }
     }
@@ -44,7 +47,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
     use Modifier::{Alt, Ctrl, Shift};
     let a = MenuAct::Key;
     vec![
-        (vec![], K::Named(Named::Enter), a(Action::Enter)),
+        (vec![], K::Named(Named::Enter), MenuAct::Open),
         (vec![Ctrl], K::Letter(Code::KeyX, "x"), a(Action::ClipCut)),
         (vec![Ctrl], K::Letter(Code::KeyC, "c"), a(Action::ClipCopy)),
         (vec![Ctrl], K::Letter(Code::KeyV, "v"), a(Action::ClipPaste)),
@@ -326,7 +329,7 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
     match ctx {
         Ctx::Entry { dir, archive } => {
             let mut v = vec![
-                b(fl!("menu-open"), Action::Enter),
+                menu::Item::Button(fl!("menu-open"), None, MenuAct::Open),
                 b(fl!("menu-view"), Action::View),
             ];
             // An archive is opened as a folder, not edited; 12 items fit a 530 px window.
@@ -484,6 +487,8 @@ mod tests {
                 // Alt+F4 belongs to the compositor; the menu item quits directly.
                 MenuAct::Exit => assert_eq!(got, None),
                 MenuAct::Key(a) => assert_eq!(got, Some(a), "{mods:?} {key:?}"),
+                // The key is Enter; the item opens the entry even with a typed command.
+                MenuAct::Open => assert_eq!(got, Some(Action::Enter)),
             }
         }
     }

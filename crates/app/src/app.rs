@@ -292,6 +292,8 @@ pub enum Message {
     },
     Click(usize, usize),
     DoubleClick(usize, usize),
+    /// Context menu "Open": like a double click, not like the Enter key (which runs a typed command).
+    OpenEntry,
     /// A context menu's popup surface (create / destroy), passed on to libcosmic.
     Surface(cosmic::surface::Action),
     /// Right press on row i: active pane, cursor there; the context menu opens on release.
@@ -789,6 +791,7 @@ impl App {
                 let tab = t.id;
                 return self.reveal(side, tab);
             }
+            Message::OpenEntry => return self.act(self.active, Action::Enter),
             Message::Surface(a) => {
                 return cosmic::task::message(cosmic::Action::Cosmic(
                     cosmic::app::Action::Surface(a),
@@ -5888,6 +5891,19 @@ mod tests {
         let _ = app.update(Message::RightEmpty(1));
         assert!(!app.ctx_entry);
         assert_eq!(app.active, 1);
+    }
+
+    #[test]
+    fn regression_menu_open_opens_even_with_a_typed_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        app.cmdline = "ls -l".into();
+        let _ = app.update(Message::RightClick(0, 1));
+        let _ = app.update(Message::OpenEntry);
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+        assert_eq!(app.cmdline, "ls -l"); // not run
     }
 
     #[test]

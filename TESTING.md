@@ -410,4 +410,5 @@
 | `regression_viewer_arrows_scroll_sideways` | ←/→ стали клавишами Brief и перестали прокручивать просмотр F3 вбок | 29 |
 | `regression_separators_inside_quotes_are_literal` | `;` и `|` в кавычках резали маску | 35 |
 | `regression_search_results_match_by_file_name` | В результатах поиска быстрый поиск, фильтр и маски сравнивали с путём | 35 |
+| `regression_menu_open_opens_even_with_a_typed_command` | «Открыть» в контекстном меню выполнял набранную команду вместо открытия | 37 |
 | `regression_closing_a_popup_does_not_quit` | Закрытие всплывающего контекстного меню завершало приложение (`on_close_requested` отвечал «выход» на любую поверхность) | 37 |
