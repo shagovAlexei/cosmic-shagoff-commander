@@ -3483,11 +3483,13 @@ impl App {
         }
         if old.skin != self.config.skin {
             // Offsets are in pixels of the old row height: bring each cursor back into view.
+            let scale = self.config.skin.row_h() / old.skin.row_h();
             for side in 0..2 {
+                // Hidden tabs too: they are shown with their stored offset.
+                for t in self.panes[side].items_mut() {
+                    t.offset *= scale;
+                }
                 let tab = self.panes[side].active().id;
-                let rows = old.skin.row_h();
-                let t = self.panes[side].active_mut();
-                t.offset = t.offset / rows * self.config.skin.row_h();
                 tasks.push(self.reveal(side, tab));
                 tasks.push(self.restore_scroll(side));
             }
@@ -4690,7 +4692,7 @@ mod tests {
 
     #[test]
     fn regression_click_on_half_visible_row_scrolls_it_in() {
-        let mut app = tall_list(100.0); // rows 0..4 full, row 4 cut at 100 px
+        let mut app = tall_list(4.5 * ROW); // rows 0..4 full, row 4 cut in half
         let _ = app.update(Message::Click(0, 4));
         let t = app.panes[0].active();
         assert!(
