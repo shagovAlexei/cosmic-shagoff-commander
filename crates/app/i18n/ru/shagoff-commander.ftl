@@ -285,6 +285,9 @@ archive-update-ok = Обновить архив
 archive-edit-link = Ссылку внутри архива править нельзя
 
 # Поиск файлов, дополнения
+find-name-regex = Имя — регулярное выражение
+find-name-regex-label = Имя (регулярное выражение)
+find-archives = Искать в архивах (по именам)
 find-regex = Регулярное выражение
 find-min-size = Размер от, КБ
 find-max-size = Размер до, КБ

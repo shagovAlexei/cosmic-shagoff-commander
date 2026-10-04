@@ -123,12 +123,21 @@ pub struct State {
     pub commands: Vec<String>,
 }
 
-/// What the find dialog opens with (the dir always comes from the panel).
+/// What the find dialog opens with (the dir always comes from the panel). Fields missing in an
+/// older state file take their defaults.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FindPrefs {
     pub mask: String,
     pub text: String,
     pub case_sensitive: bool,
+    pub regex: bool,
+    pub name_regex: bool,
+    pub archives: bool,
+    /// As typed: KB, KB, days.
+    pub min_size: String,
+    pub max_size: String,
+    pub days: String,
 }
 
 impl Default for FindPrefs {
@@ -137,6 +146,12 @@ impl Default for FindPrefs {
             mask: "*".into(),
             text: String::new(),
             case_sensitive: false,
+            regex: false,
+            name_regex: false,
+            archives: false,
+            min_size: String::new(),
+            max_size: String::new(),
+            days: String::new(),
         }
     }
 }

@@ -339,6 +339,8 @@ pub enum Message {
     DiffSave,
     /// Alt+F7: the "regular expression" checkbox.
     FindRegex,
+    FindNameRegex,
+    FindArchives,
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
     FindFeed,
     Op(jobs::Event),
@@ -877,6 +879,18 @@ impl App {
             Message::FindRegex => {
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
                     f.regex = !f.regex;
+                    f.in_list = false;
+                }
+            }
+            Message::FindNameRegex => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.name_regex = !f.name_regex;
+                    f.in_list = false;
+                }
+            }
+            Message::FindArchives => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.archives = !f.archives;
                     f.in_list = false;
                 }
             }
@@ -2139,10 +2153,12 @@ impl App {
                     dir: dir.display().to_string(),
                     text: self.find.text.clone(),
                     case_sensitive: self.find.case_sensitive,
-                    regex: false,
-                    min_size: String::new(),
-                    max_size: String::new(),
-                    days: String::new(),
+                    regex: self.find.regex,
+                    name_regex: self.find.name_regex,
+                    archives: self.find.archives,
+                    min_size: self.find.min_size.clone(),
+                    max_size: self.find.max_size.clone(),
+                    days: self.find.days.clone(),
                     error: None,
                     root: None,
                     results: Vec::new(),
@@ -2675,6 +2691,12 @@ impl App {
             mask: f.mask.clone(),
             text: f.text.clone(),
             case_sensitive: f.case_sensitive,
+            regex: f.regex,
+            name_regex: f.name_regex,
+            archives: f.archives,
+            min_size: f.min_size.clone(),
+            max_size: f.max_size.clone(),
+            days: f.days.clone(),
         };
         let root = self.panes[side].active().target().join(f.dir.trim());
         let root_searched = root.clone();
@@ -3808,8 +3830,17 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
         ),
         _ => None,
     };
+    let name_regex = match f.name_regex {
+        true => Some(
+            shagoff_core::search::name_regex(f.mask.trim())
+                .map_err(|e| fl!("find-bad-regex", err = e))?,
+        ),
+        false => None,
+    };
     Ok(shagoff_core::search::Query {
         mask: Mask::parse(&f.mask),
+        name_regex,
+        archives: f.archives,
         text: (regex.is_none() && !text.is_empty()).then_some(text),
         case_sensitive: f.case_sensitive,
         regex,
@@ -5475,6 +5506,37 @@ mod tests {
             Some(Dialog::Find(f)) => f,
             _ => panic!("no find dialog"),
         }
+    }
+
+    #[test]
+    fn find_filters_are_remembered_and_name_regex_checked() {
+        let (_tmp, mut app) = results_app();
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindNameRegex);
+        let _ = app.update(Message::FindArchives);
+        let _ = app.update(Message::FindInput(FindField::Mask, "(".into()));
+        let _ = app.update(Message::FindInput(FindField::MinSize, "5".into()));
+        let _ = app.update(Message::FindStart);
+        let Some(Dialog::Find(f)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert!(f.error.is_some() && f.stop.is_none()); // a bad name regex does not start
+        let _ = app.update(Message::FindInput(FindField::Mask, r"\.rs$".into()));
+        let _ = app.update(Message::FindStart);
+        app.dialog = None;
+        app.save_state();
+        let prefs = app.saved.find.clone();
+        assert!(prefs.name_regex && prefs.archives);
+        assert_eq!(
+            (prefs.mask.as_str(), prefs.min_size.as_str()),
+            (r"\.rs$", "5")
+        );
+        let mut app = app_with(Config::default(), app.saved.clone());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let Some(Dialog::Find(f)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert!(f.name_regex && f.archives && f.min_size == "5");
     }
 
     #[test]
