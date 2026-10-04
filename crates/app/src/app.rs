@@ -61,6 +61,8 @@ pub struct Tab {
     pub brief: bool,
     /// Brief view: first column on screen.
     pub col: usize,
+    /// Brief view: touchpad scroll not yet worth a column, px.
+    wheel: f32,
     /// Generation and path of the scan in flight; any other result is stale.
     pub(crate) pending: Option<(u64, PathBuf)>,
     pub error: Option<String>,
@@ -84,6 +86,7 @@ impl Tab {
             width: FALLBACK_LIST_W,
             brief: false,
             col: 0,
+            wheel: 0.0,
             pending: None,
             error: None,
             history: History::default(),
@@ -135,6 +138,7 @@ impl Tab {
             width: self.width,
             brief: self.brief,
             col: self.col,
+            wheel: 0.0,
             pending: None,
             error: None,
             history: self.history.clone(),
@@ -763,7 +767,8 @@ impl App {
             Message::Resized(side, size) => {
                 // One list widget per pane: every tab shares its viewport size.
                 let t = self.panes[side].active();
-                let shrunk = size.height < t.height || (t.brief && size.width < t.width);
+                // Brief: any size change regroups the columns, the cursor may leave the screen.
+                let shrunk = size.height < t.height || t.brief;
                 for t in self.panes[side].items_mut() {
                     (t.width, t.height) = (size.width, size.height);
                 }
@@ -773,10 +778,17 @@ impl App {
                 }
             }
             Message::BriefWheel(side, delta) => {
-                let y = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => y,
-                };
                 let t = self.panes[side].active_mut();
+                // Touchpads send many small pixel steps: one column per row height of travel.
+                let y = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => y,
+                    mouse::ScrollDelta::Pixels { y, .. } => {
+                        t.wheel += y;
+                        let steps = (t.wheel / ROW_H).trunc();
+                        t.wheel -= steps * ROW_H;
+                        steps
+                    }
+                };
                 let (rows, cols) = t.brief_grid();
                 let last = t.panel.entries().len().div_ceil(rows).saturating_sub(cols);
                 t.col = if y > 0.0 {
@@ -3504,8 +3516,19 @@ impl App {
 
     /// The newly shown tab was not watched while hidden: restore its scroll and rescan it.
     fn tab_switched(&mut self, side: usize) -> Task<Message> {
-        let dir = self.panes[side].active().target();
-        Task::batch([self.restore_scroll(side), self.reload(side, dir, None)])
+        let t = self.panes[side].active();
+        let (dir, tab) = (t.target(), t.id);
+        // A hidden Brief tab missed the resizes: regroup its columns.
+        let reveal = if t.brief {
+            self.reveal(side, tab)
+        } else {
+            Task::none()
+        };
+        Task::batch([
+            reveal,
+            self.restore_scroll(side),
+            self.reload(side, dir, None),
+        ])
     }
 
     /// Scroll the pane's list to the active tab's stored offset.
@@ -4359,6 +4382,23 @@ mod tests {
         assert_eq!(app.panes[0].active().col, 0);
         let _ = app.update(Message::Key(Action::ViewFull));
         assert!(!app.panes[0].active().brief);
+    }
+
+    #[test]
+    fn brief_columns_follow_a_resize_and_touchpad_steps_add_up() {
+        let mut app = tall_list(100.0); // 4 rows
+        let _ = app.update(Message::Key(Action::ViewBrief));
+        let _ = app.update(Message::Key(Action::End)); // entry 20, column 5
+        assert_eq!(app.panes[0].active().col, 4);
+        // taller: 10 rows → 3 columns, both fit; the old first column would hide the cursor
+        let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 220.0)));
+        assert_eq!(app.panes[0].active().col, 1);
+        let px = |y| Message::BriefWheel(0, mouse::ScrollDelta::Pixels { x: 0.0, y });
+        let _ = app.update(px(5.0));
+        let _ = app.update(px(5.0));
+        assert_eq!(app.panes[0].active().col, 1); // 10 px: less than a row
+        let _ = app.update(px(15.0));
+        assert_eq!(app.panes[0].active().col, 0);
     }
 
     #[test]
