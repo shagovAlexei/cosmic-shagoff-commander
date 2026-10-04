@@ -4,11 +4,19 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 
 **Status:** early development. See [.claude/docs/ROADMAP.md](.claude/docs/ROADMAP.md).
 
+## Install
+
+A `.deb` for Pop!_OS 24.04 / Ubuntu 24.04 is attached to each [release](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases):
+
+```sh
+sudo apt install ./shagoff-commander_*_amd64.deb
+```
+
 ## Build
 
 ```sh
 just build-release
-sudo just install
+sudo just install   # or: just deb → target/deb/shagoff-commander_<version>_<arch>.deb
 ```
 
 ## License
