@@ -1084,6 +1084,8 @@ impl App {
             Message::ListerEncoding(e) => {
                 if let Some(l) = &mut self.lister {
                     l.set_encoding(e);
+                    // From hex it is now text: a hex offset points nowhere in it.
+                    return lister_scroll(l, 0.0, 0.0);
                 }
             }
             Message::ListerWrap => {

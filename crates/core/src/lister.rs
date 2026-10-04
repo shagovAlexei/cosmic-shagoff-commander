@@ -173,8 +173,8 @@ pub fn detect(name: &str, bytes: &[u8]) -> Mode {
     }
 }
 
-/// Byte ranges of the lines (without `\n` / `\r\n`), lines over `max_cols` chars split.
-// ponytail: wrap cuts at a char count, not at word boundaries or by cell width (CJK is two cells).
+/// Byte ranges of the lines (without `\n` / `\r\n`), lines wider than `max_cols` cells split.
+// ponytail: wrap cuts at the cell limit, not at word boundaries.
 pub fn lines(bytes: &[u8], max_cols: usize) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -198,16 +198,32 @@ pub fn lines(bytes: &[u8], max_cols: usize) -> Vec<Range<usize>> {
 
 /// Cut `s..e` every `max` chars, at char starts (UTF-8 continuation bytes never start a piece).
 fn split_long(bytes: &[u8], s: usize, e: usize, max: usize, out: &mut Vec<Range<usize>>) {
+    // Same cells as `line_text` / `width` draw: a tab is four, wide chars two, each invalid
+    // UTF-8 sequence one `�`.
     let mut from = s;
-    let mut chars = 0;
-    for (i, &b) in bytes.iter().enumerate().take(e).skip(s) {
-        if b & 0xC0 != 0x80 {
-            if chars == max {
-                out.push(from..i);
-                from = i;
-                chars = 0;
-            }
-            chars += 1;
+    let mut cells = 0;
+    let mut at = s;
+    let mut put = |i: usize, w: usize, from: &mut usize, cells: &mut usize| {
+        if *cells + w > max && *cells > 0 {
+            out.push(*from..i);
+            *from = i;
+            *cells = 0;
+        }
+        *cells += w;
+    };
+    for chunk in bytes[s..e].utf8_chunks() {
+        for (i, c) in chunk.valid().char_indices() {
+            let w = match c {
+                '\t' => 4,
+                c if wide(c) => 2,
+                _ => 1,
+            };
+            put(at + i, w, &mut from, &mut cells);
+        }
+        at += chunk.valid().len();
+        if !chunk.invalid().is_empty() {
+            put(at, 1, &mut from, &mut cells);
+            at += chunk.invalid().len();
         }
     }
     out.push(from..e);
@@ -351,6 +367,16 @@ mod tests {
         assert_eq!(shown, ["abc", "def", "g", "\u{fffd}\u{fffd}"]);
         let t = Text::new(&doc, Encoding::Cp1251, None);
         assert_eq!(line_text(t.bytes(&doc), &t.lines[1]), "Пр");
+        // tabs are four cells, a broken byte one `�`: wrapped by what is drawn
+        let tabs = Doc {
+            bytes: b"\ta\tb\xffcd".to_vec(),
+            decoded: None,
+            total: 7,
+        };
+        let t = Text::new(&tabs, Encoding::Auto, Some(5));
+        let shown: Vec<String> = t.lines.iter().map(|r| line_text(&tabs.bytes, r)).collect();
+        assert_eq!(shown, ["    a", "    b", "\u{fffd}cd"]);
+        assert!(t.cols <= 5);
         // a zero-width viewport must not loop forever
         assert_eq!(Text::new(&doc, Encoding::Auto, Some(0)).lines.len(), 9);
     }
