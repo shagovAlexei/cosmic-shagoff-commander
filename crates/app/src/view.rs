@@ -478,11 +478,18 @@ fn file_row<'a>(
     is_marked: bool,
 ) -> Element<'a, Message> {
     let is_parent = e.name == PARENT;
-    let size = match (e.is_dir(), app.config.skin) {
-        (true, _) => "<DIR>".to_string(),
-        (false, Skin::Classic) => format::size(e.size),
+    // A dir shows its size once Space counted it.
+    let bytes = if e.is_dir() {
+        app.panes[side].active().panel.dir_size(e)
+    } else {
+        Some(e.size)
+    };
+    let size = match (bytes, app.config.skin) {
+        (None, _) => "<DIR>".to_string(),
+        // The column fits "999 999 999"; above that "45,1 GB" (exact bytes in the status line).
+        (Some(b), Skin::Classic) if b < 1_000_000_000 => format::size(b),
         // Modern: "12,3 KB" — the exact bytes are in the status line.
-        (false, Skin::Modern) => human(e.size),
+        (Some(b), _) => human(b),
     };
     let (date, attrs) = if is_parent {
         (String::new(), String::new())

@@ -357,6 +357,8 @@ pub enum Message {
     PropsRecursive,
     /// id, usage counted in the background (`None` = stopped).
     PropsUsage(u64, Option<shagoff_core::props::Usage>),
+    /// Space on a dir counted it: (side, tab id, its parent, its name, bytes).
+    DirSize(usize, u64, PathBuf, OsString, u64),
     /// chmod finished: (side, what failed).
     PropsDone(usize, Vec<String>),
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
@@ -956,6 +958,15 @@ impl App {
             Message::PropsRecursive => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
                     p.recursive = !p.recursive;
+                }
+            }
+            Message::DirSize(side, tab, cwd, name, bytes) => {
+                if let Some(t) = self.panes[side]
+                    .items_mut()
+                    .iter_mut()
+                    .find(|t| t.id == tab)
+                {
+                    t.panel.set_dir_size(&cwd, name, bytes);
                 }
             }
             Message::PropsUsage(id, usage) => {
@@ -1821,7 +1832,42 @@ impl App {
                 }
             }
             Action::Root => return self.load(side, "/".into(), None),
-            Action::Mark => panel.toggle_mark(),
+            Action::Mark => {
+                panel.toggle_mark();
+                // TC: Space on a dir also counts its size (not in archives: not real dirs).
+                let dir = panel
+                    .current()
+                    .filter(|e| e.is_dir() && e.name != PARENT && panel.dir_size(e).is_none())
+                    .map(|e| (panel.cwd().to_path_buf(), e.os_name.clone()));
+                if let Some((cwd, name)) =
+                    dir.filter(|(cwd, n)| !loading && !inside_archive(&cwd.join(n)))
+                {
+                    let path = cwd.join(&name);
+                    let count = Task::perform(
+                        async move {
+                            // ponytail: never stopped; a huge tree keeps counting after leaving
+                            // the dir (the result is dropped), add a per-tab stop if it matters.
+                            let stop = AtomicBool::new(false);
+                            tokio::task::spawn_blocking(move || {
+                                shagoff_core::props::usage(&[path], &stop)
+                            })
+                            .await
+                            .ok()
+                            .flatten()
+                        },
+                        move |u| {
+                            cosmic::Action::App(Message::DirSize(
+                                side,
+                                tab,
+                                cwd.clone(),
+                                name.clone(),
+                                u.map_or(0, |u| u.bytes),
+                            ))
+                        },
+                    );
+                    return Task::batch([count, self.reveal(side, tab)]);
+                }
+            }
             Action::MarkDown => panel.toggle_mark_and_move(1),
             Action::MarkUp => panel.toggle_mark_and_move(-1),
             Action::Invert => panel.invert(),
@@ -5754,6 +5800,22 @@ mod tests {
         p.path = tmp.path().join("out/note.zip").display().to_string(); // an existing archive
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Pack));
+    }
+
+    #[test]
+    fn space_on_dir_marks_it_and_its_counted_size_goes_into_totals() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down)); // sub
+        let _ = app.update(Message::Key(Action::Mark));
+        let id = app.panes[0].active().id;
+        let msg = Message::DirSize(0, id, tmp.path().into(), "sub".into(), 4096);
+        let _ = app.update(msg);
+        let p = &app.panes[0].active().panel;
+        assert_eq!(p.marked_totals().bytes, 4096);
+        assert_eq!(p.dir_size(&p.entries()[1]), Some(4096));
     }
 
     #[test]

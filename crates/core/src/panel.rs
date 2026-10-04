@@ -2,7 +2,7 @@ use crate::listing::{Entry, Kind};
 use crate::mask::Mask;
 use crate::quicksearch;
 use crate::sort::{Sort, SortKey, sort_entries};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -32,6 +32,8 @@ pub struct Panel {
     all: Vec<Entry>,
     /// Quick filter (Ctrl+S); `None` = show everything.
     filter: Option<String>,
+    /// Dir sizes counted by Space, by real name; shown instead of `<DIR>`, until the dir changes.
+    dir_sizes: HashMap<OsString, u64>,
 }
 
 impl Panel {
@@ -45,6 +47,7 @@ impl Panel {
             marked: HashSet::new(),
             all: Vec::new(),
             filter: None,
+            dir_sizes: HashMap::new(),
         }
     }
 
@@ -88,6 +91,7 @@ impl Panel {
         if !same_dir {
             self.marked.clear();
             self.filter = None;
+            self.dir_sizes.clear();
         }
         self.cwd = cwd;
         self.all = entries;
@@ -146,7 +150,33 @@ impl Panel {
 
     pub fn totals(&self) -> Totals {
         let start = usize::from(self.parent_row());
-        sum(self.entries[start..].iter())
+        self.sum(self.entries[start..].iter())
+    }
+
+    /// Size counted by Space for a dir row, if any.
+    pub fn dir_size(&self, e: &Entry) -> Option<u64> {
+        self.dir_sizes.get(&e.os_name).copied()
+    }
+
+    /// Counted dir sizes go into the bytes, as in TC.
+    fn sum<'a>(&self, entries: impl Iterator<Item = &'a Entry>) -> Totals {
+        entries.fold(Totals::default(), |mut t, e| {
+            if e.is_dir() {
+                t.dirs += 1;
+                t.bytes += self.dir_size(e).unwrap_or(0);
+            } else {
+                t.files += 1;
+                t.bytes += e.size;
+            }
+            t
+        })
+    }
+
+    /// A Space count finished: kept only if the panel still shows `cwd`.
+    pub fn set_dir_size(&mut self, cwd: &Path, name: OsString, bytes: u64) {
+        if cwd == self.cwd {
+            self.dir_sizes.insert(name, bytes);
+        }
     }
 
     pub fn is_marked(&self, e: &Entry) -> bool {
@@ -211,7 +241,7 @@ impl Panel {
     }
 
     pub fn marked_totals(&self) -> Totals {
-        sum(self.entries.iter().filter(|e| self.is_marked(e)))
+        self.sum(self.entries.iter().filter(|e| self.is_marked(e)))
     }
 
     /// What an operation acts on: marked entries (in list order), else the row under the cursor; never `..`.
@@ -299,18 +329,6 @@ impl Panel {
 /// `a.rs` (a plain dir listing never has `/` in a name).
 fn base(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
-}
-
-fn sum<'a>(entries: impl Iterator<Item = &'a Entry>) -> Totals {
-    entries.fold(Totals::default(), |mut t, e| {
-        if e.is_dir() {
-            t.dirs += 1;
-        } else {
-            t.files += 1;
-            t.bytes += e.size;
-        }
-        t
-    })
 }
 
 fn parent_entry() -> Entry {
@@ -747,6 +765,20 @@ mod tests {
                 dirs: 1
             }
         );
+    }
+
+    #[test]
+    fn counted_dir_sizes_show_in_totals_until_the_dir_changes() {
+        let mut p = loaded("/x", vec![d("sub"), f("a", 10)]);
+        p.set_dir_size(Path::new("/y"), "sub".into(), 5); // stale: other dir
+        assert_eq!(p.totals().bytes, 10);
+        p.set_dir_size(Path::new("/x"), "sub".into(), 1000);
+        assert_eq!(p.dir_size(&p.entries()[1]), Some(1000));
+        assert_eq!(p.totals().bytes, 1010);
+        p.set_listing("/x".into(), vec![d("sub"), f("a", 10)], None); // rescan keeps it
+        assert_eq!(p.totals().bytes, 1010);
+        p.set_listing("/z".into(), vec![d("sub")], None);
+        assert_eq!(p.dir_size(&p.entries()[1]), None);
     }
 
     #[test]
