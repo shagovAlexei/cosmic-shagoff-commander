@@ -31,7 +31,7 @@ install:
     install -Dm0644 res/icons/{{appid}}.svg {{dest}}/share/icons/hicolor/scalable/apps/{{appid}}.svg
 
 uninstall:
-    rm -f {{dest}}/bin/{{name}} {{prefix}}/share/applications/{{appid}}.desktop {{prefix}}/share/metainfo/{{appid}}.metainfo.xml {{prefix}}/share/icons/hicolor/scalable/apps/{{appid}}.svg
+    rm -f {{dest}}/bin/{{name}} {{dest}}/share/applications/{{appid}}.desktop {{dest}}/share/metainfo/{{appid}}.metainfo.xml {{dest}}/share/icons/hicolor/scalable/apps/{{appid}}.svg
 
 # .deb for Debian / Ubuntu / Pop!_OS into target/deb/ (dpkg-deb; library deps from dpkg-shlibdeps)
 deb: (build-release '--locked')
