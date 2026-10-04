@@ -101,7 +101,7 @@ impl Panel {
             Some(f) => self
                 .all
                 .iter()
-                .filter(|e| quicksearch::matches(f, &e.name))
+                .filter(|e| quicksearch::matches(f, base(&e.name)))
                 .cloned()
                 .collect(),
             None => self.all.clone(),
@@ -176,7 +176,7 @@ impl Panel {
         for e in self
             .entries
             .iter()
-            .filter(|e| !e.is_dir() && mask.matches(&e.name))
+            .filter(|e| !e.is_dir() && mask.matches(base(&e.name)))
         {
             if on {
                 self.marked.insert(e.os_name.clone());
@@ -271,7 +271,7 @@ impl Panel {
                     (from % n + n - k) % n
                 }
             })
-            .find(|&i| quicksearch::matches(pattern, &self.entries[i].name))
+            .find(|&i| quicksearch::matches(pattern, base(&self.entries[i].name)))
     }
 
     pub fn filter(&self) -> Option<&str> {
@@ -293,6 +293,12 @@ impl Panel {
     fn parent_row(&self) -> bool {
         self.entries.first().is_some_and(|e| e.name == PARENT)
     }
+}
+
+/// The file's own name: search results show `sub/a.rs`, but quick search, filter and masks go by
+/// `a.rs` (a plain dir listing never has `/` in a name).
+fn base(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
 }
 
 fn sum<'a>(entries: impl Iterator<Item = &'a Entry>) -> Totals {
@@ -371,6 +377,19 @@ mod tests {
         let mut p = Panel::new(PathBuf::from(cwd));
         p.set_listing(PathBuf::from(cwd), entries, None);
         p
+    }
+
+    #[test]
+    fn regression_search_results_match_by_file_name() {
+        // "To panel" rows are paths below the searched dir
+        let mut p = loaded("/r", vec![f("src/app.rs", 1), f("lib/sub.txt", 1)]);
+        // sorted: ".." , "lib/sub.txt", "src/app.rs"
+        assert_eq!(p.find("a", 0, true), Some(2)); // app.rs
+        assert_eq!(p.find("s", 2, true), Some(1)); // sub.txt, not "src/…"
+        p.mark_by_mask(&Mask::parse("s*"), true);
+        assert_eq!(p.marked_totals().files, 1);
+        p.set_filter(Some("app".into()));
+        assert_eq!(names(&p), ["..", "src/app.rs"]);
     }
 
     fn three() -> Panel {

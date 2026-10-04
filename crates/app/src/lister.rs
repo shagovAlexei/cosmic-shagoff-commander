@@ -74,6 +74,8 @@ pub struct Lister {
     pub width: f32,
     /// A / S / K / 8 and `W`: kept when N / P open the next file.
     pub encoding: Encoding,
+    /// The encoding was picked by hand: kept for the next file; a guessed one is guessed again.
+    chosen: bool,
     pub wrap: bool,
     /// Text for another encoding or wrapping, rebuilt from the file's bytes; `None` = `Loaded::text`.
     // ponytail: rebuilt on the UI thread (a 32 MB file takes a moment); spawn_blocking if it shows.
@@ -99,6 +101,7 @@ impl Lister {
             height: 400.0,
             width: 800.0,
             encoding: Encoding::Auto,
+            chosen: false,
             wrap: false,
             text: None,
             hit: None,
@@ -113,7 +116,12 @@ impl Lister {
     pub fn reopen(&mut self, name: String, id: u64) {
         let query = std::mem::take(&mut self.query);
         let (scroll, input, height) = (self.scroll.clone(), self.input.clone(), self.height);
-        let (width, encoding, wrap) = (self.width, self.encoding, self.wrap);
+        let (width, chosen, wrap) = (self.width, self.chosen, self.wrap);
+        let encoding = if chosen {
+            self.encoding
+        } else {
+            Encoding::Auto
+        };
         *self = Self {
             query,
             scroll,
@@ -121,6 +129,7 @@ impl Lister {
             height,
             width,
             encoding,
+            chosen,
             wrap,
             ..Self::new(self.side, name, id)
         };
@@ -133,6 +142,10 @@ impl Lister {
     pub fn set_loaded(&mut self, loaded: Arc<Result<Loaded, String>>) {
         if let Ok(l) = loaded.as_ref() {
             self.mode = lister::detect(&self.name, l.doc.text());
+            // Not UTF-8: guess the Cyrillic code page, unless one was chosen (A / S / K).
+            if self.mode == Mode::Text && !self.chosen {
+                self.encoding = lister::guess(&l.doc.bytes);
+            }
         }
         self.loaded = Some(loaded);
         self.retext();
@@ -164,6 +177,7 @@ impl Lister {
     /// A / S / K / 8: show the text in `enc` (switches hex to text, as TC does).
     pub fn set_encoding(&mut self, enc: Encoding) {
         self.encoding = enc;
+        self.chosen = true;
         self.retext();
         self.set_mode(Mode::Text);
     }
@@ -503,6 +517,31 @@ mod tests {
         l.toggle_wrap();
         l.set_encoding(Encoding::Auto);
         assert!(l.text.is_none());
+    }
+
+    #[test]
+    fn a_cp1251_file_opens_decoded() {
+        let mut l = Lister::new(0, "a.txt".into(), 1);
+        let doc = Doc {
+            bytes: b"\xcf\xf0\xe8\xe2\xe5\xf2".to_vec(), // "Привет" in 1251
+            decoded: None,
+            total: 6,
+        };
+        let text = Text::new(&doc, Encoding::Auto, None);
+        l.set_loaded(Arc::new(Ok(Loaded {
+            doc,
+            text,
+            image: None,
+        })));
+        assert_eq!(l.encoding, Encoding::Cp1251);
+        let (doc, t) = l.text().unwrap();
+        assert_eq!(lister::line_text(t.bytes(doc), &t.lines[0]), "Привет");
+        // a guess is not carried to the next file; a choice is
+        l.reopen("b.txt".into(), 2);
+        assert_eq!(l.encoding, Encoding::Auto);
+        l.set_encoding(Encoding::Koi8r);
+        l.reopen("c.txt".into(), 3);
+        assert_eq!(l.encoding, Encoding::Koi8r);
     }
 
     #[test]

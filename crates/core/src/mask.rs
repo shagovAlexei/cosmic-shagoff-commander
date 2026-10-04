@@ -8,7 +8,13 @@ pub struct Mask {
 
 impl Mask {
     pub fn parse(s: &str) -> Self {
-        let (inc, exc) = s.split_once('|').unwrap_or((s, ""));
+        // The first `|` outside quotes starts the exclusions.
+        let mut quoted = false;
+        let bar = s.char_indices().find(|&(_, c)| {
+            quoted ^= c == '"';
+            c == '|' && !quoted
+        });
+        let (inc, exc) = bar.map_or((s, ""), |(i, _)| (&s[..i], &s[i + 1..]));
         let split = |part: &str| -> Vec<String> {
             tokens(part)
                 .into_iter()
@@ -39,7 +45,7 @@ fn tokens(s: &str) -> Vec<String> {
     for c in s.chars() {
         match c {
             '"' => quoted = !quoted,
-            ';' => out.push(std::mem::take(&mut cur)),
+            ';' if !quoted => out.push(std::mem::take(&mut cur)),
             c if c.is_whitespace() && !quoted => out.push(std::mem::take(&mut cur)),
             c => cur.push(c),
         }
@@ -76,6 +82,15 @@ pub(crate) fn glob(pattern: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_separators_inside_quotes_are_literal() {
+        assert!(m("\"a;b*\"", "a;b.txt"));
+        assert!(!m("\"a;b*\"", "b.txt"));
+        assert!(m("\"x|y\"", "x|y"));
+        assert!(!m("*|\"x|y\"", "x|y"));
+        assert!(m("*|\"x|y\"", "x"));
+    }
 
     fn m(mask: &str, name: &str) -> bool {
         Mask::parse(mask).matches(name)
