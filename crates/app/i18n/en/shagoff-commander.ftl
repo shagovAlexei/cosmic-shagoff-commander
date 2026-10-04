@@ -359,6 +359,7 @@ tab-last = The panel's last tab cannot be moved
 
 # Alt+Enter
 menu-properties = Properties…
+menu-count-dirs = Count folder sizes
 props-title = Properties
 props-name = Name
 props-selected = Selected
