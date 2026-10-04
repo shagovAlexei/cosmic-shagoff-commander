@@ -37,8 +37,6 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let tabs = &app.panes[side];
     let p = tabs.active();
     let active = app.active == side;
-    let entries = p.panel.entries();
-    let cursor = p.panel.cursor();
 
     let title = match &p.results {
         Some(_) => fl!("find-results", dir = p.panel.cwd().display().to_string()),
@@ -49,6 +47,30 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .width(Length::Fill)
         .class(bar_style(active));
 
+    let list = if p.brief {
+        brief_list(side, p, active)
+    } else {
+        full_list(app, side, p, active)
+    };
+    // on_scroll misses window resizes: the sensor reports the list's real size.
+    let list = cosmic::iced::widget::sensor(list)
+        .on_show(move |size| Message::Resized(side, size))
+        .on_resize(move |size| Message::Resized(side, size));
+
+    let mut col = column![drive_bar(app, side)];
+    if tabs.items().len() > 1 {
+        col = col.push(tab_bar(side, tabs, active));
+    }
+    col.push(path)
+        .push(header(side, p.panel.sort()))
+        .push(list)
+        .width(Length::Fill)
+        .into()
+}
+
+/// Full view: virtualized rows in a vertical scrollable.
+fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
+    let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
     let range = viewport::visible_range(entries.len(), ROW_H, p.offset, p.height);
     let mut list = column![widget::Space::new().height(range.start as f32 * ROW_H)];
     for i in range.clone() {
@@ -63,23 +85,57 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         ));
     }
     list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * ROW_H));
-    let list = scrollable(list)
+    scrollable(list)
         .id(app.scroll_ids[side].clone())
         .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
-        .height(Length::Fill);
-    // on_scroll misses window resizes: the sensor reports the list's real height.
-    let list = cosmic::iced::widget::sensor(list)
-        .on_show(move |size| Message::Resized(side, size.height))
-        .on_resize(move |size| Message::Resized(side, size.height));
+        .height(Length::Fill)
+        .into()
+}
 
-    let mut col = column![drive_bar(app, side)];
-    if tabs.items().len() > 1 {
-        col = col.push(tab_bar(side, tabs, active));
+/// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
+fn brief_list<'a>(side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
+    let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
+    let (rows, cols) = p.brief_grid();
+    let mut grid = row![].spacing(2);
+    for c in p.col..p.col + cols {
+        let mut list = column![];
+        for (i, e) in entries.iter().enumerate().skip(c * rows).take(rows) {
+            let label = if e.is_dir() {
+                format::display_name(e)
+            } else {
+                e.name.clone()
+            };
+            let cell = container(name_cell(e, label))
+                .padding([0, 6])
+                .height(Length::Fixed(ROW_H))
+                .width(Length::Fill)
+                .clip(true)
+                .class(cursor_style(i == cursor, active, p.panel.is_marked(e)));
+            list = list.push(
+                mouse_area(cell)
+                    .on_press(Message::Click(side, i))
+                    .on_double_click(Message::DoubleClick(side, i)),
+            );
+        }
+        grid = grid.push(container(list).width(Length::FillPortion(1)).clip(true));
     }
-    col.push(path)
-        .push(header(side, p.panel.sort()))
-        .push(list)
-        .width(Length::Fill)
+    mouse_area(container(grid).width(Length::Fill).height(Length::Fill))
+        .on_scroll(move |d| Message::BriefWheel(side, d))
+        .into()
+}
+
+/// Theme icon by type, then the name (cut with "…").
+fn name_cell(e: &Entry, label: String) -> Element<'static, Message> {
+    let (name, generic) = format::icon_name(e);
+    let icon = widget::icon::from_name(name)
+        .fallback(Some(widget::icon::IconFallback::Names(vec![
+            generic.into(),
+        ])))
+        .size(16)
+        .icon();
+    row![icon, cell(label)]
+        .spacing(4)
+        .align_y(Alignment::Center)
         .into()
 }
 
@@ -185,7 +241,7 @@ fn file_row<'a>(
         (format::date(e.mtime, &app.tz), format::perms(e.mode))
     };
     let cells = row![
-        cell(format::display_name(e)).width(Length::Fill),
+        container(name_cell(e, format::display_name(e))).width(Length::Fill),
         cell(e.ext.clone()).width(Length::Fixed(W_EXT)),
         cell(size)
             .width(Length::Fixed(W_SIZE))

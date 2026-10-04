@@ -181,6 +181,8 @@ menu-sort-name = Сортировать по имени
 menu-sort-ext = Сортировать по типу
 menu-sort-date = Сортировать по дате
 menu-sort-size = Сортировать по размеру
+menu-brief = Кратко (Brief)
+menu-full = Подробно
 
 # Справка, о программе, настройки (18)
 fkey-help = F1 Справка
@@ -212,6 +214,7 @@ help-archive-enter = Архив открывается как папка (тол
 help-search = Поиск и сравнение
 help-tabs = Вкладки
 help-next-tab = Следующая / предыдущая вкладка
+help-brief-cols = Вид Brief: предыдущая / следующая колонка
 help-drives = Диски и сеть
 help-show = Вид
 help-window = Окно

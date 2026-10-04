@@ -12,7 +12,7 @@ use cosmic::app::{Core, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
-use cosmic::iced::{Subscription, event, keyboard};
+use cosmic::iced::{Size, Subscription, event, keyboard, mouse};
 use cosmic::{Application, Element, widget};
 use shagoff_core::archive::{self, Format};
 use shagoff_core::clipboard::Kind as ClipKind;
@@ -44,6 +44,7 @@ pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
 pub const ROW_H: f32 = 22.0;
 // ponytail: list height is guessed until the scrollable reports its bounds (it does on the first event).
 const FALLBACK_LIST_H: f32 = 400.0;
+const FALLBACK_LIST_W: f32 = 500.0;
 
 pub struct Flags {
     pub left: Option<PathBuf>,
@@ -55,6 +56,11 @@ pub struct Tab {
     pub panel: Panel,
     pub offset: f32,
     pub height: f32,
+    pub width: f32,
+    /// Ctrl+F1 Brief view (names in columns) instead of Full.
+    pub brief: bool,
+    /// Brief view: first column on screen.
+    pub col: usize,
     /// Generation and path of the scan in flight; any other result is stale.
     pub(crate) pending: Option<(u64, PathBuf)>,
     pub error: Option<String>,
@@ -75,6 +81,9 @@ impl Tab {
             panel: Panel::new(cwd),
             offset: 0.0,
             height: FALLBACK_LIST_H,
+            width: FALLBACK_LIST_W,
+            brief: false,
+            col: 0,
             pending: None,
             error: None,
             history: History::default(),
@@ -92,6 +101,14 @@ impl Tab {
         } else {
             name
         }
+    }
+
+    /// Brief view: (rows per column, columns on screen).
+    pub fn brief_grid(&self) -> (usize, usize) {
+        (
+            viewport::brief_rows(ROW_H, self.height),
+            viewport::brief_cols(self.width),
+        )
     }
 
     /// Where the tab is going: the dir being scanned, else the shown one. Rescans use this so they
@@ -115,6 +132,9 @@ impl Tab {
             },
             offset: self.offset,
             height: self.height,
+            width: self.width,
+            brief: self.brief,
+            col: self.col,
             pending: None,
             error: None,
             history: self.history.clone(),
@@ -269,8 +289,10 @@ pub enum Message {
     Header(usize, SortKey),
     /// side, scroll offset y, viewport height (of the active tab)
     Scrolled(usize, f32, f32),
-    /// side, real viewport height of the pane's list (from a sensor: on_scroll misses resizes)
-    Resized(usize, f32),
+    /// side, real size of the pane's list (from a sensor: on_scroll misses resizes)
+    Resized(usize, Size),
+    /// side, mouse wheel over a Brief list: one column per notch
+    BriefWheel(usize, mouse::ScrollDelta),
     SelectTab(usize, usize),
     CloseTabAt(usize, usize),
     Modifiers(Modifiers),
@@ -549,6 +571,7 @@ impl App {
             tabs.select(active);
             for (i, t) in tabs.items_mut().iter_mut().enumerate() {
                 t.locked = locked(i);
+                t.brief = saved.brief.get(i).copied().unwrap_or(false);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
             }
             if let Some(l) = extra {
@@ -737,16 +760,32 @@ impl App {
                 t.offset = offset;
                 t.height = height;
             }
-            Message::Resized(side, height) => {
-                // One list widget per pane: every tab shares its viewport height.
-                let shrunk = height < self.panes[side].active().height;
+            Message::Resized(side, size) => {
+                // One list widget per pane: every tab shares its viewport size.
+                let t = self.panes[side].active();
+                let shrunk = size.height < t.height || (t.brief && size.width < t.width);
                 for t in self.panes[side].items_mut() {
-                    t.height = height;
+                    (t.width, t.height) = (size.width, size.height);
                 }
                 if shrunk {
                     let tab = self.panes[side].active().id;
                     return self.reveal(side, tab); // keep the cursor on screen
                 }
+            }
+            Message::BriefWheel(side, delta) => {
+                let y = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => y,
+                };
+                let t = self.panes[side].active_mut();
+                let (rows, cols) = t.brief_grid();
+                let last = t.panel.entries().len().div_ceil(rows).saturating_sub(cols);
+                t.col = if y > 0.0 {
+                    t.col.saturating_sub(1)
+                } else if y < 0.0 {
+                    (t.col + 1).min(last)
+                } else {
+                    t.col
+                };
             }
             Message::SelectTab(side, i) => {
                 self.search = None;
@@ -1003,9 +1042,6 @@ impl App {
                     ListerKey::Next => self.lister_step(true),
                     ListerKey::Prev => self.lister_step(false),
                     ListerKey::Close => self.handle(Message::ListerClose),
-                    ListerKey::Left | ListerKey::Right => {
-                        self.lister_scroll_x(k == ListerKey::Right)
-                    }
                     ListerKey::FindPrev => self.lister_find(false, true),
                 };
             }
@@ -1381,6 +1417,7 @@ impl App {
                     .collect(),
                 active: self.panes[s].active_index(),
                 locked: self.panes[s].items().iter().map(|t| t.locked).collect(),
+                brief: self.panes[s].items().iter().map(|t| t.brief).collect(),
                 names: (self.panes[s].items().iter())
                     .map(|t| t.name.clone().unwrap_or_default())
                     .collect(),
@@ -1559,7 +1596,13 @@ impl App {
             };
         }
         let t = self.panes[side].active_mut();
-        let page = viewport::page_rows(ROW_H, t.height) as isize;
+        let (rows, cols) = t.brief_grid();
+        let (brief, rows) = (t.brief, rows as isize);
+        let page = if brief {
+            rows * cols as isize
+        } else {
+            viewport::page_rows(ROW_H, t.height) as isize
+        };
         let tab = t.id;
         let target = t.target();
         let loading = target != t.panel.cwd();
@@ -1571,6 +1614,14 @@ impl App {
             }
             Action::Up => panel.move_cursor(-1),
             Action::Down => panel.move_cursor(1),
+            Action::Left if brief => panel.move_cursor(-rows),
+            Action::Right if brief => panel.move_cursor(rows),
+            Action::Left | Action::Right => {}
+            Action::ViewBrief | Action::ViewFull => {
+                let t = self.panes[side].active_mut();
+                t.brief = action == Action::ViewBrief;
+                return Task::batch([self.reveal(side, tab), self.restore_scroll(side)]);
+            }
             Action::PageUp => panel.move_cursor(-page),
             Action::PageDown => panel.move_cursor(page),
             Action::Home => panel.cursor_home(),
@@ -2778,6 +2829,10 @@ impl App {
 
     /// Keys while the viewer is open; `None`: not the viewer's (help, settings…), act as usual.
     fn lister_action(&mut self, action: Action) -> Option<Task<Message>> {
+        if matches!(action, Action::Left | Action::Right) {
+            self.lister.as_ref()?;
+            return Some(self.lister_scroll_x(action == Action::Right));
+        }
         let l = self.lister.as_deref_mut()?;
         Some(match action {
             Action::Help | Action::About | Action::Settings | Action::Donate => return None,
@@ -3001,6 +3056,12 @@ impl App {
         else {
             return Task::none();
         };
+        if t.brief {
+            let (rows, cols) = t.brief_grid();
+            let len = t.panel.entries().len();
+            t.col = viewport::brief_first_col(len, t.panel.cursor(), rows, cols, t.col);
+            return Task::none();
+        }
         match viewport::scroll_to_cursor(t.panel.cursor(), ROW_H, t.offset, t.height) {
             Some(y) => {
                 t.offset = y;
@@ -4214,6 +4275,20 @@ mod tests {
     }
 
     #[test]
+    fn regression_viewer_arrows_scroll_sideways() {
+        // ← / → are Brief keys in the main table now; the viewer still takes them.
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        lister_loaded(&mut app, tmp.path());
+        let _ = app.update(Message::ListerKey(ListerKey::Mode(Mode::Hex)));
+        let _ = app.update(Message::Key(Action::Right));
+        assert!(app.lister.as_ref().unwrap().offset.0 > 0.0);
+        let _ = app.update(Message::Key(Action::Left));
+        assert_eq!(app.lister.as_ref().unwrap().offset.0, 0.0);
+        assert_eq!(app.panes[0].active().panel.cursor(), 2); // still on a.txt
+    }
+
+    #[test]
     fn viewer_modes_and_search() {
         let (mut app, tmp) = lister_app(Config::default());
         let _ = app.update(Message::Key(Action::View));
@@ -4252,8 +4327,38 @@ mod tests {
             result: Ok(entries),
             space: None,
         });
-        let _ = app.update(Message::Resized(0, height));
+        let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, height)));
         app
+    }
+
+    #[test]
+    fn brief_view_moves_by_columns() {
+        // ".." + 20 files; 100 px = 4 rows, 500 px = 2 columns on screen
+        let mut app = tall_list(100.0);
+        let cur = |app: &App| app.panes[0].active().panel.cursor();
+        let _ = app.update(Message::Key(Action::Right));
+        assert_eq!(cur(&app), 0); // Full view: ← / → do nothing
+        let _ = app.update(Message::Key(Action::ViewBrief));
+        assert!(app.panes[0].active().brief);
+        let _ = app.update(Message::Key(Action::Right));
+        assert_eq!(cur(&app), 4);
+        let _ = app.update(Message::Key(Action::PageDown));
+        assert_eq!(cur(&app), 12);
+        let _ = app.update(Message::Key(Action::Left));
+        assert_eq!(cur(&app), 8);
+        let _ = app.update(Message::Key(Action::End));
+        let _ = app.update(Message::Key(Action::Right));
+        assert_eq!(cur(&app), 20);
+        assert_eq!(app.panes[0].active().col, 4); // 6 columns, the last two on screen
+        let _ = app.update(Message::BriefWheel(
+            0,
+            mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+        ));
+        assert_eq!(app.panes[0].active().col, 3);
+        let _ = app.update(Message::Key(Action::Home));
+        assert_eq!(app.panes[0].active().col, 0);
+        let _ = app.update(Message::Key(Action::ViewFull));
+        assert!(!app.panes[0].active().brief);
     }
 
     #[test]
@@ -4268,7 +4373,7 @@ mod tests {
     fn regression_shrinking_window_keeps_cursor_visible() {
         let mut app = tall_list(400.0);
         let _ = app.update(Message::Click(0, 10));
-        let _ = app.update(Message::Resized(0, 100.0)); // window got smaller
+        let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 100.0))); // window got smaller
         let t = app.panes[0].active();
         assert!(t.offset + t.height >= 11.0 * ROW_H, "offset {}", t.offset);
     }
@@ -4286,7 +4391,7 @@ mod tests {
         // One scrollable per pane: hidden tabs must not keep a stale height.
         let mut app = tall_list(400.0);
         let _ = app.update(Message::Key(Action::NewTab));
-        let _ = app.update(Message::Resized(0, 150.0));
+        let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 150.0)));
         assert!(app.panes[0].items().iter().all(|t| t.height == 150.0));
     }
 
@@ -6574,6 +6679,19 @@ mod tests {
             );
             assert!(app.panes[0].items()[0].locked);
             assert_eq!(app.panes[0].active_index(), 1);
+        }
+
+        #[test]
+        fn brief_view_survives_a_restart() {
+            let (_tmp, mut app) = setup();
+            key(&mut app, Action::NewTab);
+            key(&mut app, Action::ViewBrief);
+            app.save_state();
+            let state = app.saved.clone();
+            assert_eq!(state.panes[0].brief, [false, true]);
+            let app = app_with(Config::default(), state);
+            let brief: Vec<bool> = app.panes[0].items().iter().map(|t| t.brief).collect();
+            assert_eq!(brief, [false, true]);
         }
 
         #[test]

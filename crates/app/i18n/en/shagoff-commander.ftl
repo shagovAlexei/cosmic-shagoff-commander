@@ -180,6 +180,8 @@ menu-sort-name = Sort by name
 menu-sort-ext = Sort by extension
 menu-sort-date = Sort by date
 menu-sort-size = Sort by size
+menu-brief = Brief
+menu-full = Full
 
 # Help, about, settings (18)
 fkey-help = F1 Help
@@ -211,6 +213,7 @@ help-archive-enter = An archive opens like a folder (read-only)
 help-search = Search and compare
 help-tabs = Tabs
 help-next-tab = Next / previous tab
+help-brief-cols = Brief view: previous / next column
 help-drives = Drives and network
 help-show = View
 help-window = Window
