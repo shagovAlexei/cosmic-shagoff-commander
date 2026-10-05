@@ -1540,15 +1540,8 @@ impl App {
                 }
             }
             Message::ColDragEnd => {
-                if self.col_drag.take().is_some() && self.cols != self.config.columns {
-                    match &self.config_handler {
-                        Some(h) => {
-                            if let Err(e) = self.config.set_columns(h, self.cols) {
-                                log::warn!("config: {e}");
-                            }
-                        }
-                        None => self.config.columns = self.cols,
-                    }
+                if self.col_drag.take().is_some() {
+                    self.save_columns();
                 }
             }
             Message::PathPart(side, path) => {
@@ -1999,6 +1992,11 @@ impl App {
             Action::Left if brief => panel.move_cursor(-rows),
             Action::Right if brief => panel.move_cursor(rows),
             Action::Left | Action::Right => {}
+            Action::ResetColumns => {
+                self.cols = Config::default().columns;
+                self.save_columns();
+                return Task::none();
+            }
             Action::ViewBrief | Action::ViewFull => {
                 let t = self.panes[side].active_mut();
                 t.brief = action == Action::ViewBrief;
@@ -3971,6 +3969,21 @@ impl App {
         }
     }
 
+    /// The widths on screen into the config, if they changed.
+    fn save_columns(&mut self) {
+        if self.cols == self.config.columns {
+            return;
+        }
+        match &self.config_handler {
+            Some(h) => {
+                if let Err(e) = self.config.set_columns(h, self.cols) {
+                    log::warn!("config: {e}");
+                }
+            }
+            None => self.config.columns = self.cols,
+        }
+    }
+
     fn save_hotlist(&mut self, list: Vec<HotEntry>) {
         match &self.config_handler {
             Some(h) => {
@@ -5534,6 +5547,19 @@ mod tests {
         let _ = app.update(Message::ColDragEnd);
         assert_eq!(app.config.columns[1], before[1] + 30.0);
         assert!(app.col_drag.is_none());
+    }
+
+    #[test]
+    fn reset_columns_restores_and_saves_the_defaults() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::ColDragStart(0, 2));
+        let _ = app.update(Message::ColDrag(0.0));
+        let _ = app.update(Message::ColDrag(40.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_ne!(app.config.columns, Config::default().columns);
+        let _ = app.update(Message::Key(Action::ResetColumns));
+        assert_eq!(app.cols, Config::default().columns);
+        assert_eq!(app.config.columns, Config::default().columns);
     }
 
     #[test]

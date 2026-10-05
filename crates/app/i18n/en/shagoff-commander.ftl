@@ -211,6 +211,7 @@ menu-sort-date = Sort by date
 menu-sort-size = Sort by size
 menu-brief = Brief
 menu-full = Full
+menu-reset-columns = Reset column widths
 
 # Help, about, settings (18)
 fkey-help = F1 Help

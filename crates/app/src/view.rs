@@ -513,6 +513,7 @@ fn header(side: usize, sort: Sort, skin: Skin, w: [f32; 4]) -> Element<'static, 
                 )
                 .interaction(cosmic::iced::mouse::Interaction::ResizingHorizontally)
                 .on_press(Message::ColDragStart(side, i))
+                .on_double_click(Message::PaneKey(side, Action::ResetColumns))
                 .into(),
             );
         }
