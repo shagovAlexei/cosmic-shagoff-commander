@@ -87,6 +87,14 @@ pub struct Lister {
     pub searching: bool,
     pub scroll: widget::Id,
     pub input: widget::Id,
+    /// Mouse selection (TC Lister): dragged, Shift+click extends, Ctrl+A all, Ctrl+C copies.
+    pub sel: Option<lister::Selection>,
+    /// The button is down over the text: moves extend the selection.
+    pub dragging: bool,
+    /// Last pointer position over the text, in viewport pixels; `None` until a move over it
+    /// (the move that enters the area is not reported, so a quick press would start at a stale
+    /// spot: then the first move while pressed sets where the selection starts).
+    pub pointer: Option<(f32, f32)>,
 }
 
 impl Lister {
@@ -105,6 +113,9 @@ impl Lister {
             wrap: false,
             text: None,
             hit: None,
+            sel: None,
+            dragging: false,
+            pointer: None,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -172,6 +183,7 @@ impl Lister {
             _ => None,
         };
         self.hit = None;
+        self.sel = None; // rows changed under it
     }
 
     /// A / S / K / 8: show the text in `enc` (switches hex to text, as TC does).
@@ -207,6 +219,7 @@ impl Lister {
         if mode != Mode::Image || self.ok().is_some_and(|l| l.image.is_some()) {
             self.mode = mode;
             self.hit = None;
+            self.sel = None;
         }
     }
 
@@ -271,6 +284,43 @@ impl Lister {
         self.hit = Some(row);
         // A couple of rows of context above the match.
         Some(row.saturating_sub(2) as f32 * ROW_H)
+    }
+
+    /// The text position under the pointer (the view's scroll offset added).
+    pub fn pointer_pos(&self) -> Option<lister::Pos> {
+        let (x, y) = self.pointer?;
+        Some(lister::pos_at(
+            x + self.offset.0,
+            y + self.offset.1,
+            ROW_H,
+            MONO_W,
+            self.rows(),
+        ))
+    }
+
+    /// Ctrl+A: every row.
+    pub fn select_all(&mut self) {
+        let Some((doc, txt)) = self.text() else {
+            return;
+        };
+        let last = self.rows().saturating_sub(1);
+        let len = if self.rows() == 0 {
+            0
+        } else {
+            self.row_text(doc, txt, last).chars().count()
+        };
+        self.sel = Some(lister::Selection {
+            anchor: (0, 0),
+            head: (last, len),
+        });
+    }
+
+    /// Ctrl+C: the selected text, rows as shown (a wrapped line's parts each on a line).
+    // ponytail: wrapped rows are joined with newlines too; join a line's parts if it matters.
+    pub fn selected_text(&self) -> Option<String> {
+        let sel = self.sel.filter(|s| !s.is_empty())?;
+        let (doc, txt) = self.text()?;
+        Some(sel.text(|i| self.row_text(doc, txt, i)))
     }
 
     fn row_text(&self, doc: &Doc, text: &Text, i: usize) -> String {
@@ -401,10 +451,28 @@ fn content(l: &Lister) -> Element<'_, Message> {
             .width(width)
             .height(Length::Fixed(range.start as f32 * ROW_H)),
     );
-    for i in range.clone() {
-        let text = widget::text(l.row_text(doc, txt, i))
+    let mono = |s: String| {
+        widget::text(s)
             .font(cosmic::font::mono())
-            .wrapping(Wrapping::None);
+            .wrapping(Wrapping::None)
+    };
+    for i in range.clone() {
+        let line = l.row_text(doc, txt, i);
+        let picked = l.sel.and_then(|s| s.in_row(i, line.chars().count()));
+        let text: Element<'_, Message> = match picked {
+            Some(c) => {
+                // Char columns to byte offsets.
+                let byte = |n: usize| line.char_indices().nth(n).map_or(line.len(), |(b, _)| b);
+                let (a, b) = (byte(c.start), byte(c.end));
+                row![
+                    mono(line[..a].to_string()),
+                    widget::container(mono(line[a..b].to_string())).class(hit_style(true)),
+                    mono(line[b..].to_string()),
+                ]
+                .into()
+            }
+            None => mono(line).into(),
+        };
         let hit = l.hit == Some(i);
         list = list.push(
             widget::container(text)
@@ -431,9 +499,16 @@ fn content(l: &Lister) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill);
     // on_scroll misses window resizes.
-    cosmic::iced::widget::sensor(list)
+    let list = cosmic::iced::widget::sensor(list)
         .on_show(Message::ListerResized)
-        .on_resize(Message::ListerResized)
+        .on_resize(Message::ListerResized);
+    // Selecting with the mouse: the pointer is tracked over the text, the button starts / ends.
+    widget::mouse_area(list)
+        .interaction(cosmic::iced::mouse::Interaction::Text)
+        .on_move(|p| Message::ListerPointer(p.x, p.y))
+        .on_exit(Message::ListerPointerLeft)
+        .on_press(Message::ListerPress)
+        .on_release(Message::ListerRelease)
         .into()
 }
 
@@ -470,6 +545,25 @@ mod tests {
             image: None,
         })));
         l
+    }
+
+    #[test]
+    fn select_all_and_copy_with_the_mouse() {
+        let mut l = text("one\ntwo\nthree");
+        assert_eq!(l.selected_text(), None);
+        l.select_all();
+        assert_eq!(l.selected_text().as_deref(), Some("one\ntwo\nthree"));
+        // drag from "ne" on row 0 to "tw" on row 1 (pointer in px, 8.5 px chars, 20 px rows)
+        l.pointer = Some((8.5, 5.0));
+        let start = l.pointer_pos().unwrap();
+        l.pointer = Some((17.0, 25.0));
+        l.sel = Some(lister::Selection {
+            anchor: start,
+            head: l.pointer_pos().unwrap(),
+        });
+        assert_eq!(l.selected_text().as_deref(), Some("ne\ntw"));
+        l.toggle_wrap(); // rows rebuilt: the selection would point elsewhere
+        assert_eq!(l.sel, None);
     }
 
     #[test]

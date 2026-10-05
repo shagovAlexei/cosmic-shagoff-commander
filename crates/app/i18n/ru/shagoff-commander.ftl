@@ -297,6 +297,7 @@ lister-loading = Чтение…
 lister-info-lines = строк: { $n }, { $size } б
 lister-info = { $size } б
 lister-find = Поиск (F7)
+lister-copied = Скопировано символов: { $n }
 lister-find-hint = Что искать, затем Enter; F3 / Shift+F3 — следующее / предыдущее
 lister-prev = ← Пред. (P)
 lister-next = След. (N) →
@@ -319,6 +320,8 @@ help-lister-encoding = Кодировка: Windows-1251 / DOS 866 / KOI8-R / UTF
 help-lister-step = Следующий / предыдущий файл
 help-lister-find = Поиск
 help-lister-again = Найти следующее / предыдущее
+help-lister-select = Выделить текст мышью (Shift — продлить)
+help-lister-copy = Выделить всё / скопировать выделенное
 help-lister-close = Закрыть
 
 # Запись в архив
