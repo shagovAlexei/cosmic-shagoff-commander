@@ -123,6 +123,45 @@ pub fn decode_as(bytes: &[u8], enc: Encoding) -> Option<Vec<u8>> {
     Some(s.into_bytes())
 }
 
+/// Encoding a file most likely is in: valid UTF-8 (or a BOM) → `Auto`; otherwise the Cyrillic code
+/// page in which the first 64 KiB read as the most lowercase Russian letters (running text is
+/// mostly lowercase; in the wrong page those bytes turn into capitals or box drawing).
+pub fn guess(bytes: &[u8]) -> Encoding {
+    let sample = &bytes[..bytes.len().min(64 << 10)];
+    let valid = match std::str::from_utf8(sample) {
+        Ok(_) => true,
+        // Only a char cut at the end of the sample.
+        Err(e) => e.error_len().is_none(),
+    };
+    if valid || decode(bytes).is_some() {
+        return Encoding::Auto;
+    }
+    // Lowercase Russian letters right after another Russian letter: words come in runs, while
+    // Latin-1 accents (`café`) are single high bytes between ASCII letters.
+    let cyr = |c: char| matches!(c, 'а'..='я' | 'А'..='Я' | 'ё' | 'Ё');
+    let score = |enc| {
+        let text = decode_as(sample, enc).unwrap_or_default();
+        let text = String::from_utf8_lossy(&text);
+        let mut prev = ' ';
+        let mut n = 0;
+        for c in text.chars() {
+            if cyr(prev) && matches!(c, 'а'..='я' | 'ё') {
+                n += 1;
+            }
+            prev = c;
+        }
+        n
+    };
+    let high = sample.iter().filter(|&&b| b >= 0x80).count();
+    // Cp1251 last: `max_by_key` keeps the last of equal scores, and it is the likeliest.
+    [Encoding::Cp866, Encoding::Koi8r, Encoding::Cp1251]
+        .into_iter()
+        .map(|e| (score(e), e))
+        .filter(|&(n, _)| n > 0 && n * 3 >= high)
+        .max_by_key(|&(n, _)| n)
+        .map_or(Encoding::Auto, |(_, e)| e)
+}
+
 /// Text mode content: UTF-8 bytes in the chosen encoding, its line index and widest line.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Text {
@@ -347,6 +386,35 @@ mod tests {
         for t in [CP1251, KOI8R, CP866] {
             assert_eq!(t.chars().count(), 128);
         }
+    }
+
+    #[test]
+    fn guess_picks_the_code_page_of_russian_text() {
+        let text = "Съешь же ещё этих мягких французских булок, да выпей чаю";
+        let enc = |codec: &[u8]| guess(codec);
+        assert_eq!(enc(text.as_bytes()), Encoding::Auto);
+        assert_eq!(enc(b"plain ascii"), Encoding::Auto);
+        // the same sentence in each page (bytes from Python's codecs)
+        let cp1251: Vec<u8> = text.chars().map(|c| encode(CP1251, c)).collect();
+        let koi8: Vec<u8> = text.chars().map(|c| encode(KOI8R, c)).collect();
+        let cp866: Vec<u8> = text.chars().map(|c| encode(CP866, c)).collect();
+        assert_eq!(enc(&cp1251), Encoding::Cp1251);
+        assert_eq!(enc(&koi8), Encoding::Koi8r);
+        assert_eq!(enc(&cp866), Encoding::Cp866);
+        assert_eq!(enc(b"\xff\xfe\x00\x00"), Encoding::Auto); // UTF-16 BOM
+        // ties go to 1251; Western accents stay as they were
+        assert_eq!(enc(b"\xe4\xe0"), Encoding::Cp1251); // "да"
+        assert_eq!(enc(b"caf\xe9 na\xefve G\xf6\xdfe"), Encoding::Auto);
+        // a UTF-8 char cut at the end of the sample is still UTF-8
+        assert_eq!(enc(&"я".as_bytes()[..1]), Encoding::Auto);
+    }
+
+    /// Test helper: the byte of `c` in a code page table.
+    fn encode(table: &str, c: char) -> u8 {
+        if c.is_ascii() {
+            return c as u8;
+        }
+        0x80 + table.chars().position(|t| t == c).expect("char in page") as u8
     }
 
     #[test]

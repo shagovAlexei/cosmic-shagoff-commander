@@ -354,7 +354,9 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         } else {
             row![totals]
         };
+        // A gap at the right: the active half's details would run into the other half's totals.
         line.spacing(12)
+            .padding([0, 24, 0, 0])
             .align_y(Alignment::Center)
             .width(Length::Fill)
             .into()
