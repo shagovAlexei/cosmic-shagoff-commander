@@ -390,6 +390,8 @@ pub enum Message {
     /// Command line: text edited, Enter (Shift+Enter: in a terminal), a character typed in the panel.
     CmdInput(String),
     CmdSubmit,
+    /// `CmdSubmit` one step later: by then the Shift / Ctrl of that same Enter is in `mods`.
+    CmdEnter,
     CmdType(char),
     /// The watched dir of this pane's active tab changed.
     Changed(usize),
@@ -1412,8 +1414,11 @@ impl App {
                     return unfocus();
                 }
             }
+            // The field's Enter comes before the modifier change of the same key batch: wait a
+            // step, or Shift+Enter ran without the terminal (the field's message is handled first).
+            Message::CmdSubmit => return cosmic::task::message(Message::CmdEnter),
             // The field takes Ctrl+Enter as Enter: here it inserts the name / path under the cursor.
-            Message::CmdSubmit if self.mods.control() => {
+            Message::CmdEnter if self.mods.control() => {
                 let action = if self.mods.shift() {
                     Action::CmdPath
                 } else {
@@ -1423,7 +1428,7 @@ impl App {
                     .cmd_action(self.active, action)
                     .unwrap_or_else(Task::none);
             }
-            Message::CmdSubmit => return self.cmd_run(self.mods.shift()),
+            Message::CmdEnter => return self.cmd_run(self.mods.shift()),
             Message::CmdType(c) => {
                 if self.cmd_ready() {
                     self.cmdline.push(c);
@@ -7200,7 +7205,7 @@ mod tests {
             std::fs::create_dir(tmp.path().join("sub")).unwrap();
             let mut app = at(tmp.path());
             let _ = app.update(Message::CmdInput("cd sub".into()));
-            let _ = app.update(Message::CmdSubmit);
+            let _ = app.update(Message::CmdEnter);
             assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
             assert_eq!(app.cmdline, "");
             assert_eq!(app.commands, ["cd sub"]);
@@ -7221,7 +7226,7 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             let mut app = at(tmp.path());
             let _ = app.update(Message::CmdInput("touch made".into()));
-            let _ = app.update(Message::CmdSubmit);
+            let _ = app.update(Message::CmdEnter);
             let made = tmp.path().join("made");
             for _ in 0..100 {
                 if made.exists() {
@@ -7241,10 +7246,10 @@ mod tests {
             let _ = app.update(Message::Key(Action::Down)); // off ".."
             let _ = app.update(Message::CmdInput("cat".into()));
             let _ = app.update(Message::Modifiers(Modifiers::CTRL));
-            let _ = app.update(Message::CmdSubmit); // the field reports Ctrl+Enter as Enter
+            let _ = app.update(Message::CmdEnter); // the field reports Ctrl+Enter as Enter
             assert_eq!(app.cmdline, "cat 'a b.txt'");
             let _ = app.update(Message::Modifiers(Modifiers::CTRL | Modifiers::SHIFT));
-            let _ = app.update(Message::CmdSubmit);
+            let _ = app.update(Message::CmdEnter);
             let full = tmp.path().join("a b.txt").display().to_string();
             assert_eq!(app.cmdline, format!("cat 'a b.txt' '{full}'"));
         }
