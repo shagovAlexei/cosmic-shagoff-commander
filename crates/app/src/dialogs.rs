@@ -120,9 +120,13 @@ pub struct DiffDlg {
     pub result: Option<Arc<Result<diff::Outcome, String>>>,
     /// Current block of differences (index into `blocks()`).
     pub block: usize,
-    pub scroll: widget::Id,
+    /// Each side scrolls on its own (TC: a long line doesn't push the other file away);
+    /// both follow whichever was scrolled.
+    pub scroll: [widget::Id; 2],
     /// Vertical scroll offset: only the rows in view are built.
     pub offset: f32,
+    /// Horizontal scroll offset, shared by both sides.
+    pub x: f32,
     /// Width of each side, from its longest line: `Fill` inside a two-way scrollable lays out at 0.
     pub widths: (f32, f32),
     pub opts: diff::Opts,
@@ -148,6 +152,8 @@ pub const DIFF_LIST_H: f32 = 260.0;
 /// Monospace advance at the default text size, plus the line-number column.
 const MONO_W: f32 = 8.5;
 const NUM_W: f32 = 56.0;
+/// Narrowest content of a side, so the row tint reaches across its pane.
+const PANE_W: f32 = 700.0;
 
 impl DiffDlg {
     pub fn text(&self) -> Option<&diff::Text> {
@@ -1096,7 +1102,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
         }
         Dialog::Diff(d) => {
             let name = |p: &PathBuf| p.display().to_string();
-            let mut list = column![];
+            let mut lists: [Vec<Element<'a, Message>>; 2] = [Vec::new(), Vec::new()];
             let status = match d.result.as_deref() {
                 None => fl!("diff-running"),
                 Some(Err(e)) => e.clone(),
@@ -1131,12 +1137,19 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     // Only the rows in view (plus a margin) are built; spacers keep the height.
                     let first = ((d.offset / DIFF_ROW_H) as usize).min(t.rows.len());
                     let last = (first + (DIFF_LIST_H / DIFF_ROW_H) as usize + 2).min(t.rows.len());
-                    let (wl, wr) = d.widths;
-                    list = list.push(
-                        widget::Space::new()
-                            .width(Length::Fixed(wl + wr + 8.0))
-                            .height(Length::Fixed(first as f32 * DIFF_ROW_H)),
-                    );
+                    // One width for both (scrolled together, one must not clamp the other) and
+                    // at least a half of the widest dialog, so the row tint reaches the edge.
+                    let w = d.widths.0.max(d.widths.1).max(PANE_W);
+                    let (wl, wr) = (w, w);
+                    let below = (t.rows.len() - last) as f32 * DIFF_ROW_H;
+                    for (side, w) in [(0, wl), (1, wr)] {
+                        lists[side].push(
+                            widget::Space::new()
+                                .width(Length::Fixed(w))
+                                .height(Length::Fixed(first as f32 * DIFF_ROW_H))
+                                .into(),
+                        );
+                    }
                     for r in &t.rows[first..last] {
                         let (ml, mr) = match (&r.left, &r.right) {
                             (Some((_, a)), Some((_, b))) if r.kind == diff::Kind::Changed => {
@@ -1145,23 +1158,26 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                             }
                             _ => (None, None),
                         };
-                        list = list.push(
-                            widget::container(
-                                row![half(&r.left, wl, ml), half(&r.right, wr, mr)].spacing(8),
-                            )
-                            .height(Length::Fixed(DIFF_ROW_H))
-                            .class(diff_style(r.kind)),
+                        for (side, c, w, m) in [(0, &r.left, wl, ml), (1, &r.right, wr, mr)] {
+                            lists[side].push(
+                                widget::container(half(c, w, m))
+                                    .height(Length::Fixed(DIFF_ROW_H))
+                                    .class(diff_style(r.kind))
+                                    .into(),
+                            );
+                        }
+                    }
+                    for list in &mut lists {
+                        list.push(
+                            widget::Space::new()
+                                .width(Length::Fixed(1.0))
+                                .height(Length::Fixed(below))
+                                .into(),
                         );
                     }
-                    let below = (t.rows.len() - last) as f32 * DIFF_ROW_H;
-                    list = list.push(
-                        widget::Space::new()
-                            .width(Length::Fixed(1.0))
-                            .height(Length::Fixed(below)),
-                    );
                     let more = t.total.saturating_sub(t.rows.len());
                     if more > 0 {
-                        list = list.push(widget::text(fl!("find-more", n = more)));
+                        lists[0].push(widget::text(fl!("find-more", n = more)).into());
                     }
                     match t.blocks.len() {
                         0 if t.eol_differs => fl!("diff-eol"),
@@ -1181,25 +1197,24 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 (true, false) => format!("{status}   {}", fl!("diff-unsaved")),
                 _ => status,
             };
-            let buttons = widget::flex_row(vec![
+            // TC's toolbar: rescan, ↑ ↓, block copies, save, options; Close at the right end.
+            let reread = d.result.is_some() && !dirty;
+            let buttons = row![
+                widget::button::standard(fl!("diff-reread"))
+                    .on_press_maybe(reread.then_some(Message::DiffReread)),
                 widget::button::standard(fl!("diff-prev"))
-                    .on_press_maybe(nav.then_some(Message::DiffPrev))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffPrev)),
                 widget::button::standard(fl!("diff-next"))
-                    .on_press_maybe(nav.then_some(Message::DiffNext))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffNext)),
                 widget::button::standard(fl!("diff-copy-right"))
-                    .on_press_maybe(nav.then_some(Message::DiffCopy(true)))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffCopy(true))),
                 widget::button::standard(fl!("diff-copy-left"))
-                    .on_press_maybe(nav.then_some(Message::DiffCopy(false)))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffCopy(false))),
                 widget::button::suggested(fl!("diff-save"))
-                    .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave))
-                    .into(),
-                cancel.into(),
-            ])
+                    .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave)),
+            ]
             .spacing(8);
+            // Under the text with the status, as TC keeps them out of the toolbar.
             let opts = row![
                 widget::checkbox(d.opts.ignore_space)
                     .label(fl!("diff-ignore-space"))
@@ -1209,36 +1224,50 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     .on_toggle(|_| Message::DiffOpt(DiffOpt::Case)),
             ]
             .spacing(16);
+            let close = widget::button::standard(fl!("diff-close")).on_press(Message::DialogCancel);
+            // Each file's path right over its half of the text (TC), in a header strip.
+            let head = |p: &PathBuf| {
+                widget::container(
+                    widget::text::heading(name(p))
+                        .wrapping(Wrapping::None)
+                        .ellipsize(cosmic::iced::core::text::Ellipsize::Start(
+                            cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1),
+                        )),
+                )
+                .padding([4, 8])
+                .width(Length::FillPortion(1))
+                .class(cosmic::theme::Container::Card)
+            };
+            let [left, right] = lists;
+            let pane = |list: Vec<Element<'a, Message>>, side: usize| {
+                widget::scrollable(widget::Column::with_children(list))
+                    .id(d.scroll[side].clone())
+                    .on_scroll(move |v| {
+                        let o = v.absolute_offset();
+                        Message::DiffScrolled(side, o.x, o.y)
+                    })
+                    .direction(cosmic::iced::widget::scrollable::Direction::Both {
+                        vertical: Default::default(),
+                        horizontal: Default::default(),
+                    })
+                    .width(Length::FillPortion(1))
+                    .height(Length::Fixed(DIFF_LIST_H))
+            };
             widget::dialog()
                 .title(fl!("diff-title"))
                 .width(Length::Fill)
                 .max_width(1400.0)
                 .control(
                     column![
-                        row![
-                            widget::text(name(&d.left))
-                                .width(Length::FillPortion(1))
-                                .wrapping(Wrapping::WordOrGlyph),
-                            widget::text(name(&d.right))
-                                .width(Length::FillPortion(1))
-                                .wrapping(Wrapping::WordOrGlyph),
-                        ]
-                        .spacing(8),
                         // All buttons above the text: a short window clips the dialog's bottom row.
-                        opts,
-                        buttons,
-                        widget::text(status),
-                        widget::scrollable(list)
-                            .id(d.scroll.clone())
-                            .on_scroll(|v| Message::DiffScrolled(v.absolute_offset().y))
-                            .direction(cosmic::iced::widget::scrollable::Direction::Both {
-                                vertical: Default::default(),
-                                horizontal: Default::default(),
-                            })
-                            .width(Length::Fill)
-                            .height(Length::Fixed(DIFF_LIST_H)),
+                        row![buttons, widget::Space::new().width(Length::Fill), close].spacing(8),
+                        row![head(&d.left), head(&d.right)].spacing(8),
+                        row![pane(left, 0), pane(right, 1)].spacing(8),
+                        row![widget::text(status).width(Length::Fill), opts]
+                            .spacing(16)
+                            .align_y(cosmic::iced::Alignment::Center),
                     ]
-                    .spacing(10),
+                    .spacing(8),
                 )
                 .into()
         }
