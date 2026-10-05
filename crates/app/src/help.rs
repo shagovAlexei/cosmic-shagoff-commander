@@ -104,6 +104,12 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                     fl!("menu-close-other-tabs"),
                     Action::CloseOtherTabs,
                 ),
+                r("Ctrl+Shift+PgUp", fl!("menu-tab-left"), Action::MoveTabLeft),
+                r(
+                    "Ctrl+Shift+PgDn",
+                    fl!("menu-tab-right"),
+                    Action::MoveTabRight,
+                ),
                 r("Ctrl+↑", fl!("menu-tab-open"), Action::TabOpen),
                 r(
                     "Ctrl+Shift+↑",

@@ -79,6 +79,25 @@ impl<T> Tabs<T> {
         }
     }
 
+    /// Move tab `from` to index `to` (others shift over); the active tab stays the same tab.
+    pub fn move_to(&mut self, from: usize, to: usize) {
+        if from >= self.items.len() || to >= self.items.len() {
+            return;
+        }
+        let active = self.active;
+        let item = self.items.remove(from);
+        self.items.insert(to, item);
+        self.active = if active == from {
+            to
+        } else if from < active && active <= to {
+            active - 1
+        } else if to <= active && active < from {
+            active + 1
+        } else {
+            active
+        };
+    }
+
     pub fn next(&mut self) {
         self.active = (self.active + 1) % self.items.len();
     }
@@ -160,6 +179,23 @@ mod tests {
         assert_eq!(*t.active(), 'c');
         t.select(9);
         assert_eq!(*t.active(), 'c');
+    }
+
+    #[test]
+    fn move_to_keeps_the_active_tab() {
+        let mut t = tabs(4, 1); // a [b] c d
+        t.move_to(1, 3);
+        assert_eq!((t.items(), t.active()), (&['a', 'c', 'd', 'b'][..], &'b'));
+        t.move_to(0, 2); // active b stays put
+        assert_eq!((t.items(), t.active()), (&['c', 'd', 'a', 'b'][..], &'b'));
+        t.move_to(3, 0);
+        assert_eq!((t.items(), t.active()), (&['b', 'c', 'd', 'a'][..], &'b'));
+        t.move_to(3, 0); // active shifts right
+        assert_eq!((t.items(), t.active()), (&['a', 'b', 'c', 'd'][..], &'b'));
+        t.move_to(2, 0); // over the active tab: it shifts right
+        assert_eq!((t.items(), t.active()), (&['c', 'a', 'b', 'd'][..], &'b'));
+        t.move_to(0, 9); // out of range
+        assert_eq!(t.items(), &['c', 'a', 'b', 'd']);
     }
 
     #[test]

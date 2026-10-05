@@ -22,6 +22,8 @@ pub enum Action {
     CloseTab,
     NextTab,
     PrevTab,
+    MoveTabLeft,
+    MoveTabRight,
     Mark,
     MarkDown,
     MarkUp,
@@ -168,6 +170,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F2, true, false) => Action::ViewFull,
             (Named::PageUp, false, false) => Action::PageUp,
             (Named::PageDown, false, false) => Action::PageDown,
+            (Named::PageUp, true, true) => Action::MoveTabLeft,
+            (Named::PageDown, true, true) => Action::MoveTabRight,
             (Named::Home, false, false) => Action::Home,
             (Named::End, false, false) => Action::End,
             (Named::Enter, false, false) => Action::Enter,
@@ -374,6 +378,11 @@ mod tests {
         const CTRL_SHIFT: Modifiers = Modifiers::CTRL.union(Modifiers::SHIFT);
         assert_eq!(named(Named::Tab, CTRL), Some(Action::NextTab));
         assert_eq!(named(Named::Tab, CTRL_SHIFT), Some(Action::PrevTab));
+        assert_eq!(named(Named::PageUp, CTRL_SHIFT), Some(Action::MoveTabLeft));
+        assert_eq!(
+            named(Named::PageDown, CTRL_SHIFT),
+            Some(Action::MoveTabRight)
+        );
         assert_eq!(chr("t", Code::KeyT, CTRL), Some(Action::NewTab));
         assert_eq!(chr("е", Code::KeyT, CTRL), Some(Action::NewTab)); // Russian layout
         assert_eq!(chr("w", Code::KeyW, CTRL), Some(Action::CloseTab));

@@ -127,6 +127,16 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             a(Action::CloseOtherTabs),
         ),
         (
+            vec![Ctrl, Shift],
+            K::Shown(Named::PageUp, "PgUp"),
+            a(Action::MoveTabLeft),
+        ),
+        (
+            vec![Ctrl, Shift],
+            K::Shown(Named::PageDown, "PgDn"),
+            a(Action::MoveTabRight),
+        ),
+        (
             vec![Ctrl],
             K::Shown(Named::ArrowUp, "↑"),
             a(Action::TabOpen),
@@ -267,6 +277,8 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
                     MenuAct::Key(Action::TabLock),
                 ),
                 b(fl!("menu-tab-rename"), Action::TabRename),
+                b(fl!("menu-tab-left"), Action::MoveTabLeft),
+                b(fl!("menu-tab-right"), Action::MoveTabRight),
                 menu::Item::Divider,
                 b(fl!("menu-close-tab"), Action::CloseTab),
                 b(fl!("menu-close-other-tabs"), Action::CloseOtherTabs),

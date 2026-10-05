@@ -256,6 +256,8 @@ pub struct App {
     pub cols: [f32; 4],
     /// A header edge being dragged: (side, edge 1..=4, first pointer x and the width then).
     pub col_drag: Option<ColDrag>,
+    /// A tab held by the mouse: (side, its index now). Moved over the tab the pointer enters.
+    pub tab_drag: Option<(usize, usize)>,
     /// Volumes not mounted yet (a stick just plugged in): listed with the drives, a pick mounts.
     pub volumes: Vec<mount::Volume>,
     /// When `volumes` was last asked for: gio runs at most every few seconds.
@@ -330,6 +332,10 @@ pub enum Message {
     /// side, mouse wheel over a Brief list: one column per notch
     BriefWheel(usize, mouse::ScrollDelta),
     SelectTab(usize, usize),
+    /// Left press on a tab: select it and start dragging it.
+    TabPress(usize, usize),
+    /// The pointer entered a tab (moves a dragged tab there).
+    TabEnter(usize, usize),
     CloseTabAt(usize, usize),
     Modifiers(Modifiers),
     DialogInput(String),
@@ -628,6 +634,7 @@ impl App {
             drives: Vec::new(),
             cols,
             col_drag: None,
+            tab_drag: None,
             volumes: Vec::new(),
             volumes_at: None,
             space: [None, None],
@@ -941,6 +948,19 @@ impl App {
                 } else {
                     t.col
                 };
+            }
+            Message::TabPress(side, i) => {
+                self.tab_drag = Some((side, i));
+                return self.update(Message::SelectTab(side, i));
+            }
+            Message::TabEnter(side, i) => {
+                if let Some((s, from)) = &mut self.tab_drag
+                    && *s == side
+                    && *from != i
+                {
+                    self.panes[side].move_to(*from, i);
+                    *from = i;
+                }
             }
             Message::SelectTab(side, i) => {
                 self.search = None;
@@ -1605,6 +1625,7 @@ impl App {
                 }
             }
             Message::ColDragEnd => {
+                self.tab_drag = None;
                 if self.col_drag.take().is_some() {
                     self.save_columns();
                 }
@@ -2387,6 +2408,18 @@ impl App {
             Action::PrevTab => {
                 self.panes[side].prev();
                 return self.tab_switched(side);
+            }
+            Action::MoveTabLeft | Action::MoveTabRight => {
+                let tabs = &mut self.panes[side];
+                let (i, n) = (tabs.active_index(), tabs.items().len());
+                let to = if action == Action::MoveTabLeft {
+                    i.checked_sub(1)
+                } else {
+                    Some(i + 1).filter(|&j| j < n)
+                };
+                if let Some(to) = to {
+                    tabs.move_to(i, to);
+                }
             }
         }
         self.reveal(side, tab)
@@ -5299,6 +5332,39 @@ mod tests {
         let _ = app.update(Message::Key(Action::NewTab));
         let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 150.0)));
         assert!(app.panes[0].items().iter().all(|t| t.height == 150.0));
+    }
+
+    #[test]
+    fn tabs_move_by_drag_and_keys() {
+        let mut app = app_with(Config::default(), State::default());
+        for _ in 0..2 {
+            let _ = app.update(Message::Key(Action::NewTab));
+        }
+        for (i, t) in app.panes[0].items_mut().iter_mut().enumerate() {
+            t.name = Some(i.to_string());
+        }
+        let names = |app: &App| -> String {
+            (app.panes[0].items().iter())
+                .map(|t| t.name.clone().unwrap())
+                .collect()
+        };
+        let _ = app.update(Message::TabEnter(0, 1)); // no drag: nothing moves
+        assert_eq!(names(&app), "012");
+        let _ = app.update(Message::TabPress(0, 0));
+        let _ = app.update(Message::TabEnter(0, 1));
+        let _ = app.update(Message::TabEnter(0, 2));
+        let _ = app.update(Message::ColDragEnd);
+        let _ = app.update(Message::TabEnter(0, 0)); // released
+        assert_eq!(
+            (names(&app), app.panes[0].active_index()),
+            ("120".into(), 2)
+        );
+        let _ = app.update(Message::Key(Action::MoveTabRight)); // last: stays
+        let _ = app.update(Message::Key(Action::MoveTabLeft));
+        assert_eq!(
+            (names(&app), app.panes[0].active_index()),
+            ("102".into(), 1)
+        );
     }
 
     #[test]
