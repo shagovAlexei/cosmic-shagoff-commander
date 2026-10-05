@@ -27,7 +27,8 @@ just build-debug / build-release
 just run-logs                    # RUST_LOG=debug cargo run
 cargo run -p shagoff-commander   # run the app (default log level: warn)
 cargo test -p shagoff-core <name>
-sudo just install                # binary, .desktop, metainfo, icon into /usr
+sudo just install                # binary, .desktop, metainfo, icon into /usr (rootdir=… to stage)
+just deb                         # target/deb/*.deb (dpkg-deb, deps by dpkg-shlibdeps); tag vX.Y.Z → release with it
 ```
 
 At startup libcosmic logs `error loading system dark theme ... GetKey("list_button")`. This is harmless: the pinned libcosmic expects theme keys that the system config doesn't have.
