@@ -296,6 +296,7 @@ lister-loading = Reading…
 lister-info-lines = { $n } lines, { $size } B
 lister-info = { $size } B
 lister-find = Find (F7)
+lister-copied = Characters copied: { $n }
 lister-find-hint = Text to find, then Enter; F3 / Shift+F3: next / previous
 lister-prev = ← Prev (P)
 lister-next = Next (N) →
@@ -318,6 +319,8 @@ help-lister-encoding = Encoding: Windows-1251 / DOS 866 / KOI8-R / UTF-8
 help-lister-step = Next / previous file
 help-lister-find = Find
 help-lister-again = Find next / previous
+help-lister-select = Select text with the mouse (Shift extends)
+help-lister-copy = Select all / copy the selection
 help-lister-close = Close
 
 # Writing into archives

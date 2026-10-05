@@ -462,6 +462,11 @@ pub enum Message {
     Letter(ListerKey, char),
     /// x, y scroll offset, viewport height.
     ListerScrolled(f32, f32, f32),
+    /// Viewer selection: pointer over the text (viewport px), left button down / up.
+    ListerPointer(f32, f32),
+    ListerPress,
+    ListerRelease,
+    ListerPointerLeft,
     ListerResized(Size),
     /// Drop-down / A S K 8.
     ListerEncoding(shagoff_core::lister::Encoding),
@@ -1287,6 +1292,45 @@ impl App {
                     Message::CmdType(c)
                 });
             }
+            Message::ListerPointer(x, y) => {
+                if let Some(l) = &mut self.lister {
+                    l.pointer = Some((x, y));
+                    if l.dragging
+                        && let Some(at) = l.pointer_pos()
+                    {
+                        match &mut l.sel {
+                            Some(s) => s.head = at,
+                            // Pressed before the first move was known: it starts here.
+                            None => l.sel = Some(shagoff_core::lister::Selection::new(at)),
+                        }
+                    }
+                }
+            }
+            Message::ListerPointerLeft => {
+                if let Some(l) = &mut self.lister {
+                    l.pointer = None;
+                }
+            }
+            Message::ListerPress => {
+                if let Some(l) = &mut self.lister
+                    && l.mode != shagoff_core::lister::Mode::Image
+                {
+                    let at = l.pointer_pos();
+                    match (&mut l.sel, at) {
+                        (Some(s), Some(at)) if self.mods.shift() => s.head = at,
+                        (_, at) => l.sel = at.map(shagoff_core::lister::Selection::new),
+                    }
+                    l.dragging = true;
+                }
+            }
+            Message::ListerRelease => {
+                if let Some(l) = &mut self.lister {
+                    l.dragging = false;
+                    if l.sel.is_some_and(|s| s.is_empty()) {
+                        l.sel = None; // a plain click: nothing selected
+                    }
+                }
+            }
             Message::ListerScrolled(x, y, h) => {
                 if let Some(l) = &mut self.lister {
                     (l.offset, l.height) = ((x, y), h);
@@ -1400,6 +1444,8 @@ impl App {
                     } else if let Some(l) = &mut self.lister {
                         if l.searching {
                             l.searching = false;
+                        } else if l.sel.is_some() {
+                            l.sel = None; // first Esc drops the selection, the next closes
                         } else {
                             self.lister = None;
                         }
@@ -3404,6 +3450,18 @@ impl App {
             Action::Help | Action::About | Action::Settings | Action::Donate => return None,
             Action::View => self.lister_find(true, true),
             Action::Mkdir => self.lister_search(),
+            Action::SelectAll => {
+                l.select_all();
+                Task::none()
+            }
+            Action::ClipCopy => match l.selected_text() {
+                Some(t) => {
+                    let n = t.chars().count();
+                    self.say(StatusKind::Info, fl!("lister-copied", n = n));
+                    cosmic::iced::clipboard::write(t)
+                }
+                None => Task::none(),
+            },
             a => match l.scroll_y(a) {
                 Some(y) => lister_scroll(l, l.offset.0, y),
                 None => Task::none(),

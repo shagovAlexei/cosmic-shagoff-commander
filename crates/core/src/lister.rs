@@ -367,6 +367,73 @@ pub fn find_bytes(bytes: &[u8], needle: &[u8], start: usize, forward: bool) -> O
     pos.map(|(i, _)| i / HEX_WIDTH)
 }
 
+/// A place in the shown rows: (row, column in chars).
+pub type Pos = (usize, usize);
+
+/// Mouse selection in the viewer: from where the button went down to where it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selection {
+    pub anchor: Pos,
+    pub head: Pos,
+}
+
+impl Selection {
+    pub fn new(at: Pos) -> Self {
+        Self {
+            anchor: at,
+            head: at,
+        }
+    }
+
+    /// (start, end), start first.
+    pub fn ordered(&self) -> (Pos, Pos) {
+        if self.anchor <= self.head {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.anchor == self.head
+    }
+
+    /// The chars of `row` (`len` of them) that are selected, if any.
+    pub fn in_row(&self, row: usize, len: usize) -> Option<Range<usize>> {
+        let ((r0, c0), (r1, c1)) = self.ordered();
+        if row < r0 || row > r1 {
+            return None;
+        }
+        let start = if row == r0 { c0.min(len) } else { 0 };
+        let end = if row == r1 { c1.min(len) } else { len };
+        (start < end).then_some(start..end)
+    }
+
+    /// The selected text, rows joined by `\n` (`text(i)`: row `i` as shown).
+    pub fn text(&self, text: impl Fn(usize) -> String) -> String {
+        let ((r0, _), (r1, _)) = self.ordered();
+        (r0..=r1)
+            .map(|r| {
+                let line = text(r);
+                let n = line.chars().count();
+                match self.in_row(r, n) {
+                    Some(c) => line.chars().skip(c.start).take(c.len()).collect(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// The position under (x, y) in content pixels: rows of `row_h`, chars of `char_w` (monospace),
+/// between chars rounding to the nearer edge; the row is kept within `rows`.
+pub fn pos_at(x: f32, y: f32, row_h: f32, char_w: f32, rows: usize) -> Pos {
+    let row = ((y.max(0.0) / row_h) as usize).min(rows.saturating_sub(1));
+    let col = (x.max(0.0) / char_w).round() as usize;
+    (row, col)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,5 +659,37 @@ mod tests {
         std::thread::spawn(move || tx.send(load(&fifo).is_err()).unwrap());
         let refused = rx.recv_timeout(std::time::Duration::from_secs(2));
         assert_eq!(refused, Ok(true));
+    }
+
+    #[test]
+    fn selection_rows_text_and_pointer() {
+        let rows = ["hello world", "second", "third line"];
+        let row = |i: usize| rows[i].to_string();
+        let s = Selection {
+            anchor: (2, 5), // dragged upwards: the end comes first
+            head: (0, 6),
+        };
+        assert_eq!(s.ordered(), ((0, 6), (2, 5)));
+        assert_eq!(s.in_row(0, 11), Some(6..11));
+        assert_eq!(s.in_row(1, 6), Some(0..6));
+        assert_eq!(s.in_row(2, 10), Some(0..5));
+        assert_eq!(s.in_row(3, 4), None);
+        assert_eq!(s.text(row), "world\nsecond\nthird");
+        assert!(Selection::new((1, 1)).is_empty());
+        assert_eq!(Selection::new((0, 0)).in_row(0, 5), None);
+        // past the end of a line: up to its end
+        let s = Selection {
+            anchor: (1, 2),
+            head: (1, 40),
+        };
+        assert_eq!(s.text(row), "cond");
+        // Cyrillic: chars, not bytes
+        let s = Selection {
+            anchor: (0, 1),
+            head: (0, 3),
+        };
+        assert_eq!(s.text(|_| "привет".to_string()), "ри");
+        assert_eq!(pos_at(17.0, 45.0, 20.0, 8.5, 10), (2, 2));
+        assert_eq!(pos_at(-5.0, 9999.0, 20.0, 8.5, 10), (9, 0));
     }
 }

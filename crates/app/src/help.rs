@@ -166,6 +166,8 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 o("N / P", fl!("help-lister-step")),
                 o("F7", fl!("help-lister-find")),
                 o("F3 / Shift+F3", fl!("help-lister-again")),
+                o("LMB, Shift+LMB", fl!("help-lister-select")),
+                o("Ctrl+A / Ctrl+C", fl!("help-lister-copy")),
                 o("Esc, Q", fl!("help-lister-close")),
             ],
         ),
