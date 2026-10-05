@@ -117,6 +117,12 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let skin = app.config.skin;
     let path: Element<'_, Message> = match (skin, &p.results) {
         (Skin::Modern, None) => breadcrumbs(side, p.panel.cwd(), active),
+        // TC: the plain path line, each part clickable.
+        (Skin::Classic, None) => container(path_parts(side, p.panel.cwd()))
+            .padding([2, 6])
+            .width(Length::Fill)
+            .class(bar_style(active))
+            .into(),
         _ => container(text(title).size(TEXT))
             .padding([2, 6])
             .width(Length::Fill)
@@ -194,7 +200,7 @@ fn breadcrumbs(side: usize, cwd: &std::path::Path, active: bool) -> Element<'sta
         };
         items.push(
             b.padding([0, 6])
-                .on_press(Message::Drive(side, path))
+                .on_press(Message::PathPart(side, path))
                 .into(),
         );
     }
@@ -212,6 +218,40 @@ fn breadcrumbs(side: usize, cwd: &std::path::Path, active: bool) -> Element<'sta
     .anchor_right()
     .width(Length::Fill)
     .into()
+}
+
+/// Classic skin: `/home/shag/x` as text, a click on a part goes there (TC does the same).
+fn path_parts(side: usize, cwd: &std::path::Path) -> Element<'static, Message> {
+    let mut parts: Vec<std::path::PathBuf> = cwd.ancestors().map(|a| a.to_path_buf()).collect();
+    parts.reverse();
+    let last = parts.len().saturating_sub(1);
+    let mut items: Vec<Element<'static, Message>> = Vec::new();
+    for (i, path) in parts.into_iter().enumerate() {
+        // "/" for the root; the others get theirs after them, except the last one.
+        let mut label = match path.file_name() {
+            None => "/".to_string(),
+            Some(n) => n.to_string_lossy().into_owned(),
+        };
+        if i > 0 && i < last {
+            label.push('/');
+        }
+        items.push(
+            mouse_area(text(label).size(TEXT).wrapping(Wrapping::None))
+                .interaction(cosmic::iced::mouse::Interaction::Pointer)
+                .on_press(Message::PathPart(side, path))
+                .into(),
+        );
+    }
+    // A deep path scrolls sideways, kept at its end: the dir we are in stays visible.
+    widget::scrollable(widget::row::with_children(items).align_y(Alignment::Center))
+        .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
+            cosmic::iced::widget::scrollable::Scrollbar::new()
+                .width(0)
+                .scroller_width(0),
+        ))
+        .anchor_right()
+        .width(Length::Fill)
+        .into()
 }
 
 /// Modern skin: each pane is a rounded card; the active one has an accent border.
