@@ -91,6 +91,15 @@ pub fn remember(list: &[String], line: &str) -> Vec<String> {
         .collect()
 }
 
+/// The entry after `line` (newer), stopping at the newest; a line not in the list gets the newest.
+pub fn next(list: &[String], line: &str) -> Option<String> {
+    match list.iter().position(|s| s == line) {
+        Some(0) => None,
+        Some(i) => list.get(i - 1).cloned(),
+        None => list.first().cloned(),
+    }
+}
+
 /// Ctrl+E: the command before `line` in the history; from the oldest (or a typed line) back to the newest.
 pub fn previous(list: &[String], line: &str) -> Option<String> {
     let next = match list.iter().position(|s| s == line) {
@@ -201,6 +210,15 @@ mod tests {
         assert_eq!(previous(&h, "a"), Some("c".into()));
         assert_eq!(previous(&h, "typed"), Some("c".into()));
         assert_eq!(previous(&[], ""), None);
+    }
+
+    #[test]
+    fn next_steps_forward_to_the_newest() {
+        let h: Vec<String> = vec!["c".into(), "b".into(), "a".into()];
+        assert_eq!(next(&h, "a"), Some("b".into()));
+        assert_eq!(next(&h, "b"), Some("c".into()));
+        assert_eq!(next(&h, "c"), None);
+        assert_eq!(next(&h, "typed"), Some("c".into()));
     }
 
     #[test]

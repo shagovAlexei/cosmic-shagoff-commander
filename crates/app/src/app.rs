@@ -267,6 +267,8 @@ pub struct App {
     pub cmdline: String,
     pub(crate) cmd_id: widget::Id,
     pub commands: Vec<String>,
+    /// Num+ / Num− masks, last first: the dialog opens with the last, ↑ / ↓ go through them.
+    pub masks: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -598,6 +600,7 @@ impl App {
             cmdline: String::new(),
             cmd_id: widget::Id::unique(),
             commands: state.commands.clone(),
+            masks: state.masks.clone(),
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -1403,6 +1406,20 @@ impl App {
             }
             // Quick search, viewer search or command line; not a dialog's or a settings field.
             Message::FieldKey(action) => {
+                // ↑ older mask, ↓ newer (TC's drop-down history).
+                if let Some(Dialog::Mask { input, .. }) = &mut self.dialog
+                    && matches!(action, Action::Up | Action::Down)
+                {
+                    let step = if action == Action::Up {
+                        cmdline::previous(&self.masks, input)
+                    } else {
+                        cmdline::next(&self.masks, input)
+                    };
+                    if let Some(m) = step {
+                        *input = m;
+                    }
+                    return widget::text_input::move_cursor_to_end(self.input_id.clone());
+                }
                 if self.dialog.is_none() && self.drawer.is_none() {
                     return self.handle(Message::Key(action));
                 }
@@ -1663,6 +1680,7 @@ impl App {
             active: self.active,
             find: self.find.clone(),
             commands: self.commands.clone(),
+            masks: self.masks.clone(),
         };
         if state == self.saved {
             return;
@@ -2234,7 +2252,7 @@ impl App {
             Action::SelectGroup | Action::UnselectGroup => Some(Dialog::Mask {
                 side,
                 select: action == Action::SelectGroup,
-                input: "*".into(),
+                input: self.masks.first().cloned().unwrap_or_else(|| "*".into()),
             }),
             Action::Copy | Action::Move => {
                 let sources = panel.targets();
@@ -2522,6 +2540,7 @@ impl App {
                 select,
                 input,
             } => {
+                self.masks = cmdline::remember(&self.masks, &input);
                 self.panes[side]
                     .active_mut()
                     .panel
@@ -5330,6 +5349,27 @@ mod tests {
             }) => items.iter().map(|i| i.path.clone()).collect(),
             _ => panic!("hotlist not open"),
         }
+    }
+
+    #[test]
+    fn mask_dialog_remembers_masks() {
+        let mut app = app_with(Config::default(), State::default());
+        let mask = |app: &App| match &app.dialog {
+            Some(Dialog::Mask { input, .. }) => input.clone(),
+            _ => panic!("no mask dialog"),
+        };
+        for m in ["*.rs", "*.txt"] {
+            let _ = app.update(Message::Key(Action::SelectGroup));
+            let _ = app.update(Message::DialogInput(m.into()));
+            let _ = app.update(Message::DialogSubmit);
+        }
+        assert_eq!(app.masks, ["*.txt", "*.rs"]);
+        let _ = app.update(Message::Key(Action::UnselectGroup));
+        assert_eq!(mask(&app), "*.txt"); // opens with the last one
+        let _ = app.update(Message::FieldKey(Action::Up));
+        assert_eq!(mask(&app), "*.rs");
+        let _ = app.update(Message::FieldKey(Action::Down));
+        assert_eq!(mask(&app), "*.txt");
     }
 
     #[test]

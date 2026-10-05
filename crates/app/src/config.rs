@@ -146,6 +146,8 @@ pub struct State {
     pub find: FindPrefs,
     /// Command line history, last first.
     pub commands: Vec<String>,
+    /// Num+ / Num− masks, last first.
+    pub masks: Vec<String>,
 }
 
 /// What the find dialog opens with (the dir always comes from the panel). Fields missing in an
