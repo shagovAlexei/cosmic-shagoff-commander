@@ -607,7 +607,12 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 }
             };
             let file = |label: String, f: &FileInfo, other: &FileInfo| {
-                let newer = f.mtime > other.mtime;
+                // To the second, as shown: a copy's fraction of a second is not "newer".
+                let secs = |t: SystemTime| {
+                    t.duration_since(SystemTime::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs())
+                };
+                let newer = secs(f.mtime) > secs(other.mtime);
                 let mut facts = row![
                     widget::text::body(fl!("conflict-size", size = format::size(f.size)))
                         .class(accent(f.size > other.size))
@@ -615,9 +620,21 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     widget::text::body(format::date(f.mtime, tz)).class(accent(newer)),
                 ]
                 .spacing(12);
+                // Words, not only colour: «newer», «bigger»; both alike — said once, on the new file.
+                let mut marks = Vec::new();
                 if newer {
-                    facts =
-                        facts.push(widget::text::body(fl!("conflict-newer")).class(accent(true)));
+                    marks.push(fl!("conflict-newer"));
+                }
+                if f.size > other.size {
+                    marks.push(fl!("conflict-bigger"));
+                }
+                if !marks.is_empty() {
+                    facts = facts.push(widget::text::body(marks.join(", ")).class(accent(true)));
+                } else if std::ptr::eq(f, src)
+                    && f.size == other.size
+                    && secs(f.mtime) == secs(other.mtime)
+                {
+                    facts = facts.push(widget::text::body(fl!("conflict-alike")));
                 }
                 row![
                     widget::text::body(label).width(Length::Fixed(110.0)),
