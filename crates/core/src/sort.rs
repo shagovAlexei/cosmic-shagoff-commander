@@ -1,5 +1,7 @@
 use crate::listing::Entry;
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::ffi::OsString;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SortKey {
@@ -59,23 +61,23 @@ fn take_digits(it: &mut std::iter::Peekable<std::str::Chars>) -> String {
     s
 }
 
-/// TC order: dirs above files in both directions; dirs sort by name when sorting by size.
-pub fn sort_entries(entries: &mut [Entry], sort: Sort) {
+/// TC order: dirs above files in both directions. By size, dirs go by their counted size
+/// (`dir_sizes`, Space / Alt+Shift+Enter; uncounted as 0), so by name until counted.
+pub fn sort_entries(entries: &mut [Entry], sort: Sort, dir_sizes: &HashMap<OsString, u64>) {
+    let size = |e: &Entry| match e.is_dir() {
+        true => dir_sizes.get(&e.os_name).copied().unwrap_or(0),
+        false => e.size,
+    };
     entries.sort_by(|a, b| {
         match (a.is_dir(), b.is_dir()) {
             (true, false) => return Ordering::Less,
             (false, true) => return Ordering::Greater,
             _ => {}
         }
-        let key = if a.is_dir() && sort.key == SortKey::Size {
-            SortKey::Name
-        } else {
-            sort.key
-        };
-        let ord = match key {
+        let ord = match sort.key {
             SortKey::Name => Ordering::Equal,
             SortKey::Ext => natural_cmp(&a.ext, &b.ext),
-            SortKey::Size => a.size.cmp(&b.size),
+            SortKey::Size => size(a).cmp(&size(b)),
             SortKey::Date => a.mtime.cmp(&b.mtime),
         }
         .then_with(|| natural_cmp(&a.name, &b.name))
@@ -147,7 +149,7 @@ mod tests {
             x
         };
         let mut v = vec![mk(b"a\xff"), mk(b"a\xfe")];
-        sort_entries(&mut v, Sort::default());
+        sort_entries(&mut v, Sort::default(), &HashMap::new());
         assert_eq!(v[0].os_name, OsStr::from_bytes(b"a\xfe"));
     }
 
@@ -161,7 +163,7 @@ mod tests {
                     e("a.rs", Kind::File, 900, 5),
                     e("adir", Kind::Dir, 0, 2),
                 ];
-                sort_entries(&mut v, Sort { key, asc });
+                sort_entries(&mut v, Sort { key, asc }, &HashMap::new());
                 let kinds: Vec<_> = v.iter().map(|e| e.kind).collect();
                 assert_eq!(
                     kinds,
@@ -182,7 +184,7 @@ mod tests {
             e("adir", Kind::Dir, 0, 0),
             e("a2", Kind::File, 1, 0),
         ];
-        sort_entries(&mut v, Sort::default());
+        sort_entries(&mut v, Sort::default(), &HashMap::new());
         assert_eq!(names(&v), ["adir", "Zdir", "a2", "a10", "b.txt"]);
     }
 
@@ -200,6 +202,7 @@ mod tests {
                 key: SortKey::Name,
                 asc: false,
             },
+            &HashMap::new(),
         );
         assert_eq!(names(&v), ["d2", "d1", "b", "a"]);
     }
@@ -219,8 +222,28 @@ mod tests {
                 key: SortKey::Size,
                 asc: true,
             },
+            &HashMap::new(),
         );
         assert_eq!(names(&v), ["adir", "zdir", "small1", "small2", "big"]);
+    }
+
+    #[test]
+    fn by_size_counted_dirs_go_by_their_size() {
+        let mut v = vec![
+            e("adir", Kind::Dir, 0, 0),
+            e("big", Kind::Dir, 0, 0),
+            e("f", Kind::File, 1, 0),
+            e("mid", Kind::Dir, 0, 0),
+        ];
+        let sizes = HashMap::from([("big".into(), 900), ("mid".into(), 50)]);
+        let by = |asc| Sort {
+            key: SortKey::Size,
+            asc,
+        };
+        sort_entries(&mut v, by(true), &sizes);
+        assert_eq!(names(&v), ["adir", "mid", "big", "f"]); // uncounted as 0
+        sort_entries(&mut v, by(false), &sizes);
+        assert_eq!(names(&v), ["big", "mid", "adir", "f"]);
     }
 
     #[test]
@@ -236,6 +259,7 @@ mod tests {
                 key: SortKey::Ext,
                 asc: true,
             },
+            &HashMap::new(),
         );
         assert_eq!(names(&v), ["y.md", "a.rs", "x.rs"]);
         sort_entries(
@@ -244,6 +268,7 @@ mod tests {
                 key: SortKey::Date,
                 asc: true,
             },
+            &HashMap::new(),
         );
         assert_eq!(names(&v), ["y.md", "a.rs", "x.rs"]);
         sort_entries(
@@ -252,6 +277,7 @@ mod tests {
                 key: SortKey::Date,
                 asc: false,
             },
+            &HashMap::new(),
         );
         assert_eq!(names(&v), ["x.rs", "a.rs", "y.md"]);
     }

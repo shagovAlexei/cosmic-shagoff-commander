@@ -87,12 +87,12 @@ impl Panel {
             None => None,
         };
         let old = if same_dir { self.cursor } else { 0 };
-        sort_entries(&mut entries, self.sort);
         if !same_dir {
             self.marked.clear();
             self.filter = None;
             self.dir_sizes.clear();
         }
+        sort_entries(&mut entries, self.sort, &self.dir_sizes);
         self.cwd = cwd;
         self.all = entries;
         self.rebuild(keep, old);
@@ -138,9 +138,13 @@ impl Panel {
         let asc = self.sort.key != key || !self.sort.asc;
         self.sort = Sort { key, asc };
         let name = self.current().map(|e| e.name.clone());
-        sort_entries(&mut self.all, self.sort);
+        self.resort(name);
+    }
+
+    fn resort(&mut self, keep: Option<String>) {
+        sort_entries(&mut self.all, self.sort, &self.dir_sizes);
         let old = self.cursor;
-        self.rebuild(name, old);
+        self.rebuild(keep, old);
     }
 
     pub fn set_cursor(&mut self, i: usize) {
@@ -176,6 +180,10 @@ impl Panel {
     pub fn set_dir_size(&mut self, cwd: &Path, name: OsString, bytes: u64) {
         if cwd == self.cwd {
             self.dir_sizes.insert(name, bytes);
+            // By size, the counted dir takes its place; the cursor stays on its row.
+            if self.sort.key == SortKey::Size {
+                self.resort(self.current().map(|e| e.name.clone()));
+            }
         }
     }
 
@@ -787,6 +795,19 @@ mod tests {
         assert_eq!(p.totals().bytes, 1010);
         p.set_listing("/z".into(), vec![d("sub")], None);
         assert_eq!(p.dir_size(&p.entries()[1]), None);
+    }
+
+    #[test]
+    fn by_size_a_counted_dir_moves_and_the_cursor_stays_on_its_row() {
+        let mut p = loaded("/x", vec![d("a"), d("b"), f("f", 10)]);
+        p.set_sort(SortKey::Size);
+        p.set_cursor(2); // b
+        p.set_dir_size(Path::new("/x"), "a".into(), 1000);
+        let names: Vec<_> = p.entries().iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["..", "b", "a", "f"]);
+        assert_eq!(p.current().unwrap().name, "b");
+        p.set_listing("/x".into(), vec![d("a"), d("b"), f("f", 10)], None); // rescan keeps the order
+        assert_eq!(p.entries()[2].name, "a");
     }
 
     #[test]
