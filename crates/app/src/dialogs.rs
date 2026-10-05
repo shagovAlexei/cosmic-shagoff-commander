@@ -69,6 +69,7 @@ pub enum Dialog {
         cursor: usize,
         items: Vec<ListItem>,
     },
+    Props(Box<Props>),
     /// Ctrl+M: files snapshot at open (panel order) and the form. Boxed: the form is large.
     MultiRename(Box<MultiRename>),
     /// Alt+F5. Boxed: the form is large.
@@ -296,6 +297,33 @@ pub struct Find {
 }
 
 /// Closing the dialog in any way stops its search.
+/// Alt+Enter on the selection.
+pub struct Props {
+    pub side: usize,
+    pub paths: Vec<PathBuf>,
+    /// (label, value) lines above the bits: name, type, date, owner…
+    pub facts: Vec<(String, String)>,
+    /// Bits set on every entry, and as toggled since.
+    pub mode: u32,
+    /// Bits that differ between the entries (shown as `?` until touched).
+    pub mixed: u32,
+    /// Bits the user toggled: exactly these are set or cleared on every entry.
+    pub touched: u32,
+    /// A dir is selected: offer to change what is inside too.
+    pub has_dir: bool,
+    pub recursive: bool,
+    /// Counted in the background; `None` while counting.
+    pub usage: Option<shagoff_core::props::Usage>,
+    pub id: u64,
+    pub stop: Arc<AtomicBool>,
+}
+
+impl Drop for Props {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 impl Drop for Find {
     fn drop(&mut self) {
         if let Some(s) = &self.stop {
@@ -550,6 +578,91 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .secondary_action(
                     widget::button::standard(fl!("cancel"))
                         .on_press(Message::Resolve(Resolution::Cancel)),
+                )
+                .into()
+        }
+        Dialog::Props(p) => {
+            const LABEL: f32 = 150.0;
+            const CELL: f32 = 70.0;
+            let line = |k: String, v: String| {
+                row![
+                    widget::text::body(k).width(Length::Fixed(LABEL)),
+                    widget::text::body(v).wrapping(Wrapping::WordOrGlyph),
+                ]
+                .spacing(8)
+            };
+            let mut body = column![].spacing(4);
+            for (k, v) in &p.facts {
+                body = body.push(line(k.clone(), v.clone()));
+            }
+            let size = match p.usage {
+                None => fl!("props-counting"),
+                Some(u) => fl!(
+                    "props-usage",
+                    size = format::size(u.bytes),
+                    files = u.files,
+                    dirs = u.dirs
+                ),
+            };
+            body = body.push(line(fl!("props-size"), size));
+            let bit = |b: u32| {
+                widget::container(
+                    widget::checkbox(p.mode & b != 0).on_toggle(move |_| Message::PropsBit(b)),
+                )
+                .width(Length::Fixed(CELL))
+            };
+            let head = |s: String| widget::text::caption(s).width(Length::Fixed(CELL));
+            let mut bits = column![
+                row![
+                    widget::Space::new().width(Length::Fixed(LABEL)),
+                    head(fl!("props-read")),
+                    head(fl!("props-write")),
+                    head(fl!("props-exec")),
+                ]
+                .spacing(8)
+            ]
+            .spacing(4);
+            for (who, shift) in [
+                (fl!("props-owner"), 6),
+                (fl!("props-group"), 3),
+                (fl!("props-others"), 0),
+            ] {
+                bits = bits.push(
+                    row![
+                        widget::text::body(who).width(Length::Fixed(LABEL)),
+                        bit(4 << shift),
+                        bit(2 << shift),
+                        bit(1 << shift),
+                    ]
+                    .spacing(8),
+                );
+            }
+            let unknown = p.mixed & !p.touched;
+            let shown: String = format::perms(p.mode)
+                .chars()
+                .enumerate()
+                .map(|(i, c)| if unknown & (0o400 >> i) != 0 { '?' } else { c })
+                .collect();
+            bits = bits.push(widget::text::caption(match unknown {
+                0 => format!("{shown} ({:o})", p.mode & 0o7777),
+                _ => shown,
+            }));
+            let mut control = column![body, bits].spacing(16);
+            if p.has_dir {
+                control = control.push(
+                    widget::checkbox(p.recursive)
+                        .label(fl!("props-recursive"))
+                        .on_toggle(|_| Message::PropsRecursive),
+                );
+            }
+            widget::dialog()
+                .title(fl!("props-title"))
+                .control(widget::scrollable(control).height(Length::Shrink))
+                .primary_action(
+                    widget::button::suggested(fl!("props-apply")).on_press(Message::DialogSubmit),
+                )
+                .secondary_action(
+                    widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
                 )
                 .into()
         }

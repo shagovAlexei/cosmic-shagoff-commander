@@ -108,6 +108,14 @@ pub fn dir_title(p: &std::path::Path) -> String {
         .map_or_else(|| "/".to_string(), |n| n.to_string_lossy().into_owned())
 }
 
+/// MIME type guessed from a file extension (`rs` → `text/x-rust`).
+pub fn mime_type(ext: &str) -> Option<String> {
+    (!ext.is_empty())
+        .then(|| mime_guess::from_ext(ext).first())
+        .flatten()
+        .map(|m| m.essence_str().to_string())
+}
+
 /// Theme icon for a row and the generic one to fall back to (freedesktop names): `folder`, `go-up`
 /// for `..`, else the MIME type guessed from the extension (`text/x-rust` → `text-x-rust`).
 pub fn icon_name(e: &Entry) -> (String, &'static str) {

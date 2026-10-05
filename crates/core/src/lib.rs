@@ -17,6 +17,7 @@ pub mod multirename;
 pub mod ops;
 pub mod owners;
 pub mod panel;
+pub mod props;
 pub mod quicksearch;
 pub mod repack;
 pub mod search;

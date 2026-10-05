@@ -46,6 +46,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
     vec![
         (vec![], K::Named(Named::F3), a(Action::View)),
         (vec![], K::Named(Named::F4), a(Action::Edit)),
+        (vec![Alt], K::Named(Named::Enter), a(Action::Properties)),
         (vec![], K::Named(Named::F5), a(Action::Copy)),
         (vec![Shift], K::Named(Named::F5), a(Action::CopySame)),
         (vec![], K::Named(Named::F6), a(Action::Move)),
@@ -191,6 +192,7 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-copy-same"), Action::CopySame),
                 b(fl!("menu-move"), Action::Move),
                 b(fl!("menu-rename"), Action::Rename),
+                b(fl!("menu-properties"), Action::Properties),
                 b(fl!("menu-mkdir"), Action::Mkdir),
                 b(fl!("menu-delete"), Action::Delete),
                 b(fl!("menu-delete-permanent"), Action::DeletePermanent),
