@@ -1367,9 +1367,9 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
     }
 }
 
-/// Shown while a job runs and no question is pending.
-pub fn progress(job: &Running) -> Element<'_, Message> {
-    let title = match job.kind {
+/// "Packing", "Copying"…: the job's title, in its dialog and in the status line.
+pub fn job_title(kind: OpKind) -> String {
+    match kind {
         OpKind::Copy => fl!("copying"),
         OpKind::Move => fl!("moving"),
         OpKind::Delete => fl!("deleting"),
@@ -1378,7 +1378,16 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
         OpKind::Extract => fl!("extracting"),
         OpKind::Sync => fl!("syncing"),
         OpKind::Repack => fl!("repacking"),
-    };
+    }
+}
+
+/// Share done, 0..=1 (0 while the total is not known yet).
+pub fn job_fraction(job: &Running) -> f32 {
+    job.done as f32 / job.total.max(1) as f32
+}
+
+/// Shown while a job runs, its window is not hidden and no question is pending.
+pub fn progress(job: &Running) -> Element<'_, Message> {
     let counts = match job.kind {
         OpKind::Delete => fl!(
             "progress-items",
@@ -1391,17 +1400,26 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
             total = format::size(job.total)
         ),
     };
-    let fraction = job.done as f32 / job.total.max(1) as f32;
+    let fraction = job_fraction(job);
+    let percent = format!("{} %", (fraction * 100.0).round() as u32);
     widget::dialog()
-        .title(title)
+        .title(job_title(job.kind))
         .body(job.current.clone())
         .control(
             column![
-                widget::progress_bar::determinate_linear(fraction),
-                widget::text(counts)
+                widget::progress_bar::determinate_linear(fraction)
+                    .width(Length::Fill)
+                    .girth(12),
+                row![
+                    widget::text(counts).width(Length::Fill),
+                    widget::text::heading(percent)
+                ],
             ]
-            .spacing(8),
+            .spacing(8)
+            .width(Length::Fill),
         )
+        // TC "Background": the panels work again, the job goes on (shown in the status line).
         .primary_action(widget::button::standard(fl!("cancel")).on_press(Message::CancelJob))
+        .secondary_action(widget::button::suggested(fl!("job-hide")).on_press(Message::JobHide))
         .into()
 }

@@ -172,6 +172,8 @@ pub struct Running {
     focus: Option<String>,
     /// Enter / F3 in an archive: what to do with the extracted file once the job succeeds.
     open: Option<(Open, PathBuf)>,
+    /// "In background": no dialog, the panels work; progress shows above the status line.
+    pub hidden: bool,
 }
 
 enum Open {
@@ -228,7 +230,7 @@ pub struct App {
     pub(crate) drawer: Option<Drawer>,
     /// Built once (the widget borrows it), rebuilt when the language changes.
     pub(crate) about: cosmic::widget::about::About,
-    job: Option<Running>,
+    pub(crate) job: Option<Running>,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
     pub(crate) input_id: widget::Id,
     /// Quick search / filter field, if open.
@@ -377,6 +379,9 @@ pub enum Message {
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
     CancelJob,
+    /// The progress dialog's "In background" / the status line's "Show".
+    JobHide,
+    JobShow,
     /// A panel key a focused text field captured (F-keys, PgUp/PgDn, Insert, Ctrl+…).
     FieldKey(Action),
     /// Click on entry i of the open list dialog.
@@ -545,7 +550,10 @@ impl Application for App {
         if let Some(d) = &self.dialog {
             return Some(dialogs::view(d, &self.input_id, &self.tz));
         }
-        self.job.as_ref().map(dialogs::progress)
+        self.job
+            .as_ref()
+            .filter(|j| !j.hidden)
+            .map(dialogs::progress)
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {
@@ -642,7 +650,7 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Key(action)
-                if self.lister.is_some() && self.dialog.is_none() && self.job.is_none() =>
+                if self.lister.is_some() && self.dialog.is_none() && !self.busy() =>
             {
                 if let Some(task) = self.lister_action(action) {
                     return task;
@@ -725,8 +733,8 @@ impl App {
                     }
                     return Task::none();
                 }
-                if self.job.is_some() {
-                    return Task::none(); // panels wait for the running operation
+                if self.busy() {
+                    return Task::none(); // panels wait for the running operation's dialog
                 }
                 if let Some(s) = &self.search {
                     let (side, filter, text) = (s.side, s.filter, s.text.clone());
@@ -1207,7 +1215,7 @@ impl App {
                 }
             }
             Message::ListerKey(k)
-                if self.lister.is_some() && self.dialog.is_none() && self.job.is_none() =>
+                if self.lister.is_some() && self.dialog.is_none() && !self.busy() =>
             {
                 return match k {
                     ListerKey::Mode(m) => self.handle(Message::ListerMode(m)),
@@ -1330,8 +1338,8 @@ impl App {
                         if s.filter {
                             self.panes[s.side].active_mut().panel.set_filter(None);
                         }
-                    } else if self.job.is_some() {
-                        self.cancel_job();
+                    } else if self.busy() {
+                        self.cancel_job(); // not one in the background: Esc is for the panels
                     } else if let Some(l) = &mut self.lister {
                         if l.searching {
                             l.searching = false;
@@ -1376,6 +1384,11 @@ impl App {
                 other => self.dialog = other,
             },
             Message::CancelJob => self.cancel_job(),
+            Message::JobHide | Message::JobShow => {
+                if let Some(j) = &mut self.job {
+                    j.hidden = matches!(message, Message::JobHide);
+                }
+            }
             Message::SearchInput(text) => {
                 let Some(s) = &self.search else {
                     return Task::none();
@@ -1473,7 +1486,7 @@ impl App {
             }
             Message::Drive(side, path) => {
                 self.search = None;
-                if self.job.is_none() {
+                if !self.busy() {
                     self.dialog = None;
                     return self.go_to(side, path);
                 }
@@ -1488,7 +1501,7 @@ impl App {
             }
             Message::MountVolume(side, device) => {
                 self.search = None;
-                if self.job.is_some() {
+                if self.busy() {
                     return Task::none();
                 }
                 self.dialog = None;
@@ -3426,6 +3439,11 @@ impl App {
         job: Job,
         focus: Option<String>,
     ) -> Task<Message> {
+        // One at a time: a second one waits for the first (in the background) to end.
+        if self.job.is_some() {
+            self.say(StatusKind::Error, fl!("job-running"));
+            return Task::none();
+        }
         let (cancel, events) = jobs::spawn(job);
         self.job = Some(Running {
             side,
@@ -3436,6 +3454,7 @@ impl App {
             cancel,
             focus,
             open: None,
+            hidden: false,
         });
         Task::run(events, |e| cosmic::Action::App(Message::Op(e)))
     }
@@ -3767,6 +3786,7 @@ impl App {
             return Task::none();
         };
         if self.job.is_some() {
+            self.say(StatusKind::Error, fl!("job-running")); // it may be using that disk
             return Task::none();
         }
         let root = self.drives[i].path.clone();
@@ -3917,7 +3937,12 @@ impl App {
             && self.drawer.is_none()
             && self.lister.is_none()
             && self.search.is_none()
-            && self.job.is_none()
+            && !self.busy()
+    }
+
+    /// A job's dialog is up: the panels wait. A job in the background leaves them free.
+    fn busy(&self) -> bool {
+        self.job.as_ref().is_some_and(|j| !j.hidden)
     }
 
     /// Command line keys and the panel keys it changes (Enter, Space with text typed).
@@ -5349,6 +5374,45 @@ mod tests {
             }) => items.iter().map(|i| i.path.clone()).collect(),
             _ => panic!("hotlist not open"),
         }
+    }
+
+    #[test]
+    fn a_job_in_the_background_frees_the_panels_but_not_for_a_second_job() {
+        let mut app = files_app(&["a", "b", "c"]);
+        let dir = app.panes[0].active().panel.cwd().to_path_buf();
+        let gone = vec![dir.join("a")];
+        let _ = app.start_job(
+            0,
+            OpKind::Delete,
+            Job::Delete {
+                paths: gone,
+                permanent: true,
+            },
+            None,
+        );
+        assert!(app.busy() && app.dialog().is_some());
+        let before = cursor_name(&app);
+        let _ = app.update(Message::Key(Action::Down)); // the dialog is up: the panel waits
+        assert_eq!(cursor_name(&app), before);
+        let _ = app.update(Message::JobHide);
+        assert!(!app.busy() && app.dialog().is_none());
+        let _ = app.update(Message::Key(Action::Down));
+        assert_ne!(cursor_name(&app), before);
+        let _ = app.update(Message::DialogCancel); // Esc: not for the hidden job
+        assert!(!app.job.as_ref().unwrap().cancel.load(Ordering::Relaxed));
+        let again = vec![dir.join("b")];
+        let _ = app.start_job(
+            0,
+            OpKind::Delete,
+            Job::Delete {
+                paths: again,
+                permanent: true,
+            },
+            None,
+        );
+        assert_eq!(app.msg(), Some(fl!("job-running").as_str()));
+        let _ = app.update(Message::JobShow);
+        assert!(app.busy());
     }
 
     #[test]

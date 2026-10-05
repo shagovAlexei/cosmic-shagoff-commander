@@ -608,7 +608,11 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
 pub fn footer(app: &App) -> Element<'_, Message> {
     // The viewer has no panels to total and its own buttons.
     if app.lister.is_some() {
-        return container(window_status(app)).padding([2, 8]).into();
+        let status = container(window_status(app)).padding([2, 8]);
+        return match job_line(app) {
+            Some(job) => column![job, status].into(),
+            None => status.into(),
+        };
     }
     let half = |side: usize| -> Element<'_, Message> {
         let totals = container(pane_status(app, side))
@@ -638,12 +642,12 @@ pub fn footer(app: &App) -> Element<'_, Message> {
             .width(Length::Fill)
             .into()
     };
-    let mut col = column![
+    let mut col = column![].push_maybe(job_line(app)).push(
         row![half(0), half(1)]
             .spacing(4)
             .padding([2, 6])
-            .height(Length::Shrink)
-    ];
+            .height(Length::Shrink),
+    );
     if app.config.show_cmdline {
         col = col.push(command_line(app));
     }
@@ -684,6 +688,33 @@ fn command_line(app: &App) -> Element<'_, Message> {
 }
 
 /// The last message, else the entry under the active panel's cursor (right-aligned).
+/// A job in the background: bar, "Packing: 26 % — file", Show, Cancel (above the status line).
+fn job_line(app: &App) -> Option<Element<'_, Message>> {
+    let j = app.job.as_ref().filter(|j| j.hidden)?;
+    let f = crate::dialogs::job_fraction(j);
+    let label = format!(
+        "{}: {} % — {}",
+        crate::dialogs::job_title(j.kind),
+        (f * 100.0).round() as u32,
+        j.current
+    );
+    let line = row![
+        widget::progress_bar::determinate_linear(f)
+            .width(Length::Fixed(160.0))
+            .girth(8),
+        text(label)
+            .size(TEXT)
+            .width(Length::Fill)
+            .wrapping(Wrapping::None)
+            .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
+        button::text(fl!("job-show")).on_press(Message::JobShow),
+        button::text(fl!("cancel")).on_press(Message::CancelJob),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    Some(container(line).padding([0, 8]).into())
+}
+
 fn window_status(app: &App) -> Element<'_, Message> {
     if let Some(s) = &app.status {
         let class = match s.kind {
