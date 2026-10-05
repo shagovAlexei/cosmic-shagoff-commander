@@ -269,6 +269,10 @@ pub struct Find {
     pub case_sensitive: bool,
     /// The text is a regular expression.
     pub regex: bool,
+    /// The mask field is a regular expression for the name.
+    pub name_regex: bool,
+    /// Also names inside zip / tar / 7z.
+    pub archives: bool,
     /// Filters as typed: size bounds in KB, "not older than" in days.
     pub min_size: String,
     pub max_size: String,
@@ -833,19 +837,38 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .control(
                     column![
                         row![
-                            edit(fl!("find-mask"), &f.mask, FindField::Mask),
+                            edit(
+                                if f.name_regex {
+                                    fl!("find-name-regex-label")
+                                } else {
+                                    fl!("find-mask")
+                                },
+                                &f.mask,
+                                FindField::Mask
+                            ),
                             edit(fl!("find-in"), &f.dir, FindField::Dir),
                         ]
                         .spacing(8),
                         edit(fl!("find-text"), &f.text, FindField::Text),
-                        row![
+                        // One row of four: every line here is taken from the result list.
+                        widget::flex_row(vec![
                             widget::checkbox(f.case_sensitive)
                                 .label(fl!("find-case"))
-                                .on_toggle(|_| Message::FindCase),
+                                .on_toggle(|_| Message::FindCase)
+                                .into(),
                             widget::checkbox(f.regex)
                                 .label(fl!("find-regex"))
-                                .on_toggle(|_| Message::FindRegex),
-                        ]
+                                .on_toggle(|_| Message::FindRegex)
+                                .into(),
+                            widget::checkbox(f.name_regex)
+                                .label(fl!("find-name-regex"))
+                                .on_toggle(|_| Message::FindNameRegex)
+                                .into(),
+                            widget::checkbox(f.archives)
+                                .label(fl!("find-archives"))
+                                .on_toggle(|_| Message::FindArchives)
+                                .into(),
+                        ])
                         .spacing(16),
                         row![
                             edit(fl!("find-min-size"), &f.min_size, FindField::MinSize),

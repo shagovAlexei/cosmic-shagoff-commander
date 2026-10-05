@@ -10,6 +10,10 @@ use std::time::SystemTime;
 
 pub struct Query {
     pub mask: Mask,
+    /// Name as a regular expression (case-insensitive, like masks); replaces `mask` when set.
+    pub name_regex: Option<regex::Regex>,
+    /// Also names inside zip / tar / 7z files (no content search there).
+    pub archives: bool,
     /// Substring to look for inside files; `None` = names only.
     pub text: Option<String>,
     pub case_sensitive: bool,
@@ -28,6 +32,8 @@ impl Default for Query {
     fn default() -> Self {
         Self {
             mask: Mask::parse("*"),
+            name_regex: None,
+            archives: false,
             text: None,
             case_sensitive: false,
             hidden: false,
@@ -44,27 +50,62 @@ impl Query {
         self.regex.is_some() || self.text.as_deref().is_some_and(|t| !t.is_empty())
     }
 
+    fn filtered(&self) -> bool {
+        self.min_size.is_some() || self.max_size.is_some() || self.newer_than.is_some()
+    }
+
+    fn named(&self, name: &str) -> bool {
+        match &self.name_regex {
+            Some(re) => re.is_match(name),
+            None => self.mask.matches(name),
+        }
+    }
+
     /// Size and date filters on the entry's metadata (through symlinks).
     fn passes(&self, path: &Path, is_dir: bool) -> bool {
-        let sized = self.min_size.is_some() || self.max_size.is_some();
-        if !sized && self.newer_than.is_none() {
+        if !self.filtered() {
             return true;
-        }
-        if sized && is_dir {
-            return false;
         }
         let Ok(m) = fs::metadata(path) else {
             return false;
         };
-        if sized && m.is_dir() {
-            return false; // a symlink to a dir
-        }
-        self.min_size.is_none_or(|n| m.len() >= n)
-            && self.max_size.is_none_or(|n| m.len() <= n)
-            && self
-                .newer_than
-                .is_none_or(|t| m.modified().is_ok_and(|mt| mt >= t))
+        // a symlink to a dir counts as a dir
+        let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        self.passes_meta(is_dir || m.is_dir(), m.len(), mtime)
     }
+
+    /// Size bounds → files only (dirs have no size); date → modified at or after.
+    fn passes_meta(&self, is_dir: bool, size: u64, mtime: SystemTime) -> bool {
+        let sized = self.min_size.is_some() || self.max_size.is_some();
+        !(sized && is_dir)
+            && self.min_size.is_none_or(|n| size >= n)
+            && self.max_size.is_none_or(|n| size <= n)
+            && self.newer_than.is_none_or(|t| mtime >= t)
+    }
+
+    /// Matches inside `archive`, as paths through it (`/x/a.zip/docs/f.txt` — a panel opens them).
+    fn in_archive(&self, archive: &Path, stop: &AtomicBool, found: &mut dyn FnMut(PathBuf)) {
+        let Ok(items) = crate::archive::members(archive, stop) else {
+            return;
+        };
+        for (inner, dir, size, mtime) in items {
+            let hidden = inner
+                .components()
+                .any(|c| c.as_os_str().as_encoded_bytes().starts_with(b"."));
+            let name = inner.file_name().unwrap_or_default().to_string_lossy();
+            if (self.hidden || !hidden) && self.named(&name) && self.passes_meta(dir, size, mtime) {
+                found(archive.join(inner));
+            }
+        }
+    }
+}
+
+/// The name field as a regular expression (Unicode, case-insensitive like masks).
+pub fn name_regex(text: &str) -> Result<regex::Regex, String> {
+    regex::RegexBuilder::new(text)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| e.to_string())
 }
 
 /// The text field as a regular expression (Unicode, so `(?i)` folds Cyrillic too).
@@ -123,7 +164,7 @@ pub fn find(
         }
         let path = e.path();
         let Ok(ft) = e.file_type() else { continue };
-        let named = q.mask.matches(&name);
+        let named = q.named(&name);
         if ft.is_dir() {
             if named && !q.reads_content() && q.passes(&path, true) {
                 found(path.clone());
@@ -136,8 +177,16 @@ pub fn find(
                 || (fs::metadata(&path).is_ok_and(|m| m.is_file())
                     && contains_until(&path, q, stop));
             if hit {
-                found(path);
+                found(path.clone());
             }
+        }
+        // Content search reads real files only; archive members are matched by name.
+        if !ft.is_dir()
+            && q.archives
+            && !q.reads_content()
+            && crate::archive::Format::detect(&name).is_some_and(|f| f.is_tree())
+        {
+            q.in_archive(&path, stop, found);
         }
     }
 }
@@ -249,6 +298,58 @@ mod tests {
             hidden,
             ..Query::default()
         }
+    }
+
+    #[test]
+    fn name_regex_replaces_the_mask() {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["a1.rs", "ab.rs", "Б2.txt"] {
+            fs::write(d.path().join(n), "").unwrap();
+        }
+        let q = Query {
+            name_regex: Some(name_regex(r"^\w\d\.").unwrap()),
+            ..Query::default()
+        };
+        assert_eq!(rel(d.path(), run(d.path(), &q)), ["a1.rs", "Б2.txt"]);
+        let q = Query {
+            name_regex: Some(name_regex("^б").unwrap()), // case-insensitive, Cyrillic too
+            ..Query::default()
+        };
+        assert_eq!(rel(d.path(), run(d.path(), &q)), ["Б2.txt"]);
+        assert!(name_regex("(").is_err());
+    }
+
+    #[test]
+    fn archives_searched_by_name_when_asked() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        let opt = zip::write::SimpleFileOptions::default();
+        z.add_directory("docs/", opt).unwrap();
+        z.start_file("docs/x.rs", opt).unwrap();
+        z.write_all(b"fn x() {}").unwrap();
+        z.start_file(".hid/y.rs", opt).unwrap();
+        z.start_file("big.rs", opt).unwrap();
+        z.write_all(&[b'a'; 2048]).unwrap();
+        z.finish().unwrap();
+        let mut q = q("*.rs", None, false, false);
+        assert!(run(d.path(), &q).is_empty());
+        q.archives = true;
+        assert_eq!(
+            rel(d.path(), run(d.path(), &q)),
+            ["a.zip/big.rs", "a.zip/docs/x.rs"]
+        );
+        q.min_size = Some(1024); // filters apply to members too
+        assert_eq!(rel(d.path(), run(d.path(), &q)), ["a.zip/big.rs"]);
+        q.min_size = None;
+        q.hidden = true;
+        assert_eq!(run(d.path(), &q).len(), 3);
+        // Stop reaches into reading an archive's index
+        assert!(crate::archive::members(&a, &AtomicBool::new(true)).is_err());
+        // content search does not open archives
+        q.text = Some("fn".into());
+        assert!(run(d.path(), &q).is_empty());
     }
 
     fn run(root: &Path, q: &Query) -> Vec<PathBuf> {

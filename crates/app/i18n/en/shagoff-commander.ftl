@@ -284,6 +284,10 @@ archive-update-ok = Update the archive
 archive-edit-link = A link inside an archive can't be edited
 
 # Find files, more
+find-name-regex = Name is a regular expression
+find-name-regex-label = Name (regular expression)
+find-archives = Search in archives (names)
+find-feed-archives = Found inside archives ({ $n }) are not listed in the panel
 find-regex = Regular expression
 find-min-size = Size from, KB
 find-max-size = Size up to, KB
