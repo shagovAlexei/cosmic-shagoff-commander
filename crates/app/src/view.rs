@@ -87,6 +87,11 @@ fn toolbar() -> Element<'static, Message> {
             fl!("menu-connect"),
             Action::Connect,
         ),
+        tool(
+            "media-eject-symbolic",
+            fl!("menu-disconnect"),
+            Action::Disconnect,
+        ),
         tool("starred-symbolic", fl!("menu-hotlist"), Action::Hotlist),
         tool(
             "emblem-system-symbolic",
