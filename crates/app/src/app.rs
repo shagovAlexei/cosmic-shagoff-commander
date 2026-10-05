@@ -4320,13 +4320,13 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
     // `*` (the mask's default) and nothing mean any name, not a broken regex.
     let name_regex = match f.name_regex && !matches!(f.mask.trim(), "" | "*") {
         true => Some(
-            shagoff_core::search::name_regex(f.mask.trim())
+            shagoff_core::search::name_regex(f.mask.trim(), f.case_sensitive)
                 .map_err(|e| fl!("find-bad-regex", err = e))?,
         ),
         false => None,
     };
     Ok(shagoff_core::search::Query {
-        mask: Mask::parse(&f.mask),
+        mask: Mask::parse_case(&f.mask, f.case_sensitive),
         name_regex,
         archives: f.archives,
         text: (regex.is_none() && !text.is_empty()).then_some(text),

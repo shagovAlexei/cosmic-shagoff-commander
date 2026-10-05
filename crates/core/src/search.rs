@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 pub struct Query {
     pub mask: Mask,
-    /// Name as a regular expression (case-insensitive, like masks); replaces `mask` when set.
+    /// Name as a regular expression (case as the "case sensitive" box, like masks); replaces `mask` when set.
     pub name_regex: Option<regex::Regex>,
     /// Also names inside zip / tar / 7z files (no content search there).
     pub archives: bool,
@@ -101,9 +101,9 @@ impl Query {
 }
 
 /// The name field as a regular expression (Unicode, case-insensitive like masks).
-pub fn name_regex(text: &str) -> Result<regex::Regex, String> {
+pub fn name_regex(text: &str, case_sensitive: bool) -> Result<regex::Regex, String> {
     regex::RegexBuilder::new(text)
-        .case_insensitive(true)
+        .case_insensitive(!case_sensitive)
         .build()
         .map_err(|e| e.to_string())
 }
@@ -307,16 +307,16 @@ mod tests {
             fs::write(d.path().join(n), "").unwrap();
         }
         let q = Query {
-            name_regex: Some(name_regex(r"^\w\d\.").unwrap()),
+            name_regex: Some(name_regex(r"^\w\d\.", false).unwrap()),
             ..Query::default()
         };
         assert_eq!(rel(d.path(), run(d.path(), &q)), ["a1.rs", "Б2.txt"]);
         let q = Query {
-            name_regex: Some(name_regex("^б").unwrap()), // case-insensitive, Cyrillic too
+            name_regex: Some(name_regex("^б", false).unwrap()), // case-insensitive, Cyrillic too
             ..Query::default()
         };
         assert_eq!(rel(d.path(), run(d.path(), &q)), ["Б2.txt"]);
-        assert!(name_regex("(").is_err());
+        assert!(name_regex("(", false).is_err());
     }
 
     #[test]
