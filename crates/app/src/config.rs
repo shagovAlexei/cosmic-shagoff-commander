@@ -204,7 +204,7 @@ pub fn read<T: CosmicConfigEntry + Default>(h: Option<&cosmic_config::Config>) -
             c
         })
     })
-        .unwrap_or_default()
+    .unwrap_or_default()
 }
 
 #[cfg(test)]

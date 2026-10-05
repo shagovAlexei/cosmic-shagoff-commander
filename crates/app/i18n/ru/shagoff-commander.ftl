@@ -351,7 +351,6 @@ connect-browse = Обзор сети
 connect-browsing = Поиск…
 connect-none-found = В сети ничего не найдено
 connect-cancelled = Подключение отменено
-connect-busy = Подключение уже идёт: Esc — отменить
 
 ## Command line (phase 27)
 settings-cmdline = Командная строка

@@ -1296,6 +1296,11 @@ impl App {
                 Some(Dialog::Error { reply, .. }) => {
                     let _ = reply.send(ErrorChoice::Cancel);
                 }
+                Some(Dialog::Connect { .. }) => {
+                    if let Some((_, cancel)) = &self.connecting {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                }
                 Some(_) => {}
                 None => {
                     if self.drawer.is_some() {
@@ -1482,10 +1487,17 @@ impl App {
                 }
                 if result.is_ok() {
                     let list = mount::remember(&self.config.connections, &url);
-                    if let Some(Dialog::Connect { saved, .. }) = &mut self.dialog {
-                        saved.clone_from(&list);
-                    }
                     self.save_connections(list);
+                    if matches!(self.dialog, Some(Dialog::Connect { .. })) {
+                        self.dialog = None;
+                    }
+                } else if let Some(Dialog::Connect { note, .. }) = &mut self.dialog
+                    && let Err(e) = &result
+                    && *e != mount::Error::Cancelled
+                {
+                    *note = Some((true, mount_error(e)));
+                    self.status = None; // the Busy "Connecting…"
+                    return Task::none();
                 }
                 return self.handle(Message::Mounted(side, result));
             }
@@ -1512,17 +1524,21 @@ impl App {
             }
             Message::Browsed(r) => {
                 if let Some(Dialog::Connect {
-                    found, browsing, ..
+                    found,
+                    browsing,
+                    note,
+                    ..
                 }) = &mut self.dialog
                 {
                     *browsing = false;
-                    match r {
-                        Ok(list) if list.is_empty() => {
-                            self.say(StatusKind::Info, fl!("connect-none-found"))
+                    *note = match r {
+                        Ok(list) if list.is_empty() => Some((false, fl!("connect-none-found"))),
+                        Ok(list) => {
+                            *found = list;
+                            None
                         }
-                        Ok(list) => *found = list,
-                        Err(e) => self.say(StatusKind::Error, mount_error(&e)),
-                    }
+                        Err(e) => Some((true, mount_error(&e))),
+                    };
                 }
             }
             Message::Unmounted(root, result) => {
@@ -2269,6 +2285,7 @@ impl App {
                 saved: self.config.connections.clone(),
                 found: Vec::new(),
                 browsing: false,
+                note: None,
             }),
             Action::MultiRename => {
                 let wanted: HashSet<PathBuf> = panel.targets().into_iter().collect();
@@ -2528,20 +2545,34 @@ impl App {
                 side,
                 url,
                 password,
-                ..
+                saved,
+                found,
+                browsing,
+                note,
             } => {
-                let url = url.trim().to_string();
-                if url.is_empty() {
+                let address = url.trim().to_string();
+                // Stays open while connecting: the error lands in it, Cancel stops it.
+                let busy = self.connecting.is_some();
+                self.dialog = Some(Dialog::Connect {
+                    side,
+                    url,
+                    password: password.clone(),
+                    saved,
+                    found,
+                    browsing,
+                    note: if busy || address.is_empty() {
+                        note
+                    } else {
+                        Some((false, fl!("connecting")))
+                    },
+                });
+                if busy || address.is_empty() {
                     return Task::none();
                 }
-                // One at a time: Esc must be able to stop the one running.
-                if self.connecting.is_some() {
-                    self.say(StatusKind::Info, fl!("connect-busy"));
-                    return Task::none();
-                }
-                self.say(StatusKind::Busy, fl!("connecting"));
+                let url = address;
                 let cancel = Arc::new(AtomicBool::new(false));
                 self.connecting = Some((url.clone(), cancel.clone()));
+                self.say(StatusKind::Busy, fl!("connecting"));
                 let address = url.clone();
                 blocking(
                     move || mount::connect(&url, &password, &cancel),
@@ -6910,8 +6941,16 @@ mod tests {
             };
             assert_eq!((url.as_str(), password.as_str()), ("sftp://nas/", "pw"));
             let _ = app.update(Message::DialogSubmit);
-            assert!(app.dialog.is_none());
-            assert_eq!(app.msg(), Some(fl!("connecting").as_str()));
+            // Stays open, as in TC: the outcome is shown in it.
+            let note = |app: &App| match &app.dialog {
+                Some(Dialog::Connect { note, .. }) => note.clone(),
+                _ => panic!("dialog closed"),
+            };
+            assert_eq!(note(&app), Some((false, fl!("connecting"))));
+            let bad = Err(MountError::Failed("gio: no such host".into()));
+            let _ = app.update(Message::Connected(0, "sftp://nas/".into(), bad));
+            assert_eq!(note(&app), Some((true, "gio: no such host".into())));
+            assert!(app.connecting.is_none());
         }
 
         #[test]
@@ -6938,10 +6977,8 @@ mod tests {
             // Esc while connecting stops it.
             let _ = app.update(Message::DialogSubmit);
             let flag = app.connecting.as_ref().unwrap().1.clone();
-            // A second one meanwhile is refused (its flag would replace this one).
-            let _ = app.update(Message::Key(Action::Connect));
+            // A second submit meanwhile does nothing (its flag would replace this one).
             let _ = app.update(Message::DialogSubmit);
-            assert_eq!(app.msg(), Some(fl!("connect-busy").as_str()));
             assert!(Arc::ptr_eq(&flag, &app.connecting.as_ref().unwrap().1));
             let _ = app.update(Message::DialogCancel);
             assert!(flag.load(Ordering::Relaxed));

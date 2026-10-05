@@ -105,6 +105,9 @@ pub enum Dialog {
         /// "Browse network": (name, address).
         found: Vec<(String, String)>,
         browsing: bool,
+        /// Shown in the dialog (as in TC, not in the status line): "Connecting…", or the
+        /// last error (`true`) / browse result. The dialog stays open until connected.
+        note: Option<(bool, String)>,
     },
 }
 
@@ -896,6 +899,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             saved,
             found,
             browsing,
+            note,
             ..
         } => {
             let mut col = column![
@@ -934,6 +938,19 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             col = col.push(browse);
             for (name, u) in found {
                 col = col.push(pick(format!("{name}   {u}"), u));
+            }
+            if let Some((error, text)) = note {
+                let t = widget::text::body(text.clone()).wrapping(Wrapping::WordOrGlyph);
+                col = col.push(if *error {
+                    t.class(cosmic::theme::Text::Custom(|t| {
+                        cosmic::iced::widget::text::Style {
+                            color: Some(t.cosmic().destructive_text_color().into()),
+                            ..Default::default()
+                        }
+                    }))
+                } else {
+                    t
+                });
             }
             widget::dialog()
                 .title(fl!("connect"))
