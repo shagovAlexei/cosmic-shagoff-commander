@@ -247,6 +247,11 @@ pub struct App {
     pub status: Option<Status>,
     /// User / group names for the status bar.
     pub owners: shagoff_core::owners::Owners,
+    /// The last right press landed on a row (else below them): which context menu to show.
+    pub ctx_entry: bool,
+    /// A row took this right press: the list's own `RightEmpty`, published right after it for
+    /// the same press (libcosmic does not capture right presses), must not undo that.
+    ctx_row: bool,
     /// F3 viewer, shown in place of the panels.
     pub(crate) lister: Option<Box<Lister>>,
     /// Files from archives open in the editor (F4).
@@ -287,6 +292,14 @@ pub enum Message {
     },
     Click(usize, usize),
     DoubleClick(usize, usize),
+    /// Context menu "Open": like a double click, not like the Enter key (which runs a typed command).
+    OpenEntry,
+    /// A context menu's popup surface (create / destroy), passed on to libcosmic.
+    Surface(cosmic::surface::Action),
+    /// Right press on row i: active pane, cursor there; the context menu opens on release.
+    RightClick(usize, usize),
+    /// Right press below the rows: the menu is about the dir itself.
+    RightEmpty(usize),
     /// A button of one pane (column header, `\\`, `..`): that pane becomes active and acts.
     PaneKey(usize, Action),
     /// side, scroll offset y, viewport height (of the active tab)
@@ -487,8 +500,9 @@ impl Application for App {
     }
 
     /// The title bar's × and Alt+F4: the same temp cleanup as Exit (libcosmic exits after it).
-    fn on_close_requested(&self, _id: cosmic::iced::window::Id) -> Option<Message> {
-        Some(Message::Exit)
+    /// Only for the main window: a context menu's popup closes through here too.
+    fn on_close_requested(&self, id: cosmic::iced::window::Id) -> Option<Message> {
+        (id == self.window_id()).then_some(Message::Exit)
     }
 
     fn context_drawer(&self) -> Option<cosmic::app::context_drawer::ContextDrawer<'_, Message>> {
@@ -555,6 +569,8 @@ impl App {
             space: [None, None],
             status: None,
             owners: shagoff_core::owners::Owners::load(),
+            ctx_entry: false,
+            ctx_row: false,
             lister: None,
             edited: Vec::new(),
             connecting: None,
@@ -759,6 +775,35 @@ impl App {
                 }
                 let tab = t.id;
                 return self.reveal(side, tab); // a half-visible row scrolls fully in
+            }
+            Message::RightClick(side, i) => {
+                self.search = None;
+                self.active = side;
+                (self.ctx_entry, self.ctx_row) = (true, true);
+                let t = self.panes[side].active_mut();
+                t.panel.set_cursor(i);
+                // As in Explorer: the menu is about what was clicked. A marked row keeps the marks
+                // (the menu is for all of them); an unmarked one drops them.
+                let clicked_marked = t.panel.current().is_some_and(|e| t.panel.is_marked(e));
+                if !clicked_marked {
+                    t.panel.mark_all(false);
+                }
+                let tab = t.id;
+                return self.reveal(side, tab);
+            }
+            Message::OpenEntry => return self.act(self.active, Action::Enter),
+            Message::Surface(a) => {
+                return cosmic::task::message(cosmic::Action::Cosmic(
+                    cosmic::app::Action::Surface(a),
+                ));
+            }
+            Message::RightEmpty(side) => {
+                self.search = None;
+                self.active = side;
+                // The same press on a row came first: that row's menu stands.
+                if !std::mem::take(&mut self.ctx_row) {
+                    self.ctx_entry = false;
+                }
             }
             Message::DoubleClick(side, i) => {
                 self.search = None;
@@ -1525,6 +1570,13 @@ impl App {
             log::warn!("state: {e}");
         }
         self.saved = state;
+    }
+
+    /// Parent window of context menu popups.
+    pub fn window_id(&self) -> cosmic::iced::window::Id {
+        self.core
+            .main_window_id()
+            .unwrap_or(cosmic::iced::window::Id::RESERVED)
     }
 
     /// File row height of the current skin; every scroll computation uses it.
@@ -5823,6 +5875,49 @@ mod tests {
     }
 
     #[test]
+    fn right_click_moves_the_cursor_and_keeps_marks_only_on_a_marked_row() {
+        let mut app = files_app(&["a", "b", "c"]);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::MarkDown)); // "a" marked, cursor on "b"
+        let _ = app.update(Message::RightClick(0, 1)); // on the marked "a"
+        let _ = app.update(Message::RightEmpty(0)); // the list's own handler, same press
+        assert!(app.ctx_entry);
+        assert_eq!(app.panes[0].active().panel.marked_totals().files, 1);
+        let _ = app.update(Message::RightClick(0, 3)); // unmarked "c": the menu is about it
+        let _ = app.update(Message::RightEmpty(0));
+        assert_eq!(cursor_name(&app), "c");
+        assert_eq!(app.panes[0].active().panel.marked_totals().files, 0);
+        // a press below the rows: the dir's menu
+        let _ = app.update(Message::RightEmpty(1));
+        assert!(!app.ctx_entry);
+        assert_eq!(app.active, 1);
+    }
+
+    #[test]
+    fn regression_menu_open_opens_even_with_a_typed_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        app.cmdline = "ls -l".into();
+        let _ = app.update(Message::RightClick(0, 1));
+        let _ = app.update(Message::OpenEntry);
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+        assert_eq!(app.cmdline, "ls -l"); // not run
+    }
+
+    #[test]
+    fn regression_closing_a_popup_does_not_quit() {
+        let app = files_app(&[]);
+        let popup = cosmic::iced::window::Id::unique();
+        assert!(app.on_close_requested(popup).is_none());
+        assert!(matches!(
+            app.on_close_requested(app.window_id()),
+            Some(Message::Exit)
+        ));
+    }
+
+    #[test]
     fn found_inside_archives_by_name() {
         assert!(inside_archive(Path::new("/x/a.zip/docs/f.txt")));
         assert!(inside_archive(Path::new("/x/b.tar.gz/f")));
@@ -6409,8 +6504,10 @@ mod tests {
     fn window_close_cleans_up_like_exit() {
         // Alt+F4 / the title bar's ×: same temp cleanup as the Exit button and menu item.
         let app = app_with(Config::default(), State::default());
-        let id = cosmic::iced::window::Id::unique();
-        assert!(matches!(app.on_close_requested(id), Some(Message::Exit)));
+        assert!(matches!(
+            app.on_close_requested(app.window_id()),
+            Some(Message::Exit)
+        ));
     }
 
     mod drawer_tests {

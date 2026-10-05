@@ -124,6 +124,22 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     } else {
         full_list(app, side, p, active)
     };
+    // Right-click menu: about the row under the cursor if the press landed on one, else the dir.
+    let ctx = match (app.ctx_entry, p.panel.current()) {
+        (true, Some(e)) if e.name != PARENT => crate::menu::Ctx::Entry {
+            dir: e.is_dir(),
+            archive: shagoff_core::archive::Format::detect(&e.name).is_some_and(|f| f.is_tree()),
+        },
+        _ => crate::menu::Ctx::Dir,
+    };
+    // A popup surface, not an overlay: libcosmic's overlay menu closes on the press that should
+    // pick an item.
+    let list = widget::context_menu(
+        mouse_area(list).on_right_press(Message::RightEmpty(side)),
+        Some(crate::menu::context(ctx)),
+    )
+    .window_id(app.window_id())
+    .on_surface_action(Message::Surface);
     // on_scroll misses window resizes: the sensor reports the list's real size.
     let list = cosmic::iced::widget::sensor(list)
         .on_show(move |size| Message::Resized(side, size))
@@ -135,7 +151,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
     let mut col = column![drives];
     if tabs.items().len() > 1 {
-        col = col.push(tab_bar(side, tabs, active));
+        col = col.push(tab_bar(side, tabs, active, app.window_id()));
     }
     let col = col
         .push(path)
@@ -267,6 +283,7 @@ fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, skin: Skin) -> Element<
             list = list.push(
                 mouse_area(cell)
                     .on_press(Message::Click(side, i))
+                    .on_right_press(Message::RightClick(side, i))
                     .on_double_click(Message::DoubleClick(side, i)),
             );
         }
@@ -355,7 +372,12 @@ fn human(n: u64) -> String {
 }
 
 /// Shown only with 2+ tabs; the active tab is styled like the cursor row.
-fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Message> {
+fn tab_bar(
+    side: usize,
+    tabs: &Tabs<Tab>,
+    pane_active: bool,
+    window: cosmic::iced::window::Id,
+) -> Element<'_, Message> {
     let mut bar = row![].spacing(2);
     for (i, t) in tabs.items().iter().enumerate() {
         let label = container(cell(t.title()))
@@ -367,11 +389,17 @@ fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Mess
                 false,
                 Skin::Classic,
             ));
+        let tab = mouse_area(label)
+            .on_press(Message::SelectTab(side, i))
+            // Right press selects the tab, so the menu's actions (active tab) are about it.
+            .on_right_press(Message::SelectTab(side, i))
+            .on_middle_press(Message::CloseTabAt(side, i))
+            .on_double_click(Message::CloseTabAt(side, i));
+        let ctx = crate::menu::Ctx::Tab { locked: t.locked };
         bar = bar.push(
-            mouse_area(label)
-                .on_press(Message::SelectTab(side, i))
-                .on_middle_press(Message::CloseTabAt(side, i))
-                .on_double_click(Message::CloseTabAt(side, i)),
+            widget::context_menu(tab, Some(crate::menu::context(ctx)))
+                .window_id(window)
+                .on_surface_action(Message::Surface),
         );
     }
     bar.into()
@@ -480,6 +508,7 @@ fn file_row<'a>(
         .class(cursor_style(is_cursor, active, is_marked, app.config.skin));
     mouse_area(row)
         .on_press(Message::Click(side, i))
+        .on_right_press(Message::RightClick(side, i))
         .on_double_click(Message::DoubleClick(side, i))
         .into()
 }

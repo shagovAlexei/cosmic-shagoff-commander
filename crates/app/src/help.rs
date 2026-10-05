@@ -17,7 +17,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 o("Tab", fl!("help-tab")),
                 o("↑ ↓ PgUp PgDn Home End", fl!("help-cursor")),
                 o("← →", fl!("help-brief-cols")),
-                o("Enter, Ctrl+PgDn", fl!("help-enter")),
+                r("Enter, Ctrl+PgDn", fl!("help-enter"), Action::Enter),
                 o("Backspace, Ctrl+PgUp", fl!("help-parent")),
                 o("Ctrl+\\", fl!("help-root")),
                 o("Alt+← / Alt+→", fl!("help-history-step")),
@@ -65,7 +65,9 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                     Action::DeletePermanent,
                 ),
                 r("Ctrl+M", fl!("menu-multi-rename"), Action::MultiRename),
-                o("Ctrl+C / Ctrl+X / Ctrl+V", fl!("help-clipboard")),
+                r("Ctrl+C", fl!("menu-clip-copy"), Action::ClipCopy),
+                r("Ctrl+X", fl!("menu-clip-cut"), Action::ClipCut),
+                r("Ctrl+V", fl!("menu-clip-paste"), Action::ClipPaste),
                 r(
                     "F11, Ctrl+Shift+D",
                     fl!("menu-compare-files"),
@@ -140,6 +142,17 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                     fl!("menu-sort-size"),
                     Action::Sort(SortKey::Size),
                 ),
+            ],
+        ),
+        (
+            fl!("help-mouse"),
+            vec![
+                o("LMB", fl!("help-mouse-click")),
+                o("Ctrl+LMB", fl!("help-mouse-mark")),
+                o("LMB ×2", fl!("help-mouse-open")),
+                o("RMB", fl!("help-mouse-menu")),
+                o("RMB ↓", fl!("help-mouse-menu-dir")),
+                o("RMB / MMB", fl!("help-mouse-tab")),
             ],
         ),
         (

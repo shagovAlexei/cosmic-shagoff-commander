@@ -14,6 +14,8 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAct {
     Key(Action),
+    /// Context menu "Open": the entry, never a command typed in the command line (Enter's job).
+    Open,
     Exit,
 }
 
@@ -22,6 +24,7 @@ impl menu::Action for MenuAct {
     fn message(&self) -> Message {
         match *self {
             MenuAct::Key(a) => Message::Key(a),
+            MenuAct::Open => Message::OpenEntry,
             MenuAct::Exit => Message::Exit,
         }
     }
@@ -44,6 +47,10 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
     use Modifier::{Alt, Ctrl, Shift};
     let a = MenuAct::Key;
     vec![
+        (vec![], K::Named(Named::Enter), MenuAct::Open),
+        (vec![Ctrl], K::Letter(Code::KeyX, "x"), a(Action::ClipCut)),
+        (vec![Ctrl], K::Letter(Code::KeyC, "c"), a(Action::ClipCopy)),
+        (vec![Ctrl], K::Letter(Code::KeyV, "v"), a(Action::ClipPaste)),
         (vec![], K::Named(Named::F3), a(Action::View)),
         (vec![], K::Named(Named::F4), a(Action::Edit)),
         (vec![Alt], K::Named(Named::Enter), a(Action::Properties)),
@@ -302,6 +309,93 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
     ]
 }
 
+/// What was right-clicked: the context menu's items depend on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ctx {
+    /// A file or dir (or the marked ones); `archive`: opens as a folder (offer unpacking).
+    Entry {
+        dir: bool,
+        archive: bool,
+    },
+    /// `..` or the empty space below the rows: the dir itself.
+    Dir,
+    Tab {
+        locked: bool,
+    },
+}
+
+fn context_items(ctx: Ctx) -> Vec<Item> {
+    let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
+    match ctx {
+        Ctx::Entry { dir, archive } => {
+            let mut v = vec![
+                menu::Item::Button(fl!("menu-open"), None, MenuAct::Open),
+                b(fl!("menu-view"), Action::View),
+            ];
+            // An archive is opened as a folder, not edited; 12 items fit a 530 px window.
+            if !dir && !archive {
+                v.push(b(fl!("menu-edit"), Action::Edit));
+            }
+            v.extend([
+                menu::Item::Divider,
+                b(fl!("menu-copy"), Action::Copy),
+                b(fl!("menu-move"), Action::Move),
+                b(fl!("menu-rename"), Action::Rename),
+                b(fl!("menu-delete"), Action::Delete),
+                menu::Item::Divider,
+                b(fl!("menu-clip-cut"), Action::ClipCut),
+                b(fl!("menu-clip-copy"), Action::ClipCopy),
+                b(fl!("menu-clip-paste"), Action::ClipPaste),
+                menu::Item::Divider,
+            ]);
+            v.push(if archive {
+                b(fl!("menu-unpack"), Action::Unpack)
+            } else {
+                b(fl!("menu-pack"), Action::Pack)
+            });
+            // Short enough for a 530 px window: Shift+F5, F9 / F10 stay in the main menu.
+            v.push(menu::Item::Divider);
+            if dir || archive {
+                v.push(b(fl!("menu-tab-open"), Action::TabOpen));
+            }
+            v.push(b(fl!("menu-properties"), Action::Properties));
+            v
+        }
+        Ctx::Dir => vec![
+            b(fl!("menu-mkdir"), Action::Mkdir),
+            b(fl!("menu-clip-paste"), Action::ClipPaste),
+            menu::Item::Divider,
+            b(fl!("menu-reload"), Action::Reload),
+            b(fl!("menu-select-all"), Action::SelectAll),
+            b(fl!("menu-find"), Action::FindFiles),
+            b(fl!("menu-new-tab"), Action::NewTab),
+        ],
+        Ctx::Tab { locked } => vec![
+            b(fl!("menu-new-tab"), Action::NewTab),
+            b(fl!("menu-reload"), Action::Reload),
+            menu::Item::Divider,
+            b(fl!("menu-tab-copy-other"), Action::TabCopyOther),
+            b(fl!("menu-tab-move-other"), Action::TabMoveOther),
+            menu::Item::Divider,
+            menu::Item::CheckBox(
+                fl!("menu-tab-lock"),
+                None,
+                locked,
+                MenuAct::Key(Action::TabLock),
+            ),
+            b(fl!("menu-tab-rename"), Action::TabRename),
+            menu::Item::Divider,
+            b(fl!("menu-close-tab"), Action::CloseTab),
+            b(fl!("menu-close-other-tabs"), Action::CloseOtherTabs),
+        ],
+    }
+}
+
+/// Right-click menu for `ctx`, keys shown from the same table as the main menu.
+pub fn context(ctx: Ctx) -> Vec<menu::Tree<Message>> {
+    menu::items(&key_binds(), context_items(ctx))
+}
+
 pub fn bar(show_hidden: bool, locked: bool) -> Element<'static, Message> {
     let binds = key_binds();
     let roots = menus(show_hidden, locked)
@@ -323,6 +417,53 @@ mod tests {
     use crate::keymap;
     use cosmic::iced::keyboard::Modifiers;
     use cosmic::iced::keyboard::key::Physical;
+
+    fn actions(ctx: Ctx) -> Vec<Action> {
+        context_items(ctx)
+            .into_iter()
+            .filter_map(|i| match i {
+                menu::Item::Button(_, _, MenuAct::Key(a))
+                | menu::Item::CheckBox(_, _, _, MenuAct::Key(a)) => Some(a),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn context_menus_fit_what_was_clicked() {
+        let file = actions(Ctx::Entry {
+            dir: false,
+            archive: false,
+        });
+        assert!(file.contains(&Action::Edit) && !file.contains(&Action::TabOpen));
+        assert!(!file.contains(&Action::Unpack));
+        let dir = actions(Ctx::Entry {
+            dir: true,
+            archive: false,
+        });
+        assert!(!dir.contains(&Action::Edit) && dir.contains(&Action::TabOpen));
+        let zip = actions(Ctx::Entry {
+            dir: false,
+            archive: true,
+        });
+        assert!(zip.contains(&Action::Unpack) && zip.contains(&Action::TabOpen));
+        assert!(actions(Ctx::Dir).contains(&Action::Mkdir));
+        let tab = actions(Ctx::Tab { locked: true });
+        for a in [
+            Action::NewTab,
+            Action::CloseTab,
+            Action::TabLock,
+            Action::TabRename,
+        ] {
+            assert!(tab.contains(&a), "{a:?}");
+        }
+        // a 530 px window holds about 12 items
+        assert!(
+            file.len() <= 12 && dir.len() <= 12 && zip.len() <= 12,
+            "{}",
+            zip.len()
+        );
+    }
 
     #[test]
     fn menu_keys_do_what_the_menu_says() {
@@ -346,6 +487,8 @@ mod tests {
                 // Alt+F4 belongs to the compositor; the menu item quits directly.
                 MenuAct::Exit => assert_eq!(got, None),
                 MenuAct::Key(a) => assert_eq!(got, Some(a), "{mods:?} {key:?}"),
+                // The key is Enter; the item opens the entry even with a typed command.
+                MenuAct::Open => assert_eq!(got, Some(Action::Enter)),
             }
         }
     }

@@ -210,7 +210,6 @@ help-mark = Mark the file under the cursor
 help-compare-lists = Mark what differs between the panels
 help-files = Files
 help-delete = Delete to the trash
-help-clipboard = Copy, cut, paste files (compatible with COSMIC Files)
 help-archives = Archives
 help-archive-enter = An archive opens like a folder (read-only)
 help-search = Search and compare
@@ -269,6 +268,13 @@ lister-close = Close (Esc)
 lister-truncated = Showing the first { $limit } MB of { $size } B
 lister-not-found = Not found: { $query }
 settings-internal-viewer = Built-in viewer (F3)
+help-mouse = Mouse (LMB / RMB / MMB = left / right / middle button)
+help-mouse-click = Click a row: cursor there, the panel becomes active
+help-mouse-mark = Mark / unmark the row
+help-mouse-open = Double click: like Enter
+help-mouse-menu = Right click a row: cursor there and its menu (marked row: for all marked)
+help-mouse-menu-dir = Right click below the rows: menu of the folder (new folder, paste…)
+help-mouse-tab = On a tab: its menu (lock, rename, close…) / middle button closes it
 help-lister = Viewer (F3)
 help-lister-scroll = Scroll
 help-lister-modes = Text / hex / image
@@ -375,3 +381,9 @@ props-recursive = Also everything inside the folders
 props-apply = Apply
 props-changed = Permissions changed
 props-failed = Could not change { $n } of them: { $err }
+
+# Right-click menu
+menu-open = Open
+menu-clip-cut = Cut
+menu-clip-copy = Copy to clipboard
+menu-clip-paste = Paste

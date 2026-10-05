@@ -25,7 +25,7 @@ Every feature and every MVP phase goes through these steps in order. Do not skip
    - Logic goes into `crates/core`, written test-first with `superpowers:test-driven-development`.
    - `crates/app` stays thin: map the message, call the core, render.
    - Every new UI string goes in `fl!` with both `en` and `ru` entries.
-6. **Verify.** `just verify` must pass. Then look at the real UI yourself with `.claude/skills/shagoff-feature/headless.sh` (invisible sway + `wtype` + `grim`; never the user's desktop or config): `start`, `panes L R`, `key -k F7`, `shot name`, then Read the png; check every new dialog at the default 1036x530 size for clipped buttons. Letter shortcuts (Ctrl+…) can't be sent this way; the user checks those. Add the manual check to `TESTING.md`; the user walks through it by hand.
+6. **Verify.** `just verify` must pass. Then look at the real UI yourself with `.claude/skills/shagoff-feature/headless.sh` (invisible sway + `wtype` + `grim`; never the user's desktop or config): `start`, `panes L R`, `key -k F7`, `shot name`, then Read the png; check every new dialog at the default 1036x530 size for clipped buttons. Letter shortcuts (Ctrl+…) can't be sent this way; the user checks those. Mouse: `click X Y [right]` (virtual pointer through `vpointer/`, headless sway only) — clicks, right-click menus, popups. Add the manual check to `TESTING.md`; the user walks through it by hand.
 7. **Review.** Run `/code-review` and fix what it confirms.
 8. **PR.**
    - Update `ROADMAP.md` by ticking the phase or feature.
