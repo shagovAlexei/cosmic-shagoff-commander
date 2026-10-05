@@ -359,6 +359,8 @@ pub enum Message {
     DiffPrev,
     DiffScrolled(f32),
     DiffOpt(dialogs::DiffOpt),
+    /// Read both files again (TC "Compare" / rescan); not with unsaved changes.
+    DiffReread,
     /// Copy the current block of differences left → right (true) or right → left.
     DiffCopy(bool),
     DiffSave,
@@ -1154,6 +1156,15 @@ impl App {
             Message::DiffScrolled(y) => {
                 if let Some(Dialog::Diff(d)) = &mut self.dialog {
                     d.offset = y;
+                }
+            }
+            Message::DiffReread => {
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && d.result.is_some()
+                    && !(d.dirty.0 || d.dirty.1)
+                {
+                    d.block = 0;
+                    return self.start_diff();
                 }
             }
             Message::DiffOpt(o) => {
@@ -6894,12 +6905,17 @@ mod tests {
         assert!(!diff_dlg(&mut app).opts.ignore_case);
         let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
         assert_eq!(diff_dlg(&mut app).dirty, (false, true)); // changed, unsaved
+        let shown = diff_dlg(&mut app).id;
+        let _ = app.update(Message::DiffReread); // would drop the unsaved copy: refused
+        assert_eq!(diff_dlg(&mut app).id, shown);
         let _ = app.update(Message::DialogCancel);
         assert!(app.dialog.is_some()); // first Esc only warns
         let _ = app.update(Message::DiffSave);
         assert_eq!(std::fs::read_to_string(&r).unwrap(), "x\nNEW\ny\n");
         assert_eq!(std::fs::read_to_string(&l).unwrap(), "x\nNEW\ny\n");
         assert_eq!(diff_dlg(&mut app).dirty, (false, false));
+        let _ = app.update(Message::DiffReread); // saved: reads both files again
+        assert_ne!(diff_dlg(&mut app).id, shown);
         let _ = app.update(Message::DialogCancel);
         assert!(app.dialog.is_none());
     }

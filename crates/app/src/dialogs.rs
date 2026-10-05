@@ -1181,25 +1181,24 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 (true, false) => format!("{status}   {}", fl!("diff-unsaved")),
                 _ => status,
             };
-            let buttons = widget::flex_row(vec![
+            // TC's toolbar: rescan, ↑ ↓, block copies, save, options; Close at the right end.
+            let reread = d.result.is_some() && !dirty;
+            let buttons = row![
+                widget::button::standard(fl!("diff-reread"))
+                    .on_press_maybe(reread.then_some(Message::DiffReread)),
                 widget::button::standard(fl!("diff-prev"))
-                    .on_press_maybe(nav.then_some(Message::DiffPrev))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffPrev)),
                 widget::button::standard(fl!("diff-next"))
-                    .on_press_maybe(nav.then_some(Message::DiffNext))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffNext)),
                 widget::button::standard(fl!("diff-copy-right"))
-                    .on_press_maybe(nav.then_some(Message::DiffCopy(true)))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffCopy(true))),
                 widget::button::standard(fl!("diff-copy-left"))
-                    .on_press_maybe(nav.then_some(Message::DiffCopy(false)))
-                    .into(),
+                    .on_press_maybe(nav.then_some(Message::DiffCopy(false))),
                 widget::button::suggested(fl!("diff-save"))
-                    .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave))
-                    .into(),
-                cancel.into(),
-            ])
+                    .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave)),
+            ]
             .spacing(8);
+            // Under the text with the status, as TC keeps them out of the toolbar.
             let opts = row![
                 widget::checkbox(d.opts.ignore_space)
                     .label(fl!("diff-ignore-space"))
@@ -1209,25 +1208,30 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     .on_toggle(|_| Message::DiffOpt(DiffOpt::Case)),
             ]
             .spacing(16);
+            let close = widget::button::standard(fl!("diff-close")).on_press(Message::DialogCancel);
+            // Each file's path right over its half of the text (TC), in a header strip.
+            let (wl, wr) = d.widths;
+            let head = |p: &PathBuf, w: f32| {
+                widget::container(
+                    widget::text::heading(name(p))
+                        .wrapping(Wrapping::None)
+                        .ellipsize(cosmic::iced::core::text::Ellipsize::Start(
+                            cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1),
+                        )),
+                )
+                .padding([4, 8])
+                .width(Length::Fixed(w))
+                .class(cosmic::theme::Container::Card)
+            };
             widget::dialog()
                 .title(fl!("diff-title"))
                 .width(Length::Fill)
                 .max_width(1400.0)
                 .control(
                     column![
-                        row![
-                            widget::text(name(&d.left))
-                                .width(Length::FillPortion(1))
-                                .wrapping(Wrapping::WordOrGlyph),
-                            widget::text(name(&d.right))
-                                .width(Length::FillPortion(1))
-                                .wrapping(Wrapping::WordOrGlyph),
-                        ]
-                        .spacing(8),
                         // All buttons above the text: a short window clips the dialog's bottom row.
-                        opts,
-                        buttons,
-                        widget::text(status),
+                        row![buttons, widget::Space::new().width(Length::Fill), close].spacing(8),
+                        row![head(&d.left, wl), head(&d.right, wr)].spacing(8),
                         widget::scrollable(list)
                             .id(d.scroll.clone())
                             .on_scroll(|v| Message::DiffScrolled(v.absolute_offset().y))
@@ -1237,8 +1241,11 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                             })
                             .width(Length::Fill)
                             .height(Length::Fixed(DIFF_LIST_H)),
+                        row![widget::text(status).width(Length::Fill), opts]
+                            .spacing(16)
+                            .align_y(cosmic::iced::Alignment::Center),
                     ]
-                    .spacing(10),
+                    .spacing(8),
                 )
                 .into()
         }
