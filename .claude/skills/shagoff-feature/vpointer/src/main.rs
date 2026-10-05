@@ -1,5 +1,6 @@
 //! `vpointer X Y [left|right|middle] [W H]`: move to (X, Y) of a W×H output (default 1036×530)
-//! and click. For headless sway only (tests); it never touches a real session unless pointed at it.
+//! and click. `vpointer drag X1 Y1 X2 Y2 [W H]`: press at the first point, move to the second in
+//! steps, release. For headless sway only (tests); it never touches a real session unless pointed at it.
 use wayland_client::protocol::{wl_pointer::ButtonState, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop};
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
@@ -36,9 +37,18 @@ delegate_noop!(State: ZwlrVirtualPointerManagerV1);
 delegate_noop!(State: ZwlrVirtualPointerV1);
 
 fn main() {
-    let a: Vec<String> = std::env::args().collect();
+    let mut a: Vec<String> = std::env::args().collect();
+    let drag = a.get(1).is_some_and(|s| s == "drag");
+    if drag {
+        a.remove(1);
+    }
     let num = |i: usize, d: u32| a.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
-    let (x, y, w, h) = (num(1, 0), num(2, 0), num(4, 1036), num(5, 530));
+    let (x, y, w, h) = if drag {
+        (num(1, 0), num(2, 0), num(5, 1036), num(6, 530))
+    } else {
+        (num(1, 0), num(2, 0), num(4, 1036), num(5, 530))
+    };
+    let to = (num(3, 0), num(4, 0));
     let button = match a.get(3).map(String::as_str) {
         Some("right") => 0x111,
         Some("middle") => 0x112,
@@ -58,7 +68,22 @@ fn main() {
     p.frame();
     q.roundtrip(&mut s).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(150));
-    if button != 0 {
+    if drag {
+        p.button(t(), 0x110, ButtonState::Pressed);
+        p.frame();
+        q.roundtrip(&mut s).unwrap();
+        for i in 1..=10 {
+            let step = |a: u32, b: u32| (a as i64 + (b as i64 - a as i64) * i / 10) as u32;
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            p.motion_absolute(t(), step(x, to.0), step(y, to.1), w, h);
+            p.frame();
+            q.roundtrip(&mut s).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        p.button(t(), 0x110, ButtonState::Released);
+        p.frame();
+        q.roundtrip(&mut s).unwrap();
+    } else if button != 0 {
         p.button(t(), button, ButtonState::Pressed);
         p.frame();
         q.roundtrip(&mut s).unwrap();

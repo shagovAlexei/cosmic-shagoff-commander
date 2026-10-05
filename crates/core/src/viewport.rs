@@ -36,16 +36,44 @@ pub fn page_rows(row_h: f32, height: f32) -> usize {
 }
 
 /// Brief view: narrowest column, px; the pane width is shared by as many as fit.
-pub const BRIEF_COL_W: f32 = 200.0;
+/// Full view: a column's width bounds when dragged by its header edge.
+pub const COL_MIN_W: f32 = 30.0;
+pub const COL_MAX_W: f32 = 600.0;
+
+/// Header edge `edge` (1 = right of Name … 4 = left of Attributes) dragged from `start_x` to
+/// `x`: which of the four fixed columns changes, and its new width from `start_w`. As in TC an
+/// edge sizes the column on its left; Name takes the rest, so its own edge sizes Ext inversely.
+pub fn drag_col(edge: usize, start_w: f32, start_x: f32, x: f32) -> (usize, f32) {
+    let dx = x - start_x;
+    let (col, w) = match edge {
+        1 => (0, start_w - dx),
+        e => (e - 2, start_w + dx),
+    };
+    (col, w.clamp(COL_MIN_W, COL_MAX_W))
+}
+
+/// The column `drag_col` changes for `edge`.
+pub fn drag_target(edge: usize) -> usize {
+    edge.saturating_sub(2)
+}
+
+/// Brief column width bounds: a column fits the longest name, as in TC, within these.
+pub const BRIEF_MIN_W: f32 = 120.0;
+pub const BRIEF_MAX_W: f32 = 480.0;
+
+/// Brief column width for names up to `longest` chars (icon and padding included).
+pub fn brief_col_w(longest: usize) -> f32 {
+    (longest as f32 * 7.2 + 44.0).clamp(BRIEF_MIN_W, BRIEF_MAX_W)
+}
 
 /// Brief view: rows per column that fit `height`, at least 1.
 pub fn brief_rows(row_h: f32, height: f32) -> usize {
     ((height.max(0.0) / row_h) as usize).max(1)
 }
 
-/// Brief view: columns that fit `width`, at least 1.
-pub fn brief_cols(width: f32) -> usize {
-    ((width.max(0.0) / BRIEF_COL_W) as usize).max(1)
+/// Brief view: columns of `col_w` that fit `width`, at least 1.
+pub fn brief_cols(width: f32, col_w: f32) -> usize {
+    ((width.max(0.0) / col_w) as usize).max(1)
 }
 
 /// Brief view: first visible column keeping the cursor's column on screen, moved as little as
@@ -71,8 +99,26 @@ mod tests {
     fn brief_rows_and_cols_at_least_one() {
         assert_eq!(brief_rows(20.0, 400.0), 20);
         assert_eq!(brief_rows(20.0, 5.0), 1);
-        assert_eq!(brief_cols(450.0), 2);
-        assert_eq!(brief_cols(0.0), 1);
+        assert_eq!(brief_cols(450.0, 200.0), 2);
+        assert_eq!(brief_cols(0.0, 200.0), 1);
+    }
+
+    #[test]
+    fn dragging_a_column_edge() {
+        // Name's edge 20 px right: Name wider, so Ext narrower.
+        assert_eq!(drag_col(1, 60.0, 500.0, 520.0), (0, 40.0));
+        // Size|Date edge 20 px right: Size (on its left) wider.
+        assert_eq!(drag_col(3, 90.0, 500.0, 520.0), (1, 110.0));
+        assert_eq!(drag_col(4, 130.0, 500.0, -900.0), (2, COL_MIN_W));
+        assert_eq!(drag_col(2, 60.0, 0.0, 9000.0), (0, COL_MAX_W));
+        assert_eq!((drag_target(1), drag_target(2), drag_target(4)), (0, 0, 2));
+    }
+
+    #[test]
+    fn brief_columns_fit_the_longest_name_within_bounds() {
+        assert_eq!(brief_col_w(3), BRIEF_MIN_W);
+        assert!((brief_col_w(40) - 332.0).abs() < 1.0);
+        assert_eq!(brief_col_w(500), BRIEF_MAX_W);
     }
 
     #[test]

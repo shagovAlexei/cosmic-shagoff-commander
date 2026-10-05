@@ -292,6 +292,7 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-brief"), Action::ViewBrief),
                 b(fl!("menu-full"), Action::ViewFull),
+                b(fl!("menu-reset-columns"), Action::ResetColumns),
                 menu::Item::Divider,
                 sort(fl!("menu-sort-name"), SortKey::Name),
                 sort(fl!("menu-sort-ext"), SortKey::Ext),
@@ -553,6 +554,7 @@ mod tests {
                             | Action::TabMoveOther
                             | Action::TabLock
                             | Action::TabRename
+                            | Action::ResetColumns
                     )
                 ) {
                     continue;

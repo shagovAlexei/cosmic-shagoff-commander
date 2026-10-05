@@ -212,6 +212,7 @@ menu-sort-date = Сортировать по дате
 menu-sort-size = Сортировать по размеру
 menu-brief = Кратко (Brief)
 menu-full = Подробно
+menu-reset-columns = Сбросить ширину колонок
 
 # Справка, о программе, настройки (18)
 fkey-help = F1 Справка

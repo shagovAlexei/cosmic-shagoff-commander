@@ -18,10 +18,6 @@ use shagoff_core::sort::{Sort, SortKey};
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
 
-const W_EXT: f32 = 60.0;
-const W_SIZE: f32 = 90.0;
-const W_DATE: f32 = 130.0;
-const W_ATTR: f32 = 80.0;
 const TEXT: u16 = 13;
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -166,15 +162,23 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     }
     let col = col
         .push(path)
-        .push(header(side, p.panel.sort(), skin))
+        .push(header(side, p.panel.sort(), skin, app.cols))
         .push(list)
         .width(Length::Fill);
-    match skin {
+    let pane: Element<'_, Message> = match skin {
         Skin::Classic => col.into(),
         Skin::Modern => container(col.spacing(2))
             .padding(6)
             .class(card_style(active))
             .into(),
+    };
+    // While a header edge is dragged, the whole pane follows the pointer (it may leave the header).
+    match app.col_drag {
+        Some((s, ..)) if s == side => mouse_area(pane)
+            .on_move(|p| Message::ColDrag(p.x))
+            .on_release(Message::ColDragEnd)
+            .into(),
+        _ => pane,
     }
 }
 
@@ -228,9 +232,10 @@ fn path_parts(side: usize, cwd: &std::path::Path) -> Element<'static, Message> {
     let mut items: Vec<Element<'static, Message>> = Vec::new();
     for (i, path) in parts.into_iter().enumerate() {
         // "/" for the root; the others get theirs after them, except the last one.
-        let mut label = match path.file_name() {
-            None => "/".to_string(),
-            Some(n) => n.to_string_lossy().into_owned(),
+        // The last component as is (`..` too: `file_name` has none for it).
+        let mut label = match path.components().next_back() {
+            Some(std::path::Component::RootDir) | None => "/".to_string(),
+            Some(c) => c.as_os_str().to_string_lossy().into_owned(),
         };
         if i > 0 && i < last {
             label.push('/');
@@ -464,7 +469,7 @@ fn tab_bar(
 
 /// Column headers on the same grid as `file_row` (padding 6, spacing 6), so labels sit over their columns.
 /// Classic: on a bar with a rule in each gap, like TC's header buttons.
-fn header(side: usize, sort: Sort, skin: Skin) -> Element<'static, Message> {
+fn header(side: usize, sort: Sort, skin: Skin, w: [f32; 4]) -> Element<'static, Message> {
     let cell = |label: String, key: SortKey, width: Length, align: Alignment| {
         let arrow = match (sort.key == key, sort.asc) {
             (true, true) => " ▲",
@@ -477,39 +482,44 @@ fn header(side: usize, sort: Sort, skin: Skin) -> Element<'static, Message> {
     let start = Alignment::Start;
     let cells: Vec<Element<'static, Message>> = vec![
         cell(fl!("col-name"), SortKey::Name, Length::Fill, start).into(),
-        cell(fl!("col-ext"), SortKey::Ext, Length::Fixed(W_EXT), start).into(),
+        cell(fl!("col-ext"), SortKey::Ext, Length::Fixed(w[0]), start).into(),
         cell(
             fl!("col-size"),
             SortKey::Size,
-            Length::Fixed(W_SIZE),
+            Length::Fixed(w[1]),
             Alignment::End,
         )
         .into(),
-        cell(fl!("col-date"), SortKey::Date, Length::Fixed(W_DATE), start).into(),
+        cell(fl!("col-date"), SortKey::Date, Length::Fixed(w[2]), start).into(),
         self::cell(fl!("col-attr"))
-            .width(Length::Fixed(W_ATTR))
+            .width(Length::Fixed(w[3]))
             .into(),
     ];
-    let row = match skin {
-        Skin::Modern => widget::row::with_children(cells).spacing(6),
-        Skin::Classic => {
-            // The 6 px gap holds a centred rule: the grid stays the rows' grid.
-            let mut out = Vec::with_capacity(cells.len() * 2);
-            for (i, c) in cells.into_iter().enumerate() {
-                if i > 0 {
-                    out.push(
-                        container(widget::divider::vertical::default())
-                            .width(Length::Fixed(6.0))
-                            .height(Length::Fixed(16.0))
-                            .center_x(Length::Fixed(6.0))
-                            .into(),
-                    );
-                }
-                out.push(c);
-            }
-            widget::row::with_children(out).align_y(Alignment::Center)
+    // The 6 px gaps are the grabbable edges (TC: drag to resize the column on their right);
+    // Classic draws a rule in them, Modern leaves them blank.
+    let mut out = Vec::with_capacity(cells.len() * 2);
+    for (i, c) in cells.into_iter().enumerate() {
+        if i > 0 {
+            let rule: Element<'static, Message> = match skin {
+                Skin::Classic => widget::divider::vertical::default().into(),
+                Skin::Modern => widget::Space::new().into(),
+            };
+            out.push(
+                mouse_area(
+                    container(rule)
+                        .width(Length::Fixed(6.0))
+                        .height(Length::Fixed(16.0))
+                        .center_x(Length::Fixed(6.0)),
+                )
+                .interaction(cosmic::iced::mouse::Interaction::ResizingHorizontally)
+                .on_press(Message::ColDragStart(side, i))
+                .on_double_click(Message::PaneKey(side, Action::ResetColumns))
+                .into(),
+            );
         }
-    };
+        out.push(c);
+    }
+    let row = widget::row::with_children(out).align_y(Alignment::Center);
     let bar = container(row).padding([2, 6]).width(Length::Fill);
     match skin {
         Skin::Modern => bar.into(),
@@ -558,12 +568,12 @@ fn file_row<'a>(
         container(name_cell(e, format::display_name(e), app.config.skin))
             .width(Length::Fill)
             .class(theme::Container::custom(|_| container::Style::default())),
-        cell(e.ext.clone()).width(Length::Fixed(W_EXT)),
+        cell(e.ext.clone()).width(Length::Fixed(app.cols[0])),
         cell(size)
-            .width(Length::Fixed(W_SIZE))
+            .width(Length::Fixed(app.cols[1]))
             .align_x(Alignment::End),
-        cell(date).width(Length::Fixed(W_DATE)),
-        cell(attrs).width(Length::Fixed(W_ATTR)),
+        cell(date).width(Length::Fixed(app.cols[2])),
+        cell(attrs).width(Length::Fixed(app.cols[3])),
     ]
     .spacing(6)
     .align_y(Alignment::Center);

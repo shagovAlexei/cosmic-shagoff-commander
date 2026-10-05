@@ -115,6 +115,8 @@ pub enum Action {
     /// Ctrl+F1 / Ctrl+F2: Brief / Full view of the active tab.
     ViewBrief,
     ViewFull,
+    /// Column widths back to the defaults (menu, double click on a header edge).
+    ResetColumns,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
