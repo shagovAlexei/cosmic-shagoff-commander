@@ -262,6 +262,8 @@ pub struct App {
     pub col_drag: Option<ColDrag>,
     /// A tab held by the mouse: (side, its index now). Moved over the tab the pointer enters.
     pub tab_drag: Option<(usize, usize)>,
+    /// Ctrl+D: the submenus opened, outermost first (their indices in `config.hotlist`).
+    hot_sub: Vec<usize>,
     /// Volumes not mounted yet (a stick just plugged in): listed with the drives, a pick mounts.
     pub volumes: Vec<mount::Volume>,
     /// When `volumes` was last asked for: gio runs at most every few seconds.
@@ -644,6 +646,7 @@ impl App {
             cols,
             col_drag: None,
             tab_drag: None,
+            hot_sub: Vec::new(),
             volumes: Vec::new(),
             volumes_at: None,
             space: [None, None],
@@ -707,13 +710,29 @@ impl App {
                 return self.act(self.active, action);
             }
             Message::Key(action) => {
-                if let Some(Dialog::List { kind, cursor, .. }) = &self.dialog
+                if let Some(Dialog::List {
+                    kind,
+                    cursor,
+                    items,
+                    ..
+                }) = &self.dialog
                     && *kind == ListKind::Hotlist
-                    && *cursor < self.config.hotlist.len()
-                    && matches!(action, Action::Delete | Action::DeletePermanent)
                 {
-                    let i = *cursor;
-                    return self.hotlist_remove(i);
+                    let row = items.get(*cursor).map(|it| it.kind);
+                    match (action, row) {
+                        (Action::Delete | Action::DeletePermanent, Some(Item::Hot(i))) => {
+                            return self.hotlist_remove(i);
+                        }
+                        (Action::Right, Some(Item::Sub(_))) => {
+                            let i = *cursor;
+                            return self.pick(i);
+                        }
+                        (Action::Left | Action::Parent, _) if !self.hot_sub.is_empty() => {
+                            self.hotlist_back();
+                            return Task::none();
+                        }
+                        _ => {}
+                    }
                 }
                 if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
                     // Separators are skipped, as in a menu.
@@ -2054,6 +2073,9 @@ impl App {
         if self.read_only(side, action) {
             self.say(StatusKind::Error, fl!("archive-read-only"));
             return Task::none();
+        }
+        if action == Action::Hotlist {
+            self.hot_sub.clear(); // Ctrl+D always opens at the top
         }
         if let Some(d) = self.dialog_for(side, action) {
             if matches!(d, Dialog::Sync(_)) {
@@ -4091,6 +4113,21 @@ impl App {
 
     /// Enter / click on entry `i` of the open list.
     fn pick(&mut self, i: usize) -> Task<Message> {
+        // Into a submenu or back out of it: the menu stays open.
+        if let Some(Dialog::List { items, .. }) = &self.dialog {
+            match items.get(i).map(|it| it.kind) {
+                Some(Item::Sub(s)) => {
+                    self.hot_sub.push(s);
+                    self.hotlist_refresh(1); // past "‹ back"
+                    return Task::none();
+                }
+                Some(Item::Back) => {
+                    self.hotlist_back();
+                    return Task::none();
+                }
+                _ => {}
+            }
+        }
         let Some(Dialog::List {
             kind, side, items, ..
         }) = self.dialog.take()
@@ -4117,10 +4154,15 @@ impl App {
             let cwd = self.panes[side].active().panel.cwd().to_path_buf();
             if !self.config.hotlist.iter().any(|e| e.path == cwd) {
                 let mut list = self.config.hotlist.clone();
-                list.push(HotEntry {
-                    name: format::dir_title(&cwd),
-                    path: cwd,
-                });
+                // Into the submenu shown, before its `--`.
+                let at = (self.hot_sub.last()).map_or(list.len(), |&s| hotlist::sub_end(&list, s));
+                list.insert(
+                    at,
+                    HotEntry {
+                        name: format::dir_title(&cwd),
+                        path: cwd,
+                    },
+                );
                 self.save_hotlist(list);
             }
             return Task::none();
@@ -4139,28 +4181,40 @@ impl App {
         }
     }
 
-    /// Hotlist rows as TC's menu: the favourites (row = index in the config), a line,
-    /// "add current dir", "configure…".
+    /// Hotlist rows as TC's menu, for the submenu open (`hot_sub`): "‹ back" in a submenu, its
+    /// favourites and submenus, a line, "add current dir", "configure…".
     fn hotlist_items(&self) -> Vec<ListItem> {
         let own = |label, kind| ListItem {
             label,
             path: PathBuf::new(),
             kind,
         };
-        let mut items: Vec<ListItem> = self
-            .config
-            .hotlist
-            .iter()
-            .map(|e| ListItem {
-                label: e.name.clone(),
-                path: e.path.clone(),
-                kind: if hotlist::is_sep(e) {
-                    Item::Sep
-                } else {
-                    Item::Dir
+        let list = &self.config.hotlist;
+        // A stale index (the config changed under the open menu): back to the top.
+        let open = self
+            .hot_sub
+            .last()
+            .copied()
+            .filter(|&s| list.get(s).is_some_and(hotlist::is_sub));
+        let mut items: Vec<ListItem> = Vec::new();
+        if let Some(s) = open {
+            items.push(own(
+                format!("‹ {}", hotlist::sub_name(&list[s])),
+                Item::Back,
+            ));
+        }
+        items.extend(hotlist::children(list, open).into_iter().map(|i| {
+            let e = &list[i];
+            match () {
+                _ if hotlist::is_sep(e) => own(String::new(), Item::Sep),
+                _ if hotlist::is_sub(e) => own(hotlist::sub_name(e).into(), Item::Sub(i)),
+                _ => ListItem {
+                    label: e.name.clone(),
+                    path: e.path.clone(),
+                    kind: Item::Hot(i),
                 },
-            })
-            .collect();
+            }
+        }));
         if !items.is_empty() {
             items.push(own(String::new(), Item::Sep));
         }
@@ -4256,6 +4310,35 @@ impl App {
         }
     }
 
+    /// Rebuild the open hotlist menu (after a submenu change or an edit), cursor at `cursor`
+    /// or the next row that is not a line.
+    fn hotlist_refresh(&mut self, cursor: usize) {
+        let fresh = self.hotlist_items();
+        if let Some(Dialog::List {
+            items, cursor: c, ..
+        }) = &mut self.dialog
+        {
+            let i = cursor.min(fresh.len() - 1);
+            *c = (i..fresh.len())
+                .find(|&j| fresh[j].kind != Item::Sep)
+                .unwrap_or(i);
+            *items = fresh;
+        }
+    }
+
+    /// Out of the open submenu, the cursor on it (as a TC menu).
+    fn hotlist_back(&mut self) {
+        let left = self.hot_sub.pop();
+        self.hotlist_refresh(0);
+        if let Some(Dialog::List { items, cursor, .. }) = &mut self.dialog
+            && let Some(i) = items
+                .iter()
+                .position(|it| Some(it.kind) == left.map(Item::Sub))
+        {
+            *cursor = i;
+        }
+    }
+
     /// Delete on hotlist entry `i`: drop it, save, refresh the open list in place.
     fn hotlist_remove(&mut self, i: usize) -> Task<Message> {
         let mut list = self.config.hotlist.clone();
@@ -4263,14 +4346,11 @@ impl App {
             list.remove(i);
             self.save_hotlist(list);
         }
-        let fresh = self.hotlist_items();
-        if let Some(Dialog::List { items, cursor, .. }) = &mut self.dialog {
-            *cursor = (*cursor).min(fresh.len() - 1);
-            if fresh[*cursor].kind == Item::Sep {
-                *cursor += 1; // the line before "add": land on "add"
-            }
-            *items = fresh;
-        }
+        let at = match &self.dialog {
+            Some(Dialog::List { cursor, .. }) => *cursor,
+            _ => 0,
+        };
+        self.hotlist_refresh(at);
         Task::none()
     }
 
@@ -5837,6 +5917,47 @@ mod tests {
             }) => items.iter().map(|i| i.path.clone()).collect(),
             _ => panic!("hotlist not open"),
         }
+    }
+
+    #[test]
+    fn hotlist_submenus_open_go_back_and_take_new_dirs() {
+        let hot = |name: &str, path: &str| HotEntry {
+            name: name.into(),
+            path: path.into(),
+        };
+        let config = Config {
+            hotlist: vec![
+                hot("a", "/a"),
+                hot("-Work", ""),
+                hot("w", "/w"),
+                hot("--", ""),
+            ],
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let labels = |app: &App| match &app.dialog {
+            Some(Dialog::List { items, .. }) => {
+                items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()
+            }
+            _ => panic!("hotlist not open"),
+        };
+        let _ = app.update(Message::Key(Action::Hotlist));
+        assert_eq!(labels(&app)[..2], ["a", "Work"]);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Right)); // into "Work"
+        assert_eq!(labels(&app)[..2], ["‹ Work", "w"]);
+        assert_eq!(hotlist_items(&app)[1], PathBuf::from("/w"));
+        let _ = app.update(Message::ListPick(labels(&app).len() - 2)); // add the panel's dir here
+        assert_eq!(
+            app.config.hotlist[3].path,
+            app.panes[0].active().panel.cwd()
+        );
+        assert_eq!(app.config.hotlist[4].name, "--");
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::ListPick(1));
+        let _ = app.update(Message::Key(Action::Parent)); // Backspace: back to the top, on "Work"
+        assert_eq!(labels(&app)[1], "Work");
+        assert!(matches!(&app.dialog, Some(Dialog::List { cursor: 1, .. })));
     }
 
     #[test]
