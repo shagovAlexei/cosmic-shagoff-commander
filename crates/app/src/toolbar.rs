@@ -228,6 +228,44 @@ pub struct ToolEdit {
     pub sel: Option<usize>,
     /// Dropdown labels, in `builtins()` order.
     labels: Vec<String>,
+    /// The icon picker shown instead of the editor: (all names, filter).
+    pub picker: Option<(Vec<String>, String)>,
+}
+
+/// The picker draws at most this many icons; the filter narrows the rest down.
+const PICKER_MAX: usize = 240;
+const PICKER_COLS: usize = 12;
+
+/// Symbolic icons of the current theme and its usual fallbacks, from the XDG icon dirs. Slow
+/// (seconds: every name goes through the icon lookup), so run off the UI thread, once.
+// ponytail: kept for the process; a theme switch needs a restart to show its own set.
+pub fn icon_names() -> Vec<String> {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(scan_icons).clone()
+}
+
+fn scan_icons() -> Vec<String> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| home.as_ref().map(|h| h.join(".local/share")));
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    let roots: Vec<_> = (home.map(|h| h.join(".icons")).into_iter())
+        .chain(data_home.map(|d| d.join("icons")))
+        .chain(
+            data_dirs
+                .split(':')
+                .map(|d| std::path::Path::new(d).join("icons")),
+        )
+        .collect();
+    let theme = cosmic::icon_theme::default();
+    let mut names = shagoff_core::icons::symbolic(&roots, &[&theme, "Adwaita", "hicolor"]);
+    // Only what the icon loader finds (a file of a theme outside its lookup chain draws blank).
+    names.retain(|n| widget::icon::from_name(n.as_str()).path().is_some());
+    names
 }
 
 #[derive(Clone, Debug)]
@@ -246,6 +284,13 @@ pub enum ToolMsg {
     Down,
     /// Back to the default bar.
     Reset,
+    /// Open the icon picker / its filter / pick one (back to the editor) / back without one.
+    PickOpen,
+    /// `icon_names()`, loaded in the background after `PickOpen`.
+    PickLoaded(Vec<String>),
+    PickFilter(String),
+    Pick(String),
+    PickClose,
 }
 
 impl ToolEdit {
@@ -255,6 +300,7 @@ impl ToolEdit {
             list,
             sel,
             labels: builtins().iter().map(|b| (b.label)()).collect(),
+            picker: None,
         }
     }
 
@@ -308,13 +354,88 @@ impl ToolEdit {
                 }
             }
             (ToolMsg::Reset, _) => *self = Self::new(default_bar()),
+            (ToolMsg::PickOpen, Some(_)) => self.picker = Some((Vec::new(), String::new())),
+            (ToolMsg::PickLoaded(names), _) => {
+                if let Some((all, _)) = &mut self.picker {
+                    *all = names;
+                }
+            }
+            (ToolMsg::PickFilter(s), _) => {
+                if let Some((_, f)) = &mut self.picker {
+                    *f = s;
+                }
+            }
+            (ToolMsg::Pick(name), Some(i)) => {
+                self.list[i].icon = name;
+                self.picker = None;
+            }
+            (ToolMsg::PickClose, _) => self.picker = None,
             _ => {}
         }
     }
 }
 
+/// The names matching `filter` (each word, any case), at most `PICKER_MAX`, and how many matched.
+fn matching<'a>(all: &'a [String], filter: &str) -> (Vec<&'a str>, usize) {
+    let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
+    let hits: Vec<&str> = (all.iter())
+        .filter(|n| words.iter().all(|w| n.contains(w.as_str())))
+        .map(String::as_str)
+        .collect();
+    let n = hits.len();
+    (hits.into_iter().take(PICKER_MAX).collect(), n)
+}
+
+fn picker_view<'a>(all: &'a [String], filter: &'a str) -> Element<'a, Message> {
+    use cosmic::widget::tooltip::{Position, tooltip};
+    let msg = Message::ToolEdit;
+    let (shown, total) = matching(all, filter);
+    let cell = |name: &'a str| -> Element<'a, Message> {
+        tooltip(
+            widget::button::icon(widget::icon::from_name(name).size(24))
+                .on_press(msg(ToolMsg::Pick(name.into()))),
+            widget::text(name).size(12),
+            Position::Top,
+        )
+        .into()
+    };
+    // Rows by hand: flex_row in a scrollable lays everything out on one line.
+    let grid = column(
+        shown
+            .chunks(PICKER_COLS)
+            .map(|r| row(r.iter().map(|&n| cell(n))).spacing(4).into()),
+    )
+    .spacing(4);
+    widget::dialog()
+        .title(fl!("toolbar-pick-title"))
+        .control(
+            column![
+                widget::text_input(fl!("toolbar-pick-filter"), filter)
+                    .on_input(move |s| msg(ToolMsg::PickFilter(s))),
+                widget::container(widget::scrollable(grid).height(Length::Fixed(250.0)))
+                    .padding(6)
+                    .width(Length::Fill)
+                    .class(theme::Container::Card),
+                widget::text::caption(if all.is_empty() {
+                    fl!("toolbar-pick-loading")
+                } else {
+                    fl!("toolbar-pick-count", shown = shown.len(), total = total)
+                }),
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+        )
+        .secondary_action(
+            widget::button::standard(fl!("toolbar-pick-back")).on_press(msg(ToolMsg::PickClose)),
+        )
+        .into()
+}
+
 pub fn view<'a>(t: &'a ToolEdit, cancel: Element<'a, Message>) -> Element<'a, Message> {
     let msg = Message::ToolEdit;
+    if let Some((all, filter)) = &t.picker {
+        return picker_view(all, filter);
+    }
     let mut list = column![].spacing(1);
     for (i, b) in t.list.iter().enumerate() {
         let on = msg(ToolMsg::Select(i));
@@ -407,7 +528,9 @@ pub fn view<'a>(t: &'a ToolEdit, cancel: Element<'a, Message>) -> Element<'a, Me
                 icon_name,
                 on(ToolMsg::Icon)
             ),
-            widget::icon::from_name(icon(&b)).size(24),
+            widget::button::standard(fl!("toolbar-pick"))
+                .leading_icon(widget::icon::from_name(icon(&b)).size(16))
+                .on_press_maybe(editable.map(|_| msg(ToolMsg::PickOpen))),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -433,6 +556,22 @@ mod tests {
 
     fn cmds(t: &ToolEdit) -> Vec<&str> {
         t.list.iter().map(|b| b.cmd.as_str()).collect()
+    }
+
+    #[test]
+    fn picker_filters_by_every_word_and_picks() {
+        let all: Vec<String> = ["edit-copy-symbolic", "edit-cut-symbolic", "go-up-symbolic"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(matching(&all, "  Copy EDIT ").0, ["edit-copy-symbolic"]);
+        assert_eq!(matching(&all, "").1, 3);
+        let mut t = ToolEdit::new(default_bar());
+        t.picker = Some((all, String::new()));
+        t.update(ToolMsg::Pick("go-up-symbolic".into()));
+        assert_eq!(
+            (t.list[0].icon.as_str(), t.picker.is_none()),
+            ("go-up-symbolic", true)
+        );
     }
 
     #[test]
