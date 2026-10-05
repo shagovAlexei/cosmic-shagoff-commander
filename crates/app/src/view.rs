@@ -1,7 +1,8 @@
 //! TC layout: per pane a path line, column headers and a virtualized file list; one status line
 //! (each pane's half), the command line and the F-keys in the footer.
 
-use crate::app::{App, Message, ROW_H, StatusKind, Tab};
+use crate::app::{App, Message, StatusKind, Tab};
+use crate::config::Skin;
 use crate::fl;
 use crate::keymap::Action;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
@@ -27,10 +28,76 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if let Some(l) = &app.lister {
         return crate::lister::view(l);
     }
-    row![pane(app, 0), pane(app, 1)]
-        .spacing(4)
-        .height(Length::Fill)
+    let panes = row![pane(app, 0), pane(app, 1)].height(Length::Fill);
+    match app.config.skin {
+        Skin::Classic => column![toolbar(), panes.spacing(4)].into(),
+        Skin::Modern => panes.spacing(8).padding([4, 8, 0, 8]).into(),
+    }
+}
+
+/// Classic skin: TC's button bar under the menu; each button sends the same `Action` as its key.
+fn toolbar() -> Element<'static, Message> {
+    use cosmic::widget::tooltip::{Position, tooltip};
+    let tool = |icon: &'static str, tip: String, action: Action| -> Element<'static, Message> {
+        tooltip(
+            button::icon(widget::icon::from_name(icon).size(16)).on_press(Message::Key(action)),
+            text(tip).size(TEXT),
+            Position::Bottom,
+        )
         .into()
+    };
+    let gap = || widget::Space::new().width(Length::Fixed(10.0)).into();
+    widget::row::with_children(vec![
+        tool("view-refresh-symbolic", fl!("menu-reload"), Action::Reload),
+        tool("view-list-symbolic", fl!("menu-full"), Action::ViewFull),
+        tool("view-grid-symbolic", fl!("menu-brief"), Action::ViewBrief),
+        tool(
+            "view-reveal-symbolic",
+            fl!("menu-hidden"),
+            Action::ToggleHidden,
+        ),
+        gap(),
+        tool(
+            "object-flip-horizontal-symbolic",
+            fl!("menu-swap"),
+            Action::SwapPanes,
+        ),
+        tool("folder-new-symbolic", fl!("menu-mkdir"), Action::Mkdir),
+        tool(
+            "system-search-symbolic",
+            fl!("menu-find"),
+            Action::FindFiles,
+        ),
+        tool(
+            "view-dual-symbolic",
+            fl!("menu-compare-lists"),
+            Action::CompareLists,
+        ),
+        tool(
+            "emblem-synchronizing-symbolic",
+            fl!("menu-sync"),
+            Action::SyncDirs,
+        ),
+        gap(),
+        tool("package-x-generic-symbolic", fl!("menu-pack"), Action::Pack),
+        tool("document-open-symbolic", fl!("menu-unpack"), Action::Unpack),
+        gap(),
+        tool(
+            "network-server-symbolic",
+            fl!("menu-connect"),
+            Action::Connect,
+        ),
+        tool("starred-symbolic", fl!("menu-hotlist"), Action::Hotlist),
+        tool(
+            "emblem-system-symbolic",
+            fl!("menu-settings"),
+            Action::Settings,
+        ),
+    ])
+    .spacing(2)
+    .padding([0, 6, 2, 6])
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn pane(app: &App, side: usize) -> Element<'_, Message> {
@@ -42,13 +109,18 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         Some(_) => fl!("find-results", dir = p.panel.cwd().display().to_string()),
         None => p.panel.cwd().display().to_string(),
     };
-    let path = container(text(title).size(TEXT))
-        .padding([2, 6])
-        .width(Length::Fill)
-        .class(bar_style(active));
+    let skin = app.config.skin;
+    let path: Element<'_, Message> = match (skin, &p.results) {
+        (Skin::Modern, None) => breadcrumbs(side, p.panel.cwd(), active),
+        _ => container(text(title).size(TEXT))
+            .padding([2, 6])
+            .width(Length::Fill)
+            .class(bar_style(active))
+            .into(),
+    };
 
     let list = if p.brief {
-        brief_list(side, p, active)
+        brief_list(side, p, active, skin)
     } else {
         full_list(app, side, p, active)
     };
@@ -57,22 +129,97 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .on_show(move |size| Message::Resized(side, size))
         .on_resize(move |size| Message::Resized(side, size));
 
-    let mut col = column![drive_bar(app, side)];
+    let drives = match app.config.skin {
+        Skin::Classic => drive_list(app, side),
+        Skin::Modern => drive_bar(app, side),
+    };
+    let mut col = column![drives];
     if tabs.items().len() > 1 {
         col = col.push(tab_bar(side, tabs, active));
     }
-    col.push(path)
-        .push(header(side, p.panel.sort()))
+    let col = col
+        .push(path)
+        .push(header(side, p.panel.sort(), skin))
         .push(list)
-        .width(Length::Fill)
-        .into()
+        .width(Length::Fill);
+    match skin {
+        Skin::Classic => col.into(),
+        Skin::Modern => container(col.spacing(2))
+            .padding(6)
+            .class(card_style(active))
+            .into(),
+    }
+}
+
+/// Modern skin: the path as clickable parts, `/ › home › shag`; the last part is where we are.
+fn breadcrumbs(side: usize, cwd: &std::path::Path, active: bool) -> Element<'static, Message> {
+    let mut parts: Vec<(String, std::path::PathBuf)> = cwd
+        .ancestors()
+        .map(|a| (format::dir_title(a), a.to_path_buf()))
+        .collect();
+    parts.reverse();
+    let last = parts.len().saturating_sub(1);
+    let mut items: Vec<Element<'static, Message>> = Vec::new();
+    for (i, (label, path)) in parts.into_iter().enumerate() {
+        if i > 0 {
+            items.push(text("›").size(TEXT).into());
+        }
+        let b = if i == last && active {
+            button::suggested(label)
+        } else if i == last {
+            button::standard(label)
+        } else {
+            button::text(label)
+        };
+        items.push(
+            b.padding([0, 6])
+                .on_press(Message::Drive(side, path))
+                .into(),
+        );
+    }
+    // A deep path scrolls sideways, kept at its end: the dir we are in stays visible.
+    widget::scrollable(
+        widget::row::with_children(items)
+            .spacing(2)
+            .align_y(Alignment::Center),
+    )
+    .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
+        cosmic::iced::widget::scrollable::Scrollbar::new()
+            .width(2)
+            .scroller_width(2),
+    ))
+    .anchor_right()
+    .width(Length::Fill)
+    .into()
+}
+
+/// Modern skin: each pane is a rounded card; the active one has an accent border.
+fn card_style(active: bool) -> theme::Container<'static> {
+    theme::Container::custom(move |t| {
+        let c = t.cosmic();
+        let border = if active {
+            c.accent_color()
+        } else {
+            c.primary_container_divider()
+        };
+        container::Style {
+            background: Some(Color::from(c.primary_container_color()).into()),
+            border: cosmic::iced::Border {
+                color: border.into(),
+                width: 1.0,
+                radius: c.corner_radii.radius_m.into(),
+            },
+            ..Default::default()
+        }
+    })
 }
 
 /// Full view: virtualized rows in a vertical scrollable.
 fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
-    let range = viewport::visible_range(entries.len(), ROW_H, p.offset, p.height);
-    let mut list = column![widget::Space::new().height(range.start as f32 * ROW_H)];
+    let row_h = app.row_h();
+    let range = viewport::visible_range(entries.len(), row_h, p.offset, p.height);
+    let mut list = column![widget::Space::new().height(range.start as f32 * row_h)];
     for i in range.clone() {
         list = list.push(file_row(
             app,
@@ -84,7 +231,7 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
             p.panel.is_marked(&entries[i]),
         ));
     }
-    list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * ROW_H));
+    list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * row_h));
     scrollable(list)
         .id(app.scroll_ids[side].clone())
         .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
@@ -93,9 +240,10 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
 }
 
 /// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
-fn brief_list<'a>(side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
+fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, skin: Skin) -> Element<'a, Message> {
+    let row_h = skin.row_h();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
-    let (rows, cols) = p.brief_grid();
+    let (rows, cols) = p.brief_grid(row_h);
     let mut grid = row![].spacing(2);
     for c in p.col..p.col + cols {
         let mut list = column![];
@@ -105,12 +253,17 @@ fn brief_list<'a>(side: usize, p: &'a Tab, active: bool) -> Element<'a, Message>
             } else {
                 e.name.clone()
             };
-            let cell = container(name_cell(e, label))
+            let cell = container(name_cell(e, label, skin))
                 .padding([0, 6])
-                .height(Length::Fixed(ROW_H))
+                .height(Length::Fixed(row_h))
                 .width(Length::Fill)
                 .clip(true)
-                .class(cursor_style(i == cursor, active, p.panel.is_marked(e)));
+                .class(cursor_style(
+                    i == cursor,
+                    active,
+                    p.panel.is_marked(e),
+                    skin,
+                ));
             list = list.push(
                 mouse_area(cell)
                     .on_press(Message::Click(side, i))
@@ -125,18 +278,48 @@ fn brief_list<'a>(side: usize, p: &'a Tab, active: bool) -> Element<'a, Message>
 }
 
 /// Theme icon by type, then the name (cut with "…").
-fn name_cell(e: &Entry, label: String) -> Element<'static, Message> {
+fn name_cell(e: &Entry, label: String, skin: Skin) -> Element<'static, Message> {
     let (name, generic) = format::icon_name(e);
     let icon = widget::icon::from_name(name)
         .fallback(Some(widget::icon::IconFallback::Names(vec![
             generic.into(),
         ])))
-        .size(16)
+        .size(match skin {
+            Skin::Classic => 16,
+            Skin::Modern => 20,
+        })
         .icon();
     row![icon, cell(label)]
         .spacing(4)
         .align_y(Alignment::Center)
         .into()
+}
+
+/// Classic skin, as in TC: the drive in a drop-down, `\\` (root) and `..` (up), free space.
+fn drive_list(app: &App, side: usize) -> Element<'_, Message> {
+    let current = drives::containing(&app.drives, app.panes[side].active().panel.cwd());
+    let labels: Vec<String> = app.drives.iter().map(|d| d.label.clone()).collect();
+    let paths: Vec<std::path::PathBuf> = app.drives.iter().map(|d| d.path.clone()).collect();
+    let small = |label: &'static str, action: Action| {
+        button::text(label)
+            .padding([0, 8])
+            .on_press(Message::PaneKey(side, action))
+    };
+    let mut bar = row![
+        widget::dropdown(labels, current, move |i| Message::Drive(
+            side,
+            paths[i].clone()
+        )),
+        small("\\", Action::Root),
+        small("..", Action::Parent),
+        widget::Space::new().width(Length::Fill),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+    if let Some((free, total)) = app.space[side] {
+        bar = bar.push(text(fl!("disk-free", free = human(free), total = human(total))).size(TEXT));
+    }
+    container(bar).padding([2, 6]).into()
 }
 
 /// Drive buttons (the one holding cwd highlighted) and free space on the current disk.
@@ -178,7 +361,12 @@ fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Mess
         let label = container(cell(t.title()))
             .padding([2, 8])
             .max_width(160.0)
-            .class(cursor_style(i == tabs.active_index(), pane_active, false));
+            .class(cursor_style(
+                i == tabs.active_index(),
+                pane_active,
+                false,
+                Skin::Classic,
+            ));
         bar = bar.push(
             mouse_area(label)
                 .on_press(Message::SelectTab(side, i))
@@ -190,7 +378,8 @@ fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Mess
 }
 
 /// Column headers on the same grid as `file_row` (padding 6, spacing 6), so labels sit over their columns.
-fn header(side: usize, sort: Sort) -> Element<'static, Message> {
+/// Classic: on a bar with a rule in each gap, like TC's header buttons.
+fn header(side: usize, sort: Sort, skin: Skin) -> Element<'static, Message> {
     let cell = |label: String, key: SortKey, width: Length, align: Alignment| {
         let arrow = match (sort.key == key, sort.asc) {
             (true, true) => " ▲",
@@ -198,26 +387,57 @@ fn header(side: usize, sort: Sort) -> Element<'static, Message> {
             _ => "",
         };
         mouse_area(cell(format!("{label}{arrow}")).width(width).align_x(align))
-            .on_press(Message::Header(side, key))
+            .on_press(Message::PaneKey(side, Action::Sort(key)))
     };
     let start = Alignment::Start;
-    container(
-        row![
-            cell(fl!("col-name"), SortKey::Name, Length::Fill, start),
-            cell(fl!("col-ext"), SortKey::Ext, Length::Fixed(W_EXT), start),
-            cell(
-                fl!("col-size"),
-                SortKey::Size,
-                Length::Fixed(W_SIZE),
-                Alignment::End
-            ),
-            cell(fl!("col-date"), SortKey::Date, Length::Fixed(W_DATE), start),
-            self::cell(fl!("col-attr")).width(Length::Fixed(W_ATTR)),
-        ]
-        .spacing(6),
-    )
-    .padding([2, 6])
-    .into()
+    let cells: Vec<Element<'static, Message>> = vec![
+        cell(fl!("col-name"), SortKey::Name, Length::Fill, start).into(),
+        cell(fl!("col-ext"), SortKey::Ext, Length::Fixed(W_EXT), start).into(),
+        cell(
+            fl!("col-size"),
+            SortKey::Size,
+            Length::Fixed(W_SIZE),
+            Alignment::End,
+        )
+        .into(),
+        cell(fl!("col-date"), SortKey::Date, Length::Fixed(W_DATE), start).into(),
+        self::cell(fl!("col-attr"))
+            .width(Length::Fixed(W_ATTR))
+            .into(),
+    ];
+    let row = match skin {
+        Skin::Modern => widget::row::with_children(cells).spacing(6),
+        Skin::Classic => {
+            // The 6 px gap holds a centred rule: the grid stays the rows' grid.
+            let mut out = Vec::with_capacity(cells.len() * 2);
+            for (i, c) in cells.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(
+                        container(widget::divider::vertical::default())
+                            .width(Length::Fixed(6.0))
+                            .height(Length::Fixed(16.0))
+                            .center_x(Length::Fixed(6.0))
+                            .into(),
+                    );
+                }
+                out.push(c);
+            }
+            widget::row::with_children(out).align_y(Alignment::Center)
+        }
+    };
+    let bar = container(row).padding([2, 6]).width(Length::Fill);
+    match skin {
+        Skin::Modern => bar.into(),
+        Skin::Classic => bar.class(header_style()).into(),
+    }
+}
+
+/// Classic header bar: the theme's component (button) background.
+fn header_style() -> theme::Container<'static> {
+    theme::Container::custom(|t| container::Style {
+        background: Some(Color::from(t.cosmic().primary_component_color()).into()),
+        ..Default::default()
+    })
 }
 
 fn file_row<'a>(
@@ -230,10 +450,11 @@ fn file_row<'a>(
     is_marked: bool,
 ) -> Element<'a, Message> {
     let is_parent = e.name == PARENT;
-    let size = if e.is_dir() {
-        "<DIR>".to_string()
-    } else {
-        format::size(e.size)
+    let size = match (e.is_dir(), app.config.skin) {
+        (true, _) => "<DIR>".to_string(),
+        (false, Skin::Classic) => format::size(e.size),
+        // Modern: "12,3 KB" — the exact bytes are in the status line.
+        (false, Skin::Modern) => human(e.size),
     };
     let (date, attrs) = if is_parent {
         (String::new(), String::new())
@@ -241,7 +462,7 @@ fn file_row<'a>(
         (format::date(e.mtime, &app.tz), format::perms(e.mode))
     };
     let cells = row![
-        container(name_cell(e, format::display_name(e))).width(Length::Fill),
+        container(name_cell(e, format::display_name(e), app.config.skin)).width(Length::Fill),
         cell(e.ext.clone()).width(Length::Fixed(W_EXT)),
         cell(size)
             .width(Length::Fixed(W_SIZE))
@@ -253,10 +474,10 @@ fn file_row<'a>(
     .align_y(Alignment::Center);
     let row = container(cells)
         .padding([0, 6])
-        .height(Length::Fixed(ROW_H))
+        .height(Length::Fixed(app.row_h()))
         .width(Length::Fill)
         .clip(true)
-        .class(cursor_style(is_cursor, active, is_marked));
+        .class(cursor_style(is_cursor, active, is_marked, app.config.skin));
     mouse_area(row)
         .on_press(Message::Click(side, i))
         .on_double_click(Message::DoubleClick(side, i))
@@ -497,10 +718,18 @@ fn bar_style(active: bool) -> theme::Container<'static> {
 
 /// Cursor row: accent (dimmed in the inactive pane). Marked rows: red text; a marked row under the
 /// active cursor becomes a red bar instead — red text on the accent bar is unreadable in light accents.
-fn cursor_style(is_cursor: bool, active: bool, marked: bool) -> theme::Container<'static> {
+fn cursor_style(
+    is_cursor: bool,
+    active: bool,
+    marked: bool,
+    skin: Skin,
+) -> theme::Container<'static> {
     theme::Container::custom(move |t| {
         let c = t.cosmic();
         let mut style = container::Style::default();
+        if skin == Skin::Modern {
+            style.border.radius = c.corner_radii.radius_s.into();
+        }
         match (is_cursor, active, marked) {
             (true, true, true) => {
                 style.background = Some(Color::from(c.destructive_color()).into());

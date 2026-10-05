@@ -42,6 +42,28 @@ fn pinned(mut t: cosmic::Theme, dark: bool) -> cosmic::Theme {
     t
 }
 
+/// Look of the window (Ctrl+, → Interface): the same layout and keys, drawn differently.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Skin {
+    /// Dense, like Total Commander: column rules, toolbar, drives in a list.
+    #[default]
+    Classic,
+    /// COSMIC style: cards, breadcrumbs, roomier rows.
+    Modern,
+}
+
+impl Skin {
+    pub const ALL: [Skin; 2] = [Skin::Classic, Skin::Modern];
+
+    /// Height of a file row; the scroll math is built on it.
+    pub fn row_h(self) -> f32 {
+        match self {
+            Skin::Classic => 20.0,
+            Skin::Modern => 28.0,
+        }
+    }
+}
+
 /// Interface languages we ship; `""` in the config = the system's.
 pub const LANGUAGES: [&str; 2] = ["en", "ru"];
 
@@ -81,6 +103,7 @@ pub struct Config {
     pub show_cmdline: bool,
     /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
     pub terminal: Vec<String>,
+    pub skin: Skin,
 }
 
 /// A favourite dir (Ctrl+D).
@@ -107,6 +130,7 @@ impl Default for Config {
             connections: Vec::new(),
             show_cmdline: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
+            skin: Skin::Classic,
         }
     }
 }
