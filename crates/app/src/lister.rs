@@ -7,9 +7,8 @@ use cosmic::iced::widget::text::Wrapping;
 use cosmic::iced::{ContentFit, Length};
 use cosmic::widget::{self, column, row};
 use cosmic::{Element, theme};
-use shagoff_core::lister::{self, Doc, Mode};
+use shagoff_core::lister::{self, Doc, Encoding, Mode, Text};
 use shagoff_core::viewport;
-use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -20,6 +19,14 @@ const MONO_W: f32 = 8.5;
 /// ← / →: this many chars.
 const STEP_X: f32 = MONO_W * 8.0;
 const HEX_COLS: usize = 77;
+/// Encodings in the order of the drop-down (code page names, not translated).
+pub const ENCODINGS: [(Encoding, &str); 4] = [
+    (Encoding::Auto, "UTF-8"),
+    (Encoding::Cp1251, "Windows-1251"),
+    (Encoding::Koi8r, "KOI8-R"),
+    (Encoding::Cp866, "DOS 866"),
+];
+const ENCODING_NAMES: [&str; 4] = ["UTF-8", "Windows-1251", "KOI8-R", "DOS 866"];
 
 #[derive(Debug)]
 pub enum Image {
@@ -31,9 +38,8 @@ pub enum Image {
 #[derive(Debug)]
 pub struct Loaded {
     pub doc: Doc,
-    pub lines: Vec<Range<usize>>,
-    /// Longest line, in chars: the width of the scrolled text.
-    pub cols: usize,
+    /// Text mode as opened: UTF-8 / BOM, not wrapped.
+    pub text: Text,
     /// Handles are made once: a new handle per frame would decode the image every frame.
     pub image: Option<Image>,
 }
@@ -41,12 +47,7 @@ pub struct Loaded {
 impl Loaded {
     pub fn read(path: &Path, name: &str) -> Result<Self, String> {
         let doc = lister::load(path).map_err(|e| e.to_string())?;
-        let lines = lister::lines(doc.text());
-        let cols = lines
-            .iter()
-            .map(|r| lister::width(doc.text(), r))
-            .max()
-            .unwrap_or(0);
+        let text = Text::new(&doc, Encoding::Auto, None);
         let image = lister::is_image(name).then(|| {
             if name.to_ascii_lowercase().ends_with(".svg") {
                 Image::Svg(widget::svg::Handle::from_memory(doc.bytes.clone()))
@@ -54,12 +55,7 @@ impl Loaded {
                 Image::Raster(widget::image::Handle::from_bytes(doc.bytes.clone()))
             }
         });
-        Ok(Self {
-            doc,
-            lines,
-            cols,
-            image,
-        })
+        Ok(Self { doc, text, image })
     }
 }
 
@@ -75,6 +71,13 @@ pub struct Lister {
     /// Scroll offset (x, y) and viewport height.
     pub offset: (f32, f32),
     pub height: f32,
+    pub width: f32,
+    /// A / S / K / 8 and `W`: kept when N / P open the next file.
+    pub encoding: Encoding,
+    pub wrap: bool,
+    /// Text for another encoding or wrapping, rebuilt from the file's bytes; `None` = `Loaded::text`.
+    // ponytail: rebuilt on the UI thread (a 32 MB file takes a moment); spawn_blocking if it shows.
+    text: Option<Text>,
     /// Row of the last search match (highlighted).
     pub hit: Option<usize>,
     pub query: String,
@@ -94,6 +97,10 @@ impl Lister {
             mode: Mode::Text,
             offset: (0.0, 0.0),
             height: 400.0,
+            width: 800.0,
+            encoding: Encoding::Auto,
+            wrap: false,
+            text: None,
             hit: None,
             query: String::new(),
             searching: false,
@@ -106,11 +113,15 @@ impl Lister {
     pub fn reopen(&mut self, name: String, id: u64) {
         let query = std::mem::take(&mut self.query);
         let (scroll, input, height) = (self.scroll.clone(), self.input.clone(), self.height);
+        let (width, encoding, wrap) = (self.width, self.encoding, self.wrap);
         *self = Self {
             query,
             scroll,
             input,
             height,
+            width,
+            encoding,
+            wrap,
             ..Self::new(self.side, name, id)
         };
     }
@@ -124,6 +135,53 @@ impl Lister {
             self.mode = lister::detect(&self.name, l.doc.text());
         }
         self.loaded = Some(loaded);
+        self.retext();
+    }
+
+    /// Doc and the text mode content in the current encoding / wrapping.
+    pub fn text(&self) -> Option<(&Doc, &Text)> {
+        let l = self.ok()?;
+        Some((&l.doc, self.text.as_ref().unwrap_or(&l.text)))
+    }
+
+    /// Chars per wrapped line: the viewport minus padding and the scrollbar.
+    fn wrap_cols(&self) -> usize {
+        ((self.width - 32.0).max(0.0) / MONO_W) as usize
+    }
+
+    fn retext(&mut self) {
+        self.text = match self.ok() {
+            Some(l) if self.encoding != Encoding::Auto || self.wrap => Some(Text::new(
+                &l.doc,
+                self.encoding,
+                self.wrap.then(|| self.wrap_cols()),
+            )),
+            _ => None,
+        };
+        self.hit = None;
+    }
+
+    /// A / S / K / 8: show the text in `enc` (switches hex to text, as TC does).
+    pub fn set_encoding(&mut self, enc: Encoding) {
+        self.encoding = enc;
+        self.retext();
+        self.set_mode(Mode::Text);
+    }
+
+    /// `W`: wrap long lines at the window width.
+    pub fn toggle_wrap(&mut self) {
+        self.wrap = !self.wrap;
+        self.retext();
+        self.set_mode(Mode::Text);
+    }
+
+    /// New viewport size; wrapped text is rewrapped when a char more or less fits.
+    pub fn resized(&mut self, width: f32, height: f32) {
+        let before = self.wrap_cols();
+        (self.width, self.height) = (width, height);
+        if self.wrap && self.wrap_cols() != before {
+            self.retext();
+        }
     }
 
     /// `4` on a file that is not an image does nothing.
@@ -140,7 +198,7 @@ impl Lister {
 
     pub fn rows(&self) -> usize {
         match (self.ok(), self.mode) {
-            (Some(l), Mode::Text) => l.lines.len(),
+            (Some(_), Mode::Text) => self.text().map_or(0, |(_, t)| t.lines.len()),
             (Some(l), Mode::Hex) => lister::hex_rows(l.doc.bytes.len()),
             _ => 0,
         }
@@ -175,7 +233,7 @@ impl Lister {
     fn width(&self) -> f32 {
         let cols = match self.mode {
             Mode::Hex => HEX_COLS,
-            _ => self.ok().map_or(0, |l| l.cols),
+            _ => self.text().map_or(0, |(_, t)| t.cols),
         };
         cols as f32 * MONO_W + 16.0
     }
@@ -188,10 +246,12 @@ impl Lister {
             (true, Some(h)) => h.checked_sub(1)?,
             _ => self.top(),
         };
-        let l = self.ok()?;
+        let (doc, text) = self.text()?;
         let row = match self.mode {
-            Mode::Text => lister::find_line(l.doc.text(), &l.lines, &self.query, start, forward),
-            Mode::Hex => lister::find_bytes(&l.doc.bytes, self.query.as_bytes(), start, forward),
+            Mode::Text => {
+                lister::find_line(text.bytes(doc), &text.lines, &self.query, start, forward)
+            }
+            Mode::Hex => lister::find_bytes(&doc.bytes, self.query.as_bytes(), start, forward),
             Mode::Image => None,
         }?;
         self.hit = Some(row);
@@ -199,10 +259,10 @@ impl Lister {
         Some(row.saturating_sub(2) as f32 * ROW_H)
     }
 
-    fn row_text(&self, l: &Loaded, i: usize) -> String {
+    fn row_text(&self, doc: &Doc, text: &Text, i: usize) -> String {
         match self.mode {
-            Mode::Hex => lister::hex_row(&l.doc.bytes, i),
-            _ => lister::line_text(l.doc.text(), &l.lines[i]),
+            Mode::Hex => lister::hex_row(&doc.bytes, i),
+            _ => lister::line_text(text.bytes(doc), &text.lines[i]),
         }
     }
 }
@@ -230,7 +290,7 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
         Some(Ok(x)) => match l.mode {
             Mode::Text => fl!(
                 "lister-info-lines",
-                n = x.lines.len(),
+                n = l.rows(),
                 size = shagoff_core::format::size(x.doc.total)
             ),
             _ => fl!(
@@ -250,7 +310,19 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
     .spacing(8)
     .align_y(cosmic::iced::Alignment::Center);
     let mut buttons = modes;
+    let enc = ENCODINGS.iter().position(|(e, _)| *e == l.encoding);
     buttons.extend([
+        widget::dropdown(&ENCODING_NAMES, enc, |i| {
+            Message::ListerEncoding(ENCODINGS[i].0)
+        })
+        .into(),
+        if l.wrap {
+            widget::button::suggested(fl!("lister-wrap"))
+        } else {
+            widget::button::standard(fl!("lister-wrap"))
+        }
+        .on_press(Message::ListerWrap)
+        .into(),
         widget::button::standard(fl!("lister-find"))
             .on_press(Message::ListerSearch)
             .into(),
@@ -291,7 +363,7 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
 }
 
 fn content(l: &Lister) -> Element<'_, Message> {
-    let Some(x) = l.ok() else {
+    let (Some(x), Some((doc, txt))) = (l.ok(), l.text()) else {
         return widget::Space::new().into();
     };
     if l.mode == Mode::Image {
@@ -316,7 +388,7 @@ fn content(l: &Lister) -> Element<'_, Message> {
             .height(Length::Fixed(range.start as f32 * ROW_H)),
     );
     for i in range.clone() {
-        let text = widget::text(l.row_text(x, i))
+        let text = widget::text(l.row_text(doc, txt, i))
             .font(cosmic::font::mono())
             .wrapping(Wrapping::None);
         let hit = l.hit == Some(i);
@@ -346,8 +418,8 @@ fn content(l: &Lister) -> Element<'_, Message> {
         .height(Length::Fill);
     // on_scroll misses window resizes.
     cosmic::iced::widget::sensor(list)
-        .on_show(|s| Message::ListerResized(s.height))
-        .on_resize(|s| Message::ListerResized(s.height))
+        .on_show(Message::ListerResized)
+        .on_resize(Message::ListerResized)
         .into()
 }
 
@@ -377,11 +449,10 @@ mod tests {
             decoded: None,
             total: s.len() as u64,
         };
-        let lines = lister::lines(&doc.bytes);
+        let text = Text::new(&doc, Encoding::Auto, None);
         l.set_loaded(Arc::new(Ok(Loaded {
             doc,
-            lines,
-            cols: 10,
+            text,
             image: None,
         })));
         l
@@ -414,6 +485,24 @@ mod tests {
         assert_eq!(l.hit, Some(5));
         l.find(false, true);
         assert_eq!(l.hit, Some(3));
+    }
+
+    #[test]
+    fn encoding_and_wrap_rebuild_the_text_and_survive_the_next_file() {
+        let mut l = text("abcdefghij\n\u{0}");
+        l.set_mode(Mode::Hex);
+        l.set_encoding(Encoding::Cp1251);
+        assert_eq!(l.mode, Mode::Text); // TC: an encoding key shows text
+        l.width = 32.0 + 4.0 * MONO_W; // 4 chars
+        l.toggle_wrap();
+        assert_eq!(l.rows(), 4); // abcd efgh ij + NUL line
+        l.resized(32.0 + 5.0 * MONO_W, 100.0);
+        assert_eq!(l.rows(), 3); // abcde fghij, NUL
+        l.reopen("b.txt".into(), 2);
+        assert_eq!((l.encoding, l.wrap), (Encoding::Cp1251, true));
+        l.toggle_wrap();
+        l.set_encoding(Encoding::Auto);
+        assert!(l.text.is_none());
     }
 
     #[test]

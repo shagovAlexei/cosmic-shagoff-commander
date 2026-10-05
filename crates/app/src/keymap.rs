@@ -1,7 +1,7 @@
 //! TC key bindings → `Action`. One table; the F-key buttons dispatch the same actions.
 
 use cosmic::iced::keyboard::{Key, Modifiers, key::Physical};
-use shagoff_core::lister::Mode;
+use shagoff_core::lister::{Encoding, Mode};
 use shagoff_core::sort::SortKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,6 +227,10 @@ pub enum ListerKey {
     Prev,
     Close,
     FindPrev,
+    /// A (ANSI = cp1251), S (DOS = cp866), K (KOI8-R), 8 (UTF-8 / BOM).
+    Encoding(Encoding),
+    /// W: wrap long lines.
+    Wrap,
 }
 
 pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<ListerKey> {
@@ -244,6 +248,11 @@ pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<List
         Physical::Code(Code::KeyN) => ListerKey::Next,
         Physical::Code(Code::KeyP) => ListerKey::Prev,
         Physical::Code(Code::KeyQ) => ListerKey::Close,
+        Physical::Code(Code::KeyW) => ListerKey::Wrap,
+        Physical::Code(Code::KeyA) => ListerKey::Encoding(Encoding::Cp1251),
+        Physical::Code(Code::KeyS) => ListerKey::Encoding(Encoding::Cp866),
+        Physical::Code(Code::KeyK) => ListerKey::Encoding(Encoding::Koi8r),
+        Physical::Code(Code::Digit8 | Code::Numpad8) => ListerKey::Encoding(Encoding::Auto),
         _ => return None,
     })
 }
@@ -565,6 +574,27 @@ mod tests {
             (Key::Character("т".into()), Code::KeyN, ListerKey::Next), // any layout
             (Key::Character("p".into()), Code::KeyP, ListerKey::Prev),
             (Key::Character("q".into()), Code::KeyQ, ListerKey::Close),
+            (Key::Character("ц".into()), Code::KeyW, ListerKey::Wrap),
+            (
+                Key::Character("a".into()),
+                Code::KeyA,
+                ListerKey::Encoding(Encoding::Cp1251),
+            ),
+            (
+                Key::Character("s".into()),
+                Code::KeyS,
+                ListerKey::Encoding(Encoding::Cp866),
+            ),
+            (
+                Key::Character("k".into()),
+                Code::KeyK,
+                ListerKey::Encoding(Encoding::Koi8r),
+            ),
+            (
+                Key::Character("8".into()),
+                Code::Digit8,
+                ListerKey::Encoding(Encoding::Auto),
+            ),
         ];
         for (key, code, want) in keys {
             assert_eq!(action(&key, Physical::Code(code), NONE), None, "{want:?}");

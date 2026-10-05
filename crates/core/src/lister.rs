@@ -84,6 +84,77 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// Text mode encoding (TC: A = ANSI, S = DOS; K for KOI8-R; 8 back to UTF-8 / BOM).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Encoding {
+    /// UTF-8, or UTF-16 / UTF-8 by BOM.
+    #[default]
+    Auto,
+    Cp1251,
+    Koi8r,
+    Cp866,
+}
+
+// Bytes 0x80..=0xFF of each single-byte code page (generated from Python's codecs; 0x98 in cp1251
+// is unassigned → U+FFFD).
+const CP1251: &str = "ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ\u{a0}ЎўЈ¤Ґ¦§Ё©Є«¬\u{ad}®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя";
+const KOI8R: &str = "─│┌┐└┘├┤┬┴┼▀▄█▌▐░▒▓⌠■∙√≈≤≥\u{a0}⌡°²·÷═║╒ё╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡Ё╢╣╤╥╦╧╨╩╪╫╬©юабцдефгхийклмнопярстужвьызшэщчъЮАБЦДЕФГХИЙКЛМНОПЯРСТУЖВЬЫЗШЭЩЧЪ";
+const CP866: &str = "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмноп░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀рстуфхцчшщъыьэюяЁёЄєЇїЎў°∙·√№¤■\u{a0}";
+
+/// The text as UTF-8 in `enc`; `None` for `Auto` without a BOM (the bytes are the text).
+pub fn decode_as(bytes: &[u8], enc: Encoding) -> Option<Vec<u8>> {
+    let table = match enc {
+        Encoding::Auto => return decode(bytes),
+        Encoding::Cp1251 => CP1251,
+        Encoding::Koi8r => KOI8R,
+        Encoding::Cp866 => CP866,
+    };
+    let high: Vec<char> = table.chars().collect();
+    let s: String = bytes
+        .iter()
+        .map(|&b| {
+            if b < 0x80 {
+                b as char
+            } else {
+                high[b as usize - 0x80]
+            }
+        })
+        .collect();
+    Some(s.into_bytes())
+}
+
+/// Text mode content: UTF-8 bytes in the chosen encoding, its line index and widest line.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Text {
+    /// `None`: the file's own bytes are the text.
+    pub decoded: Option<Vec<u8>>,
+    pub lines: Vec<Range<usize>>,
+    /// Widest line in monospace cells (the scrolled width).
+    pub cols: usize,
+}
+
+impl Text {
+    /// `wrap`: cut lines every this many chars (TC `W`), else at `MAX_COLS`.
+    pub fn new(doc: &Doc, enc: Encoding, wrap: Option<usize>) -> Self {
+        let decoded = match enc {
+            Encoding::Auto => doc.decoded.clone(),
+            _ => decode_as(&doc.bytes, enc),
+        };
+        let bytes = decoded.as_deref().unwrap_or(&doc.bytes);
+        let lines = lines(bytes, wrap.unwrap_or(MAX_COLS).clamp(1, MAX_COLS));
+        let cols = lines.iter().map(|r| width(bytes, r)).max().unwrap_or(0);
+        Self {
+            decoded,
+            lines,
+            cols,
+        }
+    }
+
+    pub fn bytes<'a>(&'a self, doc: &'a Doc) -> &'a [u8] {
+        self.decoded.as_deref().unwrap_or(&doc.bytes)
+    }
+}
+
 const IMAGES: [&str; 8] = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg"];
 
 pub fn is_image(name: &str) -> bool {
@@ -102,15 +173,16 @@ pub fn detect(name: &str, bytes: &[u8]) -> Mode {
     }
 }
 
-/// Byte ranges of the lines (without `\n` / `\r\n`), lines over `MAX_COLS` chars split.
-pub fn lines(bytes: &[u8]) -> Vec<Range<usize>> {
+/// Byte ranges of the lines (without `\n` / `\r\n`), lines wider than `max_cols` cells split.
+// ponytail: wrap cuts at the cell limit, not at word boundaries.
+pub fn lines(bytes: &[u8], max_cols: usize) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut push = |s: usize, mut e: usize| {
         if e > s && bytes[e - 1] == b'\r' {
             e -= 1;
         }
-        split_long(bytes, s, e, &mut out);
+        split_long(bytes, s, e, max_cols, &mut out);
     };
     for (i, &b) in bytes.iter().enumerate() {
         if b == b'\n' {
@@ -124,18 +196,34 @@ pub fn lines(bytes: &[u8]) -> Vec<Range<usize>> {
     out
 }
 
-/// Cut `s..e` every `MAX_COLS` chars, at char starts (UTF-8 continuation bytes never start a piece).
-fn split_long(bytes: &[u8], s: usize, e: usize, out: &mut Vec<Range<usize>>) {
+/// Cut `s..e` every `max` chars, at char starts (UTF-8 continuation bytes never start a piece).
+fn split_long(bytes: &[u8], s: usize, e: usize, max: usize, out: &mut Vec<Range<usize>>) {
+    // Same cells as `line_text` / `width` draw: a tab is four, wide chars two, each invalid
+    // UTF-8 sequence one `�`.
     let mut from = s;
-    let mut chars = 0;
-    for (i, &b) in bytes.iter().enumerate().take(e).skip(s) {
-        if b & 0xC0 != 0x80 {
-            if chars == MAX_COLS {
-                out.push(from..i);
-                from = i;
-                chars = 0;
-            }
-            chars += 1;
+    let mut cells = 0;
+    let mut at = s;
+    let mut put = |i: usize, w: usize, from: &mut usize, cells: &mut usize| {
+        if *cells + w > max && *cells > 0 {
+            out.push(*from..i);
+            *from = i;
+            *cells = 0;
+        }
+        *cells += w;
+    };
+    for chunk in bytes[s..e].utf8_chunks() {
+        for (i, c) in chunk.valid().char_indices() {
+            let w = match c {
+                '\t' => 4,
+                c if wide(c) => 2,
+                _ => 1,
+            };
+            put(at + i, w, &mut from, &mut cells);
+        }
+        at += chunk.valid().len();
+        if !chunk.invalid().is_empty() {
+            put(at, 1, &mut from, &mut cells);
+            at += chunk.invalid().len();
         }
     }
     out.push(from..e);
@@ -245,6 +333,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn single_byte_code_pages() {
+        let utf = |enc, b: &[u8]| String::from_utf8(decode_as(b, enc).unwrap()).unwrap();
+        // "Привет" in each
+        assert_eq!(
+            utf(Encoding::Cp1251, b"\xcf\xf0\xe8\xe2\xe5\xf2 1"),
+            "Привет 1"
+        );
+        assert_eq!(utf(Encoding::Koi8r, b"\xf0\xd2\xc9\xd7\xc5\xd4"), "Привет");
+        assert_eq!(utf(Encoding::Cp866, b"\x8f\xe0\xa8\xa2\xa5\xe2"), "Привет");
+        assert_eq!(utf(Encoding::Cp1251, b"\xa8\xb8\xb9"), "Ёё№");
+        assert_eq!(decode_as(b"plain", Encoding::Auto), None);
+        for t in [CP1251, KOI8R, CP866] {
+            assert_eq!(t.chars().count(), 128);
+        }
+    }
+
+    #[test]
+    fn text_wraps_and_switches_encoding() {
+        let doc = Doc {
+            bytes: b"abcdefg\n\xcf\xf0".to_vec(),
+            decoded: None,
+            total: 10,
+        };
+        let t = Text::new(&doc, Encoding::Auto, None);
+        assert_eq!((t.lines.len(), t.cols), (2, 7));
+        let t = Text::new(&doc, Encoding::Auto, Some(3));
+        let shown: Vec<String> = t
+            .lines
+            .iter()
+            .map(|r| line_text(t.bytes(&doc), r))
+            .collect();
+        assert_eq!(shown, ["abc", "def", "g", "\u{fffd}\u{fffd}"]);
+        let t = Text::new(&doc, Encoding::Cp1251, None);
+        assert_eq!(line_text(t.bytes(&doc), &t.lines[1]), "Пр");
+        // tabs are four cells, a broken byte one `�`: wrapped by what is drawn
+        let tabs = Doc {
+            bytes: b"\ta\tb\xffcd".to_vec(),
+            decoded: None,
+            total: 7,
+        };
+        let t = Text::new(&tabs, Encoding::Auto, Some(5));
+        let shown: Vec<String> = t.lines.iter().map(|r| line_text(&tabs.bytes, r)).collect();
+        assert_eq!(shown, ["    a", "    b", "\u{fffd}cd"]);
+        assert!(t.cols <= 5);
+        // a zero-width viewport must not loop forever
+        assert_eq!(Text::new(&doc, Encoding::Auto, Some(0)).lines.len(), 9);
+    }
+
+    #[test]
     fn detect_picks_mode() {
         assert_eq!(detect("a.PNG", b"text"), Mode::Image);
         assert_eq!(detect("a.svg", b"<svg/>"), Mode::Image);
@@ -256,17 +393,17 @@ mod tests {
     #[test]
     fn lines_split_on_lf_and_crlf() {
         let b = b"one\r\ntwo\n\nlast";
-        let l = lines(b);
+        let l = lines(b, MAX_COLS);
         let text: Vec<String> = l.iter().map(|r| line_text(b, r)).collect();
         assert_eq!(text, ["one", "two", "", "last"]);
-        assert_eq!(lines(b"a\n").len(), 1);
-        assert!(lines(b"").is_empty());
+        assert_eq!(lines(b"a\n", MAX_COLS).len(), 1);
+        assert!(lines(b"", MAX_COLS).is_empty());
     }
 
     #[test]
     fn long_line_split_at_char_boundary() {
         let s = "я".repeat(MAX_COLS + 3);
-        let l = lines(s.as_bytes());
+        let l = lines(s.as_bytes(), MAX_COLS);
         assert_eq!(l.len(), 2);
         assert_eq!(line_text(s.as_bytes(), &l[0]).chars().count(), MAX_COLS);
         assert_eq!(line_text(s.as_bytes(), &l[1]), "яяя");
@@ -337,7 +474,7 @@ mod tests {
     #[test]
     fn find_line_ignores_case_both_ways() {
         let b = "альфа\nБета\nгамма\nбета".as_bytes();
-        let l = lines(b);
+        let l = lines(b, MAX_COLS);
         assert_eq!(find_line(b, &l, "бЕТ", 0, true), Some(1));
         assert_eq!(find_line(b, &l, "бет", 2, true), Some(3));
         assert_eq!(find_line(b, &l, "бет", 2, false), Some(1));

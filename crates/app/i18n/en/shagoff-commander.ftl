@@ -252,6 +252,7 @@ menu-copy-paths = Copy names with path
 
 # Viewer (F3)
 lister-text = Text (1)
+lister-wrap = Wrap (W)
 lister-hex = Hex (3)
 lister-image = Image (4)
 lister-loading = Reading…
@@ -268,6 +269,8 @@ settings-internal-viewer = Built-in viewer (F3)
 help-lister = Viewer (F3)
 help-lister-scroll = Scroll
 help-lister-modes = Text / hex / image
+help-lister-wrap = Wrap long lines
+help-lister-encoding = Encoding: Windows-1251 / DOS 866 / KOI8-R / UTF-8
 help-lister-step = Next / previous file
 help-lister-find = Find
 help-lister-again = Find next / previous
