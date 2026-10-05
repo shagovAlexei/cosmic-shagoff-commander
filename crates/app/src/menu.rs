@@ -381,8 +381,9 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             b(fl!("menu-new-tab"), Action::NewTab),
             b(fl!("menu-reload"), Action::Reload),
             menu::Item::Divider,
-            b(fl!("menu-tab-copy-other"), Action::TabCopyOther),
-            b(fl!("menu-tab-move-other"), Action::TabMoveOther),
+            // Short: libcosmic's context menu is 240 px wide, and these are about the tab already.
+            b(fl!("ctx-tab-copy-other"), Action::TabCopyOther),
+            b(fl!("ctx-tab-move-other"), Action::TabMoveOther),
             menu::Item::Divider,
             menu::Item::CheckBox(
                 fl!("menu-tab-lock"),
@@ -393,7 +394,7 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             b(fl!("menu-tab-rename"), Action::TabRename),
             menu::Item::Divider,
             b(fl!("menu-close-tab"), Action::CloseTab),
-            b(fl!("menu-close-other-tabs"), Action::CloseOtherTabs),
+            b(fl!("ctx-close-other-tabs"), Action::CloseOtherTabs),
         ],
     }
 }
