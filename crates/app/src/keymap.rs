@@ -107,6 +107,8 @@ pub enum Action {
     CloseOtherTabs,
     /// Alt+Enter: properties and permission bits of the selection.
     Properties,
+    /// Alt+Shift+Enter: count the size of every dir in the panel.
+    CountDirs,
     /// ←/→: the next column in Brief view; nothing in Full.
     Left,
     Right,
@@ -133,6 +135,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
             Key::Named(Named::ArrowDown) if mods == Modifiers::ALT => Some(Action::HistoryList),
             Key::Named(Named::Enter) if mods == Modifiers::ALT => Some(Action::Properties),
+            Key::Named(Named::Enter) if mods == Modifiers::ALT | Modifiers::SHIFT => {
+                Some(Action::CountDirs)
+            }
             Key::Character(s) if mods == Modifiers::ALT => {
                 let mut chars = s.chars();
                 match (chars.next(), chars.next()) {
@@ -375,7 +380,7 @@ mod tests {
         const SHIFT: Modifiers = Modifiers::SHIFT;
         const ALT: Modifiers = Modifiers::ALT;
         assert_eq!(named(Named::Tab, SHIFT), None);
-        assert_eq!(named(Named::Enter, ALT.union(SHIFT)), None);
+        assert_eq!(named(Named::Enter, CTRL.union(ALT)), None);
         assert_eq!(named(Named::PageDown, SHIFT), None);
         assert_eq!(named(Named::F3, CTRL.union(ALT)), None);
         assert_eq!(chr("R", Code::KeyR, CTRL.union(SHIFT)), None);
@@ -450,6 +455,10 @@ mod tests {
         assert_eq!(named(Named::F2, ALT), Some(Action::Drives(1)));
         assert_eq!(named(Named::F1, ALT | Modifiers::SHIFT), None);
         assert_eq!(named(Named::Enter, ALT), Some(Action::Properties)); // phase 34
+        assert_eq!(
+            named(Named::Enter, ALT | Modifiers::SHIFT),
+            Some(Action::CountDirs)
+        ); // phase 39
         assert_eq!(named(Named::F4, ALT), None); // Alt+F4 stays with the compositor
         assert_eq!(chr("a", Code::KeyA, ALT), Some(Action::QuickSearch('a')));
         assert_eq!(named(Named::F1, Modifiers::LOGO), None);

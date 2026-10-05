@@ -360,6 +360,7 @@ tab-last = Последнюю вкладку панели перенести н�
 
 # Alt+Enter
 menu-properties = Свойства…
+menu-count-dirs = Посчитать размер папок
 props-title = Свойства
 props-name = Имя
 props-selected = Выбрано

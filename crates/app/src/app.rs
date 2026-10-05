@@ -1842,31 +1842,23 @@ impl App {
                 if let Some((cwd, name)) =
                     dir.filter(|(cwd, n)| !loading && !inside_archive(&cwd.join(n)))
                 {
-                    let path = cwd.join(&name);
-                    let count = Task::perform(
-                        async move {
-                            // ponytail: never stopped; a huge tree keeps counting after leaving
-                            // the dir (the result is dropped), add a per-tab stop if it matters.
-                            let stop = AtomicBool::new(false);
-                            tokio::task::spawn_blocking(move || {
-                                shagoff_core::props::usage(&[path], &stop)
-                            })
-                            .await
-                            .ok()
-                            .flatten()
-                        },
-                        move |u| {
-                            cosmic::Action::App(Message::DirSize(
-                                side,
-                                tab,
-                                cwd.clone(),
-                                name.clone(),
-                                u.map_or(0, |u| u.bytes),
-                            ))
-                        },
-                    );
+                    let count = count_dirs(side, tab, cwd, vec![name]);
                     return Task::batch([count, self.reveal(side, tab)]);
                 }
+            }
+            // TC Alt+Shift+Enter: the size of every dir here, without marking.
+            Action::CountDirs => {
+                let cwd = panel.cwd().to_path_buf();
+                if loading || inside_archive(&cwd.join("x")) {
+                    return Task::none();
+                }
+                let names = panel
+                    .entries()
+                    .iter()
+                    .filter(|e| e.is_dir() && e.name != PARENT && panel.dir_size(e).is_none())
+                    .map(|e| e.os_name.clone())
+                    .collect();
+                return count_dirs(side, tab, cwd, names);
             }
             Action::MarkDown => panel.toggle_mark_and_move(1),
             Action::MarkUp => panel.toggle_mark_and_move(-1),
@@ -4074,6 +4066,35 @@ fn read_listing(
 /// The dialog's search fields as a query (`hidden` is the panel's).
 /// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
 /// name only — a stat per result would stall on a million of them.
+/// Count dirs `names` in `cwd` in the background; each sends its own `Message::DirSize`.
+// ponytail: never stopped (a huge tree keeps counting after leaving the dir, the result is
+// dropped) and one blocking task per dir; add a per-tab stop / a queue if it matters.
+fn count_dirs(side: usize, tab: u64, cwd: PathBuf, names: Vec<OsString>) -> Task<Message> {
+    Task::batch(names.into_iter().map(|name| {
+        let path = cwd.join(&name);
+        let cwd = cwd.clone();
+        Task::perform(
+            async move {
+                let stop = AtomicBool::new(false);
+                tokio::task::spawn_blocking(move || shagoff_core::props::usage(&[path], &stop))
+                    .await
+                    .ok()
+                    .flatten()
+            },
+            move |u| {
+                let bytes = u.map_or(0, |u| u.bytes);
+                cosmic::Action::App(Message::DirSize(
+                    side,
+                    tab,
+                    cwd.clone(),
+                    name.clone(),
+                    bytes,
+                ))
+            },
+        )
+    }))
+}
+
 fn inside_archive(p: &Path) -> bool {
     p.ancestors().skip(1).any(|a| {
         a.file_name()
