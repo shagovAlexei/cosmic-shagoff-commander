@@ -32,6 +32,7 @@ case ${1:-} in
 start)
     before=$(ls "$XDG_RUNTIME_DIR" | grep -E '^wayland-[0-9]+$' || true)
     printf 'output HEADLESS-1 resolution %s\ndefault_border none\n' "${2:-1036x530}" >"$DIR/sway.cfg"
+    echo "${2:-1036x530}" >"$DIR/size"
     env -u WAYLAND_DISPLAY -u DISPLAY WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
         setsid sway -c "$DIR/sway.cfg" >"$DIR/sway.log" 2>&1 &
     echo $! >"$DIR/sway.pid"
@@ -48,7 +49,8 @@ key) shift; WAYLAND_DISPLAY="$(sock)" wtype -s 300 "$@" -s 300 ;;
 click)
     vp="$ROOT/.claude/skills/shagoff-feature/vpointer"
     [ -x "$vp/target/release/vpointer" ] || (cd "$vp" && cargo build -q --release --offline)
-    WAYLAND_DISPLAY="$(sock)" "$vp/target/release/vpointer" "$2" "$3" "${4:-left}"; sleep 0.5 ;;
+    size=$(cat "$DIR/size" 2>/dev/null || echo 1036x530)  # the output's, for absolute motion
+    WAYLAND_DISPLAY="$(sock)" "$vp/target/release/vpointer" "$2" "$3" "${4:-left}" "${size%x*}" "${size#*x}"; sleep 0.5 ;;
 shot) WAYLAND_DISPLAY="$(sock)" grim "$DIR/$2.png"; echo "$DIR/$2.png" ;;
 stop) kill_pid app; kill_pid sway ;;
 *) sed -n '2,15p' "$0"; exit 1 ;;

@@ -1406,6 +1406,10 @@ impl App {
                 if self.dialog.is_none() && self.drawer.is_none() {
                     return self.handle(Message::Key(action));
                 }
+                // Tab is ours (pane switch), so the settings fields get it here: next field.
+                if action == Action::SwitchPane && self.dialog.is_none() {
+                    return cosmic::iced::runtime::widget::operation::focus_next();
+                }
             }
             Message::CmdInput(text) => {
                 self.cmdline = text;
