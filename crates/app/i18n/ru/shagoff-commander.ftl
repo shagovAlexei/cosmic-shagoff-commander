@@ -323,7 +323,7 @@ help-lister-encoding = Кодировка: Windows-1251 / DOS 866 / KOI8-R / UTF
 help-lister-step = Следующий / предыдущий файл
 help-lister-find = Поиск
 help-lister-again = Найти следующее / предыдущее
-help-lister-select = Выделить текст мышью (Shift — продлить)
+help-lister-select = Выделить текст мышью (Shift — продлить; два щелчка — слово, три — строка)
 help-lister-copy = Выделить всё / скопировать выделенное
 help-lister-close = Закрыть
 

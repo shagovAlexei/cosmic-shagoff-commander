@@ -426,6 +426,26 @@ impl Selection {
     }
 }
 
+/// Double click: the word around char `col` of `line` (letters, digits, `_`), else the one char
+/// there; `None` past the end.
+pub fn word_at(line: &str, col: usize) -> Option<Range<usize>> {
+    let chars: Vec<char> = line.chars().collect();
+    let at = *chars.get(col)?;
+    let word = |c: &char| c.is_alphanumeric() || *c == '_';
+    if !word(&at) {
+        return Some(col..col + 1);
+    }
+    let start = chars[..col]
+        .iter()
+        .rposition(|c| !word(c))
+        .map_or(0, |i| i + 1);
+    let end = chars[col..]
+        .iter()
+        .position(|c| !word(c))
+        .map_or(chars.len(), |i| col + i);
+    Some(start..end)
+}
+
 /// The position under (x, y) in content pixels: rows of `row_h`, chars of `char_w` (monospace),
 /// between chars rounding to the nearer edge; the row is kept within `rows`.
 pub fn pos_at(x: f32, y: f32, row_h: f32, char_w: f32, rows: usize) -> Pos {
@@ -691,5 +711,15 @@ mod tests {
         assert_eq!(s.text(|_| "привет".to_string()), "ри");
         assert_eq!(pos_at(17.0, 45.0, 20.0, 8.5, 10), (2, 2));
         assert_eq!(pos_at(-5.0, 9999.0, 20.0, 8.5, 10), (9, 0));
+    }
+
+    #[test]
+    fn double_click_word() {
+        let l = "let first_row = скан(42);";
+        assert_eq!(word_at(l, 6), Some(4..13)); // first_row
+        assert_eq!(word_at(l, 17), Some(16..20)); // Cyrillic, in chars
+        assert_eq!(word_at(l, 3), Some(3..4)); // a space: just it
+        assert_eq!(word_at(l, 0), Some(0..3));
+        assert_eq!(word_at(l, 99), None);
     }
 }
