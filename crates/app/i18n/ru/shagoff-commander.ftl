@@ -262,6 +262,14 @@ settings-pack-format = Формат упаковки по умолчанию
 settings-title = Настройки
 fkey-rename = F2 Переим.
 copied = Скопировано в буфер обмена: { $n }
+copied-names = { $n ->
+    [1] Скопировано имя: { $text }
+   *[other] Скопированы имена: { $n }
+}
+copied-paths = { $n ->
+    [1] Скопирован путь: { $text }
+   *[other] Скопированы пути: { $n }
+}
 menu-copy-names = Копировать имена в буфер
 menu-copy-paths = Копировать имена с путём
 
@@ -372,7 +380,7 @@ tab-last = Последнюю вкладку панели перенести н�
 
 # Alt+Enter
 menu-properties = Свойства…
-menu-count-dirs = Посчитать размер папок
+menu-count-dirs = Размер папок
 props-title = Свойства
 props-name = Имя
 props-selected = Выбрано

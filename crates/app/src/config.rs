@@ -195,7 +195,15 @@ pub fn state_handler() -> Option<cosmic_config::Config> {
 
 /// Stored value, or the default for anything missing or unreadable.
 pub fn read<T: CosmicConfigEntry + Default>(h: Option<&cosmic_config::Config>) -> T {
-    h.map(|h| T::get_entry(h).unwrap_or_else(|(_, c)| c))
+    // A bad value (say `"Home"` in quotes for an enum) falls back to its default: say which.
+    h.map(|h| {
+        T::get_entry(h).unwrap_or_else(|(errs, c)| {
+            for e in errs.iter().filter(|e| e.is_err()) {
+                log::warn!("config: {e}");
+            }
+            c
+        })
+    })
         .unwrap_or_default()
 }
 

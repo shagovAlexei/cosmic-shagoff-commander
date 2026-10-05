@@ -315,6 +315,9 @@ pub enum Message {
     DialogInput(String),
     DialogSubmit,
     DialogCancel,
+    /// Escape in a window: the main one cancels the dialog; a popup (context menu) closes,
+    /// since the menu widget only sees the main window's keys.
+    Escape(cosmic::iced::window::Id),
     MrInput(MrField, String),
     MrCase(Case),
     /// Pack dialog: format button.
@@ -1280,6 +1283,12 @@ impl App {
                     d.confirm_close = true;
                 }
             }
+            Message::Escape(window) if window != self.window_id() => {
+                return self.update(Message::Surface(cosmic::surface::action::destroy_popup(
+                    window,
+                )));
+            }
+            Message::Escape(_) => return self.update(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(Resolution::Cancel);
@@ -1733,7 +1742,13 @@ impl App {
                     return Task::none();
                 }
                 let text = shagoff_core::clipboard::names_text(&paths, action == Action::CopyPaths);
-                self.say(StatusKind::Info, fl!("copied", n = paths.len()));
+                let (n, one) = (paths.len(), text.clone());
+                let msg = if action == Action::CopyPaths {
+                    fl!("copied-paths", n = n, text = one)
+                } else {
+                    fl!("copied-names", n = n, text = one)
+                };
+                self.say(StatusKind::Info, msg);
                 return cosmic::iced::clipboard::write(text);
             }
             _ => {}
@@ -2183,11 +2198,13 @@ impl App {
                 }))
             }
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
-            Action::TabRename => Some(input(
-                InputOp::TabName,
-                Vec::new(),
-                self.panes[side].active().name.clone().unwrap_or_default(),
-            )),
+            // The caption as shown; left as the dir's name it keeps following the dir.
+            Action::TabRename => {
+                let t = self.panes[side].active();
+                let shown = t.name.clone();
+                let shown = shown.unwrap_or_else(|| format::dir_title(t.panel.cwd()));
+                Some(input(InputOp::TabName, Vec::new(), shown))
+            }
             Action::Rename => {
                 let e = panel.current().filter(|e| e.name != PARENT)?;
                 let path = panel.cwd().join(&e.os_name);
@@ -2447,7 +2464,9 @@ impl App {
                 ..
             } => {
                 let name = input.trim();
-                self.panes[side].active_mut().name = (!name.is_empty()).then(|| name.to_string());
+                let t = self.panes[side].active_mut();
+                let own = !name.is_empty() && name != format::dir_title(t.panel.cwd());
+                t.name = own.then(|| name.to_string());
                 Task::none()
             }
             Dialog::Input {
@@ -3949,7 +3968,7 @@ fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
 fn route_event(
     event: cosmic::iced::Event,
     status: event::Status,
-    _window: cosmic::iced::window::Id,
+    window: cosmic::iced::window::Id,
 ) -> Option<Message> {
     match event {
         // Any status: a focused text_input captures Escape to unfocus itself, and the dialog must still close.
@@ -3957,7 +3976,7 @@ fn route_event(
             key: keyboard::Key::Named(keyboard::key::Named::Escape),
             modifiers,
             ..
-        }) if modifiers.is_empty() => Some(Message::DialogCancel),
+        }) if modifiers.is_empty() => Some(Message::Escape(window)),
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -5446,7 +5465,7 @@ mod tests {
     fn escape_closes_dialog_even_when_text_input_captured_it() {
         // libcosmic's text_input captures Escape (to unfocus itself); the dialog must still close.
         let msg = press(Named::Escape, Code::Escape, event::Status::Captured);
-        assert!(matches!(msg, Some(Message::DialogCancel)), "{msg:?}");
+        assert!(matches!(msg, Some(Message::Escape(_))), "{msg:?}");
     }
 
     #[test]
@@ -6709,7 +6728,11 @@ mod tests {
             let panel = &mut app.panes[0].active_mut().panel;
             panel.set_listing(d.path().to_path_buf(), entries, Some("a.txt"));
             let _ = app.update(Message::Key(Action::CopyNames));
-            assert_eq!(app.msg(), Some(fl!("copied", n = 1).as_str()));
+            assert!(
+                app.msg().is_some_and(|m| m.contains("a.txt")),
+                "{:?}",
+                app.msg()
+            );
         }
 
         #[test]
@@ -7330,10 +7353,13 @@ mod tests {
         fn rename_and_reset_a_tab_caption() {
             let (_tmp, mut app) = setup();
             key(&mut app, Action::TabRename);
+            let shown = format::dir_title(app.panes[0].active().panel.cwd());
+            assert!(matches!(&app.dialog, Some(Dialog::Input { input, .. }) if *input == shown));
             let _ = app.update(Message::DialogInput("Work".into()));
             let _ = app.update(Message::DialogSubmit);
             assert_eq!(app.panes[0].active().name.as_deref(), Some("Work"));
-            key(&mut app, Action::TabRename);
+            key(&mut app, Action::TabRename); // the own caption is offered
+            assert!(matches!(&app.dialog, Some(Dialog::Input { input, .. }) if input == "Work"));
             let _ = app.update(Message::DialogInput("  ".into()));
             let _ = app.update(Message::DialogSubmit);
             assert_eq!(app.panes[0].active().name, None);
