@@ -24,6 +24,8 @@ pub enum InputOp {
     Copy,
     Move,
     Mkdir,
+    /// Shift+F4: name of the file to create (or open) in the editor.
+    NewFile,
     Rename,
     /// Own caption of the active tab.
     TabName,
@@ -555,6 +557,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 InputOp::Copy => fl!("copy-to", what = what(sources)),
                 InputOp::Move => fl!("move-to", what = what(sources)),
                 InputOp::Mkdir => fl!("mkdir"),
+                InputOp::NewFile => fl!("new-file"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
             };

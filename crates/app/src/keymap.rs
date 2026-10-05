@@ -117,6 +117,8 @@ pub enum Action {
     ViewFull,
     /// Column widths back to the defaults (menu, double click on a header edge).
     ResetColumns,
+    /// Shift+F4: create a file (if missing) and edit it.
+    NewFile,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -186,6 +188,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F11, false, false) => Action::CompareFiles,
             (Named::F3, false, false) => Action::View,
             (Named::F4, false, false) => Action::Edit,
+            (Named::F4, false, true) => Action::NewFile,
             (Named::F5, false, false) => Action::Copy,
             (Named::F5, false, true) => Action::CopySame,
             (Named::F6, false, false) => Action::Move,
@@ -446,6 +449,7 @@ mod tests {
     fn view_edit_hidden() {
         assert_eq!(named(Named::F3, NONE), Some(Action::View));
         assert_eq!(named(Named::F4, NONE), Some(Action::Edit));
+        assert_eq!(named(Named::F4, Modifiers::SHIFT), Some(Action::NewFile)); // phase 50
         assert_eq!(chr("h", Code::KeyH, CTRL), Some(Action::ToggleHidden));
         assert_eq!(chr("р", Code::KeyH, CTRL), Some(Action::ToggleHidden));
         assert_eq!(chr("h", Code::KeyH, NONE), None);

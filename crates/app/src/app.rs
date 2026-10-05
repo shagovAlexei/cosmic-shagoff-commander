@@ -2278,6 +2278,7 @@ impl App {
             | Action::FindFiles
             | Action::SyncDirs
             | Action::Mkdir
+            | Action::NewFile
             | Action::Delete
             | Action::DeletePermanent => {}
             // Opened by `dialog_for` above.
@@ -2425,6 +2426,15 @@ impl App {
                 }))
             }
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
+            // TC offers the file under the cursor (an existing one is just opened).
+            Action::NewFile => {
+                let name = panel
+                    .current()
+                    .filter(|e| !e.is_dir() && e.name != PARENT)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default();
+                Some(input(InputOp::NewFile, Vec::new(), name))
+            }
             // The caption as shown; left as the dir's name it keeps following the dir.
             Action::TabRename => {
                 let t = self.panes[side].active();
@@ -2689,6 +2699,12 @@ impl App {
                 ..
             } => self.mkdir(side, input.trim()),
             Dialog::Input {
+                op: InputOp::NewFile,
+                side,
+                input,
+                ..
+            } => self.new_file(side, input.trim()),
+            Dialog::Input {
                 op: InputOp::TabName,
                 side,
                 input,
@@ -2857,6 +2873,32 @@ impl App {
     }
 
     /// F7: create (possibly nested) dirs, then put the cursor on the first created component.
+    /// Shift+F4: create `name` in the panel's dir if it is not there, open it in the editor,
+    /// put the cursor on it.
+    fn new_file(&mut self, side: usize, name: &str) -> Task<Message> {
+        if !ops::valid_name(name) {
+            if !name.is_empty() {
+                self.say(StatusKind::Error, plan_error(&PlanError::BadName));
+            }
+            return Task::none();
+        }
+        let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+        let file = cwd.join(name);
+        if let Err(e) = ops::new_file(&file) {
+            let err = e.to_string();
+            self.say(
+                StatusKind::Error,
+                fl!("new-file-failed", path = name, err = err),
+            );
+            return Task::none();
+        }
+        let argv = launch::command(&self.config.editor, &["cosmic-edit"], &file);
+        if let Err(err) = spawn_detached(&argv) {
+            self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
+        }
+        self.reload(side, cwd, Some(name.to_string()))
+    }
+
     fn mkdir(&mut self, side: usize, name: &str) -> Task<Message> {
         if name.is_empty() {
             return Task::none();
@@ -3541,6 +3583,7 @@ impl App {
             | Action::ClipCut
             | Action::ClipPaste
             | Action::CopySame
+            | Action::NewFile
             | Action::Properties => inside(side),
             Action::Pack | Action::Unpack | Action::SyncDirs => inside(side) || inside(1 - side),
             Action::Copy | Action::Move | Action::ClipCopy => inside(side) && inside(1 - side),
@@ -5640,6 +5683,37 @@ mod tests {
         let _ = app.update(Message::Escape(app.window_id()));
         assert!(app.col_drag.is_none());
         assert_eq!(app.cols, before);
+    }
+
+    #[test]
+    fn shift_f4_creates_the_file_and_puts_the_cursor_on_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("old.txt"), "kept").unwrap();
+        // `true` as the editor: nothing opens on the desktop running the tests.
+        let config = Config {
+            editor: vec!["true".into()],
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down)); // old.txt
+        let _ = app.update(Message::Key(Action::NewFile));
+        assert!(
+            matches!(&app.dialog, Some(Dialog::Input { op: InputOp::NewFile, input, .. }) if input == "old.txt")
+        );
+        let _ = app.update(Message::DialogSubmit); // exists: opened, not emptied
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("old.txt")).unwrap(),
+            "kept"
+        );
+        let _ = app.update(Message::Key(Action::NewFile));
+        let _ = app.update(Message::DialogInput("new.md".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(tmp.path().join("new.md").is_file());
+        let _ = app.update(Message::Key(Action::NewFile));
+        let _ = app.update(Message::DialogInput("a/b".into())); // one name only
+        let _ = app.update(Message::DialogSubmit);
+        assert!(!tmp.path().join("a").exists());
     }
 
     #[test]
