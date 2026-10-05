@@ -105,6 +105,8 @@ pub struct Config {
     /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
     pub terminal: Vec<String>,
     pub skin: Skin,
+    /// Full view widths of Ext, Size, Date, Attributes (Name takes the rest); dragged in the header.
+    pub columns: [f32; 4],
 }
 
 /// A favourite dir (Ctrl+D).
@@ -132,6 +134,7 @@ impl Default for Config {
             show_cmdline: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
             skin: Skin::Classic,
+            columns: [60.0, 90.0, 130.0, 80.0],
         }
     }
 }

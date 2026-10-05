@@ -6,6 +6,7 @@
 #   headless.sh panes LEFT RIGHT   restart the app with these dirs in the two panes
 #   headless.sh key ARGS...        wtype ARGS (e.g. -k F7, -M shift -k F2 -m shift)
 #   headless.sh click X Y [right|middle|none]  mouse at (X, Y), click (built from ./vpointer once)
+#   headless.sh drag X1 Y1 X2 Y2   press at (X1, Y1), move to (X2, Y2), release
 #   headless.sh shot NAME          screenshot to $DIR/NAME.png
 #   headless.sh stop
 #
@@ -51,6 +52,11 @@ click)
     [ -x "$vp/target/release/vpointer" ] || (cd "$vp" && cargo build -q --release --offline)
     size=$(cat "$DIR/size" 2>/dev/null || echo 1036x530)  # the output's, for absolute motion
     WAYLAND_DISPLAY="$(sock)" "$vp/target/release/vpointer" "$2" "$3" "${4:-left}" "${size%x*}" "${size#*x}"; sleep 0.5 ;;
+drag)
+    vp="$ROOT/.claude/skills/shagoff-feature/vpointer"
+    (cd "$vp" && cargo build -q --release --offline)
+    size=$(cat "$DIR/size" 2>/dev/null || echo 1036x530)
+    WAYLAND_DISPLAY="$(sock)" "$vp/target/release/vpointer" drag "$2" "$3" "$4" "$5" "${size%x*}" "${size#*x}"; sleep 0.5 ;;
 shot) WAYLAND_DISPLAY="$(sock)" grim "$DIR/$2.png"; echo "$DIR/$2.png" ;;
 stop) kill_pid app; kill_pid sway ;;
 *) sed -n '2,15p' "$0"; exit 1 ;;

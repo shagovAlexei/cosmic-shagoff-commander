@@ -106,9 +106,14 @@ impl Tab {
 
     /// Brief view: (rows per column, columns on screen) for rows `row_h` px high.
     pub fn brief_grid(&self, row_h: f32) -> (usize, usize) {
+        // ponytail: a pass over the names per call; cache in the panel if huge dirs lag.
+        let longest = (self.panel.entries().iter())
+            .map(|e| format::display_name(e).chars().count())
+            .max()
+            .unwrap_or(0);
         (
             viewport::brief_rows(row_h, self.height),
-            viewport::brief_cols(self.width),
+            viewport::brief_cols(self.width, viewport::brief_col_w(longest)),
         )
     }
 
@@ -159,6 +164,9 @@ pub enum OpKind {
     /// Rewriting an archive (a change inside one).
     Repack,
 }
+
+/// A header edge being dragged: (side, edge 1..=4, first pointer x and the width then).
+pub type ColDrag = (usize, usize, Option<(f32, f32)>);
 
 /// A file operation in progress (the progress dialog's data).
 pub struct Running {
@@ -244,6 +252,10 @@ pub struct App {
     /// Alt+F7 settings, kept in `State`.
     find: config::FindPrefs,
     pub drives: Vec<Drive>,
+    /// Column widths as shown: the config's, or the one being dragged (written on release).
+    pub cols: [f32; 4],
+    /// A header edge being dragged: (side, edge 1..=4, first pointer x and the width then).
+    pub col_drag: Option<ColDrag>,
     /// Volumes not mounted yet (a stick just plugged in): listed with the drives, a pick mounts.
     pub volumes: Vec<mount::Volume>,
     /// When `volumes` was last asked for: gio runs at most every few seconds.
@@ -409,6 +421,10 @@ pub enum Message {
     Changed(usize),
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
     Drive(usize, PathBuf),
+    /// Full view header: press on edge 1..=4 (TC drag), pointer x, release.
+    ColDragStart(usize, usize),
+    ColDrag(f32),
+    ColDragEnd,
     /// A part of the path line clicked: go there, the cursor on the dir we came from.
     PathPart(usize, PathBuf),
     CloseDrawer,
@@ -578,6 +594,7 @@ impl App {
         home: PathBuf,
     ) -> (Self, Task<Message>) {
         let home_fallback = home.clone();
+        let cols = config.columns;
         let mut app = Self {
             core,
             panes: [
@@ -602,6 +619,8 @@ impl App {
             saved: State::default(),
             find: state.find.clone(),
             drives: Vec::new(),
+            cols,
+            col_drag: None,
             volumes: Vec::new(),
             volumes_at: None,
             space: [None, None],
@@ -1504,6 +1523,27 @@ impl App {
                 if self.job.is_none() && t.target() == t.panel.cwd() {
                     let cwd = t.target();
                     return self.reload(side, cwd, None);
+                }
+            }
+            Message::ColDragStart(side, edge) => self.col_drag = Some((side, edge, None)),
+            Message::ColDrag(x) => {
+                if let Some((_, edge, start)) = &mut self.col_drag {
+                    let col = viewport::drag_target(*edge);
+                    let &mut (x0, w0) = start.get_or_insert((x, self.cols[col]));
+                    let (col, w) = viewport::drag_col(*edge, w0, x0, x);
+                    self.cols[col] = w;
+                }
+            }
+            Message::ColDragEnd => {
+                if self.col_drag.take().is_some() && self.cols != self.config.columns {
+                    match &self.config_handler {
+                        Some(h) => {
+                            if let Err(e) = self.config.set_columns(h, self.cols) {
+                                log::warn!("config: {e}");
+                            }
+                        }
+                        None => self.config.columns = self.cols,
+                    }
                 }
             }
             Message::PathPart(side, path) => {
@@ -3770,6 +3810,7 @@ impl App {
     /// New settings, from the settings drawer or the config watcher (a hand edit).
     fn apply_config(&mut self, c: Config) -> Task<Message> {
         let old = std::mem::replace(&mut self.config, c);
+        self.cols = self.config.columns;
         let mut tasks = Vec::new();
         if old.language != self.config.language {
             let system = i18n_embed::DesktopLanguageRequester::requested_languages();
@@ -4991,7 +5032,10 @@ mod tests {
         let mut app = app_with(Config::default(), State::default());
         let t = app.panes[0].active();
         let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
-        let entries = (0..20).map(|i| entry(&format!("f{i:02}"))).collect();
+        // 21-char names: Brief columns of ~195 px, two on the 500 px list.
+        let entries = (0..20)
+            .map(|i| entry(&format!("file-with-long-name{i:02}")))
+            .collect();
         let _ = app.update(Message::Listed {
             tab: id,
             generation,
@@ -5466,6 +5510,20 @@ mod tests {
         assert_eq!(app.msg(), Some(fl!("job-running").as_str()));
         let _ = app.update(Message::JobShow);
         assert!(app.busy());
+    }
+
+    #[test]
+    fn dragging_a_header_edge_resizes_and_is_saved_on_release() {
+        let mut app = app_with(Config::default(), State::default());
+        let before = app.config.columns;
+        let _ = app.update(Message::ColDragStart(0, 3)); // Size | Date
+        let _ = app.update(Message::ColDrag(500.0)); // first move: where the drag starts
+        let _ = app.update(Message::ColDrag(530.0));
+        assert_eq!(app.cols[1], before[1] + 30.0); // Size wider, shown at once
+        assert_eq!(app.config.columns, before); // not saved yet
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!(app.config.columns[1], before[1] + 30.0);
+        assert!(app.col_drag.is_none());
     }
 
     #[test]
