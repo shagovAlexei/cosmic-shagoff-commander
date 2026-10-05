@@ -58,6 +58,20 @@ pub fn valid_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains('/')
 }
 
+/// Shift+F4 (TC): an empty file at `path` unless something is there already (never replaced).
+/// `Ok(true)` created, `Ok(false)` it existed (open it as is).
+pub fn new_file(path: &Path) -> io::Result<bool> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorChoice {
     Retry,
@@ -1338,5 +1352,16 @@ mod tests {
             Ok(vec![(f.clone(), d.path().join("g"))])
         );
         assert_eq!(rename_pairs(&f, "h"), Ok(vec![(f, d.path().join("h"))]));
+    }
+
+    #[test]
+    fn new_file_creates_once_and_never_truncates() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("notes.txt");
+        assert!(new_file(&p).unwrap());
+        fs::write(&p, "kept").unwrap();
+        assert!(!new_file(&p).unwrap()); // there already: opened as is
+        assert_eq!(fs::read_to_string(&p).unwrap(), "kept");
+        assert!(new_file(&d.path().join("no/such/dir/x")).is_err());
     }
 }

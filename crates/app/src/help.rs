@@ -59,6 +59,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("F6", fl!("menu-move"), Action::Move),
                 r("Shift+F6, F2", fl!("menu-rename"), Action::Rename),
                 r("F7", fl!("menu-mkdir"), Action::Mkdir),
+                r("Shift+F4", fl!("menu-new-file"), Action::NewFile),
                 r("F8, Delete", fl!("help-delete"), Action::Delete),
                 r(
                     "Shift+F8, Shift+Delete",
