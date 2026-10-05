@@ -417,6 +417,8 @@ pub enum Message {
     Hot(HotMsg),
     /// Toolbar button `i` of `config.toolbar`.
     Tool(usize),
+    /// A toolbar program exited with an error: its last stderr line (or exit status).
+    ToolFailed(String),
     ToolEdit(crate::toolbar::ToolMsg),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
@@ -1565,6 +1567,7 @@ impl App {
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
             Message::Tool(i) => return self.run_tool(i),
+            Message::ToolFailed(e) => self.say(StatusKind::Error, fl!("cmd-failed", error = e)),
             Message::ToolEdit(m) => {
                 if let Some(Dialog::Toolbar(t)) = &mut self.dialog {
                     t.update(m);
@@ -4203,10 +4206,13 @@ impl App {
             selected: &selected,
         };
         let line = cmdline::append(&b.cmd, &cmdline::expand(&b.params, &vars));
-        if let Err(e) = spawn_in(&cmdline::argv(&line, &cwd, None), &cwd) {
-            self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
+        match run_watched(&cmdline::argv(&line, &cwd, None), &cwd) {
+            Ok(task) => task,
+            Err(e) => {
+                self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
+                Task::none()
+            }
         }
-        Task::none()
     }
 
     fn save_hotlist(&mut self, list: Vec<HotEntry>) {
@@ -4747,6 +4753,46 @@ fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
         .spawn()?;
     reap(child);
     Ok(())
+}
+
+/// Like `spawn_in`, but a failure is reported (`Message::ToolFailed`): a toolbar button's shell
+/// always starts, so "command not found" and the like only show in its exit status and stderr.
+fn run_watched(argv: &[String], dir: &Path) -> std::io::Result<Task<Message>> {
+    use std::io::BufRead;
+    use std::process::Stdio;
+    let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
+    let mut child = std::process::Command::new(prog)
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let err = child.stderr.take();
+    Ok(cosmic::iced::Task::future(async move {
+        tokio::task::spawn_blocking(move || {
+            // Only the last line is kept: a terminal may log for as long as it is open.
+            let last = err.map_or_else(String::new, |e| {
+                let lines = std::io::BufReader::new(e).lines().map_while(Result::ok);
+                lines
+                    .filter(|l| !l.trim().is_empty())
+                    .last()
+                    .unwrap_or_default()
+            });
+            let status = child.wait().ok()?;
+            (!status.success()).then(|| {
+                if last.is_empty() {
+                    status.to_string()
+                } else {
+                    last
+                }
+            })
+        })
+        .await
+        .ok()
+        .flatten()
+    })
+    .and_then(|e| Task::done(cosmic::Action::App(Message::ToolFailed(e)))))
 }
 
 fn reap(mut child: std::process::Child) {
