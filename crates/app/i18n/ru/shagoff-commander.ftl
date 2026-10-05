@@ -450,3 +450,6 @@ toolbar-pick-filter = Поиск по названию (англ.): copy, folder
 toolbar-pick-count = Показано { $shown } из { $total }
 toolbar-pick-back = Назад
 toolbar-pick-loading = Загрузка значков…
+hotlist-add-sub = Подменю
+hotlist-new-sub = Новое подменю
+hotlist-sub-end = ◂ конец подменю

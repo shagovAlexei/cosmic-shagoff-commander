@@ -451,6 +451,12 @@ pub enum Item {
     Add,
     /// Hotlist: open the settings.
     Configure,
+    /// Hotlist: the favourite at this index of `config.hotlist`.
+    Hot(usize),
+    /// Hotlist: the submenu starting at this index; Enter / → opens it.
+    Sub(usize),
+    /// Hotlist: back to the enclosing menu (← / Backspace).
+    Back,
 }
 
 impl Dialog {
@@ -838,6 +844,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 }
                 let path = match item.kind {
                     Item::Mount => format!("{}   ({})", item.path.display(), fl!("not-mounted")),
+                    Item::Sub(_) => "▸".into(),
                     _ => item.path.display().to_string(),
                 };
                 list = list.push(menu_row(

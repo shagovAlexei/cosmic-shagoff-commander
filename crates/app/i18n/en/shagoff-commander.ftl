@@ -449,3 +449,6 @@ toolbar-pick-filter = Search: copy, folder, arrow…
 toolbar-pick-count = Shown { $shown } of { $total }
 toolbar-pick-back = Back
 toolbar-pick-loading = Loading icons…
+hotlist-add-sub = Submenu
+hotlist-new-sub = New submenu
+hotlist-sub-end = ◂ end of submenu
