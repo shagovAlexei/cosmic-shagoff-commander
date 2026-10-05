@@ -123,10 +123,15 @@ sync-dirs = Synchronize directories
 sync-subdirs = Subdirectories
 sync-content = By content
 sync-ignore-date = Ignore date
-sync-show-same = Show equal
 sync-compare = Compare
 sync-run = Synchronize
-sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
+sync-show = Show:
+sync-show-right = → to right: { $n }
+sync-show-left = ← to left: { $n }
+sync-show-differ = ≠ differ: { $n }
+sync-show-same = = equal: { $n }
+sync-to-delete = ✕ to the trash: { $n } (mirror)
+sync-comparing = Comparing…
 syncing = Synchronizing
 compare-identical = The directories are identical
 diff-title = Compare by content
