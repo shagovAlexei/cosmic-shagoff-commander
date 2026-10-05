@@ -72,6 +72,8 @@ pub struct Tab {
     pub locked: bool,
     /// Own caption instead of the dir's name.
     pub name: Option<String>,
+    /// Stops the dir size counts (Space, Alt+Shift+Enter) of the dir shown; set when it is left.
+    counting: Arc<AtomicBool>,
 }
 
 impl Tab {
@@ -91,6 +93,7 @@ impl Tab {
             results: None,
             locked: false,
             name: None,
+            counting: Arc::default(),
         }
     }
 
@@ -148,6 +151,7 @@ impl Tab {
             results: self.results.clone(),
             locked: false,
             name: None,
+            counting: Arc::default(),
         }
     }
 }
@@ -843,6 +847,10 @@ impl App {
                     Ok(entries) => {
                         t.error = None;
                         t.history.visit(&path); // no-op for a rescan of the current entry
+                        if path != t.panel.cwd() {
+                            t.counting.store(true, Ordering::Relaxed);
+                            t.counting = Arc::default();
+                        }
                         t.panel.set_listing(path, entries, focus.as_deref());
                         if self.panes[side].active().id == tab {
                             self.refresh_mounts();
@@ -2161,7 +2169,8 @@ impl App {
                 if let Some((cwd, name)) =
                     dir.filter(|(cwd, n)| !loading && !inside_archive(&cwd.join(n)))
                 {
-                    let count = count_dirs(side, tab, cwd, vec![name]);
+                    let stop = self.panes[side].active().counting.clone();
+                    let count = count_dirs(side, tab, cwd, vec![name], stop);
                     return Task::batch([count, self.reveal(side, tab)]);
                 }
             }
@@ -2177,7 +2186,8 @@ impl App {
                     .filter(|e| e.is_dir() && e.name != PARENT && panel.dir_size(e).is_none())
                     .map(|e| e.os_name.clone())
                     .collect();
-                return count_dirs(side, tab, cwd, names);
+                let stop = self.panes[side].active().counting.clone();
+                return count_dirs(side, tab, cwd, names, stop);
             }
             Action::MarkDown => panel.toggle_mark_and_move(1),
             Action::MarkUp => panel.toggle_mark_and_move(-1),
@@ -4605,38 +4615,40 @@ fn read_listing(
     }
 }
 
-/// The dialog's search fields as a query (`hidden` is the panel's).
-/// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
-/// name only — a stat per result would stall on a million of them.
 /// Count dirs `names` in `cwd` in the background; each sends its own `Message::DirSize`.
-// ponytail: never stopped (a huge tree keeps counting after leaving the dir, the result is
-// dropped) and one blocking task per dir; add a per-tab stop / a queue if it matters.
-fn count_dirs(side: usize, tab: u64, cwd: PathBuf, names: Vec<OsString>) -> Task<Message> {
+/// `stop`: the tab left `cwd` (a stopped count sends nothing).
+// ponytail: one blocking task per dir; a queue if thousands of dirs ever matter.
+fn count_dirs(
+    side: usize,
+    tab: u64,
+    cwd: PathBuf,
+    names: Vec<OsString>,
+    stop: Arc<AtomicBool>,
+) -> Task<Message> {
     Task::batch(names.into_iter().map(|name| {
         let path = cwd.join(&name);
         let cwd = cwd.clone();
-        Task::perform(
-            async move {
-                let stop = AtomicBool::new(false);
-                tokio::task::spawn_blocking(move || shagoff_core::props::usage(&[path], &stop))
-                    .await
-                    .ok()
-                    .flatten()
-            },
-            move |u| {
-                let bytes = u.map_or(0, |u| u.bytes);
-                cosmic::Action::App(Message::DirSize(
-                    side,
-                    tab,
-                    cwd.clone(),
-                    name.clone(),
-                    bytes,
-                ))
-            },
-        )
+        let stop = stop.clone();
+        cosmic::iced::Task::future(async move {
+            tokio::task::spawn_blocking(move || shagoff_core::props::usage(&[path], &stop))
+                .await
+                .ok()
+                .flatten()
+        })
+        .and_then(move |u| {
+            Task::done(cosmic::Action::App(Message::DirSize(
+                side,
+                tab,
+                cwd.clone(),
+                name.clone(),
+                u.bytes,
+            )))
+        })
     }))
 }
 
+/// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
+/// name only — a stat per result would stall on a million of them.
 fn inside_archive(p: &Path) -> bool {
     p.ancestors().skip(1).any(|a| {
         a.file_name()
@@ -4646,6 +4658,7 @@ fn inside_archive(p: &Path) -> bool {
     })
 }
 
+/// The dialog's search fields as a query (`hidden` is the panel's).
 fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Query, String> {
     let number = |s: &str, what: String| -> Result<Option<u64>, String> {
         let s = s.trim();
@@ -6597,6 +6610,20 @@ mod tests {
         let p = &app.panes[0].active().panel;
         assert_eq!(p.marked_totals().bytes, 4096);
         assert_eq!(p.dir_size(&p.entries()[1]), Some(4096));
+    }
+
+    #[test]
+    fn leaving_the_dir_stops_its_size_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let stop = app.panes[0].active().counting.clone();
+        listed_at(&mut app, 0, tmp.path()); // a rescan keeps counting
+        assert!(!stop.load(Ordering::Relaxed));
+        listed_at(&mut app, 0, &tmp.path().join("sub"));
+        assert!(stop.load(Ordering::Relaxed));
+        assert!(!app.panes[0].active().counting.load(Ordering::Relaxed));
     }
 
     #[test]
