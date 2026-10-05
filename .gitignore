@@ -1,4 +1,3 @@
-/target
+target/
 .claude/settings.local.json
 .superpowers/
-.claude/skills/shagoff-feature/vpointer/target/
