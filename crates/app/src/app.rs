@@ -972,13 +972,18 @@ impl App {
             }
             Message::PropsBit(b) => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
-                    p.mode ^= b;
+                    if p.mixed & !p.touched & b != 0 {
+                        p.mode |= b; // `?` → on
+                    } else {
+                        p.mode ^= b;
+                    }
                     p.touched |= b;
                 }
             }
             Message::PropsRecursive => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
                     p.recursive = !p.recursive;
+                    p.mixed = if p.recursive { 0o777 } else { p.own_mixed };
                 }
             }
             Message::DirSize(side, tab, cwd, name, bytes) => {
@@ -2971,6 +2976,7 @@ impl App {
             facts,
             mode: if modes.is_empty() { 0 } else { all },
             mixed: any & !all,
+            own_mixed: any & !all,
             touched: 0,
             has_dir,
             recursive: false,
@@ -6082,6 +6088,30 @@ mod tests {
             panic!("no dialog");
         };
         assert_eq!((p.mode & 0o100, p.touched), (0o100, 0o100));
+    }
+
+    #[test]
+    fn recursive_properties_start_every_bit_as_leave_as_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("d")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Properties));
+        let _ = app.update(Message::PropsRecursive);
+        let props = |app: &App| match &app.dialog {
+            Some(Dialog::Props(p)) => (p.mode, p.mixed, p.touched),
+            _ => panic!("no dialog"),
+        };
+        assert_eq!(props(&app).1, 0o777);
+        // group w: `?` → on even if the dir has it already (the contents may not)
+        let _ = app.update(Message::PropsBit(0o020));
+        let (m, _, touched) = props(&app);
+        assert_eq!((m & 0o020, touched), (0o020, 0o020));
+        let _ = app.update(Message::PropsBit(0o020)); // then a plain box: off
+        assert_eq!(props(&app).0 & 0o020, 0);
+        let _ = app.update(Message::PropsRecursive); // off: the dir's own state again
+        assert_eq!(props(&app).1, 0);
     }
 
     #[test]
