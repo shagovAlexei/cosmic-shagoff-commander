@@ -5,6 +5,7 @@ mod dialogs;
 mod drawer;
 mod find;
 mod help;
+mod hotlist;
 mod i18n;
 mod jobs;
 mod keymap;

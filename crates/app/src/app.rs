@@ -1,10 +1,11 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State};
 use crate::dialogs::{
-    self, Dialog, FindField, InputOp, ListItem, ListKind, MrField, SyncOpt, Toggle,
+    self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MrField, SyncOpt, Toggle,
 };
 use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
+use crate::hotlist::{self, HotEdit, HotMsg};
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action, ListerKey};
 use crate::lister::{self, Lister};
@@ -371,6 +372,8 @@ pub enum Message {
     FieldKey(Action),
     /// Click on entry i of the open list dialog.
     ListPick(usize),
+    /// Hotlist settings (Ctrl+D → "Configure…").
+    Hot(HotMsg),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
     /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
@@ -630,16 +633,31 @@ impl App {
             Message::Key(action) => {
                 if let Some(Dialog::List { kind, cursor, .. }) = &self.dialog
                     && *kind == ListKind::Hotlist
-                    && *cursor >= 1
+                    && *cursor < self.config.hotlist.len()
                     && matches!(action, Action::Delete | Action::DeletePermanent)
                 {
-                    let i = *cursor - 1;
+                    let i = *cursor;
                     return self.hotlist_remove(i);
                 }
                 if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
+                    // Separators are skipped, as in a menu.
+                    let step = |from: usize, up: bool| {
+                        let mut i = from;
+                        loop {
+                            i = match (up, i) {
+                                (true, 0) => return from,
+                                (true, _) => i - 1,
+                                (false, _) if i + 1 >= items.len() => return from,
+                                (false, _) => i + 1,
+                            };
+                            if items[i].kind != Item::Sep {
+                                return i;
+                            }
+                        }
+                    };
                     match action {
-                        Action::Up => *cursor = cursor.saturating_sub(1),
-                        Action::Down => *cursor = (*cursor + 1).min(items.len().saturating_sub(1)),
+                        Action::Up => *cursor = step(*cursor, true),
+                        Action::Down => *cursor = step(*cursor, false),
                         Action::Enter => {
                             let i = *cursor;
                             return self.pick(i);
@@ -1345,6 +1363,12 @@ impl App {
             }
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
+            Message::Hot(m) => {
+                if let Some(Dialog::Hotlist(h)) = &mut self.dialog {
+                    let cwd = self.panes[h.side].active().panel.cwd().to_path_buf();
+                    h.update(m, &cwd);
+                }
+            }
             // Quick search, viewer search or command line; not a dialog's or a settings field.
             Message::FieldKey(action) => {
                 if self.dialog.is_none() && self.drawer.is_none() {
@@ -1424,7 +1448,7 @@ impl App {
                     items.extend(fresh.into_iter().map(|v| ListItem {
                         label: v.name,
                         path: v.device.into(),
-                        mount: true,
+                        kind: Item::Mount,
                     }));
                 }
             }
@@ -2201,7 +2225,7 @@ impl App {
                     .map(|p| ListItem {
                         label: format::dir_title(&p),
                         path: p,
-                        mount: false,
+                        kind: Item::Dir,
                     })
                     .collect(),
             }),
@@ -2217,7 +2241,7 @@ impl App {
                     .map(|d| ListItem {
                         label: d.label.clone(),
                         path: d.path.clone(),
-                        mount: false,
+                        kind: Item::Dir,
                     })
                     .collect(),
             }),
@@ -2535,6 +2559,10 @@ impl App {
             d @ Dialog::Find(_) => {
                 self.dialog = Some(d);
                 self.start_find()
+            }
+            Dialog::Hotlist(h) => {
+                self.save_hotlist(h.list);
+                Task::none()
             }
             d @ Dialog::List { .. } => {
                 let i = match &d {
@@ -3635,7 +3663,16 @@ impl App {
             }
             return Task::none();
         }
-        if kind == ListKind::Hotlist && i == 0 {
+        let what = items.get(i).map(|it| it.kind);
+        if what == Some(Item::Configure) {
+            let list = self.config.hotlist.clone();
+            self.dialog = Some(Dialog::Hotlist(Box::new(HotEdit::new(side, list))));
+            return Task::none();
+        }
+        if what == Some(Item::Sep) {
+            return Task::none();
+        }
+        if what == Some(Item::Add) {
             let cwd = self.panes[side].active().panel.cwd().to_path_buf();
             if !self.config.hotlist.iter().any(|e| e.path == cwd) {
                 let mut list = self.config.hotlist.clone();
@@ -3648,7 +3685,7 @@ impl App {
             return Task::none();
         }
         match items.get(i) {
-            Some(item) if item.mount => {
+            Some(item) if item.kind == Item::Mount => {
                 self.say(StatusKind::Busy, fl!("mounting"));
                 let device = item.path.to_string_lossy().into_owned();
                 blocking(
@@ -3661,19 +3698,34 @@ impl App {
         }
     }
 
-    /// Hotlist rows: "add current dir" (empty path), then the favourites.
+    /// Hotlist rows as TC's menu: the favourites (row = index in the config), a line,
+    /// "add current dir", "configure…".
     fn hotlist_items(&self) -> Vec<ListItem> {
-        std::iter::once(ListItem {
-            label: fl!("hotlist-add"),
+        let own = |label, kind| ListItem {
+            label,
             path: PathBuf::new(),
-            mount: false,
-        })
-        .chain(self.config.hotlist.iter().map(|e| ListItem {
-            label: e.name.clone(),
-            path: e.path.clone(),
-            mount: false,
-        }))
-        .collect()
+            kind,
+        };
+        let mut items: Vec<ListItem> = self
+            .config
+            .hotlist
+            .iter()
+            .map(|e| ListItem {
+                label: e.name.clone(),
+                path: e.path.clone(),
+                kind: if hotlist::is_sep(e) {
+                    Item::Sep
+                } else {
+                    Item::Dir
+                },
+            })
+            .collect();
+        if !items.is_empty() {
+            items.push(own(String::new(), Item::Sep));
+        }
+        items.push(own(fl!("hotlist-add"), Item::Add));
+        items.push(own(fl!("hotlist-configure"), Item::Configure));
+        items
     }
 
     fn save_pack_format(&mut self, f: Format) {
@@ -3720,6 +3772,9 @@ impl App {
         let fresh = self.hotlist_items();
         if let Some(Dialog::List { items, cursor, .. }) = &mut self.dialog {
             *cursor = (*cursor).min(fresh.len() - 1);
+            if fresh[*cursor].kind == Item::Sep {
+                *cursor += 1; // the line before "add": land on "add"
+            }
             *items = fresh;
         }
         Task::none()
@@ -3777,7 +3832,7 @@ impl App {
                             .map(|c| ListItem {
                                 label: c.clone(),
                                 path: PathBuf::new(),
-                                mount: false,
+                                kind: Item::Dir,
                             })
                             .collect(),
                     });
@@ -5171,7 +5226,7 @@ mod tests {
         let mut app = app_with(Config::default(), State::default());
         let cwd = app.panes[0].active().panel.cwd().to_path_buf();
         let _ = app.update(Message::Key(Action::Hotlist));
-        let _ = app.update(Message::Key(Action::Enter)); // row 0: add current dir
+        let _ = app.update(Message::Key(Action::Enter)); // empty: row 0 is "add current dir"
         let paths: Vec<_> = app.config.hotlist.iter().map(|e| e.path.clone()).collect();
         assert_eq!(paths, std::slice::from_ref(&cwd));
         assert!(app.dialog.is_none());
@@ -5181,14 +5236,37 @@ mod tests {
         assert_eq!(app.config.hotlist.len(), 1);
 
         let _ = app.update(Message::Key(Action::Hotlist));
-        assert_eq!(hotlist_items(&app).len(), 2); // add row + one entry
+        assert_eq!(hotlist_items(&app).len(), 4); // entry, line, add, configure
+        let _ = app.update(Message::Key(Action::Down)); // over the line onto "add"
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 2, .. })));
         let _ = app.update(Message::Key(Action::Delete)); // on the add row: nothing
         assert_eq!(app.config.hotlist.len(), 1);
-        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Up));
         let _ = app.update(Message::Key(Action::Delete)); // remove the entry
         assert!(app.config.hotlist.is_empty());
-        assert_eq!(hotlist_items(&app).len(), 1); // still open
+        assert_eq!(hotlist_items(&app).len(), 2); // still open
         assert!(matches!(app.dialog, Some(Dialog::List { cursor: 0, .. })));
+    }
+
+    #[test]
+    fn hotlist_configure_edits_a_copy_saved_on_ok() {
+        let mut app = app_with(Config::default(), State::default());
+        let cwd = app.panes[0].active().panel.cwd().to_path_buf();
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Down)); // "configure…"
+        let _ = app.update(Message::Key(Action::Enter));
+        let _ = app.update(Message::Hot(HotMsg::Add));
+        let _ = app.update(Message::Hot(HotMsg::Name("Home".into())));
+        assert!(app.config.hotlist.is_empty()); // not until OK
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.dialog.is_none());
+        assert_eq!(
+            app.config.hotlist,
+            [HotEntry {
+                name: "Home".into(),
+                path: cwd
+            }]
+        );
     }
 
     #[test]
@@ -5201,8 +5279,7 @@ mod tests {
             ..Config::default()
         };
         let mut app = app_with(config, State::default());
-        let _ = app.update(Message::Key(Action::Hotlist));
-        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Hotlist)); // cursor on the first entry
         app.panes[0].active_mut().pending = None;
         let _ = app.update(Message::Key(Action::Enter));
         assert_eq!(pending_of(&app, 0), Some(PathBuf::from("/etc")));
@@ -6764,7 +6841,7 @@ mod tests {
             let Some(Dialog::List { items, .. }) = &app.dialog else {
                 panic!("no list")
             };
-            assert!(items[2].mount && items[2].path == Path::new("/dev/sda1"));
+            assert!(items[2].kind == Item::Mount && items[2].path == Path::new("/dev/sda1"));
         }
 
         #[test]
