@@ -4,10 +4,17 @@
 pub struct Mask {
     include: Vec<String>,
     exclude: Vec<String>,
+    /// Alt+F7 "case sensitive": names compared as they are.
+    case: bool,
 }
 
 impl Mask {
     pub fn parse(s: &str) -> Self {
+        Self::parse_case(s, false)
+    }
+
+    /// `case`: `*.TXT` does not match `a.txt` (Linux names differ by case).
+    pub fn parse_case(s: &str, case: bool) -> Self {
         // The first `|` outside quotes starts the exclusions.
         let mut quoted = false;
         let bar = s.char_indices().find(|&(_, c)| {
@@ -18,7 +25,7 @@ impl Mask {
         let split = |part: &str| -> Vec<String> {
             tokens(part)
                 .into_iter()
-                .map(|p| p.to_lowercase())
+                .map(|p| if case { p } else { p.to_lowercase() })
                 // TC: `*.*` means every file, including names without a dot
                 .map(|p| if p == "*.*" { "*".to_string() } else { p })
                 .collect()
@@ -30,11 +37,16 @@ impl Mask {
         Self {
             include,
             exclude: split(exc),
+            case,
         }
     }
 
     pub fn matches(&self, name: &str) -> bool {
-        let name = name.to_lowercase();
+        let name = if self.case {
+            name.to_string()
+        } else {
+            name.to_lowercase()
+        };
         self.include.iter().any(|p| glob(p, &name)) && !self.exclude.iter().any(|p| glob(p, &name))
     }
 }
@@ -121,6 +133,12 @@ mod tests {
         assert!(m("*", "anything"));
         assert!(m("a*b*c", "aXXbYYc"));
         assert!(!m("a*b*c", "aXXbYY"));
+    }
+
+    #[test]
+    fn case_sensitive_when_asked() {
+        let m = Mask::parse_case("*.TXT", true);
+        assert!(m.matches("A.TXT") && !m.matches("a.txt"));
     }
 
     #[test]

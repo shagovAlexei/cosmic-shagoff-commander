@@ -242,6 +242,10 @@ pub struct App {
     /// Alt+F7 settings, kept in `State`.
     find: config::FindPrefs,
     pub drives: Vec<Drive>,
+    /// Volumes not mounted yet (a stick just plugged in): listed with the drives, a pick mounts.
+    pub volumes: Vec<mount::Volume>,
+    /// When `volumes` was last asked for: gio runs at most every few seconds.
+    volumes_at: Option<std::time::Instant>,
     /// (free, total) bytes of each pane's current disk.
     pub space: [Option<(u64, u64)>; 2],
     /// Status line: the last message (in the active pane's half).
@@ -263,6 +267,8 @@ pub struct App {
     pub cmdline: String,
     pub(crate) cmd_id: widget::Id,
     pub commands: Vec<String>,
+    /// Num+ / Num− masks, last first: the dialog opens with the last, ↑ / ↓ go through them.
+    pub masks: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,6 +321,9 @@ pub enum Message {
     DialogInput(String),
     DialogSubmit,
     DialogCancel,
+    /// Escape in a window: the main one cancels the dialog; a popup (context menu) closes,
+    /// since the menu widget only sees the main window's keys.
+    Escape(cosmic::iced::window::Id),
     MrInput(MrField, String),
     MrCase(Case),
     /// Pack dialog: format button.
@@ -383,6 +392,8 @@ pub enum Message {
     /// Command line: text edited, Enter (Shift+Enter: in a terminal), a character typed in the panel.
     CmdInput(String),
     CmdSubmit,
+    /// `CmdSubmit` one step later: by then the Shift / Ctrl of that same Enter is in `mods`.
+    CmdEnter,
     CmdType(char),
     /// The watched dir of this pane's active tab changed.
     Changed(usize),
@@ -398,6 +409,10 @@ pub enum Message {
     ConnectPassword(String),
     /// Volumes from gio for the drive list of this side.
     Volumes(usize, Vec<mount::Volume>),
+    /// gio's volumes for the drive list (the unmounted ones are kept).
+    AllVolumes(Vec<mount::Volume>),
+    /// A not-yet-mounted volume picked in the drive list: (side, device).
+    MountVolume(usize, String),
     /// A volume or network location was mounted (for this side): its path.
     Mounted(usize, Result<PathBuf, mount::Error>),
     /// (unmounted drive root, result).
@@ -469,7 +484,8 @@ impl Application for App {
             core.window.header_title = fl!("app-title");
         }
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
-        let task = Task::batch([task].into_iter().chain(theme));
+        let volumes = app.refresh_volumes(true);
+        let task = Task::batch([task, volumes].into_iter().chain(theme));
         app.saved = saved;
         (app.config_handler, app.state_handler) = (ch, sh);
         (app, task)
@@ -571,6 +587,8 @@ impl App {
             saved: State::default(),
             find: state.find.clone(),
             drives: Vec::new(),
+            volumes: Vec::new(),
+            volumes_at: None,
             space: [None, None],
             status: None,
             owners: shagoff_core::owners::Owners::load(),
@@ -582,6 +600,7 @@ impl App {
             cmdline: String::new(),
             cmd_id: widget::Id::unique(),
             commands: state.commands.clone(),
+            masks: state.masks.clone(),
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -969,13 +988,18 @@ impl App {
             }
             Message::PropsBit(b) => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
-                    p.mode ^= b;
+                    if p.mixed & !p.touched & b != 0 {
+                        p.mode |= b; // `?` → on
+                    } else {
+                        p.mode ^= b;
+                    }
                     p.touched |= b;
                 }
             }
             Message::PropsRecursive => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
                     p.recursive = !p.recursive;
+                    p.mixed = if p.recursive { 0o777 } else { p.own_mixed };
                 }
             }
             Message::DirSize(side, tab, cwd, name, bytes) => {
@@ -1280,12 +1304,23 @@ impl App {
                     d.confirm_close = true;
                 }
             }
+            Message::Escape(window) if window != self.window_id() => {
+                return self.update(Message::Surface(cosmic::surface::action::destroy_popup(
+                    window,
+                )));
+            }
+            Message::Escape(_) => return self.update(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(Resolution::Cancel);
                 }
                 Some(Dialog::Error { reply, .. }) => {
                     let _ = reply.send(ErrorChoice::Cancel);
+                }
+                Some(Dialog::Connect { .. }) => {
+                    if let Some((_, cancel)) = &self.connecting {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
                 }
                 Some(_) => {}
                 None => {
@@ -1371,8 +1406,26 @@ impl App {
             }
             // Quick search, viewer search or command line; not a dialog's or a settings field.
             Message::FieldKey(action) => {
+                // ↑ older mask, ↓ newer (TC's drop-down history).
+                if let Some(Dialog::Mask { input, .. }) = &mut self.dialog
+                    && matches!(action, Action::Up | Action::Down)
+                {
+                    let step = if action == Action::Up {
+                        cmdline::previous(&self.masks, input)
+                    } else {
+                        cmdline::next(&self.masks, input)
+                    };
+                    if let Some(m) = step {
+                        *input = m;
+                    }
+                    return widget::text_input::move_cursor_to_end(self.input_id.clone());
+                }
                 if self.dialog.is_none() && self.drawer.is_none() {
                     return self.handle(Message::Key(action));
+                }
+                // Tab is ours (pane switch), so the settings fields get it here: next field.
+                if action == Action::SwitchPane && self.dialog.is_none() {
+                    return cosmic::iced::runtime::widget::operation::focus_next();
                 }
             }
             Message::CmdInput(text) => {
@@ -1382,8 +1435,11 @@ impl App {
                     return unfocus();
                 }
             }
+            // The field's Enter comes before the modifier change of the same key batch: wait a
+            // step, or Shift+Enter ran without the terminal (the field's message is handled first).
+            Message::CmdSubmit => return cosmic::task::message(Message::CmdEnter),
             // The field takes Ctrl+Enter as Enter: here it inserts the name / path under the cursor.
-            Message::CmdSubmit if self.mods.control() => {
+            Message::CmdEnter if self.mods.control() => {
                 let action = if self.mods.shift() {
                     Action::CmdPath
                 } else {
@@ -1393,7 +1449,7 @@ impl App {
                     .cmd_action(self.active, action)
                     .unwrap_or_else(Task::none);
             }
-            Message::CmdSubmit => return self.cmd_run(self.mods.shift()),
+            Message::CmdEnter => return self.cmd_run(self.mods.shift()),
             Message::CmdType(c) => {
                 if self.cmd_ready() {
                     self.cmdline.push(c);
@@ -1427,6 +1483,21 @@ impl App {
                     *password = s;
                 }
             }
+            Message::AllVolumes(vols) => {
+                self.volumes = vols.into_iter().filter(|v| v.mount.is_none()).collect();
+            }
+            Message::MountVolume(side, device) => {
+                self.search = None;
+                if self.job.is_some() {
+                    return Task::none();
+                }
+                self.dialog = None;
+                self.say(StatusKind::Busy, fl!("mounting"));
+                return blocking(
+                    move || mount::mount_device(&device),
+                    move |r| Message::Mounted(side, r),
+                );
+            }
             Message::Volumes(side, vols) => {
                 if let Some(Dialog::List {
                     kind: ListKind::Drives,
@@ -1454,10 +1525,11 @@ impl App {
             }
             Message::Mounted(side, result) => {
                 self.refresh_mounts();
+                let volumes = self.refresh_volumes(true);
                 match result {
                     Ok(path) => {
                         self.clear_busy();
-                        return self.go_to(side, path);
+                        return Task::batch([self.go_to(side, path), volumes]);
                     }
                     Err(mount::Error::Cancelled) => {
                         self.status = None; // the Busy "Connecting…"
@@ -1465,6 +1537,7 @@ impl App {
                     }
                     Err(e) => self.say(StatusKind::Error, mount_error(&e)),
                 }
+                return volumes;
             }
             // Ctrl+F's result: remembered on success, then as any mount.
             Message::Connected(side, url, result) => {
@@ -1473,10 +1546,17 @@ impl App {
                 }
                 if result.is_ok() {
                     let list = mount::remember(&self.config.connections, &url);
-                    if let Some(Dialog::Connect { saved, .. }) = &mut self.dialog {
-                        saved.clone_from(&list);
-                    }
                     self.save_connections(list);
+                    if matches!(self.dialog, Some(Dialog::Connect { .. })) {
+                        self.dialog = None;
+                    }
+                } else if let Some(Dialog::Connect { note, .. }) = &mut self.dialog
+                    && let Err(e) = &result
+                    && *e != mount::Error::Cancelled
+                {
+                    *note = Some((true, mount_error(e)));
+                    self.status = None; // the Busy "Connecting…"
+                    return Task::none();
                 }
                 return self.handle(Message::Mounted(side, result));
             }
@@ -1503,21 +1583,26 @@ impl App {
             }
             Message::Browsed(r) => {
                 if let Some(Dialog::Connect {
-                    found, browsing, ..
+                    found,
+                    browsing,
+                    note,
+                    ..
                 }) = &mut self.dialog
                 {
                     *browsing = false;
-                    match r {
-                        Ok(list) if list.is_empty() => {
-                            self.say(StatusKind::Info, fl!("connect-none-found"))
+                    *note = match r {
+                        Ok(list) if list.is_empty() => Some((false, fl!("connect-none-found"))),
+                        Ok(list) => {
+                            *found = list;
+                            None
                         }
-                        Ok(list) => *found = list,
-                        Err(e) => self.say(StatusKind::Error, mount_error(&e)),
-                    }
+                        Err(e) => Some((true, mount_error(&e))),
+                    };
                 }
             }
             Message::Unmounted(root, result) => {
                 self.refresh_mounts();
+                self.volumes_at = None; // the next listing asks gio again
                 if let Err(e) = result {
                     self.say(StatusKind::Error, mount_error(&e));
                     return Task::none();
@@ -1595,6 +1680,7 @@ impl App {
             active: self.active,
             find: self.find.clone(),
             commands: self.commands.clone(),
+            masks: self.masks.clone(),
         };
         if state == self.saved {
             return;
@@ -1632,7 +1718,21 @@ impl App {
             self.leave_locked(side);
         }
         self.panes[side].active_mut().results = None;
-        self.reload(side, path, focus)
+        let volumes = self.refresh_volumes(false);
+        Task::batch([self.reload(side, path, focus), volumes])
+    }
+
+    /// Ask gio for unmounted volumes (`force`: now; else not within 3 s of the last time).
+    fn refresh_volumes(&mut self, force: bool) -> Task<Message> {
+        let now = std::time::Instant::now();
+        let recent = self
+            .volumes_at
+            .is_some_and(|t| now - t < std::time::Duration::from_secs(3));
+        if recent && !force {
+            return Task::none();
+        }
+        self.volumes_at = Some(now);
+        blocking(mount::list, |r| Message::AllVolumes(r.unwrap_or_default()))
     }
 
     /// A locked tab keeps its dir: what would move it happens in an unlocked copy opened next to it.
@@ -1733,7 +1833,13 @@ impl App {
                     return Task::none();
                 }
                 let text = shagoff_core::clipboard::names_text(&paths, action == Action::CopyPaths);
-                self.say(StatusKind::Info, fl!("copied", n = paths.len()));
+                let (n, one) = (paths.len(), text.clone());
+                let msg = if action == Action::CopyPaths {
+                    fl!("copied-paths", n = n, text = one)
+                } else {
+                    fl!("copied-names", n = n, text = one)
+                };
+                self.say(StatusKind::Info, msg);
                 return cosmic::iced::clipboard::write(text);
             }
             _ => {}
@@ -2043,9 +2149,12 @@ impl App {
             | Action::DeletePermanent => {}
             // Opened by `dialog_for` above.
             Action::SelectGroup | Action::UnselectGroup => {}
+            // Also the drive list: a stick plugged in shows up (TC rereads drives too).
             Action::Reload => {
                 let cwd = panel.cwd().to_path_buf();
-                return self.reload(side, cwd, None);
+                self.refresh_mounts();
+                let volumes = self.refresh_volumes(true);
+                return Task::batch([self.reload(side, cwd, None), volumes]);
             }
             Action::TabOpen | Action::TabOpenOther => {
                 let path = self.tab_target(side);
@@ -2143,7 +2252,7 @@ impl App {
             Action::SelectGroup | Action::UnselectGroup => Some(Dialog::Mask {
                 side,
                 select: action == Action::SelectGroup,
-                input: "*".into(),
+                input: self.masks.first().cloned().unwrap_or_else(|| "*".into()),
             }),
             Action::Copy | Action::Move => {
                 let sources = panel.targets();
@@ -2183,11 +2292,13 @@ impl App {
                 }))
             }
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
-            Action::TabRename => Some(input(
-                InputOp::TabName,
-                Vec::new(),
-                self.panes[side].active().name.clone().unwrap_or_default(),
-            )),
+            // The caption as shown; left as the dir's name it keeps following the dir.
+            Action::TabRename => {
+                let t = self.panes[side].active();
+                let shown = t.name.clone();
+                let shown = shown.unwrap_or_else(|| format::dir_title(t.panel.cwd()));
+                Some(input(InputOp::TabName, Vec::new(), shown))
+            }
             Action::Rename => {
                 let e = panel.current().filter(|e| e.name != PARENT)?;
                 let path = panel.cwd().join(&e.os_name);
@@ -2252,6 +2363,7 @@ impl App {
                 saved: self.config.connections.clone(),
                 found: Vec::new(),
                 browsing: false,
+                note: None,
             }),
             Action::MultiRename => {
                 let wanted: HashSet<PathBuf> = panel.targets().into_iter().collect();
@@ -2428,6 +2540,7 @@ impl App {
                 select,
                 input,
             } => {
+                self.masks = cmdline::remember(&self.masks, &input);
                 self.panes[side]
                     .active_mut()
                     .panel
@@ -2447,7 +2560,9 @@ impl App {
                 ..
             } => {
                 let name = input.trim();
-                self.panes[side].active_mut().name = (!name.is_empty()).then(|| name.to_string());
+                let t = self.panes[side].active_mut();
+                let own = !name.is_empty() && name != format::dir_title(t.panel.cwd());
+                t.name = own.then(|| name.to_string());
                 Task::none()
             }
             Dialog::Input {
@@ -2509,20 +2624,34 @@ impl App {
                 side,
                 url,
                 password,
-                ..
+                saved,
+                found,
+                browsing,
+                note,
             } => {
-                let url = url.trim().to_string();
-                if url.is_empty() {
+                let address = url.trim().to_string();
+                // Stays open while connecting: the error lands in it, Cancel stops it.
+                let busy = self.connecting.is_some();
+                self.dialog = Some(Dialog::Connect {
+                    side,
+                    url,
+                    password: password.clone(),
+                    saved,
+                    found,
+                    browsing,
+                    note: if busy || address.is_empty() {
+                        note
+                    } else {
+                        Some((false, fl!("connecting")))
+                    },
+                });
+                if busy || address.is_empty() {
                     return Task::none();
                 }
-                // One at a time: Esc must be able to stop the one running.
-                if self.connecting.is_some() {
-                    self.say(StatusKind::Info, fl!("connect-busy"));
-                    return Task::none();
-                }
-                self.say(StatusKind::Busy, fl!("connecting"));
+                let url = address;
                 let cancel = Arc::new(AtomicBool::new(false));
                 self.connecting = Some((url.clone(), cancel.clone()));
+                self.say(StatusKind::Busy, fl!("connecting"));
                 let address = url.clone();
                 blocking(
                     move || mount::connect(&url, &password, &cancel),
@@ -2921,6 +3050,7 @@ impl App {
             facts,
             mode: if modes.is_empty() { 0 } else { all },
             mixed: any & !all,
+            own_mixed: any & !all,
             touched: 0,
             has_dir,
             recursive: false,
@@ -3949,7 +4079,7 @@ fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
 fn route_event(
     event: cosmic::iced::Event,
     status: event::Status,
-    _window: cosmic::iced::window::Id,
+    window: cosmic::iced::window::Id,
 ) -> Option<Message> {
     match event {
         // Any status: a focused text_input captures Escape to unfocus itself, and the dialog must still close.
@@ -3957,7 +4087,7 @@ fn route_event(
             key: keyboard::Key::Named(keyboard::key::Named::Escape),
             modifiers,
             ..
-        }) if modifiers.is_empty() => Some(Message::DialogCancel),
+        }) if modifiers.is_empty() => Some(Message::Escape(window)),
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -4190,13 +4320,13 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
     // `*` (the mask's default) and nothing mean any name, not a broken regex.
     let name_regex = match f.name_regex && !matches!(f.mask.trim(), "" | "*") {
         true => Some(
-            shagoff_core::search::name_regex(f.mask.trim())
+            shagoff_core::search::name_regex(f.mask.trim(), f.case_sensitive)
                 .map_err(|e| fl!("find-bad-regex", err = e))?,
         ),
         false => None,
     };
     Ok(shagoff_core::search::Query {
-        mask: Mask::parse(&f.mask),
+        mask: Mask::parse_case(&f.mask, f.case_sensitive),
         name_regex,
         archives: f.archives,
         text: (regex.is_none() && !text.is_empty()).then_some(text),
@@ -5222,6 +5352,27 @@ mod tests {
     }
 
     #[test]
+    fn mask_dialog_remembers_masks() {
+        let mut app = app_with(Config::default(), State::default());
+        let mask = |app: &App| match &app.dialog {
+            Some(Dialog::Mask { input, .. }) => input.clone(),
+            _ => panic!("no mask dialog"),
+        };
+        for m in ["*.rs", "*.txt"] {
+            let _ = app.update(Message::Key(Action::SelectGroup));
+            let _ = app.update(Message::DialogInput(m.into()));
+            let _ = app.update(Message::DialogSubmit);
+        }
+        assert_eq!(app.masks, ["*.txt", "*.rs"]);
+        let _ = app.update(Message::Key(Action::UnselectGroup));
+        assert_eq!(mask(&app), "*.txt"); // opens with the last one
+        let _ = app.update(Message::FieldKey(Action::Up));
+        assert_eq!(mask(&app), "*.rs");
+        let _ = app.update(Message::FieldKey(Action::Down));
+        assert_eq!(mask(&app), "*.txt");
+    }
+
+    #[test]
     fn hotlist_add_once_delete_clamps() {
         let mut app = app_with(Config::default(), State::default());
         let cwd = app.panes[0].active().panel.cwd().to_path_buf();
@@ -5446,7 +5597,7 @@ mod tests {
     fn escape_closes_dialog_even_when_text_input_captured_it() {
         // libcosmic's text_input captures Escape (to unfocus itself); the dialog must still close.
         let msg = press(Named::Escape, Code::Escape, event::Status::Captured);
-        assert!(matches!(msg, Some(Message::DialogCancel)), "{msg:?}");
+        assert!(matches!(msg, Some(Message::Escape(_))), "{msg:?}");
     }
 
     #[test]
@@ -6032,6 +6183,30 @@ mod tests {
             panic!("no dialog");
         };
         assert_eq!((p.mode & 0o100, p.touched), (0o100, 0o100));
+    }
+
+    #[test]
+    fn recursive_properties_start_every_bit_as_leave_as_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("d")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Properties));
+        let _ = app.update(Message::PropsRecursive);
+        let props = |app: &App| match &app.dialog {
+            Some(Dialog::Props(p)) => (p.mode, p.mixed, p.touched),
+            _ => panic!("no dialog"),
+        };
+        assert_eq!(props(&app).1, 0o777);
+        // group w: `?` → on even if the dir has it already (the contents may not)
+        let _ = app.update(Message::PropsBit(0o020));
+        let (m, _, touched) = props(&app);
+        assert_eq!((m & 0o020, touched), (0o020, 0o020));
+        let _ = app.update(Message::PropsBit(0o020)); // then a plain box: off
+        assert_eq!(props(&app).0 & 0o020, 0);
+        let _ = app.update(Message::PropsRecursive); // off: the dir's own state again
+        assert_eq!(props(&app).1, 0);
     }
 
     #[test]
@@ -6709,7 +6884,11 @@ mod tests {
             let panel = &mut app.panes[0].active_mut().panel;
             panel.set_listing(d.path().to_path_buf(), entries, Some("a.txt"));
             let _ = app.update(Message::Key(Action::CopyNames));
-            assert_eq!(app.msg(), Some(fl!("copied", n = 1).as_str()));
+            assert!(
+                app.msg().is_some_and(|m| m.contains("a.txt")),
+                "{:?}",
+                app.msg()
+            );
         }
 
         #[test]
@@ -6845,6 +7024,19 @@ mod tests {
         }
 
         #[test]
+        fn unmounted_volumes_join_the_drive_list_and_a_pick_mounts() {
+            let mut app = app_with(Config::default(), State::default());
+            let vols = vec![
+                volume("sys", "/dev/nvme0n1p3", Some("file:///media/sys")),
+                volume("STICK", "/dev/sda1", None),
+            ];
+            let _ = app.update(Message::AllVolumes(vols));
+            assert_eq!(app.volumes, [volume("STICK", "/dev/sda1", None)]);
+            let _ = app.update(Message::MountVolume(0, "/dev/sda1".into()));
+            assert_eq!(app.msg(), Some(fl!("mounting").as_str()));
+        }
+
+        #[test]
         fn volumes_after_list_closed_are_dropped() {
             let mut app = app_with(Config::default(), State::default());
             let _ = app.update(Message::Volumes(0, vec![volume("S", "/dev/sda1", None)]));
@@ -6887,8 +7079,16 @@ mod tests {
             };
             assert_eq!((url.as_str(), password.as_str()), ("sftp://nas/", "pw"));
             let _ = app.update(Message::DialogSubmit);
-            assert!(app.dialog.is_none());
-            assert_eq!(app.msg(), Some(fl!("connecting").as_str()));
+            // Stays open, as in TC: the outcome is shown in it.
+            let note = |app: &App| match &app.dialog {
+                Some(Dialog::Connect { note, .. }) => note.clone(),
+                _ => panic!("dialog closed"),
+            };
+            assert_eq!(note(&app), Some((false, fl!("connecting"))));
+            let bad = Err(MountError::Failed("gio: no such host".into()));
+            let _ = app.update(Message::Connected(0, "sftp://nas/".into(), bad));
+            assert_eq!(note(&app), Some((true, "gio: no such host".into())));
+            assert!(app.connecting.is_none());
         }
 
         #[test]
@@ -6915,10 +7115,8 @@ mod tests {
             // Esc while connecting stops it.
             let _ = app.update(Message::DialogSubmit);
             let flag = app.connecting.as_ref().unwrap().1.clone();
-            // A second one meanwhile is refused (its flag would replace this one).
-            let _ = app.update(Message::Key(Action::Connect));
+            // A second submit meanwhile does nothing (its flag would replace this one).
             let _ = app.update(Message::DialogSubmit);
-            assert_eq!(app.msg(), Some(fl!("connect-busy").as_str()));
             assert!(Arc::ptr_eq(&flag, &app.connecting.as_ref().unwrap().1));
             let _ = app.update(Message::DialogCancel);
             assert!(flag.load(Ordering::Relaxed));
@@ -7051,7 +7249,7 @@ mod tests {
             std::fs::create_dir(tmp.path().join("sub")).unwrap();
             let mut app = at(tmp.path());
             let _ = app.update(Message::CmdInput("cd sub".into()));
-            let _ = app.update(Message::CmdSubmit);
+            let _ = app.update(Message::CmdEnter);
             assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
             assert_eq!(app.cmdline, "");
             assert_eq!(app.commands, ["cd sub"]);
@@ -7072,7 +7270,7 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             let mut app = at(tmp.path());
             let _ = app.update(Message::CmdInput("touch made".into()));
-            let _ = app.update(Message::CmdSubmit);
+            let _ = app.update(Message::CmdEnter);
             let made = tmp.path().join("made");
             for _ in 0..100 {
                 if made.exists() {
@@ -7092,10 +7290,10 @@ mod tests {
             let _ = app.update(Message::Key(Action::Down)); // off ".."
             let _ = app.update(Message::CmdInput("cat".into()));
             let _ = app.update(Message::Modifiers(Modifiers::CTRL));
-            let _ = app.update(Message::CmdSubmit); // the field reports Ctrl+Enter as Enter
+            let _ = app.update(Message::CmdEnter); // the field reports Ctrl+Enter as Enter
             assert_eq!(app.cmdline, "cat 'a b.txt'");
             let _ = app.update(Message::Modifiers(Modifiers::CTRL | Modifiers::SHIFT));
-            let _ = app.update(Message::CmdSubmit);
+            let _ = app.update(Message::CmdEnter);
             let full = tmp.path().join("a b.txt").display().to_string();
             assert_eq!(app.cmdline, format!("cat 'a b.txt' '{full}'"));
         }
@@ -7330,10 +7528,13 @@ mod tests {
         fn rename_and_reset_a_tab_caption() {
             let (_tmp, mut app) = setup();
             key(&mut app, Action::TabRename);
+            let shown = format::dir_title(app.panes[0].active().panel.cwd());
+            assert!(matches!(&app.dialog, Some(Dialog::Input { input, .. }) if *input == shown));
             let _ = app.update(Message::DialogInput("Work".into()));
             let _ = app.update(Message::DialogSubmit);
             assert_eq!(app.panes[0].active().name.as_deref(), Some("Work"));
-            key(&mut app, Action::TabRename);
+            key(&mut app, Action::TabRename); // the own caption is offered
+            assert!(matches!(&app.dialog, Some(Dialog::Input { input, .. }) if input == "Work"));
             let _ = app.update(Message::DialogInput("  ".into()));
             let _ = app.update(Message::DialogSubmit);
             assert_eq!(app.panes[0].active().name, None);

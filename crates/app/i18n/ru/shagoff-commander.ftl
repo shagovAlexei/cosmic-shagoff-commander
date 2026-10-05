@@ -262,6 +262,14 @@ settings-pack-format = Формат упаковки по умолчанию
 settings-title = Настройки
 fkey-rename = F2 Переим.
 copied = Скопировано в буфер обмена: { $n }
+copied-names = { $n ->
+    [1] Скопировано имя: { $text }
+   *[other] Скопированы имена: { $n }
+}
+copied-paths = { $n ->
+    [1] Скопирован путь: { $text }
+   *[other] Скопированы пути: { $n }
+}
 menu-copy-names = Копировать имена в буфер
 menu-copy-paths = Копировать имена с путём
 
@@ -310,7 +318,7 @@ find-name-regex = Имя — регулярное выражение
 find-name-regex-label = Имя (регулярное выражение)
 find-archives = Искать в архивах (по именам)
 find-feed-archives = Найденное в архивах ({ $n }) в панель не попадает
-find-regex = Регулярное выражение
+find-regex = Текст — регулярное выражение
 find-min-size = Размер от, КБ
 find-max-size = Размер до, КБ
 find-days = Не старше, дней
@@ -343,7 +351,6 @@ connect-browse = Обзор сети
 connect-browsing = Поиск…
 connect-none-found = В сети ничего не найдено
 connect-cancelled = Подключение отменено
-connect-busy = Подключение уже идёт: Esc — отменить
 
 ## Command line (phase 27)
 settings-cmdline = Командная строка
@@ -372,7 +379,7 @@ tab-last = Последнюю вкладку панели перенести н�
 
 # Alt+Enter
 menu-properties = Свойства…
-menu-count-dirs = Посчитать размер папок
+menu-count-dirs = Размер папок
 props-title = Свойства
 props-name = Имя
 props-selected = Выбрано

@@ -168,6 +168,33 @@ mod tests {
     }
 
     #[test]
+    fn chmod_recursive_both_ways() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, s) = (t.path().join("d"), t.path().join("d/s"));
+        fs::create_dir_all(&s).unwrap();
+        let (f, g) = (d.join("f"), s.join("g"));
+        fs::write(&f, "").unwrap();
+        fs::write(&g, "").unwrap();
+        for (p, m) in [(&d, 0o755), (&s, 0o755), (&f, 0o644), (&g, 0o644)] {
+            set(p, m);
+        }
+        let all = |m_dir: u32, m_file: u32| {
+            assert_eq!(
+                [mode_of(&d), mode_of(&s), mode_of(&f), mode_of(&g)],
+                [m_dir, m_dir, m_file, m_file]
+            );
+        };
+        assert!(chmod(std::slice::from_ref(&d), 0, 0o044, true).is_empty());
+        all(0o711, 0o600);
+        assert!(chmod(std::slice::from_ref(&d), 0o044, 0, true).is_empty());
+        all(0o755, 0o644);
+        // Owner r-x off locks us out of looking; turning it back on must still reach inside.
+        assert!(chmod(std::slice::from_ref(&d), 0, 0o500, true).is_empty());
+        assert!(chmod(std::slice::from_ref(&d), 0o500, 0, true).is_empty());
+        all(0o755, 0o744); // files get x too: only touched bits, the same on every entry
+    }
+
+    #[test]
     fn chmod_reports_an_unreadable_dir() {
         let d = tempfile::tempdir().unwrap();
         let top = d.path().join("top");

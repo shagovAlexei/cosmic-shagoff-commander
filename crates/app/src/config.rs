@@ -30,16 +30,17 @@ impl AppTheme {
     pub fn theme(self) -> cosmic::Theme {
         match self {
             AppTheme::System => cosmic::theme::system_preference(),
-            // The user's COSMIC palette (accent…), pinned to light / dark.
-            AppTheme::Light => pinned(cosmic::theme::system_light(), false),
-            AppTheme::Dark => pinned(cosmic::theme::system_dark(), true),
+            // The user's COSMIC palette (accent…), pinned to light / dark. `Custom`, not
+            // `System` + prefer_dark: libcosmic replaces a System theme with the system's
+            // own palette on its startup theme event, so "Light" on a dark desktop was lost.
+            AppTheme::Light => pinned(cosmic::theme::system_light()),
+            AppTheme::Dark => pinned(cosmic::theme::system_dark()),
         }
     }
 }
 
-fn pinned(mut t: cosmic::Theme, dark: bool) -> cosmic::Theme {
-    t.theme_type.prefer_dark(Some(dark));
-    t
+fn pinned(t: cosmic::Theme) -> cosmic::Theme {
+    cosmic::Theme::custom(std::sync::Arc::new(t.cosmic().clone()))
 }
 
 /// Look of the window (Ctrl+, → Interface): the same layout and keys, drawn differently.
@@ -145,6 +146,8 @@ pub struct State {
     pub find: FindPrefs,
     /// Command line history, last first.
     pub commands: Vec<String>,
+    /// Num+ / Num− masks, last first.
+    pub masks: Vec<String>,
 }
 
 /// What the find dialog opens with (the dir always comes from the panel). Fields missing in an
@@ -194,13 +197,30 @@ pub fn state_handler() -> Option<cosmic_config::Config> {
 
 /// Stored value, or the default for anything missing or unreadable.
 pub fn read<T: CosmicConfigEntry + Default>(h: Option<&cosmic_config::Config>) -> T {
-    h.map(|h| T::get_entry(h).unwrap_or_else(|(_, c)| c))
-        .unwrap_or_default()
+    // A bad value (say `"Home"` in quotes for an enum) falls back to its default: say which.
+    h.map(|h| {
+        T::get_entry(h).unwrap_or_else(|(errs, c)| {
+            for e in errs.iter().filter(|e| e.is_err()) {
+                log::warn!("config: {e}");
+            }
+            c
+        })
+    })
+    .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_light_or_dark_is_not_a_system_theme() {
+        // A System theme is swapped for the desktop's palette at startup (libcosmic).
+        for t in [AppTheme::Light, AppTheme::Dark] {
+            let ty = t.theme().theme_type;
+            assert!(matches!(ty, cosmic::theme::ThemeType::Custom(_)), "{t:?}");
+        }
+    }
 
     #[test]
     fn language_setting() {

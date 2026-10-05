@@ -105,6 +105,9 @@ pub enum Dialog {
         /// "Browse network": (name, address).
         found: Vec<(String, String)>,
         browsing: bool,
+        /// Shown in the dialog (as in TC, not in the status line): "Connecting…", or the
+        /// last error (`true`) / browse result. The dialog stays open until connected.
+        note: Option<(bool, String)>,
     },
 }
 
@@ -307,8 +310,11 @@ pub struct Props {
     pub facts: Vec<(String, String)>,
     /// Bits set on every entry, and as toggled since.
     pub mode: u32,
-    /// Bits that differ between the entries (shown as `?` until touched).
+    /// Bits shown as `?` until touched: they differ between the entries, or (recursive)
+    /// every bit, as TC's grey "leave as is" boxes — the contents may differ from the dir.
     pub mixed: u32,
+    /// `mixed` of the selection itself, for when "recursive" goes off again.
+    pub own_mixed: u32,
     /// Bits the user toggled: exactly these are set or cleared on every entry.
     pub touched: u32,
     /// A dir is selected: offer to change what is inside too.
@@ -468,6 +474,8 @@ pub fn menu_row<'a>(
         )
         .width(Length::FillPortion(portion))
         .clip(true)
+        // Empty style: the default one sets its own text colour over the selection's.
+        .class(cosmic::theme::Container::custom(|_| Default::default()))
     };
     let line = row![
         // Plain `text`: body / caption carry their own colour, not the cursor's.
@@ -665,10 +673,24 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             };
             body = body.push(line(fl!("props-size"), size));
             let bit = |b: u32| {
-                widget::container(
-                    widget::checkbox(p.mode & b != 0).on_toggle(move |_| Message::PropsBit(b)),
-                )
-                .width(Length::Fixed(CELL))
+                let unknown = p.mixed & !p.touched & b != 0;
+                let cell: Element<'a, Message> = if unknown {
+                    // "Leave as is": the first click turns it on, then it is a plain box.
+                    widget::button::text("?")
+                        .padding([0, 4])
+                        .height(Length::Fixed(20.0))
+                        .on_press(Message::PropsBit(b))
+                        .into()
+                } else {
+                    widget::checkbox(p.mode & b != 0)
+                        .on_toggle(move |_| Message::PropsBit(b))
+                        .into()
+                };
+                // One height for both kinds, so the rows don't jump when `?` turns into a box.
+                widget::container(cell)
+                    .width(Length::Fixed(CELL))
+                    .height(Length::Fixed(24.0))
+                    .align_y(cosmic::iced::Alignment::Center)
             };
             let head = |s: String| widget::text::caption(s).width(Length::Fixed(CELL));
             let mut bits = column![
@@ -894,6 +916,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             saved,
             found,
             browsing,
+            note,
             ..
         } => {
             let mut col = column![
@@ -932,6 +955,19 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             col = col.push(browse);
             for (name, u) in found {
                 col = col.push(pick(format!("{name}   {u}"), u));
+            }
+            if let Some((error, text)) = note {
+                let t = widget::text::body(text.clone()).wrapping(Wrapping::WordOrGlyph);
+                col = col.push(if *error {
+                    t.class(cosmic::theme::Text::Custom(|t| {
+                        cosmic::iced::widget::text::Style {
+                            color: Some(t.cosmic().destructive_text_color().into()),
+                            ..Default::default()
+                        }
+                    }))
+                } else {
+                    t
+                });
             }
             widget::dialog()
                 .title(fl!("connect"))

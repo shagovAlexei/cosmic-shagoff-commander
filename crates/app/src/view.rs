@@ -87,6 +87,11 @@ fn toolbar() -> Element<'static, Message> {
             fl!("menu-connect"),
             Action::Connect,
         ),
+        tool(
+            "media-eject-symbolic",
+            fl!("menu-disconnect"),
+            Action::Disconnect,
+        ),
         tool("starred-symbolic", fl!("menu-hotlist"), Action::Hotlist),
         tool(
             "emblem-system-symbolic",
@@ -315,18 +320,21 @@ fn name_cell(e: &Entry, label: String, skin: Skin) -> Element<'static, Message> 
 /// Classic skin, as in TC: the drive in a drop-down, `\\` (root) and `..` (up), free space.
 fn drive_list(app: &App, side: usize) -> Element<'_, Message> {
     let current = drives::containing(&app.drives, app.panes[side].active().panel.cwd());
-    let labels: Vec<String> = app.drives.iter().map(|d| d.label.clone()).collect();
+    // Mounted drives, then volumes not mounted yet (picking one mounts it).
+    let mut labels: Vec<String> = app.drives.iter().map(|d| d.label.clone()).collect();
+    labels.extend(app.volumes.iter().map(unmounted_label));
     let paths: Vec<std::path::PathBuf> = app.drives.iter().map(|d| d.path.clone()).collect();
+    let devices: Vec<String> = app.volumes.iter().map(|v| v.device.clone()).collect();
     let small = |label: &'static str, action: Action| {
         button::text(label)
             .padding([0, 8])
             .on_press(Message::PaneKey(side, action))
     };
     let mut bar = row![
-        widget::dropdown(labels, current, move |i| Message::Drive(
-            side,
-            paths[i].clone()
-        )),
+        widget::dropdown(labels, current, move |i| match paths.get(i) {
+            Some(p) => Message::Drive(side, p.clone()),
+            None => Message::MountVolume(side, devices[i - paths.len()].clone()),
+        }),
         small("\\", Action::Root),
         small("..", Action::Parent),
         widget::Space::new().width(Length::Fill),
@@ -337,6 +345,11 @@ fn drive_list(app: &App, side: usize) -> Element<'_, Message> {
         bar = bar.push(text(fl!("disk-free", free = human(free), total = human(total))).size(TEXT));
     }
     container(bar).padding([2, 6]).into()
+}
+
+/// A volume to mount, as listed with the drives: "UBUNTU-SERV (not mounted)".
+fn unmounted_label(v: &shagoff_core::mount::Volume) -> String {
+    format!("{} ({})", v.name, fl!("not-mounted"))
 }
 
 /// Drive buttons (the one holding cwd highlighted) and free space on the current disk.
@@ -351,6 +364,10 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
             button::text(d.label.clone())
         };
         bar = bar.push(b.on_press(Message::Drive(side, d.path.clone())));
+    }
+    for v in &app.volumes {
+        let b = button::text(unmounted_label(v));
+        bar = bar.push(b.on_press(Message::MountVolume(side, v.device.clone())));
     }
     bar = bar.push(widget::Space::new().width(Length::Fill));
     if let Some((free, total)) = app.space[side] {
@@ -497,7 +514,10 @@ fn file_row<'a>(
         (format::date(e.mtime, &app.tz), format::perms(e.mode))
     };
     let cells = row![
-        container(name_cell(e, format::display_name(e), app.config.skin)).width(Length::Fill),
+        // Empty style: the default (Transparent) sets its own text colour over the cursor's.
+        container(name_cell(e, format::display_name(e), app.config.skin))
+            .width(Length::Fill)
+            .class(theme::Container::custom(|_| container::Style::default())),
         cell(e.ext.clone()).width(Length::Fixed(W_EXT)),
         cell(size)
             .width(Length::Fixed(W_SIZE))
@@ -767,13 +787,15 @@ pub(crate) fn cursor_style(
             style.border.radius = c.corner_radii.radius_s.into();
         }
         match (is_cursor, active, marked) {
+            // The button pairs: `accent.on` is not meant for text on the accent and was
+            // unreadable (light on cyan in dark, dark on teal in light).
             (true, true, true) => {
-                style.background = Some(Color::from(c.destructive_color()).into());
-                style.text_color = Some(c.on_destructive_color().into());
+                style.background = Some(Color::from(c.destructive_button.base).into());
+                style.text_color = Some(c.destructive_button.on.into());
             }
             (true, true, false) => {
-                style.background = Some(Color::from(c.accent_color()).into());
-                style.text_color = Some(c.on_accent_color().into());
+                style.background = Some(Color::from(c.accent_button.base).into());
+                style.text_color = Some(c.accent_button.on.into());
             }
             (true, false, _) => {
                 let mut bg = Color::from(c.accent_color());

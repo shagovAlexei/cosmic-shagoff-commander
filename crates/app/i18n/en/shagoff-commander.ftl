@@ -261,6 +261,14 @@ settings-pack-format = Default pack format
 settings-title = Settings
 fkey-rename = F2 Rename
 copied = Copied to the clipboard: { $n }
+copied-names = { $n ->
+    [1] Name copied: { $text }
+   *[other] Names copied: { $n }
+}
+copied-paths = { $n ->
+    [1] Path copied: { $text }
+   *[other] Paths copied: { $n }
+}
 menu-copy-names = Copy names to clipboard
 menu-copy-paths = Copy names with path
 
@@ -309,7 +317,7 @@ find-name-regex = Name is a regular expression
 find-name-regex-label = Name (regular expression)
 find-archives = Search in archives (names)
 find-feed-archives = Found inside archives ({ $n }) are not listed in the panel
-find-regex = Regular expression
+find-regex = Text is a regular expression
 find-min-size = Size from, KB
 find-max-size = Size up to, KB
 find-days = Not older than, days
@@ -342,7 +350,6 @@ connect-browse = Browse network
 connect-browsing = Looking…
 connect-none-found = Nothing found on the network
 connect-cancelled = Connecting cancelled
-connect-busy = Already connecting: Esc stops it
 
 ## Command line (phase 27)
 settings-cmdline = Command line
@@ -371,7 +378,7 @@ tab-last = The panel's last tab cannot be moved
 
 # Alt+Enter
 menu-properties = Properties…
-menu-count-dirs = Count folder sizes
+menu-count-dirs = Folder sizes
 props-title = Properties
 props-name = Name
 props-selected = Selected
