@@ -338,7 +338,7 @@ pub fn view<'a>(t: &'a ToolEdit, cancel: Element<'a, Message>) -> Element<'a, Me
     let sel = t.sel.filter(|&i| i < t.list.len());
     let btn = |label: String, m: ToolMsg, on: bool| {
         widget::button::standard(label)
-            .width(Length::Fixed(140.0))
+            .width(Length::Fixed(170.0))
             .on_press_maybe(on.then(|| msg(m)))
     };
     let arrow = |name: &'static str, m: ToolMsg, on: bool| {
