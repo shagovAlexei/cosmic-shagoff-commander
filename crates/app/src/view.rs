@@ -119,7 +119,7 @@ fn human(n: u64) -> String {
 fn tab_bar(side: usize, tabs: &Tabs<Tab>, pane_active: bool) -> Element<'_, Message> {
     let mut bar = row![].spacing(2);
     for (i, t) in tabs.items().iter().enumerate() {
-        let label = container(cell(format::dir_title(t.panel.cwd())))
+        let label = container(cell(t.title()))
             .padding([2, 8])
             .max_width(160.0)
             .class(cursor_style(i == tabs.active_index(), pane_active, false));

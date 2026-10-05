@@ -25,6 +25,8 @@ pub enum InputOp {
     Move,
     Mkdir,
     Rename,
+    /// Own caption of the active tab.
+    TabName,
 }
 
 pub enum Dialog {
@@ -447,6 +449,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 InputOp::Move => fl!("move-to", what = what(sources)),
                 InputOp::Mkdir => fl!("mkdir"),
                 InputOp::Rename => fl!("rename"),
+                InputOp::TabName => fl!("tab-rename"),
             };
             widget::dialog()
                 .title(title)

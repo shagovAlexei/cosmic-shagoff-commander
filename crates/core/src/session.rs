@@ -7,6 +7,11 @@ use std::path::{Path, PathBuf};
 pub struct PaneState {
     pub tabs: Vec<PathBuf>,
     pub active: usize,
+    /// Per tab, by index: locked (TC), own caption ("" = the dir's name). Missing in old state.
+    #[serde(default)]
+    pub locked: Vec<bool>,
+    #[serde(default)]
+    pub names: Vec<String>,
 }
 
 /// `~` and `~/x` → under `home`; anything else unchanged (`~user` is not supported).
@@ -100,6 +105,7 @@ mod tests {
         let state = PaneState {
             tabs: vec![tmp.path().into(), tmp.path().join("gone"), "rel".into()],
             active: 7,
+            ..PaneState::default()
         };
         let (tabs, active) = restore(&state, Path::new("/fb"));
         assert_eq!(
