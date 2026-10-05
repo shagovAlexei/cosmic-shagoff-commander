@@ -357,7 +357,8 @@ pub enum Message {
     DiffReady(u64, Arc<Result<shagoff_core::diff::Outcome, String>>),
     DiffNext,
     DiffPrev,
-    DiffScrolled(f32),
+    /// A side was scrolled: (side, x, y); the other one follows.
+    DiffScrolled(usize, f32, f32),
     DiffOpt(dialogs::DiffOpt),
     /// Read both files again (TC "Compare" / rescan); not with unsaved changes.
     DiffReread,
@@ -1153,9 +1154,18 @@ impl App {
                     return self.diff_scroll();
                 }
             }
-            Message::DiffScrolled(y) => {
+            Message::DiffScrolled(side, x, y) => {
                 if let Some(Dialog::Diff(d)) = &mut self.dialog {
-                    d.offset = y;
+                    // The follower reports the same offset back: stop there.
+                    if (x - d.x).abs() < 0.5 && (y - d.offset).abs() < 0.5 {
+                        return Task::none();
+                    }
+                    (d.x, d.offset) = (x, y);
+                    let to = AbsoluteOffset {
+                        x: Some(x),
+                        y: Some(y),
+                    };
+                    return scrollable::scroll_to(d.scroll[1 - side].clone(), to);
                 }
             }
             Message::DiffReread => {
@@ -2486,7 +2496,8 @@ impl App {
                     id: 0,
                     result: None,
                     block: 0,
-                    scroll: widget::Id::unique(),
+                    scroll: [widget::Id::unique(), widget::Id::unique()],
+                    x: 0.0,
                     offset: 0.0,
                     widths: (420.0, 420.0),
                     opts: Default::default(),
@@ -2971,14 +2982,16 @@ impl App {
         let Some(&row) = d.blocks().get(d.block) else {
             return Task::none();
         };
-        // A couple of rows of context above the block.
+        // A couple of rows of context above the block; both sides, back to the line starts.
         let y = row.saturating_sub(2) as f32 * dialogs::DIFF_ROW_H;
-        scrollable::scroll_to(
-            d.scroll.clone(),
-            AbsoluteOffset {
-                x: Some(0.0),
-                y: Some(y),
-            },
+        let to = AbsoluteOffset {
+            x: Some(0.0),
+            y: Some(y),
+        };
+        Task::batch(
+            d.scroll
+                .iter()
+                .map(|id| scrollable::scroll_to(id.clone(), to)),
         )
     }
 
@@ -6880,6 +6893,26 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::Down));
         assert_eq!(diff_dlg(&mut app).block, 1); // two blocks: clamped
+    }
+
+    #[test]
+    fn diff_sides_scroll_together() {
+        let (tmp, mut app) = sync_setup();
+        std::fs::write(tmp.path().join("l/a"), "x\n").unwrap();
+        std::fs::write(tmp.path().join("r/a"), "y\n").unwrap();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let _ = app.update(Message::DiffScrolled(0, 120.0, 44.0)); // the left one scrolled
+        let d = diff_dlg(&mut app);
+        assert_eq!((d.x, d.offset), (120.0, 44.0)); // the right one is told to follow
+        // ... and reports the same back: nothing more happens (no ping-pong).
+        let _ = app.update(Message::DiffScrolled(1, 120.0, 44.0));
+        assert_eq!(
+            (diff_dlg(&mut app).x, diff_dlg(&mut app).offset),
+            (120.0, 44.0)
+        );
     }
 
     #[test]
