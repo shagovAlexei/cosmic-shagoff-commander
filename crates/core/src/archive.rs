@@ -1489,19 +1489,6 @@ fn place(
     let drop_part = || {
         let _ = fs::remove_file(part);
     };
-    match ops::rename_noreplace(part, dest) {
-        Ok(()) => return Some(true),
-        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
-            return match attempt(h, dest, || ops::rename_noreplace(part, dest)) {
-                Ok(()) => Some(true),
-                Err(cancel) => {
-                    drop_part();
-                    (!cancel).then_some(false)
-                }
-            };
-        }
-        Err(_) => {}
-    }
     let info = |p: &Path| {
         let m = fs::symlink_metadata(p).ok();
         FileInfo {
@@ -1512,31 +1499,55 @@ fn place(
                 .unwrap_or(SystemTime::UNIX_EPOCH),
         }
     };
-    let answer = policy.unwrap_or_else(|| h.conflict(&info(part), &info(dest)));
-    match answer {
-        Resolution::ReplaceAll | Resolution::SkipAll | Resolution::ReplaceOlder => {
-            *policy = Some(answer)
-        }
-        _ => {}
-    }
-    match answer {
-        // The new archive is always the newer file.
-        Resolution::Replace | Resolution::ReplaceAll | Resolution::ReplaceOlder => {
-            match attempt(h, dest, || fs::rename(part, dest)) {
-                Ok(()) => Some(true),
-                Err(cancel) => {
-                    drop_part();
-                    (!cancel).then_some(false)
-                }
+    let mut dest = dest.to_path_buf();
+    loop {
+        match ops::rename_noreplace(part, &dest) {
+            Ok(()) => return Some(true),
+            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+                return match attempt(h, &dest, || ops::rename_noreplace(part, &dest)) {
+                    Ok(()) => Some(true),
+                    Err(cancel) => {
+                        drop_part();
+                        (!cancel).then_some(false)
+                    }
+                };
             }
+            Err(_) => {}
         }
-        Resolution::Skip | Resolution::SkipAll => {
-            drop_part();
-            Some(false)
+        let answer = policy
+            .clone()
+            .unwrap_or_else(|| h.conflict(&info(part), &info(&dest)));
+        if matches!(
+            answer,
+            Resolution::ReplaceAll
+                | Resolution::SkipAll
+                | Resolution::ReplaceOlder
+                | Resolution::RenameAll
+        ) {
+            *policy = Some(answer.clone());
         }
-        Resolution::Cancel => {
-            drop_part();
-            None
+        match answer {
+            // The new archive is always the newer file.
+            Resolution::Replace | Resolution::ReplaceAll | Resolution::ReplaceOlder => {
+                return match attempt(h, &dest, || fs::rename(part, &dest)) {
+                    Ok(()) => Some(true),
+                    Err(cancel) => {
+                        drop_part();
+                        (!cancel).then_some(false)
+                    }
+                };
+            }
+            // Asked again if the new name is taken too.
+            Resolution::Rename(name) if ops::valid_name(&name) => dest.set_file_name(name),
+            Resolution::RenameAll => dest = ops::unique_name(&dest),
+            Resolution::Skip | Resolution::SkipAll | Resolution::Rename(_) => {
+                drop_part();
+                return Some(false);
+            }
+            Resolution::Cancel => {
+                drop_part();
+                return None;
+            }
         }
     }
 }

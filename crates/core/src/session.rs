@@ -17,9 +17,17 @@ pub struct PaneState {
     pub brief: Vec<bool>,
 }
 
-/// `~` and `~/x` → under `home`; anything else unchanged (`~user` is not supported).
+/// `~` and `~/x` → under `home`; anything else unchanged (`~user` is not supported). A trailing
+/// `/` stays: F5 reads it as "into this dir".
 pub fn expand_home(path: &Path, home: &Path) -> PathBuf {
     match path.strip_prefix("~") {
+        Ok(rest) if path.as_os_str().as_encoded_bytes().ends_with(b"/") => {
+            let mut s = home.join(rest).into_os_string();
+            if !s.as_encoded_bytes().ends_with(b"/") {
+                s.push("/");
+            }
+            s.into()
+        }
         Ok(rest) => home.join(rest),
         Err(_) => path.to_path_buf(),
     }
@@ -89,6 +97,10 @@ mod tests {
             Path::new("/home/u/work")
         );
         assert_eq!(expand_home(Path::new("/tmp"), home), Path::new("/tmp"));
+        // Path equality ignores a trailing slash: compare the strings.
+        let s = |p: &str| expand_home(Path::new(p), home).into_os_string();
+        assert_eq!(s("~/new/"), "/home/u/new/");
+        assert_eq!(s("~/"), "/home/u/");
         assert_eq!(
             expand_home(Path::new("~other/x"), home),
             Path::new("~other/x")

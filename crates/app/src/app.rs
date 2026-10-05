@@ -1827,6 +1827,7 @@ impl App {
             }
             Action::ClipPaste => return clip::take(),
             Action::Copy
+            | Action::CopySame
             | Action::Move
             | Action::Rename
             | Action::MultiRename
@@ -1956,6 +1957,23 @@ impl App {
                     sources,
                     dir_input(self.panes[1 - side].active().panel.cwd()),
                 ))
+            }
+            Action::CopySame => {
+                let e = panel.current().filter(|e| e.name != PARENT)?;
+                let path = panel.cwd().join(&e.os_name);
+                // In search results the shown name is a path; offer the file's own name.
+                let name = path
+                    .file_name()
+                    .map_or(e.name.clone(), |n| n.to_string_lossy().into_owned());
+                let parent = path.parent()?.to_path_buf();
+                Some(input(InputOp::Copy, vec![path], {
+                    // Relative to the panel's dir: in search results that is not the file's dir.
+                    if parent == panel.cwd() {
+                        name
+                    } else {
+                        parent.join(name).to_string_lossy().into_owned()
+                    }
+                }))
             }
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
             Action::TabRename => Some(input(
@@ -2391,7 +2409,7 @@ impl App {
             .and_then(|p| p.parent())
             .map(Path::to_path_buf);
         let from_archive = from.as_deref().and_then(archive::split_path);
-        let target = cwd.join(input);
+        let target = cwd.join(session::expand_home(Path::new(input), &self.home));
         let to_archive = (op != InputOp::Rename)
             .then(|| archive::split_path(&target))
             .flatten();
@@ -2455,7 +2473,7 @@ impl App {
             };
             (ops::rename_pairs(src, input), Some(input.to_string()))
         } else {
-            (ops::plan(&sources, &cwd.join(input)), None)
+            (ops::plan(&sources, &target), None)
         };
         let pairs = match planned {
             Ok(pairs) if pairs.is_empty() => return Task::none(), // rename to the same name
@@ -2924,7 +2942,10 @@ impl App {
         let inside = |s: usize| archive::split_path(&self.panes[s].active().target()).is_some();
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
-            Action::MultiRename | Action::ClipCut | Action::ClipPaste => inside(side),
+            // Shift+F5 inside one copies from the archive into itself.
+            Action::MultiRename | Action::ClipCut | Action::ClipPaste | Action::CopySame => {
+                inside(side)
+            }
             Action::Pack | Action::Unpack | Action::SyncDirs => inside(side) || inside(1 - side),
             Action::Copy | Action::Move | Action::ClipCopy => inside(side) && inside(1 - side),
             _ => false,
@@ -2994,7 +3015,16 @@ impl App {
                 }
             }
             jobs::Event::Conflict { src, dst, reply } => {
-                self.dialog = Some(Dialog::Conflict { src, dst, reply });
+                let name = ops::unique_name(&dst.path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.dialog = Some(Dialog::Conflict {
+                    src,
+                    dst,
+                    reply,
+                    name,
+                });
             }
             jobs::Event::Error { path, error, reply } => {
                 self.dialog = Some(Dialog::Error { path, error, reply });
@@ -4461,6 +4491,51 @@ mod tests {
 
     fn cursor_name(app: &App) -> String {
         app.panes[0].active().panel.current().unwrap().name.clone()
+    }
+
+    #[test]
+    fn shift_f5_offers_the_name_in_the_same_dir() {
+        let mut app = files_app(&["a.txt"]);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CopySame));
+        let Some(Dialog::Input {
+            op, input, sources, ..
+        }) = &app.dialog
+        else {
+            panic!("no dialog");
+        };
+        assert_eq!((*op, input.as_str()), (InputOp::Copy, "a.txt"));
+        assert_eq!(sources, &[std::env::temp_dir().join("a.txt")]);
+        // on ".." there is nothing to copy
+        let mut app = files_app(&["a.txt"]);
+        let _ = app.update(Message::Key(Action::CopySame));
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn conflict_rename_sends_the_typed_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "").unwrap();
+        let mut app = files_app(&[]);
+        let info = |p: PathBuf| ops::FileInfo {
+            path: p,
+            size: 0,
+            mtime: std::time::SystemTime::UNIX_EPOCH,
+        };
+        let (reply, rx) = std::sync::mpsc::channel();
+        let _ = app.on_job_event(jobs::Event::Conflict {
+            src: info("/x/a.txt".into()),
+            dst: info(tmp.path().join("a.txt")),
+            reply,
+        });
+        let Some(Dialog::Conflict { name, .. }) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert_eq!(name, "a (1).txt");
+        let _ = app.update(Message::DialogInput("b.txt".into()));
+        let _ = app.update(Message::Resolve(Resolution::Rename("b.txt".into())));
+        assert_eq!(rx.recv().unwrap(), Resolution::Rename("b.txt".into()));
+        assert!(app.dialog.is_none());
     }
 
     #[test]
