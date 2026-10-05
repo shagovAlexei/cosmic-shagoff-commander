@@ -309,3 +309,15 @@ connect-browsing = Looking…
 connect-none-found = Nothing found on the network
 connect-cancelled = Connecting cancelled
 connect-busy = Already connecting: Esc stops it
+
+## Command line (phase 27)
+settings-cmdline = Command line
+cmd-history = Command history
+cmd-failed = Could not run the command: { $error }
+help-cmdline = Command line
+help-cmd-type = Typing goes to the command line (Space too, once it has text)
+help-cmd-run = Run in the panel's folder / in a terminal that stays open; cd changes the folder
+help-cmd-name = Insert the name under the cursor
+help-cmd-path = Insert the full path under the cursor
+help-cmd-cwd = Insert the panel's path
+help-cmd-previous = Previous command

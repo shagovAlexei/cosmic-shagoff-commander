@@ -310,3 +310,15 @@ connect-browsing = Поиск…
 connect-none-found = В сети ничего не найдено
 connect-cancelled = Подключение отменено
 connect-busy = Подключение уже идёт: Esc — отменить
+
+## Command line (phase 27)
+settings-cmdline = Командная строка
+cmd-history = История команд
+cmd-failed = Не удалось выполнить команду: { $error }
+help-cmdline = Командная строка
+help-cmd-type = Набранные символы идут в командную строку (Пробел — когда в ней уже есть текст)
+help-cmd-run = Выполнить в каталоге панели / в терминале, который не закроется; cd меняет каталог
+help-cmd-name = Вставить имя под курсором
+help-cmd-path = Вставить полный путь под курсором
+help-cmd-cwd = Вставить путь панели
+help-cmd-previous = Предыдущая команда

@@ -38,6 +38,7 @@ pub enum Setting {
     Language(usize),
     Theme(usize),
     ShowFkeys(bool),
+    ShowCmdline(bool),
     InternalViewer(bool),
     ShowHidden(bool),
     /// Ctrl+W on the last tab goes home.
@@ -197,6 +198,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-fkeys"),
                 widget::toggler(c.show_fkeys).on_toggle(move |b| set(Setting::ShowFkeys(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-cmdline"),
+                widget::toggler(c.show_cmdline).on_toggle(move |b| set(Setting::ShowCmdline(b))),
             ))
             .into(),
         settings::section()

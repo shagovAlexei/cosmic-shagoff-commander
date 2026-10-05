@@ -3,6 +3,7 @@
 
 pub mod archive;
 pub mod clipboard;
+pub mod cmdline;
 pub mod diff;
 pub mod drives;
 pub mod format;
