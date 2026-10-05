@@ -720,6 +720,10 @@ impl App {
                     }
                     return Task::none();
                 }
+                // The field lets ↑ / ↓ through as plain keys.
+                if let Some(task) = self.mask_history(action) {
+                    return task;
+                }
                 if let Some(d) = &self.dialog {
                     // Modal: panels must not move. Enter confirms a dialog without a text field.
                     if action == Action::Enter
@@ -1419,19 +1423,8 @@ impl App {
             }
             // Quick search, viewer search or command line; not a dialog's or a settings field.
             Message::FieldKey(action) => {
-                // ↑ older mask, ↓ newer (TC's drop-down history).
-                if let Some(Dialog::Mask { input, .. }) = &mut self.dialog
-                    && matches!(action, Action::Up | Action::Down)
-                {
-                    let step = if action == Action::Up {
-                        cmdline::previous(&self.masks, input)
-                    } else {
-                        cmdline::next(&self.masks, input)
-                    };
-                    if let Some(m) = step {
-                        *input = m;
-                    }
-                    return widget::text_input::move_cursor_to_end(self.input_id.clone());
+                if let Some(task) = self.mask_history(action) {
+                    return task;
                 }
                 if self.dialog.is_none() && self.drawer.is_none() {
                     return self.handle(Message::Key(action));
@@ -3940,6 +3933,24 @@ impl App {
             && !self.busy()
     }
 
+    /// Num+ / Num− dialog: ↑ older mask, ↓ newer (TC's drop-down history).
+    fn mask_history(&mut self, action: Action) -> Option<Task<Message>> {
+        let Some(Dialog::Mask { input, .. }) = &mut self.dialog else {
+            return None;
+        };
+        let step = match action {
+            Action::Up => cmdline::previous(&self.masks, input),
+            Action::Down => cmdline::next(&self.masks, input),
+            _ => return None,
+        };
+        if let Some(m) = step {
+            *input = m;
+        }
+        Some(widget::text_input::move_cursor_to_end(
+            self.input_id.clone(),
+        ))
+    }
+
     /// A job's dialog is up: the panels wait. A job in the background leaves them free.
     fn busy(&self) -> bool {
         self.job.as_ref().is_some_and(|j| !j.hidden)
@@ -5434,6 +5445,9 @@ mod tests {
         assert_eq!(mask(&app), "*.rs");
         let _ = app.update(Message::FieldKey(Action::Down));
         assert_eq!(mask(&app), "*.txt");
+        // regression: the field lets ↑ / ↓ through as plain keys, which went nowhere
+        let _ = app.update(Message::Key(Action::Up));
+        assert_eq!(mask(&app), "*.rs");
     }
 
     #[test]

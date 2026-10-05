@@ -109,6 +109,19 @@ pub fn previous(list: &[String], line: &str) -> Option<String> {
     list.get(next).cloned()
 }
 
+/// The flag after which a terminal runs a command: `--` for gnome-terminal / kgx, `-e` for the
+/// rest (cosmic-term, xterm, konsole, alacritty, foot -e is fine too).
+fn exec_flag(prog: &str) -> &'static str {
+    let name = Path::new(prog)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(prog);
+    match name {
+        "gnome-terminal" | "kgx" | "ptyxis" => "--",
+        _ => "-e",
+    }
+}
+
 /// What runs `line`: `sh -c` (no window), or in `terminal` (empty → `cosmic-term -e`) with a shell
 /// left open after it (Shift+Enter, TC `cmd /k`). The terminal is told the dir too: its profile
 /// may have its own.
@@ -116,10 +129,12 @@ pub fn argv(line: &str, dir: &Path, terminal: Option<&[String]>) -> Vec<String> 
     let Some(term) = terminal else {
         return ["sh", "-c", line].map(String::from).to_vec();
     };
-    let term = if term.is_empty() {
-        &["cosmic-term".to_string(), "-e".into()][..]
-    } else {
-        term
+    let term: Vec<String> = match term {
+        [] => vec!["cosmic-term".into(), "-e".into()],
+        // Just the program (`["cosmic-term"]`): without its "run this" flag it ignores the
+        // command and opens a plain shell.
+        [prog] => vec![prog.clone(), exec_flag(prog).into()],
+        _ => term.to_vec(),
     };
     let dir = quote(&dir.display().to_string());
     // Lines, not `;`: a `#` in the command must not comment out the shell that keeps it open.
@@ -237,5 +252,12 @@ mod tests {
             ]
         );
         assert_eq!(argv("x", dir, Some(&[]))[..3], ["cosmic-term", "-e", "sh"]);
+        // regression: `terminal = ["cosmic-term"]` opened a bare shell, the command was ignored
+        let only = |p: &str| argv("x", dir, Some(&[p.to_string()]))[..3].to_vec();
+        assert_eq!(only("cosmic-term"), ["cosmic-term", "-e", "sh"]);
+        assert_eq!(
+            only("/usr/bin/gnome-terminal"),
+            ["/usr/bin/gnome-terminal", "--", "sh"]
+        );
     }
 }
