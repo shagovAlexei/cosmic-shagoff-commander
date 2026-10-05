@@ -467,6 +467,8 @@ pub enum Message {
     ListerPress,
     ListerRelease,
     ListerPointerLeft,
+    /// Comes instead of the second release.
+    ListerDoubleClick,
     ListerResized(Size),
     /// Drop-down / A S K 8.
     ListerEncoding(shagoff_core::lister::Encoding),
@@ -1311,7 +1313,24 @@ impl App {
                     l.pointer = None;
                 }
             }
+            Message::ListerDoubleClick => {
+                if let Some(l) = &mut self.lister {
+                    l.dragging = false; // this click's release
+                    l.select_at_pointer(false);
+                    let row = l.pointer_pos().map(|(r, _)| r);
+                    l.double = row.map(|r| (std::time::Instant::now(), r));
+                }
+            }
             Message::ListerPress => {
+                // A third click soon after a double one on the same row: the whole row.
+                if let Some(l) = &mut self.lister
+                    && let Some((t, row)) = l.double.take()
+                    && t.elapsed() < std::time::Duration::from_millis(500)
+                    && l.pointer_pos().is_some_and(|(r, _)| r == row)
+                {
+                    l.select_at_pointer(true);
+                    return Task::none();
+                }
                 if let Some(l) = &mut self.lister
                     && l.mode != shagoff_core::lister::Mode::Image
                 {

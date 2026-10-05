@@ -322,7 +322,7 @@ help-lister-encoding = Encoding: Windows-1251 / DOS 866 / KOI8-R / UTF-8
 help-lister-step = Next / previous file
 help-lister-find = Find
 help-lister-again = Find next / previous
-help-lister-select = Select text with the mouse (Shift extends)
+help-lister-select = Select text with the mouse (Shift extends; double click a word, triple a line)
 help-lister-copy = Select all / copy the selection
 help-lister-close = Close
 

@@ -95,6 +95,8 @@ pub struct Lister {
     /// (the move that enters the area is not reported, so a quick press would start at a stale
     /// spot: then the first move while pressed sets where the selection starts).
     pub pointer: Option<(f32, f32)>,
+    /// When and on which row the last double click was: a press soon after there selects the row.
+    pub double: Option<(std::time::Instant, usize)>,
 }
 
 impl Lister {
@@ -116,6 +118,7 @@ impl Lister {
             sel: None,
             dragging: false,
             pointer: None,
+            double: None,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -323,6 +326,26 @@ impl Lister {
         Some(sel.text(|i| self.row_text(doc, txt, i)))
     }
 
+    /// Double click: the word under the pointer (`whole`: the whole row, for a triple click).
+    pub fn select_at_pointer(&mut self, whole: bool) {
+        let (Some((row, col)), Some((doc, txt))) = (self.pointer_pos(), self.text()) else {
+            return;
+        };
+        if row >= self.rows() {
+            return;
+        }
+        let line = self.row_text(doc, txt, row);
+        let cols = if whole {
+            Some(0..line.chars().count())
+        } else {
+            lister::word_at(&line, col)
+        };
+        self.sel = cols.map(|c| lister::Selection {
+            anchor: (row, c.start),
+            head: (row, c.end),
+        });
+    }
+
     fn row_text(&self, doc: &Doc, text: &Text, i: usize) -> String {
         match self.mode {
             Mode::Hex => lister::hex_row(&doc.bytes, i),
@@ -509,6 +532,7 @@ fn content(l: &Lister) -> Element<'_, Message> {
         .on_exit(Message::ListerPointerLeft)
         .on_press(Message::ListerPress)
         .on_release(Message::ListerRelease)
+        .on_double_click(Message::ListerDoubleClick)
         .into()
 }
 
@@ -564,6 +588,16 @@ mod tests {
         assert_eq!(l.selected_text().as_deref(), Some("ne\ntw"));
         l.toggle_wrap(); // rows rebuilt: the selection would point elsewhere
         assert_eq!(l.sel, None);
+    }
+
+    #[test]
+    fn double_click_selects_the_word_triple_the_row() {
+        let mut l = text("let first_row = 1;");
+        l.pointer = Some((8.5 * 6.0, 5.0)); // over "first_row"
+        l.select_at_pointer(false);
+        assert_eq!(l.selected_text().as_deref(), Some("first_row"));
+        l.select_at_pointer(true);
+        assert_eq!(l.selected_text().as_deref(), Some("let first_row = 1;"));
     }
 
     #[test]

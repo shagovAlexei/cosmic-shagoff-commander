@@ -1,4 +1,4 @@
-//! `vpointer X Y [left|right|middle] [W H]`: move to (X, Y) of a W×H output (default 1036×530)
+//! `vpointer X Y [left|right|middle|double|none] [W H]`: move to (X, Y) of a W×H output (default 1036×530)
 //! and click. `vpointer drag X1 Y1 X2 Y2 [W H]`: press at the first point, move to the second in
 //! steps, release. For headless sway only (tests); it never touches a real session unless pointed at it.
 use wayland_client::protocol::{wl_pointer::ButtonState, wl_registry, wl_seat};
@@ -53,6 +53,7 @@ fn main() {
         Some("right") => 0x111,
         Some("middle") => 0x112,
         Some("none") => 0,
+        Some("double") => 0x110,
         _ => 0x110,
     };
     let conn = Connection::connect_to_env().expect("WAYLAND_DISPLAY");
@@ -83,6 +84,18 @@ fn main() {
         p.button(t(), 0x110, ButtonState::Released);
         p.frame();
         q.roundtrip(&mut s).unwrap();
+    } else if a.get(3).is_some_and(|s| s == "double") {
+        // Two clicks well inside the double-click interval.
+        for _ in 0..2 {
+            p.button(t(), 0x110, ButtonState::Pressed);
+            p.frame();
+            q.roundtrip(&mut s).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            p.button(t(), 0x110, ButtonState::Released);
+            p.frame();
+            q.roundtrip(&mut s).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
     } else if button != 0 {
         p.button(t(), button, ButtonState::Pressed);
         p.frame();
