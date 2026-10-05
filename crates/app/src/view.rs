@@ -754,7 +754,7 @@ fn bar_style(active: bool) -> theme::Container<'static> {
 
 /// Cursor row: accent (dimmed in the inactive pane). Marked rows: red text; a marked row under the
 /// active cursor becomes a red bar instead — red text on the accent bar is unreadable in light accents.
-fn cursor_style(
+pub(crate) fn cursor_style(
     is_cursor: bool,
     active: bool,
     marked: bool,

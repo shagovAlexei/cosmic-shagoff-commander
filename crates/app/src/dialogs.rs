@@ -70,6 +70,8 @@ pub enum Dialog {
         items: Vec<ListItem>,
     },
     Props(Box<Props>),
+    /// Ctrl+D → "Configure…".
+    Hotlist(Box<crate::hotlist::HotEdit>),
     /// Ctrl+M: files snapshot at open (panel order) and the form. Boxed: the form is large.
     MultiRename(Box<MultiRename>),
     /// Alt+F5. Boxed: the form is large.
@@ -417,10 +419,23 @@ pub enum ListKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListItem {
     pub label: String,
-    /// Empty for the hotlist's "add current dir" row.
+    /// Empty for the hotlist's own rows.
     pub path: PathBuf,
+    pub kind: Item,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Item {
+    #[default]
+    Dir,
     /// An unmounted volume: `path` is its device, Enter mounts it.
-    pub mount: bool,
+    Mount,
+    /// A line between groups; Enter does nothing.
+    Sep,
+    /// Hotlist: add the panel's dir.
+    Add,
+    /// Hotlist: open the settings.
+    Configure,
 }
 
 impl Dialog {
@@ -435,6 +450,49 @@ impl Dialog {
             _ => None,
         }
     }
+}
+
+/// One row of a TC-style menu list: name, then a path cut with "…"; the selection looks
+/// like the panel cursor.
+pub fn menu_row<'a>(
+    name: String,
+    path: String,
+    selected: bool,
+    on: Message,
+) -> Element<'a, Message> {
+    use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
+    let cut = |t: widget::Text<'a, cosmic::Theme>, portion| {
+        widget::container(
+            t.wrapping(Wrapping::None)
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
+        )
+        .width(Length::FillPortion(portion))
+        .clip(true)
+    };
+    let line = row![
+        // Plain `text`: body / caption carry their own colour, not the cursor's.
+        cut(widget::text(name).size(14), 2),
+        cut(widget::text(path).size(12), 3)
+    ]
+    .spacing(12);
+    widget::button::custom(
+        widget::container(line)
+            .padding([4, 8])
+            .width(Length::Fill)
+            .height(Length::Fixed(28.0))
+            .align_y(cosmic::iced::Alignment::Center)
+            .class(crate::view::cursor_style(
+                selected,
+                true,
+                false,
+                crate::config::Skin::Modern,
+            )),
+    )
+    .padding(0)
+    .width(Length::Fill)
+    .class(cosmic::theme::Button::MenuItem)
+    .on_press(on)
+    .into()
 }
 
 fn problem(p: Problem) -> String {
@@ -581,6 +639,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 )
                 .into()
         }
+        Dialog::Hotlist(h) => crate::hotlist::view(h, cancel.into()),
         Dialog::Props(p) => {
             const LABEL: f32 = 150.0;
             const CELL: f32 = 70.0;
@@ -672,26 +731,27 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
             items,
             ..
         } => {
-            let mut list = column![].spacing(2);
+            // Like a TC popup menu: name, then the path dimmed and cut, one line per row.
+            let mut list = column![].spacing(1);
             for (i, item) in items.iter().enumerate() {
-                let label = if item.path.as_os_str().is_empty() {
-                    item.label.clone()
-                } else if item.mount {
-                    let path = item.path.display();
-                    format!("{}   {path}   ({})", item.label, fl!("not-mounted"))
-                } else {
-                    format!("{}   {}", item.label, item.path.display())
+                if item.kind == Item::Sep {
+                    list = list.push(
+                        widget::container(widget::divider::horizontal::default()).padding([4, 8]),
+                    );
+                    continue;
+                }
+                let path = match item.kind {
+                    Item::Mount => format!("{}   ({})", item.path.display(), fl!("not-mounted")),
+                    _ => item.path.display().to_string(),
                 };
-                let b = if i == *cursor {
-                    widget::button::suggested(label)
-                } else {
-                    widget::button::text(label)
-                };
-                list = list.push(
-                    b.on_press(Message::ListPick(i))
-                        .width(cosmic::iced::Length::Fill),
-                );
+                list = list.push(menu_row(
+                    item.label.clone(),
+                    path,
+                    i == *cursor,
+                    Message::ListPick(i),
+                ));
             }
+            let list = widget::scrollable(list).height(Length::Shrink);
             let title = match kind {
                 ListKind::Drives => fl!("drives"),
                 ListKind::History => fl!("history"),
