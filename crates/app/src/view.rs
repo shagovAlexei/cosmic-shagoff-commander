@@ -26,81 +26,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
     }
     let panes = row![pane(app, 0), pane(app, 1)].height(Length::Fill);
     match app.config.skin {
-        Skin::Classic => column![toolbar(), panes.spacing(4)].into(),
+        Skin::Classic => column![crate::toolbar::bar(&app.config.toolbar), panes.spacing(4)].into(),
         Skin::Modern => panes.spacing(8).padding([4, 8, 0, 8]).into(),
     }
 }
 
 /// Classic skin: TC's button bar under the menu; each button sends the same `Action` as its key.
-fn toolbar() -> Element<'static, Message> {
-    use cosmic::widget::tooltip::{Position, tooltip};
-    let tool = |icon: &'static str, tip: String, action: Action| -> Element<'static, Message> {
-        tooltip(
-            button::icon(widget::icon::from_name(icon).size(16)).on_press(Message::Key(action)),
-            text(tip).size(TEXT),
-            Position::Bottom,
-        )
-        .into()
-    };
-    let gap = || widget::Space::new().width(Length::Fixed(10.0)).into();
-    widget::row::with_children(vec![
-        tool("view-refresh-symbolic", fl!("menu-reload"), Action::Reload),
-        tool("view-list-symbolic", fl!("menu-full"), Action::ViewFull),
-        tool("view-grid-symbolic", fl!("menu-brief"), Action::ViewBrief),
-        tool(
-            "view-reveal-symbolic",
-            fl!("menu-hidden"),
-            Action::ToggleHidden,
-        ),
-        gap(),
-        tool(
-            "object-flip-horizontal-symbolic",
-            fl!("menu-swap"),
-            Action::SwapPanes,
-        ),
-        tool("folder-new-symbolic", fl!("menu-mkdir"), Action::Mkdir),
-        tool(
-            "system-search-symbolic",
-            fl!("menu-find"),
-            Action::FindFiles,
-        ),
-        tool(
-            "view-dual-symbolic",
-            fl!("menu-compare-lists"),
-            Action::CompareLists,
-        ),
-        tool(
-            "emblem-synchronizing-symbolic",
-            fl!("menu-sync"),
-            Action::SyncDirs,
-        ),
-        gap(),
-        tool("package-x-generic-symbolic", fl!("menu-pack"), Action::Pack),
-        tool("document-open-symbolic", fl!("menu-unpack"), Action::Unpack),
-        gap(),
-        tool(
-            "network-server-symbolic",
-            fl!("menu-connect"),
-            Action::Connect,
-        ),
-        tool(
-            "media-eject-symbolic",
-            fl!("menu-disconnect"),
-            Action::Disconnect,
-        ),
-        tool("starred-symbolic", fl!("menu-hotlist"), Action::Hotlist),
-        tool(
-            "emblem-system-symbolic",
-            fl!("menu-settings"),
-            Action::Settings,
-        ),
-    ])
-    .spacing(2)
-    .padding([0, 6, 2, 6])
-    .align_y(Alignment::Center)
-    .into()
-}
-
 fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let tabs = &app.panes[side];
     let p = tabs.active();

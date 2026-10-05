@@ -74,6 +74,7 @@ pub enum Dialog {
     Props(Box<Props>),
     /// Ctrl+D → "Configure…".
     Hotlist(Box<crate::hotlist::HotEdit>),
+    Toolbar(Box<crate::toolbar::ToolEdit>),
     /// Ctrl+M: files snapshot at open (panel order) and the form. Boxed: the form is large.
     MultiRename(Box<MultiRename>),
     /// Alt+F5. Boxed: the form is large.
@@ -720,6 +721,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .into()
         }
         Dialog::Hotlist(h) => crate::hotlist::view(h, cancel.into()),
+        Dialog::Toolbar(t) => crate::toolbar::view(t, cancel.into()),
         Dialog::Props(p) => {
             const LABEL: f32 = 150.0;
             const CELL: f32 = 70.0;

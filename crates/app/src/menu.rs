@@ -316,7 +316,10 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
         ),
         (
             fl!("menu-config"),
-            vec![b(fl!("menu-settings"), Action::Settings)],
+            vec![
+                b(fl!("menu-settings"), Action::Settings),
+                b(fl!("menu-toolbar"), Action::ConfigureToolbar),
+            ],
         ),
         (
             fl!("menu-help-root"),
@@ -569,6 +572,7 @@ mod tests {
                             | Action::TabLock
                             | Action::TabRename
                             | Action::ResetColumns
+                            | Action::ConfigureToolbar
                     )
                 ) {
                     continue;

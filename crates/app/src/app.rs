@@ -411,6 +411,9 @@ pub enum Message {
     ListPick(usize),
     /// Hotlist settings (Ctrl+D → "Configure…").
     Hot(HotMsg),
+    /// Toolbar button `i` of `config.toolbar`.
+    Tool(usize),
+    ToolEdit(crate::toolbar::ToolMsg),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
     /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
@@ -1553,6 +1556,12 @@ impl App {
             }
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
+            Message::Tool(i) => return self.run_tool(i),
+            Message::ToolEdit(m) => {
+                if let Some(Dialog::Toolbar(t)) = &mut self.dialog {
+                    t.update(m);
+                }
+            }
             Message::Hot(m) => {
                 if let Some(Dialog::Hotlist(h)) = &mut self.dialog {
                     let cwd = self.panes[h.side].active().panel.cwd().to_path_buf();
@@ -2078,6 +2087,13 @@ impl App {
             Action::Left if brief => panel.move_cursor(-rows),
             Action::Right if brief => panel.move_cursor(rows),
             Action::Left | Action::Right => {}
+            Action::ConfigureToolbar => {
+                let list = self.config.toolbar.clone();
+                self.dialog = Some(Dialog::Toolbar(Box::new(crate::toolbar::ToolEdit::new(
+                    list,
+                ))));
+                return Task::none();
+            }
             Action::ResetColumns => {
                 self.cols = Config::default().columns;
                 self.save_columns();
@@ -2894,6 +2910,17 @@ impl App {
             }
             Dialog::Hotlist(h) => {
                 self.save_hotlist(h.list);
+                Task::none()
+            }
+            Dialog::Toolbar(t) => {
+                match &self.config_handler {
+                    Some(h) => {
+                        if let Err(e) = self.config.set_toolbar(h, t.list) {
+                            log::warn!("config: {e}");
+                        }
+                    }
+                    None => self.config.toolbar = t.list,
+                }
                 Task::none()
             }
             d @ Dialog::List { .. } => {
@@ -4137,6 +4164,41 @@ impl App {
         }
     }
 
+    /// A toolbar button: its internal command, or its program with the parameters filled in.
+    fn run_tool(&mut self, i: usize) -> Task<Message> {
+        let Some(b) = self.config.toolbar.get(i) else {
+            return Task::none();
+        };
+        if let Some(c) = crate::toolbar::builtin(&b.cmd) {
+            return self.update(Message::Key(c.action));
+        }
+        if b.cmd.trim().is_empty() || b.cmd == crate::toolbar::SEP {
+            return Task::none();
+        }
+        let (panel, other) = (
+            &self.panes[self.active].active().panel,
+            &self.panes[1 - self.active].active().panel,
+        );
+        let cwd = panel.cwd().to_path_buf();
+        let selected: Vec<String> = (panel.targets().iter())
+            .map(|p| p.strip_prefix(&cwd).unwrap_or(p).display().to_string())
+            .collect();
+        let vars = cmdline::Vars {
+            dir: &cwd,
+            other: other.cwd(),
+            name: panel
+                .current()
+                .map(|e| e.name.as_str())
+                .filter(|&n| n != ".."),
+            selected: &selected,
+        };
+        let line = cmdline::append(&b.cmd, &cmdline::expand(&b.params, &vars));
+        if let Err(e) = spawn_in(&cmdline::argv(&line, &cwd, None), &cwd) {
+            self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
+        }
+        Task::none()
+    }
+
     fn save_hotlist(&mut self, list: Vec<HotEntry>) {
         match &self.config_handler {
             Some(h) => {
@@ -5332,6 +5394,23 @@ mod tests {
         let _ = app.update(Message::Key(Action::NewTab));
         let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 150.0)));
         assert!(app.panes[0].items().iter().all(|t| t.height == 150.0));
+    }
+
+    #[test]
+    fn toolbar_buttons_run_and_the_bar_is_edited() {
+        use crate::toolbar::ToolMsg;
+        let mut app = app_with(Config::default(), State::default());
+        let brief = (app.config.toolbar.iter())
+            .position(|b| b.cmd == "cm_SrcShort")
+            .unwrap();
+        let _ = app.update(Message::Tool(brief));
+        assert!(app.panes[0].active().brief);
+        let _ = app.update(Message::Key(Action::ConfigureToolbar));
+        let _ = app.update(Message::ToolEdit(ToolMsg::Select(0)));
+        let _ = app.update(Message::ToolEdit(ToolMsg::Delete));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.config.toolbar, crate::toolbar::default_bar()[1..]);
     }
 
     #[test]
