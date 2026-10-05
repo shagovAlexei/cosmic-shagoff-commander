@@ -11,7 +11,7 @@ use shagoff_core::diff;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{self, ErrorChoice, FileInfo, Resolution};
-use shagoff_core::sync::{self, Dir, State};
+use shagoff_core::sync;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -192,7 +192,8 @@ pub struct SyncDlg {
     pub content: bool,
     pub ignore_date: bool,
     pub hidden: bool,
-    pub show_same: bool,
+    /// TC's show buttons: kinds of rows hidden from the list (✕ rows are always listed).
+    pub hide: HashSet<sync::Kind>,
     /// The right becomes a copy of the left (right-only goes to the trash).
     pub mirror: bool,
     /// Mask of file names to compare, as typed ("" or "*": all).
@@ -235,7 +236,6 @@ pub enum SyncOpt {
     Recursive,
     Content,
     IgnoreDate,
-    ShowSame,
     Mirror,
 }
 
@@ -1243,53 +1243,126 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .into()
         }
         Dialog::Sync(s) => {
-            let info = |i: &Option<sync::Info>| match i {
-                None => String::new(),
-                Some(i) if i.dir => "<DIR>".into(),
-                Some(i) => format!("{}  {}", format::size(i.size), format::date(i.mtime, tz)),
+            use sync::Kind;
+            const W_SIZE: f32 = 100.0;
+            const W_DATE: f32 = 130.0;
+            const W_ACT: f32 = 44.0;
+            // Copy → / ← in the accent colour, ✕ red, ≠ and = plain (TC colours rows the same way).
+            let tint = |k: Kind| -> cosmic::theme::Text {
+                match k {
+                    Kind::ToRight | Kind::ToLeft => cosmic::theme::Text::Accent,
+                    Kind::Delete => {
+                        cosmic::theme::Text::Custom(|t| cosmic::iced::widget::text::Style {
+                            color: Some(t.cosmic().destructive_text_color().into()),
+                            ..Default::default()
+                        })
+                    }
+                    _ => cosmic::theme::Text::Default,
+                }
             };
-            let (mut r, mut l, mut d, mut same, mut x) = (0, 0, 0, 0, 0);
+            let cell = |t: String, k: Kind| {
+                widget::text(t)
+                    .size(13)
+                    .class(tint(k))
+                    .wrapping(Wrapping::None)
+            };
+            // One side: name (path below the compared dirs), size, date — mirrored on the right.
+            let side = |i: &Option<sync::Info>, rel: &str, k: Kind, left: bool| {
+                let (name, size, date) = match i {
+                    None => (String::new(), String::new(), String::new()),
+                    Some(i) => (
+                        rel.to_string(),
+                        if i.dir {
+                            "<DIR>".into()
+                        } else {
+                            format::size(i.size)
+                        },
+                        format::date(i.mtime, tz),
+                    ),
+                };
+                let name = cell(name, k).width(Length::Fill);
+                let size = cell(size, k)
+                    .width(Length::Fixed(W_SIZE))
+                    .align_x(cosmic::iced::Alignment::End);
+                let date = cell(date, k).width(Length::Fixed(W_DATE));
+                if left {
+                    row![name, size, date].spacing(8)
+                } else {
+                    row![date, size, name].spacing(8)
+                }
+            };
+            let c = sync::counts(&s.rows);
             let mut list = column![].spacing(2);
             let mut shown = 0;
-            for (i, row) in s.rows.iter().enumerate() {
-                match (row.dir, row.state) {
-                    (Dir::ToRight, _) => r += 1,
-                    (Dir::ToLeft, _) => l += 1,
-                    (Dir::Delete, _) => x += 1,
-                    (Dir::None, State::Same) => same += 1,
-                    (Dir::None, _) => d += 1,
-                }
+            for (i, r) in s.rows.iter().enumerate() {
+                let k = r.kind();
                 // ✕ rows are always listed: nothing is deleted unseen.
-                if (row.state == State::Same && !s.show_same)
-                    || (shown >= FIND_SHOWN && row.dir != Dir::Delete)
-                {
+                if k != Kind::Delete && (s.hide.contains(&k) || shown >= FIND_SHOWN) {
                     continue;
                 }
                 shown += 1;
-                let arrow = match (row.dir, row.state) {
-                    (Dir::ToRight, _) => "→",
-                    (Dir::ToLeft, _) => "←",
-                    (Dir::Delete, _) => "✕",
-                    (Dir::None, State::Same) => "=",
-                    (Dir::None, State::Differ) => "≠",
-                    (Dir::None, _) => "·",
+                let arrow = match k {
+                    Kind::ToRight => "→",
+                    Kind::ToLeft => "←",
+                    Kind::Delete => "✕",
+                    Kind::Same => "=",
+                    Kind::Differ => "≠",
                 };
+                let rel = r.rel.display().to_string();
                 list = list.push(
                     row![
-                        widget::text(row.rel.display().to_string())
-                            .wrapping(Wrapping::WordOrGlyph)
-                            .width(Length::FillPortion(3)),
-                        widget::text(info(&row.left)).width(Length::FillPortion(2)),
-                        widget::button::standard(arrow).on_press(Message::SyncFlip(i)),
-                        widget::text(info(&row.right)).width(Length::FillPortion(2)),
+                        side(&r.left, &rel, k, true).width(Length::FillPortion(1)),
+                        // Custom: the standard button has a minimum height; rows stay dense, as in TC.
+                        widget::button::custom(
+                            widget::text(arrow)
+                                .width(Length::Fill)
+                                .align_x(cosmic::iced::Alignment::Center),
+                        )
+                        .class(cosmic::theme::Button::Standard)
+                        .padding([1, 4])
+                        .width(Length::Fixed(W_ACT))
+                        .on_press(Message::SyncFlip(i)),
+                        side(&r.right, &rel, k, false).width(Length::FillPortion(1)),
                     ]
-                    .spacing(8),
+                    .spacing(8)
+                    .align_y(cosmic::iced::Alignment::Center),
                 );
             }
+            let head = |left: bool| {
+                let h = |t: String| widget::text::caption(t);
+                let (name, size, date) = (
+                    h(fl!("col-name")).width(Length::Fill),
+                    h(fl!("col-size"))
+                        .width(Length::Fixed(W_SIZE))
+                        .align_x(cosmic::iced::Alignment::End),
+                    h(fl!("col-date")).width(Length::Fixed(W_DATE)),
+                );
+                if left {
+                    row![name, size, date].spacing(8)
+                } else {
+                    row![date, size, name].spacing(8)
+                }
+                .width(Length::FillPortion(1))
+            };
+            let header = row![
+                head(true),
+                widget::Space::new().width(Length::Fixed(W_ACT)),
+                head(false)
+            ]
+            .spacing(8);
             let opt = |label: String, on: bool, o: SyncOpt| {
                 widget::checkbox(on)
                     .label(label)
                     .on_toggle(move |_| Message::SyncOpt(o))
+            };
+            // TC's show buttons, with what each means and how many there are.
+            let show = |k: Kind, label: String| {
+                let b = if s.hide.contains(&k) {
+                    widget::button::standard(label)
+                } else {
+                    widget::button::suggested(label)
+                };
+                b.on_press(Message::SyncShow(k))
             };
             let compare = match &s.running {
                 Some(_) => widget::button::standard(fl!("find-stop")).on_press(Message::SyncStop),
@@ -1297,54 +1370,69 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     widget::button::standard(fl!("sync-compare")).on_press(Message::SyncCompare)
                 }
             };
+            let todo = c.to_right + c.to_left + c.delete;
             let run = if s.confirm {
                 widget::button::destructive(fl!("sync-run-delete"))
             } else {
                 widget::button::suggested(fl!("sync-run"))
             }
-            .on_press_maybe((r + l + x > 0 && s.running.is_none()).then_some(Message::SyncRun));
-            let summary = fl!(
-                "sync-summary",
-                r = r.to_string(),
-                l = l.to_string(),
-                d = d.to_string(),
-                s = same.to_string()
-            );
-            let summary = match (x, s.confirm) {
-                (0, _) => summary,
-                (x, false) => format!("{summary}, ✕ {x}"),
-                (x, true) => format!("{summary}. {}", fl!("sync-confirm-delete", n = x)),
+            .on_press_maybe((todo > 0 && s.running.is_none()).then_some(Message::SyncRun));
+            let mut note = match (c.delete, s.confirm) {
+                (0, _) => String::new(),
+                (x, false) => fl!("sync-to-delete", n = x),
+                (x, true) => fl!("sync-confirm-delete", n = x),
+            };
+            if s.running.is_some() {
+                note = fl!("sync-comparing");
+            }
+            let path = |p: &std::path::Path| {
+                widget::text::heading(p.display().to_string())
+                    .wrapping(Wrapping::WordOrGlyph)
+                    .width(Length::FillPortion(1))
             };
             widget::dialog()
                 .title(fl!("sync-dirs"))
                 .width(Length::Fill)
-                .max_width(1100.0)
+                .max_width(1200.0)
                 .control(
                     column![
-                        widget::text(format!("{}   ⇄   {}", s.left.display(), s.right.display()))
-                            .wrapping(Wrapping::WordOrGlyph),
                         row![
-                            opt(fl!("sync-subdirs"), s.recursive, SyncOpt::Recursive),
-                            opt(fl!("sync-content"), s.content, SyncOpt::Content),
-                            opt(fl!("sync-ignore-date"), s.ignore_date, SyncOpt::IgnoreDate),
-                            opt(fl!("sync-show-same"), s.show_same, SyncOpt::ShowSame),
+                            path(&s.left),
+                            widget::Space::new().width(Length::Fixed(W_ACT)),
+                            path(&s.right)
                         ]
-                        .spacing(16),
+                        .spacing(8),
                         row![
-                            opt(fl!("sync-mirror"), s.mirror, SyncOpt::Mirror),
                             widget::text_input(fl!("sync-mask"), &s.mask)
                                 .on_input(Message::SyncMask)
                                 .on_submit(|_| Message::SyncCompare)
-                                .width(Length::Fixed(240.0)),
+                                .width(Length::Fixed(200.0)),
+                            opt(fl!("sync-subdirs"), s.recursive, SyncOpt::Recursive),
+                            opt(fl!("sync-content"), s.content, SyncOpt::Content),
+                            opt(fl!("sync-ignore-date"), s.ignore_date, SyncOpt::IgnoreDate),
+                            opt(fl!("sync-mirror"), s.mirror, SyncOpt::Mirror),
                         ]
                         .spacing(16)
                         .align_y(cosmic::iced::Alignment::Center),
                         // All buttons above the list: a short window clips the dialog's bottom row.
-                        row![compare, run, cancel].spacing(8),
-                        widget::text(summary),
+                        row![
+                            widget::text::body(fl!("sync-show")),
+                            show(Kind::ToRight, fl!("sync-show-right", n = c.to_right)),
+                            show(Kind::ToLeft, fl!("sync-show-left", n = c.to_left)),
+                            show(Kind::Differ, fl!("sync-show-differ", n = c.differ)),
+                            show(Kind::Same, fl!("sync-show-same", n = c.same)),
+                            widget::Space::new().width(Length::Fill),
+                            compare,
+                            run,
+                            cancel,
+                        ]
+                        .spacing(8)
+                        .align_y(cosmic::iced::Alignment::Center),
+                        header,
                         widget::scrollable(list).height(list_height(shown)),
+                        widget::text::body(note),
                     ]
-                    .spacing(12),
+                    .spacing(10),
                 )
                 .into()
         }

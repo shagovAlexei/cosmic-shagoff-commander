@@ -343,6 +343,8 @@ pub enum Message {
     FindPick(usize),
     SyncOpt(SyncOpt),
     SyncCompare,
+    /// A show button (→ ← ≠ =): that kind of rows in or out of the list.
+    SyncShow(shagoff_core::sync::Kind),
     SyncStop,
     /// Compare result for the sync dialog with this id.
     SyncCompared(u64, Vec<shagoff_core::sync::Row>),
@@ -1075,14 +1077,18 @@ impl App {
                         SyncOpt::Recursive => &mut s.recursive,
                         SyncOpt::Content => &mut s.content,
                         SyncOpt::IgnoreDate => &mut s.ignore_date,
-                        SyncOpt::ShowSame => &mut s.show_same,
                         SyncOpt::Mirror => &mut s.mirror,
                     };
                     *flag = !*flag;
                     // The rows must match the options they are synced with.
-                    if o != SyncOpt::ShowSame {
-                        return self.start_compare();
-                    }
+                    return self.start_compare();
+                }
+            }
+            Message::SyncShow(kind) => {
+                if let Some(Dialog::Sync(s)) = &mut self.dialog
+                    && !s.hide.remove(&kind)
+                {
+                    s.hide.insert(kind);
                 }
             }
             Message::SyncCompare => return self.start_compare(),
@@ -2487,7 +2493,8 @@ impl App {
                 content: false,
                 ignore_date: false,
                 hidden: panel.show_hidden(),
-                show_same: false,
+                // As before: equal files hidden until asked for.
+                hide: HashSet::from([shagoff_core::sync::Kind::Same]),
                 mirror: false,
                 mask: String::new(),
                 confirm: false,
@@ -6660,6 +6667,21 @@ mod tests {
         let _ = app.update(Message::SyncRun);
         assert!(app.dialog.is_none());
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Sync));
+    }
+
+    #[test]
+    fn sync_show_buttons_toggle_a_kind() {
+        use shagoff_core::sync::Kind;
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let hidden = |app: &App, k| match &app.dialog {
+            Some(Dialog::Sync(s)) => s.hide.contains(&k),
+            _ => panic!("no sync dialog"),
+        };
+        assert!(hidden(&app, Kind::Same) && !hidden(&app, Kind::ToRight)); // = off at first
+        let _ = app.update(Message::SyncShow(Kind::ToRight));
+        let _ = app.update(Message::SyncShow(Kind::Same));
+        assert!(hidden(&app, Kind::ToRight) && !hidden(&app, Kind::Same));
     }
 
     #[test]

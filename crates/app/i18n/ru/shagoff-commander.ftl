@@ -124,10 +124,15 @@ sync-dirs = Синхронизация каталогов
 sync-subdirs = С подкаталогами
 sync-content = По содержимому
 sync-ignore-date = Без учёта даты
-sync-show-same = Показывать одинаковые
 sync-compare = Сравнить
 sync-run = Синхронизировать
-sync-summary = → { $r }   ← { $l }   ≠ { $d }   = { $s }
+sync-show = Показать:
+sync-show-right = → вправо: { $n }
+sync-show-left = ← влево: { $n }
+sync-show-differ = ≠ различаются: { $n }
+sync-show-same = = одинаковые: { $n }
+sync-to-delete = ✕ в корзину: { $n } (зеркало)
+sync-comparing = Сравнение…
 syncing = Синхронизация
 compare-identical = Каталоги одинаковые
 diff-title = Сравнение по содержимому

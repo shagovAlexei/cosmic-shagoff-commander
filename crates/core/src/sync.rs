@@ -352,6 +352,52 @@ pub fn compare_lists(left: &[Entry], right: &[Entry]) -> (Vec<OsString>, Vec<OsS
     (ml, mr)
 }
 
+/// What a row stands for in the list: TC's show buttons (→ ← ≠ =) and the totals line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Kind {
+    ToRight,
+    ToLeft,
+    Differ,
+    Same,
+    Delete,
+}
+
+impl Row {
+    pub fn kind(&self) -> Kind {
+        match (self.dir, self.state) {
+            (Dir::ToRight, _) => Kind::ToRight,
+            (Dir::ToLeft, _) => Kind::ToLeft,
+            (Dir::Delete, _) => Kind::Delete,
+            (Dir::None, State::Same) => Kind::Same,
+            // Left as is by a click on the arrow: still different.
+            (Dir::None, _) => Kind::Differ,
+        }
+    }
+}
+
+/// Rows of each kind, for the totals line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub to_right: usize,
+    pub to_left: usize,
+    pub differ: usize,
+    pub same: usize,
+    pub delete: usize,
+}
+
+pub fn counts(rows: &[Row]) -> Counts {
+    rows.iter().fold(Counts::default(), |mut c, r| {
+        *match r.kind() {
+            Kind::ToRight => &mut c.to_right,
+            Kind::ToLeft => &mut c.to_left,
+            Kind::Differ => &mut c.differ,
+            Kind::Same => &mut c.same,
+            Kind::Delete => &mut c.delete,
+        } += 1;
+        c
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,6 +729,36 @@ mod tests {
         );
         // Without a mask the one-sided dir stays one row.
         assert_eq!(arrows(&l, &r, &opts()).len(), 3);
+    }
+
+    #[test]
+    fn kinds_and_counts() {
+        let row = |state: State, dir: Dir| Row {
+            rel: "x".into(),
+            left: None,
+            right: None,
+            state,
+            dir,
+        };
+        let rows = [
+            row(State::LeftNewer, Dir::ToRight),
+            row(State::RightOnly, Dir::ToLeft),
+            row(State::LeftNewer, Dir::None), // arrow clicked away: still different
+            row(State::Same, Dir::None),
+            row(State::Same, Dir::None),
+            row(State::RightOnly, Dir::Delete),
+        ];
+        assert_eq!(rows[2].kind(), Kind::Differ);
+        assert_eq!(
+            counts(&rows),
+            Counts {
+                to_right: 1,
+                to_left: 1,
+                differ: 1,
+                same: 2,
+                delete: 1
+            }
+        );
     }
 
     #[test]
