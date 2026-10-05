@@ -409,6 +409,8 @@ pub enum Message {
     Changed(usize),
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
     Drive(usize, PathBuf),
+    /// A part of the path line clicked: go there, the cursor on the dir we came from.
+    PathPart(usize, PathBuf),
     CloseDrawer,
     Setting(Setting),
     /// Tab in a settings field.
@@ -1503,6 +1505,15 @@ impl App {
                     let cwd = t.target();
                     return self.reload(side, cwd, None);
                 }
+            }
+            Message::PathPart(side, path) => {
+                self.search = None;
+                if self.busy() {
+                    return Task::none();
+                }
+                let focus = panel::child_toward(self.panes[side].active().panel.cwd(), &path);
+                self.active = side;
+                return self.load(side, path, focus);
             }
             Message::Drive(side, path) => {
                 self.search = None;

@@ -346,6 +346,14 @@ fn parent_entry() -> Entry {
     }
 }
 
+/// A click on `up` in the path line of `cwd`: the name to put the cursor on there (the dir we
+/// came through), as Backspace does. `/a/b/c` up to `/a` → "b".
+pub fn child_toward(cwd: &Path, up: &Path) -> Option<String> {
+    let rest = cwd.strip_prefix(up).ok()?;
+    let first = rest.components().next()?;
+    Some(first.as_os_str().to_string_lossy().into_owned())
+}
+
 /// `/a/b` → (`/a`, "b"): where Backspace leads and which name to put the cursor on.
 /// Without paths that lie inside another one of them (search results can hold a dir and its
 /// files: F6 / F8 / pack would act on those twice).
@@ -829,5 +837,19 @@ mod tests {
             ]),
             [p("/r/sub"), p("/r/b"), p("/r/subway")]
         );
+    }
+
+    #[test]
+    fn child_toward_names_the_dir_we_came_through() {
+        assert_eq!(
+            child_toward(Path::new("/a/b/c"), Path::new("/a")),
+            Some("b".into())
+        );
+        assert_eq!(
+            child_toward(Path::new("/a/b"), Path::new("/")),
+            Some("a".into())
+        );
+        assert_eq!(child_toward(Path::new("/a"), Path::new("/a")), None); // the dir itself
+        assert_eq!(child_toward(Path::new("/a"), Path::new("/x")), None);
     }
 }
