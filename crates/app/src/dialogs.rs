@@ -598,58 +598,104 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 .into()
         }
         Dialog::Conflict { src, dst, name, .. } => {
-            let line = |key: &str, f: &FileInfo| {
-                let (size, date) = (format::size(f.size), format::date(f.mtime, tz));
-                match key {
-                    "new" => fl!("new-file", size = size, date = date),
-                    _ => fl!("existing-file", size = size, date = date),
+            // TC "Confirm file overwrite": what is replaced, with what; the newer / bigger marked.
+            let accent = |on: bool| {
+                if on {
+                    cosmic::theme::Text::Accent
+                } else {
+                    cosmic::theme::Text::Default
                 }
             };
-            let answer = |label: String, r: Resolution| {
-                widget::button::standard(label).on_press(Message::Resolve(r))
+            let file = |label: String, f: &FileInfo, other: &FileInfo| {
+                let newer = f.mtime > other.mtime;
+                let mut facts = row![
+                    widget::text::body(fl!("conflict-size", size = format::size(f.size)))
+                        .class(accent(f.size > other.size))
+                        .width(Length::Fixed(130.0)),
+                    widget::text::body(format::date(f.mtime, tz)).class(accent(newer)),
+                ]
+                .spacing(12);
+                if newer {
+                    facts =
+                        facts.push(widget::text::body(fl!("conflict-newer")).class(accent(true)));
+                }
+                row![
+                    widget::text::body(label).width(Length::Fixed(110.0)),
+                    column![
+                        widget::text::body(f.path.display().to_string())
+                            .wrapping(Wrapping::WordOrGlyph),
+                        facts,
+                    ]
+                    .spacing(2),
+                ]
+                .spacing(8)
+            };
+            // One width for all: a grid of answers, as in TC.
+            // `custom`: a text button's width goes to its label row, the button stays shrunk.
+            let cell = |label: String, main: bool, on: Option<Message>| {
+                widget::button::custom(
+                    widget::text::body(label)
+                        .wrapping(Wrapping::None)
+                        .width(Length::Fill)
+                        .align_x(cosmic::iced::Alignment::Center),
+                )
+                .class(if main {
+                    cosmic::theme::Button::Suggested
+                } else {
+                    cosmic::theme::Button::Standard
+                })
+                .padding([6, 12])
+                .width(Length::Fill)
+                .on_press_maybe(on)
+            };
+            let answer = |label: String, main: bool, r: Resolution| -> Element<'a, Message> {
+                cell(label, main, Some(Message::Resolve(r))).into()
             };
             widget::dialog()
                 .title(fl!("file-exists"))
-                .body(format!(
-                    "{}\n{}\n{}",
-                    dst.path.display(),
-                    line("new", src),
-                    line("existing", dst)
-                ))
                 .control(
                     column![
+                        file(fl!("conflict-replace"), dst, src),
+                        file(fl!("conflict-with"), src, dst),
+                        widget::divider::horizontal::default(),
                         row![
-                            answer(fl!("skip"), Resolution::Skip),
-                            answer(fl!("skip-all"), Resolution::SkipAll),
+                            answer(fl!("replace"), true, Resolution::Replace),
+                            answer(fl!("replace-all"), false, Resolution::ReplaceAll),
+                            answer(fl!("replace-older"), false, Resolution::ReplaceOlder),
                         ]
-                        .spacing(8),
+                        .spacing(8)
+                        .width(Length::Fill),
                         row![
-                            answer(fl!("replace-all"), Resolution::ReplaceAll),
-                            answer(fl!("replace-older"), Resolution::ReplaceOlder),
+                            answer(fl!("skip"), false, Resolution::Skip),
+                            answer(fl!("skip-all"), false, Resolution::SkipAll),
+                            answer(fl!("cancel"), false, Resolution::Cancel),
                         ]
-                        .spacing(8),
+                        .spacing(8)
+                        .width(Length::Fill),
                         row![
                             widget::text_input("", name.as_str())
                                 .on_input(Message::DialogInput)
-                                .width(Length::Fill),
-                            widget::button::standard(fl!("rename-to")).on_press_maybe(
+                                .width(Length::FillPortion(1)),
+                            cell(
+                                fl!("rename-to"),
+                                false,
                                 ops::valid_name(name)
-                                    .then(|| Message::Resolve(Resolution::Rename(name.clone())))
-                            ),
-                            answer(fl!("rename-all"), Resolution::RenameAll),
+                                    .then(|| Message::Resolve(Resolution::Rename(name.clone()))),
+                            )
+                            .width(Length::FillPortion(1)),
+                            cell(
+                                fl!("rename-all"),
+                                false,
+                                Some(Message::Resolve(Resolution::RenameAll))
+                            )
+                            .width(Length::FillPortion(1)),
                         ]
                         .spacing(8)
+                        .width(Length::Fill)
                         .align_y(cosmic::iced::Alignment::Center),
                     ]
-                    .spacing(8),
-                )
-                .primary_action(
-                    widget::button::suggested(fl!("replace"))
-                        .on_press(Message::Resolve(Resolution::Replace)),
-                )
-                .secondary_action(
-                    widget::button::standard(fl!("cancel"))
-                        .on_press(Message::Resolve(Resolution::Cancel)),
+                    .spacing(10)
+                    .width(Length::Fill),
                 )
                 .into()
         }
