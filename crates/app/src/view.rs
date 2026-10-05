@@ -452,7 +452,8 @@ fn tab_bar(
                 Skin::Classic,
             ));
         let tab = mouse_area(label)
-            .on_press(Message::SelectTab(side, i))
+            .on_press(Message::TabPress(side, i))
+            .on_enter(Message::TabEnter(side, i))
             // Right press selects the tab, so the menu's actions (active tab) are about it.
             .on_right_press(Message::SelectTab(side, i))
             .on_middle_press(Message::CloseTabAt(side, i))
