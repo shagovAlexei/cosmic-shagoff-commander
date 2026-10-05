@@ -12,6 +12,9 @@ pub struct PaneState {
     pub locked: Vec<bool>,
     #[serde(default)]
     pub names: Vec<String>,
+    /// Per tab: Brief view (Ctrl+F1) instead of Full.
+    #[serde(default)]
+    pub brief: Vec<bool>,
 }
 
 /// `~` and `~/x` → under `home`; anything else unchanged (`~user` is not supported).

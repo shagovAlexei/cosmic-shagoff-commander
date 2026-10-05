@@ -13,6 +13,7 @@ flate2 = "1"
 jiff = "0.2"
 liblzma = { version = "0.4", features = ["static"] }
 memchr = "2"
+mime_guess = "2"
 regex = "1"
 rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1", features = ["derive"] }

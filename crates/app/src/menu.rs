@@ -135,6 +135,8 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             a(Action::ToggleHidden),
         ),
         (vec![], K::Named(Named::F1), a(Action::Help)),
+        (vec![Ctrl], K::Named(Named::F1), a(Action::ViewBrief)),
+        (vec![Ctrl], K::Named(Named::F2), a(Action::ViewFull)),
         (vec![Ctrl], K::Letter(Code::Comma, ","), a(Action::Settings)),
         (
             vec![Ctrl],
@@ -270,6 +272,9 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
                     show_hidden,
                     MenuAct::Key(Action::ToggleHidden),
                 ),
+                menu::Item::Divider,
+                b(fl!("menu-brief"), Action::ViewBrief),
+                b(fl!("menu-full"), Action::ViewFull),
                 menu::Item::Divider,
                 sort(fl!("menu-sort-name"), SortKey::Name),
                 sort(fl!("menu-sort-ext"), SortKey::Ext),

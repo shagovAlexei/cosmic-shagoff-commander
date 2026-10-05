@@ -103,6 +103,12 @@ pub enum Action {
     TabRename,
     /// Ctrl+Shift+W: close the panel's other tabs but the locked ones.
     CloseOtherTabs,
+    /// ←/→: the next column in Brief view; nothing in Full.
+    Left,
+    Right,
+    /// Ctrl+F1 / Ctrl+F2: Brief / Full view of the active tab.
+    ViewBrief,
+    ViewFull,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -142,6 +148,10 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::ArrowUp, true, false) => Action::TabOpen,
             (Named::ArrowUp, true, true) => Action::TabOpenOther,
             (Named::ArrowDown, false, false) => Action::Down,
+            (Named::ArrowLeft, false, false) => Action::Left,
+            (Named::ArrowRight, false, false) => Action::Right,
+            (Named::F1, true, false) => Action::ViewBrief,
+            (Named::F2, true, false) => Action::ViewFull,
             (Named::PageUp, false, false) => Action::PageUp,
             (Named::PageDown, false, false) => Action::PageDown,
             (Named::Home, false, false) => Action::Home,
@@ -213,8 +223,6 @@ pub enum ListerKey {
     Next,
     Prev,
     Close,
-    Left,
-    Right,
     FindPrev,
 }
 
@@ -223,8 +231,6 @@ pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<List
     match key {
         Key::Named(Named::F3) if mods == Modifiers::SHIFT => return Some(ListerKey::FindPrev),
         _ if !mods.is_empty() => return None,
-        Key::Named(Named::ArrowLeft) => return Some(ListerKey::Left),
-        Key::Named(Named::ArrowRight) => return Some(ListerKey::Right),
         _ => {}
     }
     // TC: 1 text, 3 hex, 4 multimedia; N / P next / previous file; Q closes.
@@ -267,6 +273,10 @@ mod tests {
         assert_eq!(named(Named::PageDown, NONE), Some(Action::PageDown));
         assert_eq!(named(Named::Home, NONE), Some(Action::Home));
         assert_eq!(named(Named::End, NONE), Some(Action::End));
+        assert_eq!(named(Named::ArrowLeft, NONE), Some(Action::Left));
+        assert_eq!(named(Named::ArrowRight, NONE), Some(Action::Right));
+        assert_eq!(named(Named::F1, CTRL), Some(Action::ViewBrief));
+        assert_eq!(named(Named::F2, CTRL), Some(Action::ViewFull));
         assert_eq!(named(Named::Enter, NONE), Some(Action::Enter));
         assert_eq!(named(Named::Backspace, NONE), Some(Action::Parent));
         assert_eq!(named(Named::PageUp, CTRL), Some(Action::Parent));
@@ -551,16 +561,6 @@ mod tests {
             (Key::Character("т".into()), Code::KeyN, ListerKey::Next), // any layout
             (Key::Character("p".into()), Code::KeyP, ListerKey::Prev),
             (Key::Character("q".into()), Code::KeyQ, ListerKey::Close),
-            (
-                Key::Named(Named::ArrowLeft),
-                Code::ArrowLeft,
-                ListerKey::Left,
-            ),
-            (
-                Key::Named(Named::ArrowRight),
-                Code::ArrowRight,
-                ListerKey::Right,
-            ),
         ];
         for (key, code, want) in keys {
             assert_eq!(action(&key, Physical::Code(code), NONE), None, "{want:?}");

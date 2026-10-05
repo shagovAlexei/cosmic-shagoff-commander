@@ -108,6 +108,31 @@ pub fn dir_title(p: &std::path::Path) -> String {
         .map_or_else(|| "/".to_string(), |n| n.to_string_lossy().into_owned())
 }
 
+/// Theme icon for a row and the generic one to fall back to (freedesktop names): `folder`, `go-up`
+/// for `..`, else the MIME type guessed from the extension (`text/x-rust` → `text-x-rust`).
+pub fn icon_name(e: &Entry) -> (String, &'static str) {
+    if e.name == crate::panel::PARENT {
+        return ("go-up".into(), "go-up");
+    }
+    if e.is_dir() {
+        return ("folder".into(), "folder");
+    }
+    match mime_guess::from_ext(&e.ext).first() {
+        Some(m) if !e.ext.is_empty() => {
+            let generic = match m.type_().as_str() {
+                "image" => "image-x-generic",
+                "audio" => "audio-x-generic",
+                "video" => "video-x-generic",
+                "font" => "font-x-generic",
+                _ => "text-x-generic",
+            };
+            (m.essence_str().replace('/', "-"), generic)
+        }
+        _ if e.mode & 0o111 != 0 => ("application-x-executable".into(), "text-x-generic"),
+        _ => ("text-x-generic".into(), "text-x-generic"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +177,33 @@ mod tests {
             owner: None,
             target: None,
         }
+    }
+
+    #[test]
+    fn icon_names_by_kind_and_type() {
+        let name = |e: &Entry| icon_name(e);
+        assert_eq!(name(&entry("..", "", Kind::Dir)), ("go-up".into(), "go-up"));
+        assert_eq!(
+            name(&entry("src", "", Kind::Dir)),
+            ("folder".into(), "folder")
+        );
+        assert_eq!(name(&entry("a.rs", "rs", Kind::File)).0, "text-x-rust");
+        assert_eq!(
+            name(&entry("a.png", "png", Kind::File)),
+            ("image-png".into(), "image-x-generic")
+        );
+        assert_eq!(
+            name(&entry("a.zip", "zip", Kind::File)).0,
+            "application-zip"
+        );
+        assert_eq!(
+            name(&entry("a.qqq", "qqq", Kind::File)),
+            ("text-x-generic".into(), "text-x-generic")
+        );
+        let mut exe = entry("run", "", Kind::File);
+        exe.mode = 0o755;
+        assert_eq!(name(&exe).0, "application-x-executable");
+        assert_eq!(name(&entry("README", "", Kind::File)).0, "text-x-generic");
     }
 
     #[test]
