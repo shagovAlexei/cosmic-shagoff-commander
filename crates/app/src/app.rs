@@ -1470,6 +1470,10 @@ impl App {
                 self.col_drag = None;
                 self.cols = self.config.columns;
             }
+            Message::Escape(_) if matches!(&self.dialog, Some(Dialog::Toolbar(t)) if t.picker.is_some()) =>
+            {
+                return self.update(Message::ToolEdit(crate::toolbar::ToolMsg::PickClose));
+            }
             Message::Escape(_) => return self.update(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -1570,7 +1574,22 @@ impl App {
             Message::ToolFailed(e) => self.say(StatusKind::Error, fl!("cmd-failed", error = e)),
             Message::ToolEdit(m) => {
                 if let Some(Dialog::Toolbar(t)) = &mut self.dialog {
+                    let open = matches!(m, crate::toolbar::ToolMsg::PickOpen);
                     t.update(m);
+                    if open && t.picker.is_some() {
+                        return Task::perform(
+                            async {
+                                tokio::task::spawn_blocking(crate::toolbar::icon_names)
+                                    .await
+                                    .unwrap_or_default()
+                            },
+                            |v| {
+                                cosmic::Action::App(Message::ToolEdit(
+                                    crate::toolbar::ToolMsg::PickLoaded(v),
+                                ))
+                            },
+                        );
+                    }
                 }
             }
             Message::Hot(m) => {

@@ -14,6 +14,23 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs
 - Right-click menus, full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
 
+## Toolbar buttons
+
+Right click on the toolbar (Classic look) or *Configuration → Toolbar…* opens the button editor: add, remove, move, pick an icon. A button runs an internal command (`cm_*`, picked from the list) or a program with parameters:
+
+| | |
+|---|---|
+| `%P` / `%T` | the active / other panel's folder |
+| `%N` | the name under the cursor; `%O` without its extension, `%E` the extension |
+| `%S` | the selected names |
+
+Each value is quoted as one shell word. The command runs through `sh -c` in the panel's folder, without a terminal. Example, a terminal that lists the file under the cursor and waits for Enter:
+
+- Command: `cosmic-term -e`
+- Parameters: `sh -c "ls -l %N; read x"`
+
+Use double quotes around the script (the inserted names carry their own single quotes), and `read x`, not a bare `read`: `sh` is dash, where `read` without a variable fails at once and the terminal closes. A failing command shows its error in the status line.
+
 ## Install
 
 A `.deb` for Pop!_OS 24.04 / Ubuntu 24.04 is attached to each [release](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases):
