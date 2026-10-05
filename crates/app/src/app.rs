@@ -242,6 +242,10 @@ pub struct App {
     /// Alt+F7 settings, kept in `State`.
     find: config::FindPrefs,
     pub drives: Vec<Drive>,
+    /// Volumes not mounted yet (a stick just plugged in): listed with the drives, a pick mounts.
+    pub volumes: Vec<mount::Volume>,
+    /// When `volumes` was last asked for: gio runs at most every few seconds.
+    volumes_at: Option<std::time::Instant>,
     /// (free, total) bytes of each pane's current disk.
     pub space: [Option<(u64, u64)>; 2],
     /// Status line: the last message (in the active pane's half).
@@ -401,6 +405,10 @@ pub enum Message {
     ConnectPassword(String),
     /// Volumes from gio for the drive list of this side.
     Volumes(usize, Vec<mount::Volume>),
+    /// gio's volumes for the drive list (the unmounted ones are kept).
+    AllVolumes(Vec<mount::Volume>),
+    /// A not-yet-mounted volume picked in the drive list: (side, device).
+    MountVolume(usize, String),
     /// A volume or network location was mounted (for this side): its path.
     Mounted(usize, Result<PathBuf, mount::Error>),
     /// (unmounted drive root, result).
@@ -472,7 +480,8 @@ impl Application for App {
             core.window.header_title = fl!("app-title");
         }
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
-        let task = Task::batch([task].into_iter().chain(theme));
+        let volumes = app.refresh_volumes(true);
+        let task = Task::batch([task, volumes].into_iter().chain(theme));
         app.saved = saved;
         (app.config_handler, app.state_handler) = (ch, sh);
         (app, task)
@@ -574,6 +583,8 @@ impl App {
             saved: State::default(),
             find: state.find.clone(),
             drives: Vec::new(),
+            volumes: Vec::new(),
+            volumes_at: None,
             space: [None, None],
             status: None,
             owners: shagoff_core::owners::Owners::load(),
@@ -1446,6 +1457,21 @@ impl App {
                     *password = s;
                 }
             }
+            Message::AllVolumes(vols) => {
+                self.volumes = vols.into_iter().filter(|v| v.mount.is_none()).collect();
+            }
+            Message::MountVolume(side, device) => {
+                self.search = None;
+                if self.job.is_some() {
+                    return Task::none();
+                }
+                self.dialog = None;
+                self.say(StatusKind::Busy, fl!("mounting"));
+                return blocking(
+                    move || mount::mount_device(&device),
+                    move |r| Message::Mounted(side, r),
+                );
+            }
             Message::Volumes(side, vols) => {
                 if let Some(Dialog::List {
                     kind: ListKind::Drives,
@@ -1473,10 +1499,11 @@ impl App {
             }
             Message::Mounted(side, result) => {
                 self.refresh_mounts();
+                let volumes = self.refresh_volumes(true);
                 match result {
                     Ok(path) => {
                         self.clear_busy();
-                        return self.go_to(side, path);
+                        return Task::batch([self.go_to(side, path), volumes]);
                     }
                     Err(mount::Error::Cancelled) => {
                         self.status = None; // the Busy "Connecting…"
@@ -1484,6 +1511,7 @@ impl App {
                     }
                     Err(e) => self.say(StatusKind::Error, mount_error(&e)),
                 }
+                return volumes;
             }
             // Ctrl+F's result: remembered on success, then as any mount.
             Message::Connected(side, url, result) => {
@@ -1548,6 +1576,7 @@ impl App {
             }
             Message::Unmounted(root, result) => {
                 self.refresh_mounts();
+                self.volumes_at = None; // the next listing asks gio again
                 if let Err(e) = result {
                     self.say(StatusKind::Error, mount_error(&e));
                     return Task::none();
@@ -1662,7 +1691,21 @@ impl App {
             self.leave_locked(side);
         }
         self.panes[side].active_mut().results = None;
-        self.reload(side, path, focus)
+        let volumes = self.refresh_volumes(false);
+        Task::batch([self.reload(side, path, focus), volumes])
+    }
+
+    /// Ask gio for unmounted volumes (`force`: now; else not within 3 s of the last time).
+    fn refresh_volumes(&mut self, force: bool) -> Task<Message> {
+        let now = std::time::Instant::now();
+        let recent = self
+            .volumes_at
+            .is_some_and(|t| now - t < std::time::Duration::from_secs(3));
+        if recent && !force {
+            return Task::none();
+        }
+        self.volumes_at = Some(now);
+        blocking(mount::list, |r| Message::AllVolumes(r.unwrap_or_default()))
     }
 
     /// A locked tab keeps its dir: what would move it happens in an unlocked copy opened next to it.
@@ -2079,9 +2122,12 @@ impl App {
             | Action::DeletePermanent => {}
             // Opened by `dialog_for` above.
             Action::SelectGroup | Action::UnselectGroup => {}
+            // Also the drive list: a stick plugged in shows up (TC rereads drives too).
             Action::Reload => {
                 let cwd = panel.cwd().to_path_buf();
-                return self.reload(side, cwd, None);
+                self.refresh_mounts();
+                let volumes = self.refresh_volumes(true);
+                return Task::batch([self.reload(side, cwd, None), volumes]);
             }
             Action::TabOpen | Action::TabOpenOther => {
                 let path = self.tab_target(side);
@@ -6926,6 +6972,19 @@ mod tests {
                 panic!("no list")
             };
             assert!(items[2].kind == Item::Mount && items[2].path == Path::new("/dev/sda1"));
+        }
+
+        #[test]
+        fn unmounted_volumes_join_the_drive_list_and_a_pick_mounts() {
+            let mut app = app_with(Config::default(), State::default());
+            let vols = vec![
+                volume("sys", "/dev/nvme0n1p3", Some("file:///media/sys")),
+                volume("STICK", "/dev/sda1", None),
+            ];
+            let _ = app.update(Message::AllVolumes(vols));
+            assert_eq!(app.volumes, [volume("STICK", "/dev/sda1", None)]);
+            let _ = app.update(Message::MountVolume(0, "/dev/sda1".into()));
+            assert_eq!(app.msg(), Some(fl!("mounting").as_str()));
         }
 
         #[test]
