@@ -119,30 +119,34 @@ impl HotEdit {
     }
 }
 
+/// A separator in a list dialog: selectable (to move or delete it), drawn as a line.
+pub fn sep_row<'a>(selected: bool, on: Message) -> Element<'a, Message> {
+    widget::button::custom(
+        widget::container(widget::divider::horizontal::default())
+            .padding([0, 8])
+            .width(Length::Fill)
+            .height(Length::Fixed(14.0))
+            .align_y(Alignment::Center)
+            .class(crate::view::cursor_style(
+                selected,
+                true,
+                false,
+                crate::config::Skin::Modern,
+            )),
+    )
+    .padding(0)
+    .width(Length::Fill)
+    .class(theme::Button::MenuItem)
+    .on_press(on)
+    .into()
+}
+
 pub fn view<'a>(h: &'a HotEdit, cancel: Element<'a, Message>) -> Element<'a, Message> {
     let msg = |m: HotMsg| Message::Hot(m);
     let mut list = column![].spacing(1);
     for (i, e) in h.list.iter().enumerate() {
         let row: Element<'a, Message> = if is_sep(e) {
-            // Selectable (to move or delete it), drawn as a line.
-            widget::button::custom(
-                widget::container(widget::divider::horizontal::default())
-                    .padding([0, 8])
-                    .width(Length::Fill)
-                    .height(Length::Fixed(14.0))
-                    .align_y(Alignment::Center)
-                    .class(crate::view::cursor_style(
-                        h.sel == Some(i),
-                        true,
-                        false,
-                        crate::config::Skin::Modern,
-                    )),
-            )
-            .padding(0)
-            .width(Length::Fill)
-            .class(theme::Button::MenuItem)
-            .on_press(msg(HotMsg::Select(i)))
-            .into()
+            sep_row(h.sel == Some(i), msg(HotMsg::Select(i)))
         } else {
             crate::dialogs::menu_row(
                 e.name.clone(),

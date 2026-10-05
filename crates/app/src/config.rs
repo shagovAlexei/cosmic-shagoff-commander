@@ -107,6 +107,19 @@ pub struct Config {
     pub skin: Skin,
     /// Full view widths of Ext, Size, Date, Attributes (Name takes the rest); dragged in the header.
     pub columns: [f32; 4],
+    /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
+    pub toolbar: Vec<ToolButton>,
+}
+
+/// A toolbar button: `cmd` is an internal `cm_*` command, a program (`params` with `%P`, `%N`, …
+/// appended, run by `sh -c` in the panel's dir), or `-` (a gap). Empty `icon` / `tip`: the command's.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolButton {
+    pub cmd: String,
+    pub params: String,
+    pub icon: String,
+    pub tip: String,
 }
 
 /// A favourite dir (Ctrl+D).
@@ -135,6 +148,7 @@ impl Default for Config {
             terminal: vec!["cosmic-term".into(), "-e".into()],
             skin: Skin::Classic,
             columns: [60.0, 90.0, 130.0, 80.0],
+            toolbar: crate::toolbar::default_bar(),
         }
     }
 }

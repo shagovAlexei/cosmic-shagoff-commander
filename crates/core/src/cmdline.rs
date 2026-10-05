@@ -145,12 +145,85 @@ pub fn argv(line: &str, dir: &Path, terminal: Option<&[String]>) -> Vec<String> 
         .collect()
 }
 
+/// What a toolbar button's parameters are filled from.
+pub struct Vars<'a> {
+    pub dir: &'a Path,
+    pub other: &'a Path,
+    /// The file under the cursor (none on `..`).
+    pub name: Option<&'a str>,
+    /// The marked names, or the one under the cursor.
+    pub selected: &'a [String],
+}
+
+/// TC button parameters: `%P` the panel's dir, `%T` the other one, `%N` the name under the cursor,
+/// `%O` / `%E` it without / only its extension, `%S` the selection, `%%` a `%`. Each value is one
+/// quoted shell word (`%S`: one per name); anything else is kept as typed.
+pub fn expand(params: &str, v: &Vars) -> String {
+    let name = v.name.unwrap_or("");
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, e),
+        _ => (name, ""),
+    };
+    let mut out = String::new();
+    let mut chars = params.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('P') => out += &quote(&v.dir.display().to_string()),
+            Some('T') => out += &quote(&v.other.display().to_string()),
+            Some('N') => out += &quote(name),
+            Some('O') => out += &quote(stem),
+            Some('E') => out += &quote(ext),
+            Some('S') => {
+                out += &v
+                    .selected
+                    .iter()
+                    .map(|s| quote(s))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }
+            Some('%') => out.push('%'),
+            Some(o) => {
+                out.push('%');
+                out.push(o);
+            }
+            None => out.push('%'),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn cd(line: &str) -> Option<Cmd> {
         parse(line, Path::new("/a/b"), Path::new("/home/u"))
+    }
+
+    #[test]
+    fn expand_fills_tc_params() {
+        let sel = ["a b.txt".to_string(), "c".to_string()];
+        let v = Vars {
+            dir: Path::new("/x y"),
+            other: Path::new("/o"),
+            name: Some("arc.tar.gz"),
+            selected: &sel,
+        };
+        assert_eq!(
+            expand("-d %P %T %N %O.%E %S 100%% %Q %", &v),
+            "-d '/x y' /o arc.tar.gz arc.tar.gz 'a b.txt' c 100% %Q %"
+        );
+        let dot = Vars {
+            name: Some(".bashrc"),
+            ..v
+        };
+        assert_eq!(expand("%O|%E", &dot), ".bashrc|''");
+        let none = Vars { name: None, ..dot };
+        assert_eq!(expand("[%N]", &none), "['']");
     }
 
     #[test]

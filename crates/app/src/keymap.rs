@@ -121,6 +121,8 @@ pub enum Action {
     ResetColumns,
     /// Shift+F4: create a file (if missing) and edit it.
     NewFile,
+    /// Right click on the toolbar: TC "Change button bar".
+    ConfigureToolbar,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
