@@ -468,6 +468,8 @@ pub fn menu_row<'a>(
         )
         .width(Length::FillPortion(portion))
         .clip(true)
+        // Empty style: the default one sets its own text colour over the selection's.
+        .class(cosmic::theme::Container::custom(|_| Default::default()))
     };
     let line = row![
         // Plain `text`: body / caption carry their own colour, not the cursor's.

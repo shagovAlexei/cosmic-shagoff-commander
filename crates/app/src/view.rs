@@ -497,7 +497,10 @@ fn file_row<'a>(
         (format::date(e.mtime, &app.tz), format::perms(e.mode))
     };
     let cells = row![
-        container(name_cell(e, format::display_name(e), app.config.skin)).width(Length::Fill),
+        // Empty style: the default (Transparent) sets its own text colour over the cursor's.
+        container(name_cell(e, format::display_name(e), app.config.skin))
+            .width(Length::Fill)
+            .class(theme::Container::custom(|_| container::Style::default())),
         cell(e.ext.clone()).width(Length::Fixed(W_EXT)),
         cell(size)
             .width(Length::Fixed(W_SIZE))
@@ -767,13 +770,15 @@ pub(crate) fn cursor_style(
             style.border.radius = c.corner_radii.radius_s.into();
         }
         match (is_cursor, active, marked) {
+            // The button pairs: `accent.on` is not meant for text on the accent and was
+            // unreadable (light on cyan in dark, dark on teal in light).
             (true, true, true) => {
-                style.background = Some(Color::from(c.destructive_color()).into());
-                style.text_color = Some(c.on_destructive_color().into());
+                style.background = Some(Color::from(c.destructive_button.base).into());
+                style.text_color = Some(c.destructive_button.on.into());
             }
             (true, true, false) => {
-                style.background = Some(Color::from(c.accent_color()).into());
-                style.text_color = Some(c.on_accent_color().into());
+                style.background = Some(Color::from(c.accent_button.base).into());
+                style.text_color = Some(c.accent_button.on.into());
             }
             (true, false, _) => {
                 let mut bg = Color::from(c.accent_color());
