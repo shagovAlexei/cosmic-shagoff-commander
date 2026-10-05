@@ -1369,6 +1369,11 @@ impl App {
                     window,
                 )));
             }
+            // Esc during a header-edge drag: back to the widths before it.
+            Message::Escape(_) if self.col_drag.is_some() => {
+                self.col_drag = None;
+                self.cols = self.config.columns;
+            }
             Message::Escape(_) => return self.update(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -4201,6 +4206,11 @@ fn route_event(
     window: cosmic::iced::window::Id,
 ) -> Option<Message> {
     match event {
+        // Any status, any widget under it: the list's own mouse handling takes the release, and a
+        // header-edge drag must end wherever the button comes up.
+        cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
+            cosmic::iced::mouse::Button::Left,
+        )) => Some(Message::ColDragEnd),
         // Any status: a focused text_input captures Escape to unfocus itself, and the dialog must still close.
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(keyboard::key::Named::Escape),
@@ -5524,6 +5534,28 @@ mod tests {
         let _ = app.update(Message::ColDragEnd);
         assert_eq!(app.config.columns[1], before[1] + 30.0);
         assert!(app.col_drag.is_none());
+    }
+
+    #[test]
+    fn regression_column_drag_ends_on_any_release_and_esc_undoes_it() {
+        // The release over the file list never reached the pane's own handler: the drag stuck.
+        let up = cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
+            cosmic::iced::mouse::Button::Left,
+        ));
+        let id = cosmic::iced::window::Id::unique();
+        assert!(matches!(
+            route_event(up, event::Status::Captured, id),
+            Some(Message::ColDragEnd)
+        ));
+        let mut app = app_with(Config::default(), State::default());
+        let before = app.cols;
+        let _ = app.update(Message::ColDragStart(0, 2));
+        let _ = app.update(Message::ColDrag(100.0));
+        let _ = app.update(Message::ColDrag(150.0));
+        assert_ne!(app.cols, before);
+        let _ = app.update(Message::Escape(app.window_id()));
+        assert!(app.col_drag.is_none());
+        assert_eq!(app.cols, before);
     }
 
     #[test]
