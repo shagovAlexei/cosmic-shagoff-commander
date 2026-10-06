@@ -1632,6 +1632,9 @@ impl App {
                 // The pane the files came from, if one shows them: its marks go when done, as F5.
                 let parent = paths.first().and_then(|p| p.parent());
                 let from = (0..2).find(|&s| Some(self.panes[s].active().panel.cwd()) == parent);
+                // Shift as we see it: the compositor's chosen action ignores it (COSMIC keeps the
+                // destination's preferred Copy), but the window keeps the keyboard while dragging.
+                let mv = mv || self.mods.shift();
                 // As F5 / F6 in TC: the same dialog, aimed at the dir the files were dropped on.
                 self.dialog = Some(Dialog::Input {
                     op: if mv { InputOp::Move } else { InputOp::Copy },
@@ -7400,6 +7403,17 @@ mod tests {
             app.dialog.take(),
             Some(Dialog::Input { side: 1, .. })
         ));
+        // Shift held while dropping: move, whatever action the compositor reports.
+        let _ = app.update(Message::Modifiers(Modifiers::SHIFT));
+        let _ = app.update(drop(None, false));
+        assert!(matches!(
+            app.dialog.take(),
+            Some(Dialog::Input {
+                op: InputOp::Move,
+                ..
+            })
+        ));
+        let _ = app.update(Message::Modifiers(Modifiers::empty()));
         // Back into the dir it came from: nothing.
         listed_at(&mut app, 0, &tmp.path().join("src"));
         let _ = app.update(drop(None, false));
