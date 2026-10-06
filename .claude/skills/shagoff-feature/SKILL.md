@@ -40,3 +40,5 @@ Every feature and every MVP phase goes through these steps in order. Do not skip
    - Merge only after the user says so: `gh pr merge --merge --delete-branch`.
 
 Bug fix: use `superpowers:systematic-debugging`. Add a regression test named `regression_<what>` in core, add a row in `TESTING.md`, and work on branch `fix/<topic>`.
+
+X11 check: after `headless.sh start`, ask sway for its Xwayland display (`SWAYSOCK=$XDG_RUNTIME_DIR/sway-ipc.*.<sway pid>.sock swaymsg exec 'echo $DISPLAY > /tmp/shagoff-headless/display'`), kill the app and start `target/debug/shagoff-commander` with `env -u WAYLAND_DISPLAY DISPLAY=:N` and the same `XDG_*_HOME`; `click` / `shot` work as usual. Under X11 libcosmic draws menus inside the window, not as popups.
