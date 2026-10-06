@@ -766,12 +766,15 @@ fn command_line(app: &App) -> Element<'_, Message> {
 fn job_line(app: &App) -> Option<Element<'_, Message>> {
     let j = app.job.as_ref().filter(|j| j.hidden)?;
     let f = crate::dialogs::job_fraction(j);
-    let label = format!(
+    let mut label = format!(
         "{}: {} % — {}",
         crate::dialogs::job_title(j.kind),
         (f * 100.0).round() as u32,
         j.current
     );
+    if !app.queue.is_empty() {
+        label = format!("{label} ({})", fl!("job-waiting", n = app.queue.len()));
+    }
     let line = row![
         widget::progress_bar::determinate_linear(f)
             .width(Length::Fixed(160.0))

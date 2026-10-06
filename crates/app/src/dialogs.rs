@@ -646,12 +646,20 @@ pub fn view<'a>(
                 InputOp::TabName => fl!("tab-rename"),
                 InputOp::OpenWith => fl!("open-with-other-title"),
             };
-            widget::dialog()
+            let dialog = widget::dialog()
                 .title(title)
                 .control(field(input))
                 .primary_action(ok)
-                .secondary_action(cancel)
-                .into()
+                .secondary_action(cancel);
+            match op {
+                // TC: F2 puts it in the background queue.
+                InputOp::Copy | InputOp::Move => dialog
+                    .tertiary_action(
+                        widget::button::text(fl!("job-queue")).on_press(Message::DialogQueue),
+                    )
+                    .into(),
+                _ => dialog.into(),
+            }
         }
         Dialog::UpdateArchive { archive, entry, .. } => widget::dialog()
             .title(fl!("archive-update-title"))

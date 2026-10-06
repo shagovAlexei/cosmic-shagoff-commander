@@ -33,7 +33,7 @@ use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -197,6 +197,14 @@ pub struct Running {
     pub hidden: bool,
 }
 
+/// An operation started while another one runs: it waits its turn, then runs in the background.
+pub struct Queued {
+    side: usize,
+    kind: OpKind,
+    job: Job,
+    focus: Option<String>,
+}
+
 enum Open {
     Run(Vec<OsString>),
     /// F4 in an archive: run the editor, then watch the file to offer packing it back.
@@ -252,6 +260,8 @@ pub struct App {
     /// Built once (the widget borrows it), rebuilt when the language changes.
     pub(crate) about: cosmic::widget::about::About,
     pub(crate) job: Option<Running>,
+    /// TC's background queue: started one after another once `job` ends.
+    pub(crate) queue: VecDeque<Queued>,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
     pub(crate) input_id: widget::Id,
     /// Quick search / filter field, if open.
@@ -367,6 +377,8 @@ pub enum Message {
     Modifiers(Modifiers),
     DialogInput(String),
     DialogSubmit,
+    /// F2 «В очередь» in the F5 / F6 dialog: run it in the background (after the running one).
+    DialogQueue,
     DialogCancel,
     /// Escape in a window: the main one cancels the dialog; a popup (context menu) closes,
     /// since the menu widget only sees the main window's keys.
@@ -688,6 +700,7 @@ impl App {
             drawer: None,
             about: drawer::about(),
             job: None,
+            queue: VecDeque::new(),
             input_id: widget::Id::unique(),
             search: None,
             home,
@@ -1377,6 +1390,14 @@ impl App {
             Message::DiffNext => return self.diff_step(1),
             Message::DiffPrev => return self.diff_step(-1),
             Message::DialogSubmit => return self.submit_dialog(),
+            Message::DialogQueue => {
+                let idle = self.job.is_none();
+                let task = self.submit_dialog();
+                if idle && let Some(j) = &mut self.job {
+                    j.hidden = true;
+                }
+                return task;
+            }
             Message::ListerLoaded(id, loaded) => {
                 if let Some(l) = &mut self.lister
                     && l.id == id
@@ -1592,9 +1613,7 @@ impl App {
                 }
             },
             Message::Op(event) => return self.on_job_event(event),
-            Message::Pasted(Some((kind, paths)))
-                if !paths.is_empty() && self.job.is_none() && self.dialog.is_none() =>
-            {
+            Message::Pasted(Some((kind, paths))) if !paths.is_empty() && self.dialog.is_none() => {
                 let op = match kind {
                     ClipKind::Copy => InputOp::Copy,
                     ClipKind::Cut => InputOp::Move,
@@ -1828,6 +1847,19 @@ impl App {
                 }
             }
             // Quick search, viewer search or command line; not a dialog's or a settings field.
+            // F2 only: Shift+F6 is Rename too.
+            Message::FieldKey(Action::Rename)
+                if !self.mods.shift()
+                    && matches!(
+                        self.dialog,
+                        Some(Dialog::Input {
+                            op: InputOp::Copy | InputOp::Move,
+                            ..
+                        })
+                    ) =>
+            {
+                return self.handle(Message::DialogQueue);
+            }
             Message::FieldKey(action) => {
                 if let Some(task) = self.mask_history(action) {
                     return task;
@@ -3853,6 +3885,11 @@ impl App {
         name: OsString,
         how: How,
     ) -> Task<Message> {
+        // Opened right away or not at all: queued, the file would pop up out of nowhere later.
+        if self.job.is_some() {
+            self.say(StatusKind::Error, fl!("job-running"));
+            return Task::none();
+        }
         let dir = match archive::fresh_temp_dir(&archive::temp_root()) {
             Ok(d) => d,
             Err(e) => {
@@ -4246,9 +4283,15 @@ impl App {
         job: Job,
         focus: Option<String>,
     ) -> Task<Message> {
-        // One at a time: a second one waits for the first (in the background) to end.
+        // One at a time: a second one waits in the queue for the first to end (TC F2 «В очередь»).
         if self.job.is_some() {
-            self.say(StatusKind::Error, fl!("job-running"));
+            self.queue.push_back(Queued {
+                side,
+                kind,
+                job,
+                focus,
+            });
+            self.say(StatusKind::Info, fl!("job-queued", n = self.queue.len()));
             return Task::none();
         }
         let (cancel, events) = jobs::spawn(job);
@@ -4266,10 +4309,12 @@ impl App {
         Task::run(events, |e| cosmic::Action::App(Message::Op(e)))
     }
 
-    fn cancel_job(&self) {
+    /// Cancel stops what waits too: a queued delete must not start on its own right after.
+    fn cancel_job(&mut self) {
         if let Some(j) = &self.job {
             j.cancel.store(true, Ordering::Relaxed);
         }
+        self.queue.clear();
     }
 
     fn on_job_event(&mut self, event: jobs::Event) -> Task<Message> {
@@ -4353,11 +4398,20 @@ impl App {
             .unmark(&report.completed);
         let here = self.panes[side].active().panel.cwd().to_path_buf();
         let there = self.panes[1 - side].active().panel.cwd().to_path_buf();
-        Task::batch([
+        let reload = Task::batch([
             self.reload(side, here, job.focus),
             self.reload(1 - side, there, None),
             view,
-        ])
+        ]);
+        let Some(q) = self.queue.pop_front() else {
+            return reload;
+        };
+        // The next one in the background, as TC's queue.
+        let next = self.start_job(q.side, q.kind, q.job, q.focus);
+        if let Some(j) = &mut self.job {
+            j.hidden = true;
+        }
+        Task::batch([reload, next])
     }
 
     /// Keep tab `tab`'s cursor row fully visible. An inactive tab only gets its offset updated;
@@ -6882,7 +6936,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_in_the_background_frees_the_panels_but_not_for_a_second_job() {
+    fn a_job_in_the_background_frees_the_panels_and_a_second_one_waits_in_the_queue() {
         let mut app = files_app(&["a", "b", "c"]);
         let dir = app.panes[0].active().panel.cwd().to_path_buf();
         let gone = vec![dir.join("a")];
@@ -6915,9 +6969,49 @@ mod tests {
             },
             None,
         );
-        assert_eq!(app.msg(), Some(fl!("job-running").as_str()));
+        assert_eq!(app.msg(), Some(fl!("job-queued", n = 1).as_str()));
+        assert_eq!(app.queue.len(), 1);
         let _ = app.update(Message::JobShow);
         assert!(app.busy());
+        // The first one ends: the queued one starts, in the background.
+        let _ = app.finish_job(&Report::default());
+        assert!(app.queue.is_empty());
+        assert!(
+            app.job
+                .as_ref()
+                .is_some_and(|j| j.hidden && j.kind == OpKind::Delete)
+        );
+        assert!(!app.busy());
+        // Cancel empties the queue as well.
+        let nothing = Job::Delete {
+            paths: Vec::new(),
+            permanent: true,
+        };
+        let _ = app.start_job(0, OpKind::Delete, nothing, None);
+        assert_eq!(app.queue.len(), 1);
+        let _ = app.update(Message::CancelJob);
+        assert!(app.queue.is_empty());
+    }
+
+    #[test]
+    fn f2_in_the_copy_dialog_runs_it_in_the_background() {
+        let (_tmp, mut app, a) = paste_setup();
+        let _ = app.update(Message::Drop {
+            side: 0,
+            dir: None,
+            paths: vec![a],
+            mv: false,
+        });
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Copy,
+                ..
+            })
+        ));
+        let _ = app.update(Message::FieldKey(Action::Rename)); // F2
+        assert!(app.dialog.is_none());
+        assert!(app.job.as_ref().is_some_and(|j| j.hidden));
     }
 
     #[test]
