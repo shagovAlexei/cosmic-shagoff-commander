@@ -452,3 +452,8 @@ toolbar-pick-loading = Loading icons…
 hotlist-add-sub = Submenu
 hotlist-new-sub = New submenu
 hotlist-sub-end = ◂ end of submenu
+
+menu-open-with = Open with…
+open-with = Open with
+open-with-none = No programs for this file type
+open-with-archive = Not inside an archive: unpack the file first

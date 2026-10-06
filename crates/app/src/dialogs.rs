@@ -429,6 +429,8 @@ pub enum ListKind {
     Hotlist,
     /// Command line history (Alt+F8).
     Commands,
+    /// Context menu "Open with…": `path` is the program's `.desktop` file.
+    OpenWith,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -457,6 +459,8 @@ pub enum Item {
     Sub(usize),
     /// Hotlist: back to the enclosing menu (← / Backspace).
     Back,
+    /// "Open with…": a program; its `.desktop` file name is shown.
+    App,
 }
 
 impl Dialog {
@@ -845,6 +849,9 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 let path = match item.kind {
                     Item::Mount => format!("{}   ({})", item.path.display(), fl!("not-mounted")),
                     Item::Sub(_) => "▸".into(),
+                    Item::App => item.path.file_name().map_or(String::new(), |n| {
+                        n.to_string_lossy().trim_end_matches(".desktop").to_string()
+                    }),
                     _ => item.path.display().to_string(),
                 };
                 list = list.push(menu_row(
@@ -860,6 +867,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 ListKind::History => fl!("history"),
                 ListKind::Hotlist => fl!("hotlist"),
                 ListKind::Commands => fl!("cmd-history"),
+                ListKind::OpenWith => fl!("open-with"),
             };
             widget::dialog()
                 .title(title)

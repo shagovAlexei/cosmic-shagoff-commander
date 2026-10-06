@@ -453,3 +453,8 @@ toolbar-pick-loading = Загрузка значков…
 hotlist-add-sub = Подменю
 hotlist-new-sub = Новое подменю
 hotlist-sub-end = ◂ конец подменю
+
+menu-open-with = Открыть с помощью…
+open-with = Открыть с помощью
+open-with-none = Нет программ для этого типа файлов
+open-with-archive = Внутри архива нельзя: сначала распакуйте файл
