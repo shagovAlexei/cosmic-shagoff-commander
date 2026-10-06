@@ -161,6 +161,8 @@ pub fn branch(dirs: &[std::path::PathBuf], show_hidden: bool) -> Vec<std::path::
             }
             match e.file_type() {
                 Ok(t) if t.is_dir() => todo.push(e.path()),
+                // Like TC: only files; a link to a dir is neither listed nor followed.
+                Ok(t) if t.is_symlink() && e.path().is_dir() => {}
                 Ok(_) => out.push(e.path()),
                 Err(_) => {}
             }
@@ -197,6 +199,7 @@ mod tests {
             fs::write(r.join(f), "").unwrap();
         }
         std::os::unix::fs::symlink(r.join("a"), r.join("link")).unwrap();
+        std::os::unix::fs::symlink(r.join("top.txt"), r.join("flink")).unwrap();
         let rel = |v: Vec<std::path::PathBuf>| {
             let mut v: Vec<String> = (v.iter())
                 .map(|p| p.strip_prefix(r).unwrap().display().to_string())
@@ -206,7 +209,7 @@ mod tests {
         };
         assert_eq!(
             rel(branch(&[r.to_path_buf()], false)),
-            ["a/b/y.rs", "a/x.rs", "link", "top.txt"]
+            ["a/b/y.rs", "a/x.rs", "flink", "top.txt"]
         );
         assert_eq!(rel(branch(&[r.to_path_buf()], true)).len(), 6);
         assert_eq!(rel(branch(&[r.join("a/b")], false)), ["a/b/y.rs"]);
