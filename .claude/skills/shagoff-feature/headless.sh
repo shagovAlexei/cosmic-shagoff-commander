@@ -5,7 +5,7 @@
 #   headless.sh start [WxH]        start headless sway (default 1036x530) + the app (debug build)
 #   headless.sh panes LEFT RIGHT   restart the app with these dirs in the two panes
 #   headless.sh key ARGS...        wtype ARGS (e.g. -k F7, -M shift -k F2 -m shift)
-#   headless.sh click X Y [right|middle|double|none]  mouse at (X, Y), click (built from ./vpointer once)
+#   headless.sh click X Y [right|middle|double|none|up|down]  mouse at (X, Y), click or wheel (built from ./vpointer once)
 #   headless.sh drag X1 Y1 X2 Y2   press at (X1, Y1), move to (X2, Y2), release
 #   headless.sh shot NAME          screenshot to $DIR/NAME.png
 #   headless.sh stop

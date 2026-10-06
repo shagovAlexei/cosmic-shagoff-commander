@@ -1,7 +1,8 @@
-//! `vpointer X Y [left|right|middle|double|none] [W H]`: move to (X, Y) of a W×H output (default 1036×530)
-//! and click. `vpointer drag X1 Y1 X2 Y2 [W H]`: press at the first point, move to the second in
+//! `vpointer X Y [left|right|middle|double|none|up|down] [W H]`: move to (X, Y) of a W×H output (default
+//! 1036×530) and click (`up` / `down`: five wheel notches). `vpointer drag X1 Y1 X2 Y2 [W H]`: press at the first point, move to the second in
 //! steps, release. For headless sway only (tests); it never touches a real session unless pointed at it.
-use wayland_client::protocol::{wl_pointer::ButtonState, wl_registry, wl_seat};
+use wayland_client::protocol::wl_pointer::{Axis, AxisSource, ButtonState};
+use wayland_client::protocol::{wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop};
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
@@ -52,7 +53,7 @@ fn main() {
     let button = match a.get(3).map(String::as_str) {
         Some("right") => 0x111,
         Some("middle") => 0x112,
-        Some("none") => 0,
+        Some("none" | "up" | "down") => 0,
         Some("double") => 0x110,
         _ => 0x110,
     };
@@ -92,6 +93,15 @@ fn main() {
             q.roundtrip(&mut s).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(40));
             p.button(t(), 0x110, ButtonState::Released);
+            p.frame();
+            q.roundtrip(&mut s).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+    } else if let Some(dir @ ("up" | "down")) = a.get(3).map(String::as_str) {
+        let v = if dir == "up" { -1 } else { 1 };
+        for _ in 0..5 {
+            p.axis_source(AxisSource::Wheel);
+            p.axis_discrete(t(), Axis::VerticalScroll, 15.0 * v as f64, v);
             p.frame();
             q.roundtrip(&mut s).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(60));
