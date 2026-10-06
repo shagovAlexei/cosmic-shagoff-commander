@@ -30,6 +30,7 @@ Every feature and every MVP phase goes through these steps in order. Do not skip
 8. **PR.**
    - Update `ROADMAP.md` by ticking the phase or feature.
    - If the architecture changed, update `CLAUDE.md`.
+   - Bump `version` in the root `Cargo.toml` (`cargo build` updates `Cargo.lock`): feature → minor, fix → patch (see CLAUDE.md "Versions").
    - Then:
      ```sh
      git push -u origin feat/<topic>
@@ -38,6 +39,7 @@ Every feature and every MVP phase goes through these steps in order. Do not skip
      The body links the spec and the plan.
    - Wait for CI with `gh pr checks --watch`.
    - Merge only after the user says so: `gh pr merge --merge --delete-branch`.
+   - Then tag the bumped version on `main` and push the tag (`vX.Y.Z`): the `release` workflow attaches the .deb. Check it with `gh run watch` / `gh release view`.
 
 Bug fix: use `superpowers:systematic-debugging`. Add a regression test named `regression_<what>` in core, add a row in `TESTING.md`, and work on branch `fix/<topic>`.
 

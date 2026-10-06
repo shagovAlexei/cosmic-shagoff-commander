@@ -88,4 +88,6 @@ Every feature or phase follows the project skill **`shagoff-feature`** (`.claude
 
 Never commit to `main` directly. Bugs get a `regression_<what>` test and a row in `TESTING.md`.
 
+**Versions:** every PR that changes the program bumps `version` in the root `Cargo.toml` (and `Cargo.lock`) in the same PR: a feature → minor (0.2.0 → 0.3.0), a bug fix → patch (0.2.0 → 0.2.1); docs / tests / tooling only → no bump. After the user approves the merge: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z` → the `release` workflow publishes the .deb.
+
 Docs and skills live in `.claude/` and are committed (only `.claude/settings.local.json` is ignored). Lessons that are general to libcosmic go into the global `cosmic-applet` skill.
