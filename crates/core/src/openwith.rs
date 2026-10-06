@@ -7,6 +7,8 @@ use std::process::Command;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct App {
     pub name: String,
+    /// `Icon=`: a theme icon name or an absolute path; empty if none.
+    pub icon: String,
     /// The `.desktop` file, as `gio launch` wants it.
     pub desktop: PathBuf,
 }
@@ -37,9 +39,17 @@ pub fn parse_mime(out: &str) -> Vec<String> {
     ids
 }
 
-/// The name a `.desktop` file shows in `lang` ("ru"), or `None` if it hides itself.
-pub fn parse_desktop(text: &str, lang: &str) -> Option<String> {
+/// The programs for a type.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Found {
+    pub mime: String,
+    pub apps: Vec<App>,
+}
+
+/// The name a `.desktop` file shows in `lang` ("ru") and its icon, or `None` if it hides itself.
+pub fn parse_desktop(text: &str, lang: &str) -> Option<(String, String)> {
     let (mut plain, mut local, mut in_entry) = (None, None, false);
+    let mut icon = String::new();
     for l in text.lines().map(str::trim) {
         if l.starts_with('[') {
             in_entry = l == "[Desktop Entry]";
@@ -57,10 +67,11 @@ pub fn parse_desktop(text: &str, lang: &str) -> Option<String> {
             Some(_) => {}
             None if k == "Name" => plain = Some(v.to_string()),
             None if k == "Hidden" && v == "true" => return None,
+            None if k == "Icon" => icon = v.to_string(),
             None => {}
         }
     }
-    local.or(plain)
+    Some((local.or(plain)?, icon))
 }
 
 /// Where `.desktop` files live: `$XDG_DATA_HOME`, then `$XDG_DATA_DIRS`.
@@ -95,7 +106,7 @@ fn gio(args: &[&std::ffi::OsStr]) -> Result<String, String> {
 }
 
 /// The programs for `file`'s type, the default first. Blocking: runs `gio` twice.
-pub fn apps(file: &Path, lang: &str) -> Result<Vec<App>, String> {
+pub fn apps(file: &Path, lang: &str) -> Result<Found, String> {
     let info = gio(&[
         "info".as_ref(),
         "-a".as_ref(),
@@ -104,14 +115,35 @@ pub fn apps(file: &Path, lang: &str) -> Result<Vec<App>, String> {
     ])?;
     let mime = parse_content_type(&info).ok_or("no content type")?;
     let dirs = data_dirs();
-    Ok(parse_mime(&gio(&["mime".as_ref(), mime.as_ref()])?)
+    let apps = parse_mime(&gio(&["mime".as_ref(), mime.as_ref()])?)
         .iter()
         .filter_map(|id| {
             let desktop = find_desktop(id, &dirs)?;
-            let name = parse_desktop(&std::fs::read_to_string(&desktop).ok()?, lang)?;
-            Some(App { name, desktop })
+            let (name, icon) = parse_desktop(&std::fs::read_to_string(&desktop).ok()?, lang)?;
+            Some(App {
+                name,
+                icon,
+                desktop,
+            })
         })
-        .collect())
+        .collect();
+    Ok(Found {
+        mime: mime.into(),
+        apps,
+    })
+}
+
+/// Makes `desktop` the default program for `mime`. Blocking.
+pub fn set_default(mime: &str, desktop: &Path) -> Result<(), String> {
+    let id = desktop.file_name().ok_or("no desktop file")?;
+    gio(&["mime".as_ref(), mime.as_ref(), id]).map(drop)
+}
+
+/// "Other program…": the typed command with the files after it, for `sh -c`.
+pub fn other_line(cmd: &str, files: &[PathBuf]) -> String {
+    files.iter().fold(cmd.trim().to_string(), |line, f| {
+        crate::cmdline::append(&line, &crate::cmdline::quote(&f.display().to_string()))
+    })
 }
 
 pub fn launch_argv(desktop: &Path, files: &[PathBuf]) -> Vec<OsString> {
@@ -144,14 +176,30 @@ mod tests {
     fn desktop_name_in_language() {
         let t = "[Desktop Entry]\nName=Editor\nName[ru_RU]=Ред\nName[de]=Ed\nExec=e %f\n\
                  [Desktop Action new]\nName[ru]=Новое окно\n";
-        assert_eq!(parse_desktop(t, "ru").as_deref(), Some("Ред"));
-        assert_eq!(parse_desktop(t, "fr").as_deref(), Some("Editor"));
+        let name = |t, l| parse_desktop(t, l).map(|(n, _)| n);
+        assert_eq!(name(t, "ru").as_deref(), Some("Ред"));
+        assert_eq!(name(t, "fr").as_deref(), Some("Editor"));
         let exact = "[Desktop Entry]\nName[ru_RU]=Долго\nName[ru]=Ред\nName=E\n";
-        assert_eq!(parse_desktop(exact, "ru").as_deref(), Some("Ред"));
+        assert_eq!(name(exact, "ru").as_deref(), Some("Ред"));
         assert_eq!(
             parse_desktop("[Desktop Entry]\nName=A\nHidden=true\n", "ru"),
             None
         );
+    }
+
+    #[test]
+    fn desktop_icon_name_or_path() {
+        let t = "[Desktop Entry]\nName=A\nIcon=org.gnome.gedit\n[Desktop Action x]\nIcon=other\n";
+        assert_eq!(parse_desktop(t, "ru").unwrap().1, "org.gnome.gedit");
+        let none = parse_desktop("[Desktop Entry]\nName=A\n", "ru").unwrap();
+        assert_eq!(none.1, "");
+    }
+
+    #[test]
+    fn other_program_gets_quoted_files() {
+        let files = ["/a b/x.txt".into(), "/c".into()];
+        assert_eq!(other_line(" gimp ", &files), "gimp '/a b/x.txt' /c");
+        assert_eq!(other_line("foot -e less", &[]), "foot -e less");
     }
 
     #[test]

@@ -455,5 +455,8 @@ hotlist-sub-end = ◂ end of submenu
 
 menu-open-with = Open with…
 open-with = Open with
-open-with-none = No programs for this file type
 open-with-archive = Not inside an archive: unpack the file first
+open-with-other = Other program…
+open-with-other-title = Open with command
+open-with-default = Make default
+open-with-default-set = { $app } now opens { $mime } by default

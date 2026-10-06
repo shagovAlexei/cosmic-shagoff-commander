@@ -456,5 +456,8 @@ hotlist-sub-end = ◂ конец подменю
 
 menu-open-with = Открыть с помощью…
 open-with = Открыть с помощью
-open-with-none = Нет программ для этого типа файлов
 open-with-archive = Внутри архива нельзя: сначала распакуйте файл
+open-with-other = Другая программа…
+open-with-other-title = Открыть командой
+open-with-default = По умолчанию
+open-with-default-set = { $app } теперь открывает { $mime } по умолчанию
