@@ -165,6 +165,8 @@ pub struct State {
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first.
     pub masks: Vec<String>,
+    /// "Open with…" → "Other program…" commands, last first.
+    pub other_cmds: Vec<String>,
 }
 
 /// What the find dialog opens with (the dir always comes from the panel). Fields missing in an
