@@ -15,6 +15,7 @@ pub mod listing;
 pub mod mask;
 pub mod mount;
 pub mod multirename;
+pub mod openwith;
 pub mod ops;
 pub mod owners;
 pub mod panel;

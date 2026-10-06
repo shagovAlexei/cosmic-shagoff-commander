@@ -26,6 +26,7 @@ use shagoff_core::listing::{self, Entry};
 use shagoff_core::mask::Mask;
 use shagoff_core::mount;
 use shagoff_core::multirename::{self, Case, Rule};
+use shagoff_core::openwith;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
 use shagoff_core::panel::{self, PARENT, Panel};
 use shagoff_core::repack::Change;
@@ -272,6 +273,8 @@ pub struct App {
     pub space: [Option<(u64, u64)>; 2],
     /// Status line: the last message (in the active pane's half).
     pub status: Option<Status>,
+    /// "Open with…" list: the files to open, as they were when it was asked for.
+    open_with: Vec<PathBuf>,
     /// User / group names for the status bar.
     pub owners: shagoff_core::owners::Owners,
     /// The last right press landed on a row (else below them): which context menu to show.
@@ -415,6 +418,8 @@ pub enum Message {
     FieldKey(Action),
     /// Click on entry i of the open list dialog.
     ListPick(usize),
+    /// "Open with…": the files (taken when asked) and the programs found for the first one.
+    OpenWithApps(usize, Vec<PathBuf>, Result<Vec<openwith::App>, String>),
     /// Hotlist settings (Ctrl+D → "Configure…").
     Hot(HotMsg),
     /// Toolbar button `i` of `config.toolbar`.
@@ -651,6 +656,7 @@ impl App {
             volumes_at: None,
             space: [None, None],
             status: None,
+            open_with: Vec::new(),
             owners: shagoff_core::owners::Owners::load(),
             ctx_entry: false,
             ctx_row: false,
@@ -1589,6 +1595,27 @@ impl App {
             }
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
+            Message::OpenWithApps(side, files, r) => match r {
+                // Asked in the background: a dialog opened meanwhile keeps its place.
+                Ok(_) if self.dialog.is_some() => {}
+                Ok(apps) if !apps.is_empty() => {
+                    self.open_with = files;
+                    self.dialog = Some(Dialog::List {
+                        kind: ListKind::OpenWith,
+                        side,
+                        cursor: 0,
+                        items: (apps.into_iter())
+                            .map(|a| ListItem {
+                                label: a.name,
+                                path: a.desktop,
+                                kind: Item::App,
+                            })
+                            .collect(),
+                    });
+                }
+                Ok(_) => self.say(StatusKind::Error, fl!("open-with-none")),
+                Err(e) => self.say(StatusKind::Error, fl!("open-failed", err = e)),
+            },
             Message::Tool(i) => return self.run_tool(i),
             Message::ToolFailed(e) => self.say(StatusKind::Error, fl!("cmd-failed", error = e)),
             Message::ToolEdit(m) => {
@@ -2049,6 +2076,7 @@ impl App {
             Action::QuickSearch(c) => return self.quick_search(side, c),
             Action::QuickFilter => return self.quick_filter(side),
             Action::Disconnect => return self.disconnect(side),
+            Action::OpenWith => return self.open_with(side),
             Action::Help | Action::About | Action::Settings | Action::Donate => {
                 self.toggle_drawer(action);
                 return Task::none();
@@ -2301,6 +2329,7 @@ impl App {
             | Action::About
             | Action::Settings
             | Action::Donate
+            | Action::OpenWith
             | Action::CopyNames
             | Action::CopyPaths
             | Action::CmdName
@@ -4111,6 +4140,36 @@ impl App {
         )
     }
 
+    /// Context menu "Open with…": the programs for the file under the cursor, found off the UI
+    /// thread (`gio` reads the file).
+    fn open_with(&mut self, side: usize) -> Task<Message> {
+        let panel = &self.panes[side].active().panel;
+        let Some(file) = (panel.current())
+            .filter(|e| !e.is_dir() && e.name != PARENT)
+            .map(|e| panel.cwd().join(&e.os_name))
+        else {
+            return Task::none();
+        };
+        if inside_archive(&file) {
+            self.say(StatusKind::Error, fl!("open-with-archive"));
+            return Task::none();
+        }
+        use i18n_embed::LanguageLoader;
+        let files = panel.targets();
+        let lang = crate::i18n::LANGUAGE_LOADER
+            .current_language()
+            .language
+            .to_string();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || openwith::apps(&file, &lang))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            move |r| cosmic::Action::App(Message::OpenWithApps(side, files, r)),
+        )
+    }
+
     /// Enter / click on entry `i` of the open list.
     fn pick(&mut self, i: usize) -> Task<Message> {
         // Into a submenu or back out of it: the menu stays open.
@@ -4134,6 +4193,15 @@ impl App {
         else {
             return Task::none();
         };
+        if kind == ListKind::OpenWith {
+            let files = std::mem::take(&mut self.open_with);
+            if let Some(item) = items.get(i)
+                && let Err(e) = spawn_detached(&openwith::launch_argv(&item.path, &files))
+            {
+                self.say(StatusKind::Error, fl!("open-failed", err = e.to_string()));
+            }
+            return Task::none();
+        }
         if kind == ListKind::Commands {
             if let Some(item) = items.get(i) {
                 self.cmdline.clone_from(&item.label);
@@ -4931,6 +4999,27 @@ mod tests {
             "x".into(),
         ];
         assert!(spawn_detached(&argv).is_err());
+    }
+
+    #[test]
+    fn open_with_lists_programs_or_says_none() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::OpenWithApps(0, Vec::new(), Ok(Vec::new())));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
+        let ed = openwith::App {
+            name: "Editor".into(),
+            desktop: "/usr/share/applications/ed.desktop".into(),
+        };
+        let _ = app.update(Message::OpenWithApps(0, Vec::new(), Ok(vec![ed])));
+        let Some(Dialog::List { kind, items, .. }) = &app.dialog else {
+            panic!("no list")
+        };
+        assert_eq!(*kind, ListKind::OpenWith);
+        assert_eq!(
+            (items[0].label.as_str(), items[0].kind),
+            ("Editor", Item::App)
+        );
     }
 
     #[test]

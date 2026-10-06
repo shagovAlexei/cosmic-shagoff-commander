@@ -360,6 +360,9 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             if !dir && !archive {
                 v.push(b(fl!("menu-edit"), Action::Edit));
             }
+            if !dir {
+                v.push(b(fl!("menu-open-with"), Action::OpenWith));
+            }
             v.extend([
                 menu::Item::Divider,
                 b(fl!("menu-copy"), Action::Copy),
@@ -462,12 +465,14 @@ mod tests {
             archive: false,
         });
         assert!(file.contains(&Action::Edit) && !file.contains(&Action::TabOpen));
+        assert!(file.contains(&Action::OpenWith));
         assert!(!file.contains(&Action::Unpack));
         let dir = actions(Ctx::Entry {
             dir: true,
             archive: false,
         });
         assert!(!dir.contains(&Action::Edit) && dir.contains(&Action::TabOpen));
+        assert!(!dir.contains(&Action::OpenWith));
         let zip = actions(Ctx::Entry {
             dir: false,
             archive: true,
