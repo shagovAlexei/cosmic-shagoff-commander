@@ -25,6 +25,8 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+D", fl!("menu-hotlist"), Action::Hotlist),
                 r("Ctrl+U", fl!("menu-swap"), Action::SwapPanes),
                 r("Ctrl+Q", fl!("menu-quick-view"), Action::QuickView),
+                r("Ctrl+B", fl!("menu-branch"), Action::Branch),
+                r("Ctrl+Shift+B", fl!("menu-branch-sel"), Action::BranchSel),
                 o("Alt+…", fl!("help-quick-search")),
                 r("Ctrl+S", fl!("menu-filter"), Action::QuickFilter),
                 r("Ctrl+R", fl!("menu-reload"), Action::Reload),

@@ -469,3 +469,7 @@ quick-counting = Counting…
 quick-dir = Folder: { $files } files, { $dirs } folders, { $size }
 quick-too-big = Over { $limit } MB inside an archive: open it with F3
 quick-archive = Archive: { $files } files, { $dirs } folders, { $size } unpacked
+menu-branch = Branch view (all files below)
+menu-branch-sel = Branch view of the marked folders
+branch-reading = Reading all files below…
+branch-title = Branch: { $dir }

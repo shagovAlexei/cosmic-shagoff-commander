@@ -33,7 +33,7 @@ use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -69,6 +69,10 @@ pub struct Tab {
     pub(crate) history: History,
     /// Alt+F7 "To panel": (dir searched, found paths) listed instead of the dir.
     pub(crate) results: Option<(PathBuf, Arc<Vec<PathBuf>>)>,
+    /// The results are Ctrl+B's branch (every file below), not a search: Ctrl+B again leaves.
+    pub(crate) branch: bool,
+    /// Ctrl+B being read: its request id; any dir change (`App::load`) drops it.
+    pub(crate) branching: Option<u64>,
     /// TC locked tab: cannot be closed, leaving its dir opens a new tab.
     pub locked: bool,
     /// Own caption instead of the dir's name.
@@ -92,6 +96,8 @@ impl Tab {
             error: None,
             history: History::default(),
             results: None,
+            branch: false,
+            branching: None,
             locked: false,
             name: None,
             counting: Arc::default(),
@@ -150,6 +156,8 @@ impl Tab {
             error: None,
             history: self.history.clone(),
             results: self.results.clone(),
+            branch: self.branch,
+            branching: None,
             locked: false,
             name: None,
             counting: Arc::default(),
@@ -430,6 +438,15 @@ pub enum Message {
     ListClear,
     /// "Open with…": the files (taken when asked) and the programs found for the first one.
     OpenWithApps(usize, Vec<PathBuf>, Result<openwith::Found, String>),
+    /// Ctrl+B read: shown if that tab is still in `root`, as it was.
+    BranchListed {
+        side: usize,
+        tab: u64,
+        /// The request: dropped unless the tab still waits for this one.
+        id: u64,
+        root: PathBuf,
+        paths: Vec<PathBuf>,
+    },
     /// "Open with…" → "All programs…": every installed one.
     OpenWithAll(Vec<openwith::App>),
     /// "Open with…" → "Default": the program under the list's cursor for this type.
@@ -1663,6 +1680,35 @@ impl App {
                     );
                 }
             }
+            Message::BranchListed {
+                side,
+                tab,
+                id,
+                root,
+                paths,
+            } => {
+                if self
+                    .status
+                    .as_ref()
+                    .is_some_and(|s| s.kind == StatusKind::Busy)
+                {
+                    self.status = None;
+                }
+                let Some(i) = (self.panes[side].items().iter()).position(|t| t.id == tab) else {
+                    return Task::none();
+                };
+                let t = &mut self.panes[side].items_mut()[i];
+                // The tab went somewhere meanwhile (even back here), or asked again: not wanted.
+                if t.branching != Some(id) {
+                    return Task::none();
+                }
+                t.branching = None;
+                t.results = Some((root.clone(), Arc::new(paths)));
+                t.branch = true;
+                if self.panes[side].active().id == tab {
+                    return self.reload(side, root, None);
+                }
+            }
             Message::OpenWithDefault => {
                 let Some(Dialog::List {
                     kind: ListKind::OpenWith,
@@ -2107,7 +2153,9 @@ impl App {
         if path != self.panes[side].active().panel.cwd() {
             self.leave_locked(side);
         }
-        self.panes[side].active_mut().results = None;
+        let t = self.panes[side].active_mut();
+        t.results = None;
+        t.branching = None; // a branch read for the dir left (or re-entered) is not wanted
         let volumes = self.refresh_volumes(false);
         Task::batch([self.reload(side, path, focus), volumes])
     }
@@ -2157,12 +2205,18 @@ impl App {
         }
         let results = t.results.as_ref().map(|(_, r)| r.clone());
         let tab = t.id;
-        let show_hidden = t.panel.show_hidden();
+        let (show_hidden, sort) = (t.panel.show_hidden(), t.panel.sort());
         Task::perform(
             async move {
                 let p = path.clone();
                 let (result, space) = tokio::task::spawn_blocking(move || {
-                    let result = read_listing(&p, show_hidden, results.as_deref());
+                    let mut result = read_listing(&p, show_hidden, results.as_deref());
+                    // Sorted here, not on the UI thread; the panel only checks the order.
+                    // ponytail: counted dir sizes are not known here; a Size sort with them is
+                    // redone by the panel.
+                    if let Ok(entries) = &mut result {
+                        shagoff_core::sort::sort_entries(entries, sort, &HashMap::new());
+                    }
                     (result, drives::space(&p))
                 })
                 .await
@@ -2516,6 +2570,7 @@ impl App {
                 self.panes[1].active_mut().panel.mark_names(&r);
                 return Task::none();
             }
+            Action::Branch | Action::BranchSel => return self.branch(side, action),
             Action::QuickView => {
                 match self.lister.as_deref() {
                     Some(l) if l.quick.is_some() => self.lister = None,
@@ -3676,7 +3731,9 @@ impl App {
         }
         self.active = side;
         self.leave_locked(side);
-        self.panes[side].active_mut().results = Some((root.clone(), paths));
+        let t = self.panes[side].active_mut();
+        t.results = Some((root.clone(), paths));
+        t.branch = false;
         self.reload(side, root, None)
     }
 
@@ -3776,6 +3833,54 @@ impl App {
     }
 
     /// F3 with the built-in viewer: the file under the cursor (extracted first inside an archive).
+    /// Ctrl+B / Ctrl+Shift+B (TC "branch"): every file below the dir (or the marked dirs) in one
+    /// list, read in the background; again — the dir as usual.
+    fn branch(&mut self, side: usize, action: Action) -> Task<Message> {
+        let t = self.panes[side].active();
+        if t.branch
+            && let Some((root, _)) = &t.results
+        {
+            let root = root.clone();
+            self.panes[side].active_mut().results = None;
+            return self.load(side, root, None);
+        }
+        let cwd = t.panel.cwd().to_path_buf();
+        if inside_archive(&cwd.join("x")) || t.results.is_some() {
+            self.say(StatusKind::Error, fl!("results-unsupported"));
+            return Task::none();
+        }
+        let dirs: Vec<PathBuf> = if action == Action::BranchSel {
+            (t.panel.targets().into_iter())
+                .filter(|p| p.is_dir())
+                .collect()
+        } else {
+            vec![cwd.clone()]
+        };
+        if dirs.is_empty() {
+            return Task::none();
+        }
+        let (tab, hidden) = (t.id, self.config.show_hidden);
+        let id = self.next_id();
+        self.panes[side].active_mut().branching = Some(id);
+        self.say(StatusKind::Busy, fl!("branch-reading"));
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || listing::branch(&dirs, hidden))
+                    .await
+                    .unwrap_or_default()
+            },
+            move |paths| {
+                cosmic::Action::App(Message::BranchListed {
+                    side,
+                    tab,
+                    id,
+                    root: cwd.clone(),
+                    paths,
+                })
+            },
+        )
+    }
+
     /// The full-window F3 viewer is up (not the Ctrl+Q one): it takes the keys.
     fn viewer(&self) -> bool {
         self.lister.as_ref().is_some_and(|l| l.quick.is_none())
@@ -5963,6 +6068,51 @@ mod tests {
         let l = app.lister.as_ref().unwrap();
         assert_eq!(l.name, "c.zip");
         assert!(matches!(l.loaded.as_deref(), Some(Err(t)) if *t == fl!("quick-counting")));
+    }
+
+    #[test]
+    fn ctrl_b_lists_every_file_below_and_again_leaves() {
+        let (mut app, tmp) = lister_app(Config::default());
+        std::fs::write(tmp.path().join("sub/deep.txt"), "d").unwrap();
+        let tab = app.panes[0].active().id;
+        let root = tmp.path().to_path_buf();
+        let listed = |app: &mut App, root: PathBuf| {
+            let paths = listing::branch(std::slice::from_ref(&root), false);
+            let id = app.panes[0].active().branching.unwrap_or(0);
+            let _ = app.update(Message::BranchListed {
+                side: 0,
+                tab,
+                id,
+                root,
+                paths,
+            });
+        };
+        let _ = app.update(Message::Key(Action::Branch)); // reads in the background
+        listed(&mut app, root.clone());
+        let t = app.panes[0].active();
+        assert!(t.branch);
+        let mut found: Vec<String> = (t.results.as_ref().unwrap().1.iter())
+            .map(|p| p.strip_prefix(&root).unwrap().display().to_string())
+            .collect();
+        found.sort();
+        assert_eq!(found, ["a.txt", "b.bin", "sub/deep.txt"]);
+        // Ctrl+B again: the dir as usual.
+        let _ = app.update(Message::Key(Action::Branch));
+        assert!(app.panes[0].active().results.is_none());
+        // A read that comes back after the tab went elsewhere — even back here — is dropped.
+        let _ = app.update(Message::Key(Action::Branch));
+        let id = app.panes[0].active().branching.unwrap();
+        let _ = app.load(0, root.join("sub"), None);
+        let _ = app.load(0, root.clone(), None);
+        let paths = listing::branch(std::slice::from_ref(&root), false);
+        let _ = app.update(Message::BranchListed {
+            side: 0,
+            tab,
+            id,
+            root,
+            paths,
+        });
+        assert!(app.panes[0].active().results.is_none());
     }
 
     #[test]

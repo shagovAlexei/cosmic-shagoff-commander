@@ -54,6 +54,18 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-swap"
         ),
         b!(
+            "cm_DirBranch",
+            Branch,
+            "format-indent-more-symbolic",
+            "menu-branch"
+        ),
+        b!(
+            "cm_DirBranchSel",
+            BranchSel,
+            "format-indent-more-symbolic",
+            "menu-branch-sel"
+        ),
+        b!(
             "cm_SrcQuickview",
             QuickView,
             "document-preview-symbolic",

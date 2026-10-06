@@ -470,3 +470,7 @@ quick-counting = Подсчёт…
 quick-dir = Каталог: файлов { $files }, каталогов { $dirs }, { $size }
 quick-too-big = Больше { $limit } МБ в архиве: открыть через F3
 quick-archive = Архив: файлов { $files }, каталогов { $dirs }, распаковано { $size }
+menu-branch = Ветвь (все файлы ниже)
+menu-branch-sel = Ветвь отмеченных каталогов
+branch-reading = Читаю все файлы ниже…
+branch-title = Ветвь: { $dir }
