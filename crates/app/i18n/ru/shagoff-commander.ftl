@@ -257,7 +257,6 @@ about-issues = Сообщить о проблеме
 donate-title = Поддержать проект
 donate-text = Shagoff Commander бесплатный. Если он вам помогает, вы можете поддержать его развитие.
 donate-button = Поддержать проект
-donate-soon = Скоро: оплата картой через Stripe
 settings-system = Системный
 settings-light = Светлая
 settings-dark = Тёмная
