@@ -821,6 +821,34 @@ pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<E
     Ok(kids.into_values().collect())
 }
 
+/// What the dir `inner` of `archive` holds, from the index (nothing unpacked): its files, their
+/// size and its dirs, the dir itself counted (as `props::usage`); dirs with no entry of their own
+/// (`a/b/f` without `a/b/`) count too.
+pub fn usage(archive: &Path, inner: &Path) -> io::Result<crate::props::Usage> {
+    let mut u = crate::props::Usage::default();
+    let mut dirs = std::collections::HashSet::new();
+    for it in index(archive)?.iter() {
+        let Ok(rest) = it.path.strip_prefix(inner) else {
+            continue;
+        };
+        if rest.as_os_str().is_empty() {
+            continue;
+        }
+        // Every dir on the way down, the entry's own if it is one.
+        let mut up = if it.dir { Some(rest) } else { rest.parent() };
+        while let Some(d) = up.filter(|d| !d.as_os_str().is_empty()) {
+            dirs.insert(d.to_path_buf());
+            up = d.parent();
+        }
+        if !it.dir {
+            u.files += 1;
+            u.bytes += it.size;
+        }
+    }
+    u.dirs = dirs.len() as u64 + 1;
+    Ok(u)
+}
+
 /// Where files opened from archives (Enter, F3) are extracted: the user's cache dir, on disk —
 /// `$XDG_RUNTIME_DIR` is a small RAM tmpfs that other session services need.
 pub fn temp_root() -> PathBuf {
@@ -2538,6 +2566,17 @@ mod tests {
             extract_one(&z, inner, Path::new("nope"), &out2, &AtomicBool::new(false)),
             None
         );
+    }
+
+    #[test]
+    fn usage_counts_from_the_index() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z); // docs/a.txt, docs/img/p.png, .hidden, top.txt — no dir entries
+        let u = usage(&z, Path::new("docs")).unwrap();
+        assert_eq!((u.files, u.dirs, u.bytes), (2, 2, 5)); // docs + img
+        let all = usage(&z, Path::new("")).unwrap();
+        assert_eq!((all.files, all.dirs, all.bytes), (4, 3, 7));
     }
 
     #[test]

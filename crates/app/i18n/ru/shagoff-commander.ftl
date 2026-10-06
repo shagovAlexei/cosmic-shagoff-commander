@@ -469,3 +469,4 @@ quick-none = Нет просмотра: каталог или файл внут�
 quick-counting = Подсчёт…
 quick-dir = Каталог: файлов { $files }, каталогов { $dirs }, { $size }
 quick-too-big = Больше { $limit } МБ в архиве: открыть через F3
+quick-archive = Архив: файлов { $files }, каталогов { $dirs }, распаковано { $size }
