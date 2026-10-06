@@ -102,6 +102,8 @@ pub struct Config {
     pub connections: Vec<String>,
     /// Command line under the panels (TC `path>`).
     pub show_cmdline: bool,
+    /// Command line, "Other program…" and mask histories survive a restart (off: kept in memory only).
+    pub keep_history: bool,
     /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
     pub terminal: Vec<String>,
     pub skin: Skin,
@@ -145,6 +147,7 @@ impl Default for Config {
             internal_viewer: true,
             connections: Vec::new(),
             show_cmdline: true,
+            keep_history: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
             skin: Skin::Classic,
             columns: [60.0, 90.0, 130.0, 80.0],
