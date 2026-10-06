@@ -468,3 +468,4 @@ quick-none = No preview: a folder, or a file inside an archive
 quick-counting = Counting…
 quick-dir = Folder: { $files } files, { $dirs } folders, { $size }
 quick-too-big = Over { $limit } MB inside an archive: open it with F3
+quick-archive = Archive: { $files } files, { $dirs } folders, { $size } unpacked
