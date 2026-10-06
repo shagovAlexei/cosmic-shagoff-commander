@@ -467,6 +467,8 @@ pub enum Item {
     App,
     /// "Open with…": type a command.
     Other,
+    /// "Open with…": show every installed program.
+    All,
 }
 
 impl Dialog {
@@ -481,6 +483,11 @@ impl Dialog {
             _ => None,
         }
     }
+}
+
+/// The list dialog's scroll area: ↑ / ↓ keep the cursor in view.
+pub fn list_scroll_id() -> widget::Id {
+    widget::Id::new("dialog-list")
 }
 
 /// A program's `Icon=`: a theme name or a file; blank room if none.
@@ -581,7 +588,13 @@ fn what(paths: &[PathBuf]) -> String {
     }
 }
 
-pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<'a, Message> {
+/// `list_h`: the most a list dialog's rows may take (the panel's rows), 0 before the first layout.
+pub fn view<'a>(
+    d: &'a Dialog,
+    input_id: &widget::Id,
+    tz: &TimeZone,
+    list_h: f32,
+) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
     let field = |value: &'a str| {
@@ -905,7 +918,14 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     Message::ListPick(i),
                 ));
             }
-            let list = widget::scrollable(list).height(Length::Shrink);
+            let list = widget::scrollable(list)
+                .id(list_scroll_id())
+                .height(Length::Shrink);
+            let list = widget::container(list).max_height(if list_h > 0.0 {
+                list_h
+            } else {
+                f32::INFINITY
+            });
             let title = match kind {
                 ListKind::Drives => fl!("drives"),
                 ListKind::History => fl!("history"),

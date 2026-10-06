@@ -296,6 +296,8 @@ pub struct App {
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first: the dialog opens with the last, ↑ / ↓ go through them.
     pub masks: Vec<String>,
+    /// "Open with…" → "Other program…" commands, last first; ↑ / ↓ as for masks.
+    pub other_cmds: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -422,6 +424,8 @@ pub enum Message {
     ListPick(usize),
     /// "Open with…": the files (taken when asked) and the programs found for the first one.
     OpenWithApps(usize, Vec<PathBuf>, Result<openwith::Found, String>),
+    /// "Open with…" → "All programs…": every installed one.
+    OpenWithAll(Vec<openwith::App>),
     /// "Open with…" → "Default": the program under the list's cursor for this type.
     OpenWithDefault,
     /// Its result: the program's name, or the error.
@@ -606,7 +610,9 @@ impl Application for App {
 
     fn dialog(&self) -> Option<Element<'_, Message>> {
         if let Some(d) = &self.dialog {
-            return Some(dialogs::view(d, &self.input_id, &self.tz));
+            // A list no taller than the panel's rows: the dialog's buttons stay in the window.
+            let list_h = self.panes[self.active].active().height;
+            return Some(dialogs::view(d, &self.input_id, &self.tz, list_h));
         }
         self.job
             .as_ref()
@@ -674,6 +680,7 @@ impl App {
             cmd_id: widget::Id::unique(),
             commands: state.commands.clone(),
             masks: state.masks.clone(),
+            other_cmds: state.other_cmds.clone(),
         };
         // A file opens its folder; a missing path keeps the saved tab.
         let left = left
@@ -770,9 +777,18 @@ impl App {
                             let i = *cursor;
                             return self.pick(i);
                         }
-                        _ => {}
+                        _ => return Task::none(),
                     }
-                    return Task::none();
+                    // Scrolled in proportion to the cursor: its row is always in view
+                    // (separators are shorter, close enough).
+                    let y = *cursor as f32 / items.len().saturating_sub(1).max(1) as f32;
+                    return scrollable::snap_to(
+                        dialogs::list_scroll_id(),
+                        scrollable::RelativeOffset {
+                            x: None,
+                            y: Some(y),
+                        },
+                    );
                 }
                 if let Some(Dialog::Diff(_)) = &self.dialog {
                     return match action {
@@ -1607,34 +1623,36 @@ impl App {
                 Ok(_) if self.dialog.is_some() => {}
                 Ok(found) => {
                     self.open_with = files;
-                    let own = |label, kind| ListItem {
-                        label,
-                        path: PathBuf::new(),
-                        kind,
-                        icon: String::new(),
-                    };
-                    let mut items: Vec<ListItem> = (found.apps.into_iter())
-                        .map(|a| ListItem {
-                            label: a.name,
-                            path: a.desktop,
-                            kind: Item::App,
-                            icon: a.icon,
-                        })
-                        .collect();
-                    if !items.is_empty() {
-                        items.push(own(String::new(), Item::Sep));
-                    }
-                    items.push(own(fl!("open-with-other"), Item::Other));
                     self.open_with_mime = found.mime;
                     self.dialog = Some(Dialog::List {
                         kind: ListKind::OpenWith,
                         side,
                         cursor: 0,
-                        items,
+                        items: open_with_items(found.apps, false),
                     });
                 }
                 Err(e) => self.say(StatusKind::Error, fl!("open-failed", err = e)),
             },
+            // "All programs…": the list shown is still the one that asked.
+            Message::OpenWithAll(apps) => {
+                if let Some(Dialog::List {
+                    kind: ListKind::OpenWith,
+                    cursor,
+                    items,
+                    ..
+                }) = &mut self.dialog
+                {
+                    *items = open_with_items(apps, true);
+                    *cursor = 0;
+                    return scrollable::snap_to(
+                        dialogs::list_scroll_id(),
+                        scrollable::RelativeOffset {
+                            x: None,
+                            y: Some(0.0),
+                        },
+                    );
+                }
+            }
             Message::OpenWithDefault => {
                 let Some(Dialog::List {
                     kind: ListKind::OpenWith,
@@ -1993,6 +2011,7 @@ impl App {
             find: self.find.clone(),
             commands: self.commands.clone(),
             masks: self.masks.clone(),
+            other_cmds: self.other_cmds.clone(),
         };
         if state == self.saved {
             return;
@@ -2925,6 +2944,7 @@ impl App {
                 if input.trim().is_empty() {
                     return Task::none();
                 }
+                self.other_cmds = cmdline::remember(&self.other_cmds, &input);
                 let dir = self.panes[side].active().panel.cwd().to_path_buf();
                 let line = openwith::other_line(&input, &sources);
                 // Watched like a toolbar command: a typo ("gimpp") is reported, not silent.
@@ -4265,6 +4285,23 @@ impl App {
                     self.hotlist_back();
                     return Task::none();
                 }
+                Some(Item::All) => {
+                    use i18n_embed::LanguageLoader;
+                    let lang = crate::i18n::LANGUAGE_LOADER
+                        .current_language()
+                        .language
+                        .to_string();
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                openwith::all_apps(&openwith::data_dirs(), &lang)
+                            })
+                            .await
+                            .unwrap_or_default()
+                        },
+                        |apps| cosmic::Action::App(Message::OpenWithAll(apps)),
+                    );
+                }
                 _ => {}
             }
         }
@@ -4281,7 +4318,7 @@ impl App {
                     op: InputOp::OpenWith,
                     side,
                     sources: files,
-                    input: String::new(),
+                    input: self.other_cmds.first().cloned().unwrap_or_default(),
                 });
                 return widget::text_input::focus(self.input_id.clone());
             }
@@ -4524,14 +4561,20 @@ impl App {
             && !self.busy()
     }
 
-    /// Num+ / Num− dialog: ↑ older mask, ↓ newer (TC's drop-down history).
+    /// Num+ / Num− and "Open with command": ↑ older entry, ↓ newer (TC's drop-down history).
     fn mask_history(&mut self, action: Action) -> Option<Task<Message>> {
-        let Some(Dialog::Mask { input, .. }) = &mut self.dialog else {
-            return None;
+        let (list, input) = match &mut self.dialog {
+            Some(Dialog::Mask { input, .. }) => (&self.masks, input),
+            Some(Dialog::Input {
+                op: InputOp::OpenWith,
+                input,
+                ..
+            }) => (&self.other_cmds, input),
+            _ => return None,
         };
         let step = match action {
-            Action::Up => cmdline::previous(&self.masks, input),
-            Action::Down => cmdline::next(&self.masks, input),
+            Action::Up => cmdline::previous(list, input),
+            Action::Down => cmdline::next(list, input),
             _ => return None,
         };
         if let Some(m) = step {
@@ -4913,6 +4956,33 @@ fn count_dirs(
     }))
 }
 
+/// "Open with…" rows: the programs, a line, "All programs…" (unless they are all shown already),
+/// "Other program…".
+fn open_with_items(apps: Vec<openwith::App>, all: bool) -> Vec<ListItem> {
+    let own = |label, kind| ListItem {
+        label,
+        path: PathBuf::new(),
+        kind,
+        icon: String::new(),
+    };
+    let mut items: Vec<ListItem> = (apps.into_iter())
+        .map(|a| ListItem {
+            label: a.name,
+            path: a.desktop,
+            kind: Item::App,
+            icon: a.icon,
+        })
+        .collect();
+    if !items.is_empty() {
+        items.push(own(String::new(), Item::Sep));
+    }
+    if !all {
+        items.push(own(fl!("open-with-all"), Item::All));
+    }
+    items.push(own(fl!("open-with-other"), Item::Other));
+    items
+}
+
 /// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
 /// name only — a stat per result would stall on a million of them.
 fn inside_archive(p: &Path) -> bool {
@@ -5104,7 +5174,7 @@ mod tests {
         };
         assert_eq!(
             items.iter().map(|i| i.kind).collect::<Vec<_>>(),
-            [Item::Other]
+            [Item::All, Item::Other]
         );
         app.dialog = None;
         let ed = openwith::App {
@@ -5127,13 +5197,49 @@ mod tests {
             ("Editor", "ed")
         );
         let kinds: Vec<Item> = items.iter().map(|i| i.kind).collect();
+        assert_eq!(kinds, [Item::App, Item::Sep, Item::All, Item::Other]);
+        // "All programs…" replaces the list, without itself.
+        let other = openwith::App {
+            name: "Gimp".into(),
+            icon: String::new(),
+            desktop: "/usr/share/applications/gimp.desktop".into(),
+        };
+        let _ = app.update(Message::OpenWithAll(vec![other]));
+        let Some(Dialog::List { items, .. }) = &app.dialog else {
+            panic!("no list")
+        };
+        let kinds: Vec<Item> = items.iter().map(|i| i.kind).collect();
         assert_eq!(kinds, [Item::App, Item::Sep, Item::Other]);
+        assert_eq!(items[0].label, "Gimp");
         // "Other program…" asks for a command, with the files taken when the list was asked for.
         let _ = app.update(Message::ListPick(2));
         let Some(Dialog::Input { op, sources, .. }) = &app.dialog else {
             panic!("no input")
         };
         assert_eq!((*op, sources.clone()), (InputOp::OpenWith, files));
+    }
+
+    #[test]
+    fn other_program_remembers_commands() {
+        let mut app = app_with(Config::default(), State::default());
+        let input = |app: &App| match &app.dialog {
+            Some(Dialog::Input { input, .. }) => input.clone(),
+            _ => panic!("no input"),
+        };
+        let found = || Ok(openwith::Found::default());
+        // `true` / `false` with no file: nothing to open, the command is still remembered.
+        for cmd in ["false", "true"] {
+            let _ = app.update(Message::OpenWithApps(0, Vec::new(), found()));
+            let _ = app.update(Message::ListPick(1)); // "Other program…"
+            let _ = app.update(Message::DialogInput(cmd.into()));
+            let _ = app.update(Message::DialogSubmit);
+        }
+        assert_eq!(app.other_cmds, ["true", "false"]);
+        let _ = app.update(Message::OpenWithApps(0, Vec::new(), found()));
+        let _ = app.update(Message::ListPick(1));
+        assert_eq!(input(&app), "true"); // opens with the last one
+        let _ = app.update(Message::FieldKey(Action::Up));
+        assert_eq!(input(&app), "false");
     }
 
     #[test]

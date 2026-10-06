@@ -46,10 +46,12 @@ pub struct Found {
     pub apps: Vec<App>,
 }
 
-/// The name a `.desktop` file shows in `lang` ("ru") and its icon, or `None` if it hides itself.
-pub fn parse_desktop(text: &str, lang: &str) -> Option<(String, String)> {
+/// The name a `.desktop` file shows in `lang` ("ru"), its icon and whether menus show it
+/// (`NoDisplay`: still a handler for its types); `None` if `Hidden` (deleted) or not a program
+/// (`Type=Link` / `Directory`).
+pub fn parse_desktop(text: &str, lang: &str) -> Option<(String, String, bool)> {
     let (mut plain, mut local, mut in_entry) = (None, None, false);
-    let mut icon = String::new();
+    let (mut icon, mut shown) = (String::new(), true);
     for l in text.lines().map(str::trim) {
         if l.starts_with('[') {
             in_entry = l == "[Desktop Entry]";
@@ -67,11 +69,13 @@ pub fn parse_desktop(text: &str, lang: &str) -> Option<(String, String)> {
             Some(_) => {}
             None if k == "Name" => plain = Some(v.to_string()),
             None if k == "Hidden" && v == "true" => return None,
+            None if k == "NoDisplay" => shown = v != "true",
+            None if k == "Type" && v != "Application" => return None,
             None if k == "Icon" => icon = v.to_string(),
             None => {}
         }
     }
-    Some((local.or(plain)?, icon))
+    Some((local.or(plain)?, icon, shown))
 }
 
 /// Where `.desktop` files live: `$XDG_DATA_HOME`, then `$XDG_DATA_DIRS`.
@@ -119,7 +123,7 @@ pub fn apps(file: &Path, lang: &str) -> Result<Found, String> {
         .iter()
         .filter_map(|id| {
             let desktop = find_desktop(id, &dirs)?;
-            let (name, icon) = parse_desktop(&std::fs::read_to_string(&desktop).ok()?, lang)?;
+            let (name, icon, _) = parse_desktop(&std::fs::read_to_string(&desktop).ok()?, lang)?;
             Some(App {
                 name,
                 icon,
@@ -131,6 +135,30 @@ pub fn apps(file: &Path, lang: &str) -> Result<Found, String> {
         mime: mime.into(),
         apps,
     })
+}
+
+/// Every program in `dirs` (`data_dirs()`), by name; an id in an earlier dir hides later ones.
+pub fn all_apps(dirs: &[PathBuf], lang: &str) -> Vec<App> {
+    let mut seen = std::collections::HashSet::new();
+    let mut apps: Vec<App> = dirs
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d.join("applications")).ok())
+        .flat_map(|rd| rd.filter_map(Result::ok).map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "desktop"))
+        .filter(|p| seen.insert(p.file_name().map(ToOwned::to_owned)))
+        .filter_map(|desktop| {
+            let text = std::fs::read_to_string(&desktop).ok()?;
+            let (name, icon, shown) = parse_desktop(&text, lang)?;
+            shown.then_some(())?;
+            Some(App {
+                name,
+                icon,
+                desktop,
+            })
+        })
+        .collect();
+    apps.sort_by_cached_key(|a| a.name.to_lowercase());
+    apps
 }
 
 /// Makes `desktop` the default program for `mime`. Blocking.
@@ -176,15 +204,19 @@ mod tests {
     fn desktop_name_in_language() {
         let t = "[Desktop Entry]\nName=Editor\nName[ru_RU]=Ред\nName[de]=Ed\nExec=e %f\n\
                  [Desktop Action new]\nName[ru]=Новое окно\n";
-        let name = |t, l| parse_desktop(t, l).map(|(n, _)| n);
+        let name = |t, l| parse_desktop(t, l).map(|(n, ..)| n);
         assert_eq!(name(t, "ru").as_deref(), Some("Ред"));
         assert_eq!(name(t, "fr").as_deref(), Some("Editor"));
         let exact = "[Desktop Entry]\nName[ru_RU]=Долго\nName[ru]=Ред\nName=E\n";
         assert_eq!(name(exact, "ru").as_deref(), Some("Ред"));
-        assert_eq!(
-            parse_desktop("[Desktop Entry]\nName=A\nHidden=true\n", "ru"),
-            None
-        );
+        for hidden in ["Hidden=true", "Type=Link"] {
+            let t = format!("[Desktop Entry]\nName=A\n{hidden}\n");
+            assert_eq!(parse_desktop(&t, "ru"), None, "{hidden}");
+        }
+        assert!(parse_desktop("[Desktop Entry]\nType=Application\nName=A\n", "ru").is_some());
+        // Not in menus, still a handler for its types.
+        let nd = parse_desktop("[Desktop Entry]\nName=A\nNoDisplay=true\n", "ru").unwrap();
+        assert!(!nd.2);
     }
 
     #[test]
@@ -211,6 +243,31 @@ mod tests {
         let dirs = [a.path().to_path_buf(), b.path().to_path_buf()];
         assert_eq!(find_desktop("x.desktop", &dirs), Some(f));
         assert_eq!(find_desktop("y.desktop", &dirs), None);
+    }
+
+    #[test]
+    fn all_apps_by_name_first_dir_wins() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let put = |d: &Path, id: &str, text: &str| {
+            std::fs::create_dir_all(d.join("applications")).unwrap();
+            std::fs::write(d.join("applications").join(id), text).unwrap();
+        };
+        put(a.path(), "x.desktop", "[Desktop Entry]\nName=zeta\n");
+        put(b.path(), "x.desktop", "[Desktop Entry]\nName=shadowed\n");
+        put(
+            b.path(),
+            "y.desktop",
+            "[Desktop Entry]\nName=Alpha\nIcon=y\n",
+        );
+        put(
+            b.path(),
+            "h.desktop",
+            "[Desktop Entry]\nName=hid\nNoDisplay=true\n",
+        );
+        put(b.path(), "n.txt", "[Desktop Entry]\nName=not\n");
+        let dirs = [a.path().to_path_buf(), b.path().to_path_buf()];
+        let names: Vec<String> = all_apps(&dirs, "ru").into_iter().map(|a| a.name).collect();
+        assert_eq!(names, ["Alpha", "zeta"]);
     }
 
     #[test]
