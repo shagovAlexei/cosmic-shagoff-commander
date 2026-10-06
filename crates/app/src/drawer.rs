@@ -41,6 +41,7 @@ pub enum Setting {
     Skin(usize),
     ShowFkeys(bool),
     ShowCmdline(bool),
+    KeepHistory(bool),
     InternalViewer(bool),
     ShowHidden(bool),
     /// Ctrl+W on the last tab goes home.
@@ -210,6 +211,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-cmdline"),
                 widget::toggler(c.show_cmdline).on_toggle(move |b| set(Setting::ShowCmdline(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-keep-history"),
+                widget::toggler(c.keep_history).on_toggle(move |b| set(Setting::KeepHistory(b))),
             ))
             .into(),
         settings::section()

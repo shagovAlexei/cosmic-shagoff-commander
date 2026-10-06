@@ -422,6 +422,8 @@ pub enum Message {
     FieldKey(Action),
     /// Click on entry i of the open list dialog.
     ListPick(usize),
+    /// Alt+↓ / Alt+F8 "Clear": forget that history.
+    ListClear,
     /// "Open with…": the files (taken when asked) and the programs found for the first one.
     OpenWithApps(usize, Vec<PathBuf>, Result<openwith::Found, String>),
     /// "Open with…" → "All programs…": every installed one.
@@ -1609,6 +1611,18 @@ impl App {
             }
             // Only the quick search field forwards keys; a dialog's text field keeps its own.
             Message::ListPick(i) => return self.pick(i),
+            Message::ListClear => match self.dialog.take() {
+                Some(Dialog::List {
+                    kind: ListKind::History,
+                    side,
+                    ..
+                }) => self.panes[side].active_mut().history.clear(),
+                Some(Dialog::List {
+                    kind: ListKind::Commands,
+                    ..
+                }) => self.commands.clear(),
+                other => self.dialog = other,
+            },
             Message::OpenWithApps(side, files, r) => match r {
                 // Asked in the background: a dialog opened meanwhile keeps its place.
                 Ok(_) if self.dialog.is_some() => {}
@@ -1993,6 +2007,14 @@ impl App {
 
     /// Write tab paths when they changed (cheap compare on every message; no write if equal).
     fn save_state(&mut self) {
+        // Off: the histories live for this run only, and what was saved is wiped.
+        let keep = |v: &Vec<String>| {
+            if self.config.keep_history {
+                v.clone()
+            } else {
+                Vec::new()
+            }
+        };
         let state = State {
             panes: [0, 1].map(|s| PaneState {
                 tabs: self.panes[s]
@@ -2009,9 +2031,9 @@ impl App {
             }),
             active: self.active,
             find: self.find.clone(),
-            commands: self.commands.clone(),
-            masks: self.masks.clone(),
-            other_cmds: self.other_cmds.clone(),
+            commands: keep(&self.commands),
+            masks: keep(&self.masks),
+            other_cmds: keep(&self.other_cmds),
         };
         if state == self.saved {
             return;
@@ -4137,6 +4159,7 @@ impl App {
             Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
             Setting::ShowCmdline(b) => c.show_cmdline = b,
+            Setting::KeepHistory(b) => c.keep_history = b,
             Setting::InternalViewer(b) => c.internal_viewer = b,
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::LastTabHome(b) => {
@@ -6405,6 +6428,33 @@ mod tests {
         let _ = app.update(Message::DialogInput("a/b".into())); // one name only
         let _ = app.update(Message::DialogSubmit);
         assert!(!tmp.path().join("a").exists());
+    }
+
+    #[test]
+    fn history_clear_and_keep_history_off() {
+        let mut app = app_with(Config::default(), State::default());
+        for p in ["/a", "/b"] {
+            app.panes[0].active_mut().history.visit(Path::new(p));
+        }
+        let _ = app.update(Message::Key(Action::HistoryList));
+        let _ = app.update(Message::ListClear);
+        assert!(app.dialog.is_none());
+        assert_eq!(
+            app.panes[0].active().history.recent(),
+            [PathBuf::from("/b")]
+        );
+        app.commands = vec!["ls".into()];
+        let _ = app.update(Message::Key(Action::CmdHistory));
+        let _ = app.update(Message::ListClear);
+        assert!(app.commands.is_empty());
+        // Off: kept for this run, not written.
+        app.commands = vec!["ls".into()];
+        app.masks = vec!["*.rs".into()];
+        let _ = app.update(Message::Setting(crate::drawer::Setting::KeepHistory(false)));
+        assert_eq!(app.commands, ["ls"]);
+        assert!(app.saved.commands.is_empty() && app.saved.masks.is_empty());
+        let _ = app.update(Message::Setting(crate::drawer::Setting::KeepHistory(true)));
+        assert_eq!(app.saved.commands, ["ls"]);
     }
 
     #[test]

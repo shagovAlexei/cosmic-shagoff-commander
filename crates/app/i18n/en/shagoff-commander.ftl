@@ -461,3 +461,5 @@ open-with-other-title = Open with command
 open-with-default = Make default
 open-with-default-set = { $app } now opens { $mime } by default
 open-with-all = All programs…
+settings-keep-history = Remember history after restart
+history-clear = Clear

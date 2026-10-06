@@ -44,6 +44,13 @@ impl History {
         Some(self.items[self.pos].clone())
     }
 
+    /// Forget everything but the dir the tab is in.
+    pub fn clear(&mut self) {
+        let current = self.items.get(self.pos).cloned();
+        self.items = current.into_iter().collect();
+        self.pos = 0;
+    }
+
     /// Unique dirs: the current one first, then the rest by most recent visit.
     pub fn recent(&self) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = Vec::new();
@@ -71,6 +78,20 @@ mod tests {
             h.visit(Path::new(p));
         }
         h
+    }
+
+    #[test]
+    fn clear_keeps_only_the_current_dir() {
+        let mut x = h(&["/a", "/b", "/c"]);
+        x.back();
+        x.clear();
+        assert_eq!(x.recent(), [PathBuf::from("/b")]);
+        assert_eq!((x.back(), x.forward()), (None, None));
+        x.visit(Path::new("/d"));
+        assert_eq!(x.back(), Some(PathBuf::from("/b")));
+        let mut empty = History::default();
+        empty.clear();
+        assert!(empty.recent().is_empty());
     }
 
     #[test]

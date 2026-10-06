@@ -462,3 +462,5 @@ open-with-other-title = Открыть командой
 open-with-default = По умолчанию
 open-with-default-set = { $app } теперь открывает { $mime } по умолчанию
 open-with-all = Все программы…
+settings-keep-history = Помнить историю после перезапуска
+history-clear = Очистить

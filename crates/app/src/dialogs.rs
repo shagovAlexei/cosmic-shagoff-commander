@@ -937,18 +937,21 @@ pub fn view<'a>(
                 .title(title)
                 .control(list)
                 .secondary_action(cancel);
-            if *kind == ListKind::OpenWith {
-                let default = (items.get(*cursor))
-                    .filter(|it| it.kind == Item::App)
-                    .map(|_| Message::OpenWithDefault);
-                dialog
-                    .tertiary_action(
+            match kind {
+                ListKind::OpenWith => {
+                    let default = (items.get(*cursor))
+                        .filter(|it| it.kind == Item::App)
+                        .map(|_| Message::OpenWithDefault);
+                    dialog.tertiary_action(
                         widget::button::standard(fl!("open-with-default")).on_press_maybe(default),
                     )
-                    .into()
-            } else {
-                dialog.into()
+                }
+                ListKind::History | ListKind::Commands => dialog.tertiary_action(
+                    widget::button::standard(fl!("history-clear")).on_press(Message::ListClear),
+                ),
+                _ => dialog,
             }
+            .into()
         }
         Dialog::MultiRename(m) => {
             let edit = |label: String, value: &'a str, f: MrField| {
