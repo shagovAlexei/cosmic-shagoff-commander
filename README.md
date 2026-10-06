@@ -9,7 +9,7 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Two panels with tabs (lock, rename, move between panels), Total Commander keys: F3–F8, Shift+F5/F6, Insert / Space / Num+ / Num− marking, Alt+letter quick search, history and hotlist
 - Copy / move / delete with conflict answers (replace, skip, replace older, rename, keep both), trash or permanent delete, clipboard compatible with COSMIC Files
 - Archives as folders: zip, tar.gz / bz2 / xz / zst, 7z — browse, copy in and out, pack / unpack
-- Built-in viewer (F3): text with wrap and Cyrillic code pages (1251, KOI8-R, 866, guessed), hex, images
+- Built-in viewer (F3): text with wrap and Cyrillic code pages (1251, KOI8-R, 866, guessed), hex, images; quick view in the other panel (Ctrl+Q), also inside archives
 - Find files (masks or regex, text inside, size / date, inside archives), compare and synchronize folders, compare files side by side
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs
 - Right-click menus, full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
@@ -38,6 +38,25 @@ A `.deb` for Pop!_OS 24.04 / Ubuntu 24.04 is attached to each [release](https://
 ```sh
 sudo apt install ./shagoff-commander_*_amd64.deb
 ```
+
+## Update
+
+Which version you have: **Help → About**, or `dpkg -s shagoff-commander | grep Version`.
+The newest one is on the [releases page](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/latest).
+
+Install the new `.deb` over the old one — settings, tabs and history stay (they live in
+`~/.config/cosmic/` and `~/.local/state/cosmic/`):
+
+```sh
+# with the GitHub CLI
+gh release download -R shagovAlexei/cosmic-shagoff-commander -p '*.deb' -D /tmp --clobber
+sudo apt install /tmp/shagoff-commander_*_amd64.deb
+
+# or from a clone of the sources
+git pull && sudo just install
+```
+
+Then close the running Shagoff Commander and start it again.
 
 ## Build
 
