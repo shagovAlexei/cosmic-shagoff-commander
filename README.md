@@ -49,8 +49,8 @@ Install the new `.deb` over the old one — settings, tabs and history stay (the
 
 ```sh
 # with the GitHub CLI
-gh release download -R shagovAlexei/cosmic-shagoff-commander -p '*.deb' -D /tmp --clobber
-sudo apt install /tmp/shagoff-commander_*_amd64.deb
+gh release download -R shagovAlexei/cosmic-shagoff-commander -p '*.deb' -O /tmp/shagoff-commander.deb --clobber
+sudo apt install /tmp/shagoff-commander.deb
 
 # or from a clone of the sources
 git pull && sudo just install
