@@ -84,6 +84,7 @@ pub enum Event {
 struct ChannelHandler {
     tx: fmpsc::UnboundedSender<Event>,
     cancel: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
     last: Option<Instant>,
 }
 
@@ -122,18 +123,30 @@ impl Handler for ChannelHandler {
         rx.recv().unwrap_or(ErrorChoice::Cancel)
     }
 
+    /// Pause: the engine asks this between chunks and files, so it waits here (cancel still works).
     fn cancelled(&self) -> bool {
+        while self.pause.load(Ordering::Relaxed) && !self.cancel.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
         self.cancel.load(Ordering::Relaxed)
     }
 }
 
-/// Start `job` on its own thread. Returns the cancel flag and the event stream (ends after `Finished`).
-pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
+/// Set from the UI, read by the worker.
+#[derive(Clone, Default)]
+pub struct Control {
+    pub cancel: Arc<AtomicBool>,
+    pub pause: Arc<AtomicBool>,
+}
+
+/// Start `job` on its own thread. Returns its controls and the event stream (ends after `Finished`).
+pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
     let (tx, rx) = fmpsc::unbounded();
-    let cancel = Arc::new(AtomicBool::new(false));
+    let control = Control::default();
     let mut h = ChannelHandler {
         tx: tx.clone(),
-        cancel: cancel.clone(),
+        cancel: control.cancel.clone(),
+        pause: control.pause.clone(),
         last: None,
     };
     std::thread::spawn(move || {
@@ -243,13 +256,117 @@ pub fn spawn(job: Job) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<Event>) {
         };
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });
-    (cancel, rx)
+    (control, rx)
+}
+
+impl Job {
+    /// What it works on, for the queue list: the sources and where they go (if anywhere).
+    pub fn what(&self) -> (Vec<&Path>, Option<&Path>) {
+        match self {
+            Job::Transfer { pairs, .. } => (
+                pairs.iter().map(|(s, _)| s.as_path()).collect(),
+                pairs.first().and_then(|(_, d)| d.parent()),
+            ),
+            Job::Delete { paths, .. } => (paths.iter().map(PathBuf::as_path).collect(), None),
+            Job::Pack { groups, .. } => (
+                groups
+                    .iter()
+                    .flat_map(|(s, _)| s.iter().map(PathBuf::as_path))
+                    .collect(),
+                groups.first().map(|(_, a)| a.as_path()),
+            ),
+            Job::Unpack { archives, dest, .. } => (
+                archives.iter().map(PathBuf::as_path).collect(),
+                Some(dest.as_path()),
+            ),
+            Job::Sync {
+                to_right, to_left, ..
+            } => (
+                to_right
+                    .iter()
+                    .chain(to_left)
+                    .map(|(s, _)| s.as_path())
+                    .collect(),
+                None,
+            ),
+            Job::Extract { names, dest, .. } | Job::ExtractMove { names, dest, .. } => (
+                names.iter().map(PathBuf::as_path).collect(),
+                Some(dest.as_path()),
+            ),
+            Job::Repack { archive, .. } => (vec![], Some(archive.as_path())),
+        }
+    }
+}
+
+/// One queue row: `big.iso +2 → /mnt/usb`.
+pub fn describe(job: &Job) -> String {
+    let (src, dest) = job.what();
+    let name = |p: &Path| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.display().to_string())
+    };
+    let mut s = src.first().map(|p| name(p)).unwrap_or_default();
+    if src.len() > 1 {
+        s = format!("{s} +{}", src.len() - 1);
+    }
+    match dest {
+        Some(d) if s.is_empty() => d.display().to_string(),
+        Some(d) => format!("{s} → {}", d.display()),
+        None => s,
+    }
 }
 
 #[cfg(test)]
 mod sync_tests {
     use super::*;
     use cosmic::iced::futures::{StreamExt, executor::block_on};
+
+    #[test]
+    fn describe_names_the_first_source_the_rest_and_the_target() {
+        let job = Job::Transfer {
+            method: Method::Copy,
+            pairs: vec![
+                ("/a/x.iso".into(), "/mnt/x.iso".into()),
+                ("/a/y".into(), "/mnt/y".into()),
+            ],
+        };
+        assert_eq!(describe(&job), "x.iso +1 → /mnt");
+        let job = Job::Delete {
+            paths: vec!["/a/z".into()],
+            permanent: false,
+        };
+        assert_eq!(describe(&job), "z");
+    }
+
+    #[test]
+    fn paused_the_worker_waits_until_resumed_and_cancel_ends_the_wait() {
+        let (tx, _rx) = fmpsc::unbounded();
+        let c = Control::default();
+        let h = ChannelHandler {
+            tx,
+            cancel: c.cancel.clone(),
+            pause: c.pause.clone(),
+            last: None,
+        };
+        c.pause.store(true, Ordering::Relaxed);
+        let p = c.pause.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            p.store(false, Ordering::Relaxed);
+        });
+        let t = Instant::now();
+        assert!(!h.cancelled());
+        assert!(t.elapsed() >= Duration::from_millis(250));
+
+        c.pause.store(true, Ordering::Relaxed);
+        let k = c.cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            k.store(true, Ordering::Relaxed);
+        });
+        assert!(h.cancelled());
+    }
 
     #[test]
     fn regression_sync_asks_before_replacing_and_deletes_nothing() {
@@ -265,7 +382,7 @@ mod sync_tests {
             to_left: vec![],
             delete: vec![],
         };
-        let (_cancel, mut rx) = spawn(job);
+        let (_control, mut rx) = spawn(job);
         let asked = block_on(async {
             let mut asked = false;
             while let Some(e) = rx.next().await {
@@ -283,7 +400,7 @@ mod sync_tests {
 
     /// Run a job to the end, answering nothing (no conflicts or errors expected).
     fn run(job: Job) -> Arc<Report> {
-        let (_cancel, mut rx) = spawn(job);
+        let (_control, mut rx) = spawn(job);
         block_on(async {
             while let Some(e) = rx.next().await {
                 if let Event::Finished(r) = e {

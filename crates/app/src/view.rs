@@ -771,7 +771,9 @@ fn job_line(app: &App) -> Option<Element<'_, Message>> {
         crate::dialogs::job_title(j.kind),
         (f * 100.0).round() as u32
     );
-    if !j.current.is_empty() {
+    if j.paused() {
+        label = format!("{label} — {}", fl!("job-paused"));
+    } else if !j.current.is_empty() {
         label = format!("{label} — {}", j.current);
     }
     if !app.queue.is_empty() {
@@ -786,6 +788,12 @@ fn job_line(app: &App) -> Option<Element<'_, Message>> {
             .width(Length::Fill)
             .wrapping(Wrapping::None)
             .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
+        button::text(if j.paused() {
+            fl!("job-resume")
+        } else {
+            fl!("job-pause")
+        })
+        .on_press(Message::JobPause),
         button::text(fl!("job-show")).on_press(Message::JobShow),
         button::text(fl!("cancel")).on_press(Message::CancelJob),
     ]

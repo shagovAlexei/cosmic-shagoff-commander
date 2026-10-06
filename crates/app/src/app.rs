@@ -188,7 +188,7 @@ pub struct Running {
     pub done: u64,
     pub total: u64,
     pub current: String,
-    cancel: Arc<AtomicBool>,
+    control: jobs::Control,
     /// Name to put the source pane's cursor on afterwards (rename).
     focus: Option<String>,
     /// Enter / F3 in an archive: what to do with the extracted file once the job succeeds.
@@ -200,9 +200,21 @@ pub struct Running {
 /// An operation started while another one runs: it waits its turn, then runs in the background.
 pub struct Queued {
     side: usize,
-    kind: OpKind,
+    pub kind: OpKind,
     job: Job,
     focus: Option<String>,
+}
+
+impl Queued {
+    pub fn label(&self) -> String {
+        jobs::describe(&self.job)
+    }
+}
+
+impl Running {
+    pub fn paused(&self) -> bool {
+        self.control.pause.load(Ordering::Relaxed)
+    }
 }
 
 enum Open {
@@ -444,6 +456,10 @@ pub enum Message {
     /// The progress dialog's "In background" / the status line's "Show".
     JobHide,
     JobShow,
+    /// Pause / go on with the running job.
+    JobPause,
+    /// ✕ on a queue row: it will not run.
+    Unqueue(usize),
     /// A panel key a focused text field captured (F-keys, PgUp/PgDn, Insert, Ctrl+…).
     FieldKey(Action),
     /// Click on entry i of the open list dialog.
@@ -666,7 +682,7 @@ impl Application for App {
         self.job
             .as_ref()
             .filter(|j| !j.hidden)
-            .map(|j| dialogs::progress(j, self.queue.len()))
+            .map(|j| dialogs::progress(j, &self.queue))
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {
@@ -1676,6 +1692,18 @@ impl App {
                 other => self.dialog = other,
             },
             Message::CancelJob => self.cancel_job(),
+            Message::JobPause => {
+                if let Some(j) = &self.job {
+                    j.control.pause.fetch_xor(true, Ordering::Relaxed);
+                }
+            }
+            Message::Unqueue(i) => {
+                if i < self.queue.len() {
+                    self.queue.remove(i);
+                    // The «В очереди: N» said when it was added is stale now.
+                    self.status = None;
+                }
+            }
             Message::JobHide | Message::JobShow => {
                 if let Some(j) = &mut self.job {
                     j.hidden = matches!(message, Message::JobHide);
@@ -4294,14 +4322,14 @@ impl App {
             self.say(StatusKind::Info, fl!("job-queued", n = self.queue.len()));
             return Task::none();
         }
-        let (cancel, events) = jobs::spawn(job);
+        let (control, events) = jobs::spawn(job);
         self.job = Some(Running {
             side,
             kind,
             done: 0,
             total: 0,
             current: String::new(),
-            cancel,
+            control,
             focus,
             open: None,
             hidden: false,
@@ -4312,7 +4340,7 @@ impl App {
     /// Cancel stops what waits too: a queued delete must not start on its own right after.
     fn cancel_job(&mut self) {
         if let Some(j) = &self.job {
-            j.cancel.store(true, Ordering::Relaxed);
+            j.control.cancel.store(true, Ordering::Relaxed);
         }
         self.queue.clear();
     }
@@ -6936,6 +6964,32 @@ mod tests {
     }
 
     #[test]
+    fn the_running_job_pauses_and_a_queued_one_can_be_taken_out() {
+        let mut app = files_app(&["a", "b", "c"]);
+        let dir = app.panes[0].active().panel.cwd().to_path_buf();
+        for n in ["a", "b", "c"] {
+            let _ = app.start_job(
+                0,
+                OpKind::Delete,
+                Job::Delete {
+                    paths: vec![dir.join(n)],
+                    permanent: true,
+                },
+                None,
+            );
+        }
+        let _ = app.update(Message::JobPause);
+        assert!(app.job.as_ref().unwrap().paused());
+        let _ = app.update(Message::JobPause);
+        assert!(!app.job.as_ref().unwrap().paused());
+        let labels = |app: &App| app.queue.iter().map(Queued::label).collect::<Vec<_>>();
+        assert_eq!(labels(&app), ["b", "c"]);
+        let _ = app.update(Message::Unqueue(0));
+        assert_eq!(labels(&app), ["c"]);
+        app.cancel_job();
+    }
+
+    #[test]
     fn a_job_in_the_background_frees_the_panels_and_a_second_one_waits_in_the_queue() {
         let mut app = files_app(&["a", "b", "c"]);
         let dir = app.panes[0].active().panel.cwd().to_path_buf();
@@ -6958,7 +7012,14 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         assert_ne!(cursor_name(&app), before);
         let _ = app.update(Message::DialogCancel); // Esc: not for the hidden job
-        assert!(!app.job.as_ref().unwrap().cancel.load(Ordering::Relaxed));
+        assert!(
+            !app.job
+                .as_ref()
+                .unwrap()
+                .control
+                .cancel
+                .load(Ordering::Relaxed)
+        );
         let again = vec![dir.join("b")];
         let _ = app.start_job(
             0,
