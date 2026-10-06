@@ -666,7 +666,7 @@ impl Application for App {
         self.job
             .as_ref()
             .filter(|j| !j.hidden)
-            .map(dialogs::progress)
+            .map(|j| dialogs::progress(j, self.queue.len()))
     }
 
     fn footer(&self) -> Option<Element<'_, Message>> {

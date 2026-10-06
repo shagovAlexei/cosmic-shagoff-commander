@@ -1701,7 +1701,8 @@ pub fn job_fraction(job: &Running) -> f32 {
 }
 
 /// Shown while a job runs, its window is not hidden and no question is pending.
-pub fn progress(job: &Running) -> Element<'_, Message> {
+/// `queued`: jobs waiting behind this one, shown after the title.
+pub fn progress(job: &Running, queued: usize) -> Element<'_, Message> {
     let counts = match job.kind {
         OpKind::Delete => fl!(
             "progress-items",
@@ -1716,8 +1717,12 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
     };
     let fraction = job_fraction(job);
     let percent = format!("{} %", (fraction * 100.0).round() as u32);
+    let mut title = job_title(job.kind);
+    if queued > 0 {
+        title = format!("{title} ({})", fl!("job-waiting", n = queued));
+    }
     widget::dialog()
-        .title(job_title(job.kind))
+        .title(title)
         .body(job.current.clone())
         .control(
             column![

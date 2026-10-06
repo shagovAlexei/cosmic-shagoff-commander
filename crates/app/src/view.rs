@@ -767,11 +767,13 @@ fn job_line(app: &App) -> Option<Element<'_, Message>> {
     let j = app.job.as_ref().filter(|j| j.hidden)?;
     let f = crate::dialogs::job_fraction(j);
     let mut label = format!(
-        "{}: {} % — {}",
+        "{}: {} %",
         crate::dialogs::job_title(j.kind),
-        (f * 100.0).round() as u32,
-        j.current
+        (f * 100.0).round() as u32
     );
+    if !j.current.is_empty() {
+        label = format!("{label} — {}", j.current);
+    }
     if !app.queue.is_empty() {
         label = format!("{label} ({})", fl!("job-waiting", n = app.queue.len()));
     }
