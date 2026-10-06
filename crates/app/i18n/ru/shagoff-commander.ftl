@@ -468,3 +468,4 @@ menu-quick-view = Быстрый просмотр
 quick-none = Нет просмотра: каталог или файл внутри архива
 quick-counting = Подсчёт…
 quick-dir = Каталог: файлов { $files }, каталогов { $dirs }, { $size }
+quick-too-big = Больше { $limit } МБ в архиве: открыть через F3

@@ -914,6 +914,39 @@ pub fn unpack(archives: &[PathBuf], dest: &Path, own_dir: bool, h: &mut dyn Hand
     run(&units, dest, h)
 }
 
+/// Ctrl+Q inside an archive: the entry `name` of the dir `inner` into `dest` with nothing to ask
+/// (a fresh dir has no conflicts; any error gives up), stopped by `stop`. The extracted file.
+pub fn extract_one(
+    archive: &Path,
+    inner: &Path,
+    name: &Path,
+    dest: &Path,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Option<PathBuf> {
+    struct Quiet<'a>(&'a std::sync::atomic::AtomicBool);
+    impl Handler for Quiet<'_> {
+        fn progress(&mut self, _: u64, _: u64, _: &Path) {}
+        fn conflict(&mut self, _: &FileInfo, _: &FileInfo) -> Resolution {
+            Resolution::Cancel
+        }
+        fn error(&mut self, _: &Path, _: &io::Error) -> ErrorChoice {
+            ErrorChoice::Cancel
+        }
+        fn cancelled(&self) -> bool {
+            self.0.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+    let r = extract(
+        archive,
+        inner,
+        &[name.to_path_buf()],
+        dest,
+        &mut Quiet(stop),
+    );
+    let file = dest.join(name);
+    (!r.cancelled && file.is_file()).then_some(file)
+}
+
 /// F5 / Ctrl+C / Enter in an archive panel: `names` (relative to the dir `inner`) into `dest`.
 /// `completed` = their paths through the archive (`archive/inner/name`) when nothing was skipped.
 pub fn extract(
@@ -2484,6 +2517,27 @@ mod tests {
         assert_eq!(names(&out), ["a.txt"]);
         assert_eq!(fs::read_to_string(out.join("a.txt")).unwrap(), "aa");
         assert_eq!(r.completed, [z.join("docs/a.txt")]);
+    }
+
+    #[test]
+    fn extract_one_quietly_or_not_when_stopped() {
+        use std::sync::atomic::AtomicBool;
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let (inner, name) = (Path::new("docs"), Path::new("a.txt"));
+        let out = d.path().join("out");
+        let f = extract_one(&z, inner, name, &out, &AtomicBool::new(false)).unwrap();
+        assert_eq!(fs::read_to_string(f).unwrap(), "aa");
+        let out2 = d.path().join("out2");
+        assert_eq!(
+            extract_one(&z, inner, name, &out2, &AtomicBool::new(true)),
+            None
+        );
+        assert_eq!(
+            extract_one(&z, inner, Path::new("nope"), &out2, &AtomicBool::new(false)),
+            None
+        );
     }
 
     #[test]

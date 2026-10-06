@@ -3817,14 +3817,20 @@ impl App {
         let Some(l) = self.lister.as_deref_mut() else {
             return Task::none();
         };
-        let file = key.0.clone();
+        let (file, size) = (key.0.clone(), key.1);
         l.reopen(name.clone(), id);
         l.quick = Some(key);
         l.side = side;
-        // As F3 decides: a real dir named `x.zip` is no archive.
-        let cwd = self.panes[side].active().panel.cwd();
-        if dir.is_none() || archive::split_path(cwd).is_some() {
+        // Inside an archive? As F3 decides (a real dir named `x.zip` is none).
+        let in_archive = archive::split_path(self.panes[side].active().panel.cwd());
+        if dir.is_none() || (dir == Some(true) && in_archive.is_some()) {
             l.set_loaded(Arc::new(Err(fl!("quick-none"))));
+            return Task::none();
+        }
+        // The viewer reads 32 MB at most; a bigger entry would be unpacked whole for that.
+        if in_archive.is_some() && size > shagoff_core::lister::LIMIT {
+            let limit = (shagoff_core::lister::LIMIT >> 20).to_string();
+            l.set_loaded(Arc::new(Err(fl!("quick-too-big", limit = limit))));
             return Task::none();
         }
         // TC: a dir shows what is in it, counted in the background.
@@ -3861,9 +3867,23 @@ impl App {
                 if latest.load(Ordering::Relaxed) != id {
                     return Err(String::new()); // dropped: its id is stale
                 }
-                tokio::task::spawn_blocking(move || lister::Loaded::read(&file, &name))
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()))
+                tokio::task::spawn_blocking(move || match in_archive {
+                    // Inside an archive: taken out into a temp dir, read, the copy dropped.
+                    Some((arc, inner)) => {
+                        let tmp = archive::fresh_temp_dir(&archive::temp_root())
+                            .map_err(|e| e.to_string())?;
+                        let entry = file.file_name().map(PathBuf::from).unwrap_or_default();
+                        let r = match archive::extract_one(&arc, &inner, &entry, &tmp, &stop) {
+                            Some(f) => lister::Loaded::read(&f, &name),
+                            None => Err(fl!("quick-none")),
+                        };
+                        let _ = std::fs::remove_dir_all(&tmp);
+                        r
+                    }
+                    None => lister::Loaded::read(&file, &name),
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
             },
             move |r| cosmic::Action::App(Message::ListerLoaded(id, Arc::new(r))),
         );
@@ -5838,6 +5858,52 @@ mod tests {
         let _ = app.update(Message::Key(Action::QuickView));
         assert!(app.lister.is_none());
         assert!(counting.load(Ordering::Relaxed), "closed: its count stops");
+    }
+
+    #[test]
+    fn ctrl_q_inside_an_archive_reads_files_and_notes_dirs() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let z = tmp.path().join("a.zip");
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&z).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        w.add_directory("d/", opts).unwrap();
+        w.start_file("f.txt", opts).unwrap();
+        w.write_all(b"inside").unwrap();
+        w.start_file("g.bin", opts).unwrap(); // past 32 MB (zeros pack small)
+        w.write_all(&vec![0; (shagoff_core::lister::LIMIT + 1) as usize])
+            .unwrap();
+        w.finish().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.load(0, z.clone(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: z.clone(),
+            focus: Some("d".into()),
+            result: Ok(listing::scan(&z, false).unwrap()),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::QuickView));
+        let l = app.lister.as_ref().unwrap();
+        assert_eq!(l.name, "d");
+        assert!(matches!(l.loaded.as_deref(), Some(Err(t)) if *t == fl!("quick-none")));
+        let _ = app.update(Message::Key(Action::Down));
+        let l = app.lister.as_ref().unwrap();
+        assert_eq!(l.name, "f.txt");
+        assert!(l.loaded.is_none(), "being taken out and read, not refused");
+        // Too big to unpack whole for a 32 MB look.
+        let _ = app.update(Message::Key(Action::Down));
+        let l = app.lister.as_ref().unwrap();
+        assert_eq!(l.name, "g.bin");
+        assert!(matches!(l.loaded.as_deref(), Some(Err(t)) if t.contains("F3")));
+        // What the background read does for it.
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let out = tmp.path().join("out");
+        let f = archive::extract_one(&z, Path::new(""), Path::new("f.txt"), &out, &stop).unwrap();
+        assert_eq!(std::fs::read_to_string(f).unwrap(), "inside");
     }
 
     #[test]
