@@ -11,9 +11,8 @@ use shagoff_core::archive::Format;
 
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
-/// Where "Support the project" leads: a Stripe Payment Link (`https://buy.stripe.com/…`), which
-/// needs no server. `None` until it exists: the button is shown disabled.
-pub const DONATE_URL: Option<&str> = None;
+/// Where "Support the project" leads: a Stripe Payment Link, which needs no server.
+pub const DONATE_URL: &str = "https://donate.stripe.com/6oU28s8Ff7cR1342J967S00";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Drawer {
@@ -143,22 +142,16 @@ fn help() -> Element<'static, Message> {
 }
 
 fn donate() -> Element<'static, Message> {
-    let button = widget::button::suggested(fl!("donate-button"));
-    let button = match DONATE_URL {
-        Some(url) => button.on_press(Message::OpenUrl(url.to_string())),
-        None => button,
-    };
-    let mut col = widget::column::with_capacity(4)
+    let button = widget::button::suggested(fl!("donate-button"))
+        .on_press(Message::OpenUrl(DONATE_URL.to_string()));
+    widget::column::with_capacity(3)
         .spacing(8)
         .align_x(Alignment::Center)
         .width(Length::Fill)
         .push(widget::text::heading(fl!("donate-title")))
         .push(widget::text::body(fl!("donate-text")))
-        .push(button);
-    if DONATE_URL.is_none() {
-        col = col.push(widget::text::caption(fl!("donate-soon")));
-    }
-    col.into()
+        .push(button)
+        .into()
 }
 
 fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Message> {

@@ -256,7 +256,6 @@ about-issues = Report a problem
 donate-title = Support the project
 donate-text = Shagoff Commander is free. If it helps you, you can support its development.
 donate-button = Support the project
-donate-soon = Coming soon: card payment via Stripe
 settings-system = System
 settings-light = Light
 settings-dark = Dark
