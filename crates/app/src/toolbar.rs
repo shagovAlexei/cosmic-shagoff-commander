@@ -53,6 +53,12 @@ pub fn builtins() -> &'static [Builtin] {
             "object-flip-horizontal-symbolic",
             "menu-swap"
         ),
+        b!(
+            "cm_SrcQuickview",
+            QuickView,
+            "document-preview-symbolic",
+            "menu-quick-view"
+        ),
         b!("cm_MkDir", Mkdir, "folder-new-symbolic", "menu-mkdir"),
         b!(
             "cm_SearchFor",

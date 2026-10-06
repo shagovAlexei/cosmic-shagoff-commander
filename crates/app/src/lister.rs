@@ -9,7 +9,7 @@ use cosmic::widget::{self, column, row};
 use cosmic::{Element, theme};
 use shagoff_core::lister::{self, Doc, Encoding, Mode, Text};
 use shagoff_core::viewport;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Fixed row height: the scroll math depends on it.
@@ -97,6 +97,10 @@ pub struct Lister {
     pub pointer: Option<(f32, f32)>,
     /// When and on which row the last double click was: a press soon after there selects the row.
     pub double: Option<(std::time::Instant, usize)>,
+    /// Ctrl+Q: shown in place of the other pane, keys stay with the panels; what is shown — path,
+    /// size, mtime (a file changed on disk is shown again; a dir or `..`: a note instead of
+    /// contents). `None`: the full-window F3 viewer.
+    pub quick: Option<(PathBuf, u64, std::time::SystemTime)>,
 }
 
 impl Lister {
@@ -119,6 +123,7 @@ impl Lister {
             dragging: false,
             pointer: None,
             double: None,
+            quick: None,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -410,19 +415,24 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
         }
         .on_press(Message::ListerWrap)
         .into(),
-        widget::button::standard(fl!("lister-find"))
-            .on_press(Message::ListerSearch)
-            .into(),
-        widget::button::standard(fl!("lister-prev"))
-            .on_press(Message::ListerStep(false))
-            .into(),
-        widget::button::standard(fl!("lister-next"))
-            .on_press(Message::ListerStep(true))
-            .into(),
-        widget::button::standard(fl!("lister-close"))
-            .on_press(Message::ListerClose)
-            .into(),
     ]);
+    // Ctrl+Q: the keys are the panels'; search, N / P and Esc belong to the F3 viewer.
+    if l.quick.is_none() {
+        buttons.extend([
+            widget::button::standard(fl!("lister-find"))
+                .on_press(Message::ListerSearch)
+                .into(),
+            widget::button::standard(fl!("lister-prev"))
+                .on_press(Message::ListerStep(false))
+                .into(),
+            widget::button::standard(fl!("lister-next"))
+                .on_press(Message::ListerStep(true))
+                .into(),
+            widget::button::standard(fl!("lister-close"))
+                .on_press(Message::ListerClose)
+                .into(),
+        ]);
+    }
     let bar = column::with_children(vec![
         title.into(),
         widget::flex_row(buttons).spacing(4).into(),
