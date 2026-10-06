@@ -73,7 +73,8 @@ pub fn take() -> Task<Message> {
 
 /// A row that can be dragged out: the files go as on Ctrl+C (uri-list + gnome), so Files and the
 /// desktop take them too. The source is the window: a widget id is new on every frame, so the
-/// runtime would not find the row it started from.
+/// runtime would not find the row it started from. Copy only: offered Move too, the desktop moved
+/// the files away (Shift-move between our own panes reads `App::mods`, not the action).
 pub fn drag<'a>(
     child: impl Into<cosmic::Element<'a, Message>>,
     paths: std::sync::Arc<Vec<PathBuf>>,
@@ -82,7 +83,7 @@ pub fn drag<'a>(
     use cosmic::iced::clipboard::dnd::DndAction;
     use cosmic::widget;
     widget::dnd_source(child)
-        .action(DndAction::Copy | DndAction::Move)
+        .action(DndAction::Copy)
         .drag_content(move || Files(fmt::encode(Kind::Copy, &paths)))
         .window(window)
         .on_finish(Some(Message::DropHover(None)))
