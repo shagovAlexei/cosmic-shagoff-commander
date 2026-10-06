@@ -74,14 +74,16 @@ fn main() {
         p.button(t(), 0x110, ButtonState::Pressed);
         p.frame();
         q.roundtrip(&mut s).unwrap();
+        // VP_STEP_MS: slower steps, e.g. for a Wayland drag-and-drop session to settle.
+        let ms = std::env::var("VP_STEP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
         for i in 1..=10 {
             let step = |a: u32, b: u32| (a as i64 + (b as i64 - a as i64) * i / 10) as u32;
-            std::thread::sleep(std::time::Duration::from_millis(40));
+            std::thread::sleep(std::time::Duration::from_millis(ms));
             p.motion_absolute(t(), step(x, to.0), step(y, to.1), w, h);
             p.frame();
             q.roundtrip(&mut s).unwrap();
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(ms.max(100)));
         p.button(t(), 0x110, ButtonState::Released);
         p.frame();
         q.roundtrip(&mut s).unwrap();

@@ -20,7 +20,7 @@ ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 mkdir -p "$DIR"/{cfg,state,cache}
 sock() { cat "$DIR/wayland"; }
 # pid files, not `pkill -f`: a pattern also matches the shell that runs this script.
-kill_pid() { [ -f "$DIR/$1.pid" ] && kill "$(cat "$DIR/$1.pid")" 2>/dev/null; rm -f "$DIR/$1.pid"; }
+kill_pid() { [ -f "$DIR/$1.pid" ] && { kill "$(cat "$DIR/$1.pid")" 2>/dev/null || true; }; rm -f "$DIR/$1.pid"; }
 app() {
     kill_pid app
     cd "$ROOT"

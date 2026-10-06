@@ -70,3 +70,50 @@ pub fn take() -> Task<Message> {
     clipboard::read_data::<Paste>()
         .map(|p| cosmic::Action::App(Message::Pasted(p.map(|Paste(k, v)| (k, v)))))
 }
+
+/// A row that can be dragged out: the files go as on Ctrl+C (uri-list + gnome), so Files and the
+/// desktop take them too. The source is the window: a widget id is new on every frame, so the
+/// runtime would not find the row it started from.
+pub fn drag<'a>(
+    child: impl Into<cosmic::Element<'a, Message>>,
+    paths: std::sync::Arc<Vec<PathBuf>>,
+    window: cosmic::iced::window::Id,
+) -> cosmic::Element<'a, Message> {
+    use cosmic::iced::clipboard::dnd::DndAction;
+    use cosmic::widget;
+    widget::dnd_source(child)
+        .action(DndAction::Copy | DndAction::Move)
+        .drag_content(move || Files(fmt::encode(Kind::Copy, &paths)))
+        .window(window)
+        .on_finish(Some(Message::DropHover(None)))
+        .on_cancel(Some(Message::DropHover(None)))
+        .into()
+}
+
+/// Files dropped on `child` (from us or another program) arrive as `on(paths, move?)`.
+/// Copy unless the compositor picked Move (Shift held).
+pub fn drop_zone<'a>(
+    child: impl Into<cosmic::Element<'a, Message>>,
+    on: impl Fn(Vec<PathBuf>, bool) -> Message + 'static,
+    hover: Option<(usize, usize)>,
+) -> cosmic::Element<'a, Message> {
+    use cosmic::iced::clipboard::dnd::DndAction;
+    let mut d = cosmic::widget::dnd_destination::DndDestination::for_data::<Paste>(
+        child,
+        move |p, action| {
+            on(
+                p.map(|Paste(_, v)| v).unwrap_or_default(),
+                action == DndAction::Move,
+            )
+        },
+    )
+    .preferred_action(DndAction::Copy);
+    // A row lights up while files are held over it; leaving clears only its own light (the next
+    // row's enter may come first).
+    if let Some(h) = hover {
+        d = d
+            .on_enter(move |_, _, _| Message::DropHover(Some(h)))
+            .on_leave(move || Message::DropLeave(h));
+    }
+    d.into()
+}

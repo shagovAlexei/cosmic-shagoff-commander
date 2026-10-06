@@ -272,6 +272,15 @@ impl Panel {
             .unwrap_or_default()
     }
 
+    /// Where a drop on row `i` lands: that dir (`..`: the parent), else the panel's own dir.
+    pub fn drop_dir(&self, i: Option<usize>) -> PathBuf {
+        match i.and_then(|i| self.entries.get(i)) {
+            Some(e) if e.name == PARENT => self.cwd.parent().unwrap_or(&self.cwd).to_path_buf(),
+            Some(e) if e.is_dir() => self.cwd.join(&e.os_name),
+            _ => self.cwd.clone(),
+        }
+    }
+
     /// Drop marks of processed entries (by file name; search results are marked by whole path).
     pub fn unmark(&mut self, paths: &[PathBuf]) {
         for p in paths {
@@ -363,6 +372,11 @@ pub fn child_toward(cwd: &Path, up: &Path) -> Option<String> {
     let rest = cwd.strip_prefix(up).ok()?;
     let first = rest.components().next()?;
     Some(first.as_os_str().to_string_lossy().into_owned())
+}
+
+/// A drop back where the files already are, or of a dir into itself: TC does nothing.
+pub fn drop_is_noop(sources: &[PathBuf], dir: &Path) -> bool {
+    sources.iter().any(|s| dir.starts_with(s)) || sources.iter().all(|s| s.parent() == Some(dir))
 }
 
 /// `/a/b` → (`/a`, "b"): where Backspace leads and which name to put the cursor on.
@@ -823,6 +837,28 @@ mod tests {
         p.toggle_mark(); // mark b
         p.set_cursor(1); // cursor on a, but marks win
         assert_eq!(p.targets(), [PathBuf::from("/x/b")]);
+    }
+
+    #[test]
+    fn drop_lands_in_a_dir_row_or_else_the_panel_dir() {
+        let p = loaded("/x/y", vec![d("sub"), f("a", 1)]);
+        assert_eq!(p.drop_dir(Some(0)), PathBuf::from("/x")); // ".."
+        assert_eq!(p.drop_dir(Some(1)), PathBuf::from("/x/y/sub"));
+        assert_eq!(p.drop_dir(Some(2)), PathBuf::from("/x/y")); // a file
+        assert_eq!(p.drop_dir(None), PathBuf::from("/x/y"));
+    }
+
+    #[test]
+    fn drop_into_the_same_dir_or_into_itself_does_nothing() {
+        let src = [PathBuf::from("/x/a"), PathBuf::from("/x/d")];
+        assert!(drop_is_noop(&src, Path::new("/x")));
+        assert!(drop_is_noop(&src, Path::new("/x/d")));
+        assert!(drop_is_noop(&src, Path::new("/x/d/deep")));
+        assert!(!drop_is_noop(&src, Path::new("/y")));
+        assert!(!drop_is_noop(
+            &[PathBuf::from("/x/a"), PathBuf::from("/z/b")],
+            Path::new("/x")
+        ));
     }
 
     #[test]

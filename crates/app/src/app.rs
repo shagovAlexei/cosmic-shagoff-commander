@@ -271,6 +271,8 @@ pub struct App {
     pub col_drag: Option<ColDrag>,
     /// A tab held by the mouse: (side, its index now). Moved over the tab the pointer enters.
     pub tab_drag: Option<(usize, usize)>,
+    /// The dir row files are being dragged over: (side, row).
+    pub drop_hover: Option<(usize, usize)>,
     /// Ctrl+D: the submenus opened, outermost first (their indices in `config.hotlist`).
     hot_sub: Vec<usize>,
     /// Volumes not mounted yet (a stick just plugged in): listed with the drives, a pick mounts.
@@ -464,6 +466,17 @@ pub enum Message {
     SearchInput(String),
     /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
     Pasted(Option<(ClipKind, Vec<PathBuf>)>),
+    /// Files dropped on a pane (`dir`: the dir row they were dropped on); `mv`: Shift was held.
+    Drop {
+        side: usize,
+        dir: Option<PathBuf>,
+        paths: Vec<PathBuf>,
+        mv: bool,
+    },
+    /// Files are held over a dir row (it lights up) / no longer over any.
+    DropHover(Option<(usize, usize)>),
+    /// The pointer left that row while dragging.
+    DropLeave((usize, usize)),
     /// Enter in that field.
     SearchSubmit,
     /// Command line: text edited, Enter (Shift+Enter: in a terminal), a character typed in the panel.
@@ -687,6 +700,7 @@ impl App {
             cols,
             col_drag: None,
             tab_drag: None,
+            drop_hover: None,
             hot_sub: Vec::new(),
             volumes: Vec::new(),
             volumes_at: None,
@@ -1593,6 +1607,40 @@ impl App {
                 return task;
             }
             Message::Pasted(_) => {}
+            Message::DropHover(h) => self.drop_hover = h,
+            Message::DropLeave(h) => {
+                if self.drop_hover == Some(h) {
+                    self.drop_hover = None;
+                }
+            }
+            Message::Drop {
+                side,
+                dir,
+                paths,
+                mv,
+            } => {
+                self.drop_hover = None;
+                let t = self.panes[side].active();
+                // A job "In background" does not stop it: OK then says the job is running, as F5.
+                if paths.is_empty() || self.dialog.is_some() || t.results.is_some() {
+                    return Task::none();
+                }
+                let dir = dir.unwrap_or_else(|| t.panel.cwd().to_path_buf());
+                if shagoff_core::panel::drop_is_noop(&paths, &dir) {
+                    return Task::none();
+                }
+                // The pane the files came from, if one shows them: its marks go when done, as F5.
+                let parent = paths.first().and_then(|p| p.parent());
+                let from = (0..2).find(|&s| Some(self.panes[s].active().panel.cwd()) == parent);
+                // As F5 / F6 in TC: the same dialog, aimed at the dir the files were dropped on.
+                self.dialog = Some(Dialog::Input {
+                    op: if mv { InputOp::Move } else { InputOp::Copy },
+                    side: from.unwrap_or(side),
+                    sources: paths,
+                    input: dir_input(&dir),
+                });
+                return widget::text_input::focus(self.input_id.clone());
+            }
             Message::Resolve(r) => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(r);
@@ -7321,6 +7369,42 @@ mod tests {
         assert!(app.dialog.is_some());
         let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![a]))));
         assert!(app.job.is_none());
+    }
+
+    #[test]
+    fn drop_opens_the_copy_dialog_aimed_at_the_dir_row_or_the_pane() {
+        let (tmp, mut app, a) = paste_setup();
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir(dst.join("sub")).unwrap();
+        listed_at(&mut app, 0, &dst);
+        let drop = |dir, mv| Message::Drop {
+            side: 0,
+            dir,
+            paths: vec![a.clone()],
+            mv,
+        };
+        let _ = app.update(drop(Some(dst.join("sub")), false));
+        let Some(Dialog::Input { op, input, .. }) = app.dialog.take() else {
+            panic!("no dialog")
+        };
+        assert_eq!((op, input), (InputOp::Copy, dir_input(&dst.join("sub"))));
+        let _ = app.update(drop(None, true)); // Shift: move, into the pane's dir
+        let Some(Dialog::Input { op, input, .. }) = app.dialog.take() else {
+            panic!("no dialog")
+        };
+        assert_eq!((op, input), (InputOp::Move, dir_input(&dst)));
+        // Dragged from the other pane: its marks go when the copy is done, as after F5.
+        listed_at(&mut app, 1, &tmp.path().join("src"));
+        let _ = app.update(drop(None, false));
+        assert!(matches!(
+            app.dialog.take(),
+            Some(Dialog::Input { side: 1, .. })
+        ));
+        // Back into the dir it came from: nothing.
+        listed_at(&mut app, 0, &tmp.path().join("src"));
+        let _ = app.update(drop(None, false));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.drop_hover, None);
     }
 
     #[test]
