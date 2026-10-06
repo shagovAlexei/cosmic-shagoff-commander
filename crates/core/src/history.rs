@@ -1,10 +1,12 @@
 //! Per-tab directory history for Alt+← / Alt+→ / Alt+↓.
 
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const LIMIT: usize = 50;
 
-#[derive(Clone, Debug, Default)]
+/// Saved with the tabs (`PaneState.history`), so Alt+↓ survives a restart as in TC.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct History {
     items: Vec<PathBuf>,
     pos: usize,

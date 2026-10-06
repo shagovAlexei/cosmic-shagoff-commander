@@ -710,6 +710,7 @@ impl App {
                 t.locked = locked(i);
                 t.brief = saved.brief.get(i).copied().unwrap_or(false);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
+                t.history = saved.history.get(i).cloned().unwrap_or_default();
             }
             if let Some(l) = extra {
                 tabs.open_after(app.new_tab(l));
@@ -2028,6 +2029,15 @@ impl App {
                 names: (self.panes[s].items().iter())
                     .map(|t| t.name.clone().unwrap_or_default())
                     .collect(),
+                history: if self.config.keep_history {
+                    self.panes[s]
+                        .items()
+                        .iter()
+                        .map(|t| t.history.clone())
+                        .collect()
+                } else {
+                    Vec::new()
+                },
             }),
             active: self.active,
             find: self.find.clone(),
@@ -6453,8 +6463,24 @@ mod tests {
         let _ = app.update(Message::Setting(crate::drawer::Setting::KeepHistory(false)));
         assert_eq!(app.commands, ["ls"]);
         assert!(app.saved.commands.is_empty() && app.saved.masks.is_empty());
+        assert!(app.saved.panes[0].history.is_empty());
         let _ = app.update(Message::Setting(crate::drawer::Setting::KeepHistory(true)));
         assert_eq!(app.saved.commands, ["ls"]);
+    }
+
+    #[test]
+    fn regression_dir_history_survives_a_restart() {
+        let mut app = app_with(Config::default(), State::default());
+        for p in ["/a", "/b"] {
+            app.panes[0].active_mut().history.visit(Path::new(p));
+        }
+        let _ = app.update(Message::Key(Action::HistoryList)); // any message saves the state
+        let _ = app.update(Message::DialogCancel);
+        let saved = app.saved.clone();
+        assert_eq!(saved.panes[0].history.len(), saved.panes[0].tabs.len());
+        let again = app_with(Config::default(), saved);
+        let recent = again.panes[0].active().history.recent();
+        assert!(recent.contains(&PathBuf::from("/a")), "{recent:?}");
     }
 
     #[test]
