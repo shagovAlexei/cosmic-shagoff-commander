@@ -46,6 +46,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let active = app.active == side;
 
     let title = match &p.results {
+        Some(_) if p.branch => fl!("branch-title", dir = p.panel.cwd().display().to_string()),
         Some(_) => fl!("find-results", dir = p.panel.cwd().display().to_string()),
         None => p.panel.cwd().display().to_string(),
     };

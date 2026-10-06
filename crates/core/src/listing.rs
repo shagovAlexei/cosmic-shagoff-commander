@@ -147,6 +147,28 @@ pub fn entries(paths: &[std::path::PathBuf], root: &Path) -> Vec<Entry> {
         .collect()
 }
 
+/// Ctrl+B "branch" (TC): every file under `dirs`, at any depth — not the dirs themselves. Links to
+/// dirs are not followed (a link shows as an entry of its own); unreadable dirs are skipped.
+// ponytail: no stop and no cap; a huge tree (all of `~`) is read whole in the background.
+pub fn branch(dirs: &[std::path::PathBuf], show_hidden: bool) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut todo = dirs.to_vec();
+    while let Some(d) = todo.pop() {
+        let Ok(rd) = fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            if !show_hidden && e.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            match e.file_type() {
+                Ok(t) if t.is_dir() => todo.push(e.path()),
+                Ok(_) => out.push(e.path()),
+                Err(_) => {}
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn ext_of(name: &str) -> String {
     match name.rfind('.') {
         Some(i) if i > 0 => name[i + 1..].to_string(),
@@ -163,6 +185,31 @@ mod tests {
         v.iter()
             .find(|e| e.name == name)
             .unwrap_or_else(|| panic!("{name} not listed"))
+    }
+
+    #[test]
+    fn branch_lists_files_at_any_depth() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        fs::create_dir_all(r.join("a/b")).unwrap();
+        fs::create_dir(r.join(".h")).unwrap();
+        for f in ["top.txt", "a/x.rs", "a/b/y.rs", ".h/z", ".dot"] {
+            fs::write(r.join(f), "").unwrap();
+        }
+        std::os::unix::fs::symlink(r.join("a"), r.join("link")).unwrap();
+        let rel = |v: Vec<std::path::PathBuf>| {
+            let mut v: Vec<String> = (v.iter())
+                .map(|p| p.strip_prefix(r).unwrap().display().to_string())
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            rel(branch(&[r.to_path_buf()], false)),
+            ["a/b/y.rs", "a/x.rs", "link", "top.txt"]
+        );
+        assert_eq!(rel(branch(&[r.to_path_buf()], true)).len(), 6);
+        assert_eq!(rel(branch(&[r.join("a/b")], false)), ["a/b/y.rs"]);
     }
 
     #[test]
