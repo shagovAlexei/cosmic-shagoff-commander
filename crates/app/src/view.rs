@@ -361,7 +361,7 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
 }
 
 /// `12,3 ГБ`: units and decimal separator come from the locale's ftl.
-fn human(n: u64) -> String {
+pub fn human(n: u64) -> String {
     let units = fl!("size-units");
     let units: [&str; 6] = units
         .split_whitespace()
