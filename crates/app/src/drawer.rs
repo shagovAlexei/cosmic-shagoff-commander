@@ -12,7 +12,7 @@ use shagoff_core::archive::Format;
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
 /// Where "Support the project" leads: a Stripe Payment Link, which needs no server.
-pub const DONATE_URL: &str = "https://donate.stripe.com/4gM8wQe05g1efJM9hIco001";
+pub const DONATE_URL: &str = "https://donate.stripe.com/6oU28s8Ff7cR1342J967S00";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Drawer {
