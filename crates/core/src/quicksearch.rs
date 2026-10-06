@@ -30,9 +30,42 @@ pub fn next_with<'a>(
         .find(|&i| starts(labels[i]))
 }
 
+/// A TC / Windows menu name: `&x` marks the hot letter, `&&` is a plain `&`. The name as shown and
+/// the hot letter (lowercase) with its byte offset in the shown name (to underline it).
+pub fn hotkey(name: &str) -> (String, Option<(usize, char)>) {
+    let (mut shown, mut key) = (String::new(), None);
+    let mut chars = name.chars();
+    while let Some(c) = chars.next() {
+        match (c, chars.clone().next()) {
+            ('&', Some('&')) => {
+                shown.push('&');
+                chars.next();
+            }
+            ('&', Some(k)) => key = key.or(k.to_lowercase().next().map(|l| (shown.len(), l))),
+            ('&', None) => shown.push('&'),
+            _ => shown.push(c),
+        }
+    }
+    (shown, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hotkey_marks_and_escapes() {
+        assert_eq!(hotkey("&Docs"), ("Docs".into(), Some((0, 'd'))));
+        assert_eq!(hotkey("My &Work"), ("My Work".into(), Some((3, 'w'))));
+        assert_eq!(hotkey("R&&D"), ("R&D".into(), None));
+        assert_eq!(
+            hotkey("Мои &Документы"),
+            ("Мои Документы".into(), Some((7, 'д')))
+        );
+        assert_eq!(hotkey("a&b&c"), ("abc".into(), Some((1, 'b')))); // the first one counts
+        assert_eq!(hotkey("end&"), ("end&".into(), None));
+        assert_eq!(hotkey("plain"), ("plain".into(), None));
+    }
 
     #[test]
     fn letter_steps_through_matches_round() {
