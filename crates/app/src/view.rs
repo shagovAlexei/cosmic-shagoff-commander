@@ -21,10 +21,18 @@ use shagoff_core::viewport;
 const TEXT: u16 = 13;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    if let Some(l) = &app.lister {
+    if let Some(l) = app.lister.as_deref().filter(|l| l.quick.is_none()) {
         return crate::lister::view(l);
     }
-    let panes = row![pane(app, 0), pane(app, 1)].height(Length::Fill);
+    // Ctrl+Q: the viewer in place of the other pane.
+    let side = |s: usize| match app.lister.as_deref() {
+        Some(l) if s != app.active => container(crate::lister::view(l))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+        _ => pane(app, s),
+    };
+    let panes = row![side(0), side(1)].height(Length::Fill);
     match app.config.skin {
         Skin::Classic => column![crate::toolbar::bar(&app.config.toolbar), panes.spacing(4)].into(),
         Skin::Modern => panes.spacing(8).padding([4, 8, 0, 8]).into(),
@@ -589,7 +597,7 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
 /// half also the last message or, without one, the entry under the cursor.
 pub fn footer(app: &App) -> Element<'_, Message> {
     // The viewer has no panels to total and its own buttons.
-    if app.lister.is_some() {
+    if app.lister.as_ref().is_some_and(|l| l.quick.is_none()) {
         let status = container(window_status(app)).padding([2, 8]);
         return match job_line(app) {
             Some(job) => column![job, status].into(),

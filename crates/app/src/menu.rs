@@ -113,6 +113,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             a(Action::HistoryList),
         ),
         (vec![Ctrl], K::Letter(Code::KeyU, "u"), a(Action::SwapPanes)),
+        (vec![Ctrl], K::Letter(Code::KeyQ, "q"), a(Action::QuickView)),
         (
             vec![Ctrl],
             K::Letter(Code::KeyS, "s"),
@@ -304,6 +305,7 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
                     MenuAct::Key(Action::ToggleHidden),
                 ),
                 menu::Item::Divider,
+                b(fl!("menu-quick-view"), Action::QuickView),
                 b(fl!("menu-brief"), Action::ViewBrief),
                 b(fl!("menu-full"), Action::ViewFull),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),

@@ -463,3 +463,5 @@ open-with-default-set = { $app } now opens { $mime } by default
 open-with-all = All programs…
 settings-keep-history = Remember history after restart
 history-clear = Clear
+menu-quick-view = Quick view
+quick-none = No preview: a folder, or a file inside an archive

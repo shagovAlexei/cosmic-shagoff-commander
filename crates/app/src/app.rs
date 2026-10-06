@@ -277,6 +277,8 @@ pub struct App {
     open_with: Vec<PathBuf>,
     /// Their type, for "Default".
     open_with_mime: String,
+    /// Ctrl+Q: id of the newest read; an older one waiting out its delay is skipped.
+    quick_latest: Arc<std::sync::atomic::AtomicU64>,
     /// User / group names for the status bar.
     pub owners: shagoff_core::owners::Owners,
     /// The last right press landed on a row (else below them): which context menu to show.
@@ -562,8 +564,9 @@ impl Application for App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
+        let follow = self.quick_follow();
         self.save_state();
-        task
+        Task::batch([task, follow])
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -672,6 +675,7 @@ impl App {
             status: None,
             open_with: Vec::new(),
             open_with_mime: String::new(),
+            quick_latest: Arc::default(),
             owners: shagoff_core::owners::Owners::load(),
             ctx_entry: false,
             ctx_row: false,
@@ -724,9 +728,7 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Key(action)
-                if self.lister.is_some() && self.dialog.is_none() && !self.busy() =>
-            {
+            Message::Key(action) if self.viewer() && self.dialog.is_none() && !self.busy() => {
                 if let Some(task) = self.lister_action(action) {
                     return task;
                 }
@@ -1348,9 +1350,7 @@ impl App {
                     l.set_loaded(loaded);
                 }
             }
-            Message::ListerKey(k)
-                if self.lister.is_some() && self.dialog.is_none() && !self.busy() =>
-            {
+            Message::ListerKey(k) if self.viewer() && self.dialog.is_none() && !self.busy() => {
                 return match k {
                     ListerKey::Mode(m) => self.handle(Message::ListerMode(m)),
                     ListerKey::Next => self.lister_step(true),
@@ -1363,7 +1363,7 @@ impl App {
             }
             Message::ListerKey(_) => {}
             Message::Letter(k, c) => {
-                return self.handle(if self.lister.is_some() {
+                return self.handle(if self.viewer() {
                     Message::ListerKey(k)
                 } else {
                     Message::CmdType(c)
@@ -1539,7 +1539,8 @@ impl App {
                         }
                     } else if self.busy() {
                         self.cancel_job(); // not one in the background: Esc is for the panels
-                    } else if let Some(l) = &mut self.lister {
+                    } else if let Some(l) = self.lister.as_deref_mut().filter(|l| l.quick.is_none())
+                    {
                         if l.searching {
                             l.searching = false;
                         } else if l.sel.is_some() {
@@ -2510,6 +2511,19 @@ impl App {
                 }
                 self.panes[0].active_mut().panel.mark_names(&l);
                 self.panes[1].active_mut().panel.mark_names(&r);
+                return Task::none();
+            }
+            Action::QuickView => {
+                match self.lister.as_deref() {
+                    Some(l) if l.quick.is_some() => self.lister = None,
+                    Some(_) => {} // the full viewer is up: not from there
+                    None => {
+                        let mut l = Lister::new(side, String::new(), 0);
+                        // Nothing yet: `quick_follow` loads it.
+                        l.quick = Some((PathBuf::new(), 0, std::time::UNIX_EPOCH));
+                        self.lister = Some(Box::new(l));
+                    }
+                }
                 return Task::none();
             }
             Action::SwapPanes => {
@@ -3759,6 +3773,62 @@ impl App {
     }
 
     /// F3 with the built-in viewer: the file under the cursor (extracted first inside an archive).
+    /// The full-window F3 viewer is up (not the Ctrl+Q one): it takes the keys.
+    fn viewer(&self) -> bool {
+        self.lister.as_ref().is_some_and(|l| l.quick.is_none())
+    }
+
+    /// Ctrl+Q: show what is under the active pane's cursor, if that changed. Run after every
+    /// message, so any way the cursor moves (keys, mouse, quick search, a rescan) is followed.
+    fn quick_follow(&mut self) -> Task<Message> {
+        let side = self.active;
+        let panel = &self.panes[side].active().panel;
+        let entry = (panel.current()).filter(|e| e.name != PARENT);
+        let key = entry.map_or_else(
+            || (panel.cwd().to_path_buf(), 0, std::time::UNIX_EPOCH),
+            |e| (panel.cwd().join(&e.os_name), e.size, e.mtime),
+        );
+        let (name, dir) = entry.map_or((String::new(), true), |e| (e.name.clone(), e.is_dir()));
+        match self.lister.as_deref() {
+            // Only the Ctrl+Q one; the F3 viewer stays on its file.
+            Some(l)
+                if l.quick
+                    .as_ref()
+                    .is_some_and(|q| *q != key || l.side != side) => {}
+            _ => return Task::none(),
+        }
+        let id = self.next_id();
+        self.quick_latest.store(id, Ordering::Relaxed);
+        let latest = self.quick_latest.clone();
+        let Some(l) = self.lister.as_deref_mut() else {
+            return Task::none();
+        };
+        let file = key.0.clone();
+        l.reopen(name.clone(), id);
+        l.quick = Some(key);
+        l.side = side;
+        // As F3 decides: a real dir named `x.zip` is no archive.
+        let cwd = self.panes[side].active().panel.cwd();
+        if dir || archive::split_path(cwd).is_some() {
+            l.set_loaded(Arc::new(Err(fl!("quick-none"))));
+            return Task::none();
+        }
+        let read = Task::perform(
+            async move {
+                // Held ↓ passes many files: read only the one the cursor stops on.
+                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                if latest.load(Ordering::Relaxed) != id {
+                    return Err(String::new()); // dropped: its id is stale
+                }
+                tokio::task::spawn_blocking(move || lister::Loaded::read(&file, &name))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            move |r| cosmic::Action::App(Message::ListerLoaded(id, Arc::new(r))),
+        );
+        Task::batch([read, lister_scroll(l, 0.0, 0.0)])
+    }
+
     fn view_current(&mut self, side: usize) -> Task<Message> {
         let panel = &self.panes[side].active().panel;
         let cwd = panel.cwd().to_path_buf();
@@ -4613,7 +4683,7 @@ impl App {
         self.config.show_cmdline
             && self.dialog.is_none()
             && self.drawer.is_none()
-            && self.lister.is_none()
+            && !self.viewer()
             && self.search.is_none()
             && !self.busy()
     }
@@ -5692,6 +5762,65 @@ mod tests {
         assert!(app.dialog.is_none());
         let _ = app.update(Message::DialogCancel);
         assert!(app.lister.is_none());
+    }
+
+    #[test]
+    fn ctrl_q_follows_the_cursor_and_leaves_keys_to_the_panels() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::QuickView));
+        let shown = |app: &App| app.lister.as_ref().map(|l| l.name.clone());
+        assert_eq!(shown(&app).as_deref(), Some("a.txt"));
+        lister_loaded(&mut app, tmp.path());
+        assert_eq!(app.lister.as_ref().unwrap().rows(), 2);
+        // ↓ moves the panel's cursor, and the view follows it.
+        let _ = app.update(Message::Key(Action::Down));
+        assert_eq!(shown(&app).as_deref(), Some("b.bin"));
+        // A dir: a note, no contents.
+        let _ = app.update(Message::Key(Action::Up));
+        let _ = app.update(Message::Key(Action::Up));
+        let l = app.lister.as_ref().unwrap();
+        assert_eq!(l.name, "sub");
+        assert!(matches!(l.loaded.as_deref(), Some(Err(_))));
+        // F8 is the panel's: it asks to delete.
+        let _ = app.update(Message::Key(Action::Delete));
+        assert!(app.dialog.is_some());
+        let _ = app.update(Message::DialogCancel);
+        assert!(app.lister.is_some()); // Esc closed the dialog, not the view
+        let _ = app.update(Message::Key(Action::QuickView));
+        assert!(app.lister.is_none());
+    }
+
+    #[test]
+    fn regression_ctrl_q_reloads_a_changed_file_and_shows_a_zip() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let rescan = |app: &mut App, focus: &str| {
+            let _ = app.load(0, tmp.path().into(), Some(focus.into()));
+            let t = app.panes[0].active();
+            let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+            let _ = app.update(Message::Listed {
+                tab: id,
+                generation,
+                path: tmp.path().into(),
+                focus: Some(focus.into()),
+                result: Ok(listing::scan(tmp.path(), false).unwrap()),
+                space: None,
+            });
+        };
+        let _ = app.update(Message::Key(Action::QuickView));
+        let before = app.lister.as_ref().unwrap().id;
+        std::fs::write(tmp.path().join("a.txt"), "changed, and longer\n").unwrap();
+        rescan(&mut app, "a.txt");
+        assert_ne!(
+            app.lister.as_ref().unwrap().id,
+            before,
+            "same name, new size: read again"
+        );
+        // A zip on disk is a file to show, not a path inside an archive.
+        std::fs::write(tmp.path().join("c.zip"), b"PK").unwrap();
+        rescan(&mut app, "c.zip");
+        let l = app.lister.as_ref().unwrap();
+        assert_eq!(l.name, "c.zip");
+        assert!(l.loaded.is_none(), "being read, not refused");
     }
 
     #[test]

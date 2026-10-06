@@ -464,3 +464,5 @@ open-with-default-set = { $app } теперь открывает { $mime } по 
 open-with-all = Все программы…
 settings-keep-history = Помнить историю после перезапуска
 history-clear = Очистить
+menu-quick-view = Быстрый просмотр
+quick-none = Нет просмотра: каталог или файл внутри архива

@@ -58,6 +58,8 @@ pub enum Action {
     Hotlist,
     /// Ctrl+U: swap the two panels.
     SwapPanes,
+    /// Ctrl+Q: the file under the cursor shown in the other pane, following the cursor.
+    QuickView,
     /// Ctrl+C / Ctrl+X: put the targets on the system clipboard; Ctrl+V: paste files from it.
     ClipCopy,
     ClipCut,
@@ -221,6 +223,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyD), true, true) => Some(Action::CompareFiles),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
+        (Physical::Code(Code::KeyQ), true, false) => Some(Action::QuickView),
         (Physical::Code(Code::Comma), true, false) => Some(Action::Settings),
         (Physical::Code(Code::KeyF), true, false) => Some(Action::Connect),
         (Physical::Code(Code::KeyF), true, true) => Some(Action::Disconnect),
@@ -545,6 +548,7 @@ mod tests {
         assert_eq!(chr("в", Code::KeyD, CTRL), Some(Action::Hotlist));
         assert_eq!(chr("u", Code::KeyU, CTRL), Some(Action::SwapPanes));
         assert_eq!(chr("г", Code::KeyU, CTRL), Some(Action::SwapPanes));
+        assert_eq!(chr("й", Code::KeyQ, CTRL), Some(Action::QuickView));
     }
 
     #[test]
