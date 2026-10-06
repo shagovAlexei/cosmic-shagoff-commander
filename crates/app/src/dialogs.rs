@@ -26,6 +26,8 @@ pub enum InputOp {
     Mkdir,
     /// Shift+F4: name of the file to create (or open) in the editor.
     NewFile,
+    /// "Open with…" → "Other program…": the command; `sources` are the files.
+    OpenWith,
     Rename,
     /// Own caption of the active tab.
     TabName,
@@ -439,6 +441,8 @@ pub struct ListItem {
     /// Empty for the hotlist's own rows.
     pub path: PathBuf,
     pub kind: Item,
+    /// "Open with…": the program's `Icon=` (theme name or path); empty elsewhere.
+    pub icon: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -461,6 +465,8 @@ pub enum Item {
     Back,
     /// "Open with…": a program; its `.desktop` file name is shown.
     App,
+    /// "Open with…": type a command.
+    Other,
 }
 
 impl Dialog {
@@ -477,9 +483,37 @@ impl Dialog {
     }
 }
 
+/// A program's `Icon=`: a theme name or a file; blank room if none.
+fn app_icon<'a>(icon: &str) -> Element<'a, Message> {
+    const SIZE: u16 = 20;
+    if icon.is_empty() {
+        return widget::Space::new()
+            .width(Length::Fixed(SIZE.into()))
+            .height(Length::Fixed(SIZE.into()))
+            .into();
+    }
+    let handle = if icon.starts_with('/') {
+        widget::icon::from_path(icon.into())
+    } else {
+        widget::icon::from_name(icon).size(SIZE).handle()
+    };
+    widget::icon(handle).size(SIZE).into()
+}
+
 /// One row of a TC-style menu list: name, then a path cut with "…"; the selection looks
 /// like the panel cursor.
 pub fn menu_row<'a>(
+    name: String,
+    path: String,
+    selected: bool,
+    on: Message,
+) -> Element<'a, Message> {
+    menu_row_with(None, name, path, selected, on)
+}
+
+/// `menu_row` with an icon before the name.
+pub fn menu_row_with<'a>(
+    icon: Option<Element<'a, Message>>,
     name: String,
     path: String,
     selected: bool,
@@ -502,6 +536,12 @@ pub fn menu_row<'a>(
         cut(widget::text(path).size(12), 3)
     ]
     .spacing(12);
+    let line = match icon {
+        Some(icon) => row![icon, line]
+            .spacing(8)
+            .align_y(cosmic::iced::Alignment::Center),
+        None => line,
+    };
     widget::button::custom(
         widget::container(line)
             .padding([4, 8])
@@ -571,6 +611,7 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 InputOp::NewFile => fl!("new-file"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
+                InputOp::OpenWith => fl!("open-with-other-title"),
             };
             widget::dialog()
                 .title(title)
@@ -854,7 +895,10 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                     }),
                     _ => item.path.display().to_string(),
                 };
-                list = list.push(menu_row(
+                // Programs get an icon, or the same room without one, so names line up.
+                let icon = (*kind == ListKind::OpenWith).then(|| app_icon(&item.icon));
+                list = list.push(menu_row_with(
+                    icon,
                     item.label.clone(),
                     path,
                     i == *cursor,
@@ -869,11 +913,22 @@ pub fn view<'a>(d: &'a Dialog, input_id: &widget::Id, tz: &TimeZone) -> Element<
                 ListKind::Commands => fl!("cmd-history"),
                 ListKind::OpenWith => fl!("open-with"),
             };
-            widget::dialog()
+            let dialog = widget::dialog()
                 .title(title)
                 .control(list)
-                .secondary_action(cancel)
-                .into()
+                .secondary_action(cancel);
+            if *kind == ListKind::OpenWith {
+                let default = (items.get(*cursor))
+                    .filter(|it| it.kind == Item::App)
+                    .map(|_| Message::OpenWithDefault);
+                dialog
+                    .tertiary_action(
+                        widget::button::standard(fl!("open-with-default")).on_press_maybe(default),
+                    )
+                    .into()
+            } else {
+                dialog.into()
+            }
         }
         Dialog::MultiRename(m) => {
             let edit = |label: String, value: &'a str, f: MrField| {

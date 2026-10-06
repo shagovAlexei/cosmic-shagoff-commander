@@ -275,6 +275,8 @@ pub struct App {
     pub status: Option<Status>,
     /// "Open with…" list: the files to open, as they were when it was asked for.
     open_with: Vec<PathBuf>,
+    /// Their type, for "Default".
+    open_with_mime: String,
     /// User / group names for the status bar.
     pub owners: shagoff_core::owners::Owners,
     /// The last right press landed on a row (else below them): which context menu to show.
@@ -419,7 +421,11 @@ pub enum Message {
     /// Click on entry i of the open list dialog.
     ListPick(usize),
     /// "Open with…": the files (taken when asked) and the programs found for the first one.
-    OpenWithApps(usize, Vec<PathBuf>, Result<Vec<openwith::App>, String>),
+    OpenWithApps(usize, Vec<PathBuf>, Result<openwith::Found, String>),
+    /// "Open with…" → "Default": the program under the list's cursor for this type.
+    OpenWithDefault,
+    /// Its result: the program's name, or the error.
+    OpenWithDefaultSet(Result<String, String>),
     /// Hotlist settings (Ctrl+D → "Configure…").
     Hot(HotMsg),
     /// Toolbar button `i` of `config.toolbar`.
@@ -657,6 +663,7 @@ impl App {
             space: [None, None],
             status: None,
             open_with: Vec::new(),
+            open_with_mime: String::new(),
             owners: shagoff_core::owners::Owners::load(),
             ctx_entry: false,
             ctx_row: false,
@@ -1598,22 +1605,73 @@ impl App {
             Message::OpenWithApps(side, files, r) => match r {
                 // Asked in the background: a dialog opened meanwhile keeps its place.
                 Ok(_) if self.dialog.is_some() => {}
-                Ok(apps) if !apps.is_empty() => {
+                Ok(found) => {
                     self.open_with = files;
+                    let own = |label, kind| ListItem {
+                        label,
+                        path: PathBuf::new(),
+                        kind,
+                        icon: String::new(),
+                    };
+                    let mut items: Vec<ListItem> = (found.apps.into_iter())
+                        .map(|a| ListItem {
+                            label: a.name,
+                            path: a.desktop,
+                            kind: Item::App,
+                            icon: a.icon,
+                        })
+                        .collect();
+                    if !items.is_empty() {
+                        items.push(own(String::new(), Item::Sep));
+                    }
+                    items.push(own(fl!("open-with-other"), Item::Other));
+                    self.open_with_mime = found.mime;
                     self.dialog = Some(Dialog::List {
                         kind: ListKind::OpenWith,
                         side,
                         cursor: 0,
-                        items: (apps.into_iter())
-                            .map(|a| ListItem {
-                                label: a.name,
-                                path: a.desktop,
-                                kind: Item::App,
-                            })
-                            .collect(),
+                        items,
                     });
                 }
-                Ok(_) => self.say(StatusKind::Error, fl!("open-with-none")),
+                Err(e) => self.say(StatusKind::Error, fl!("open-failed", err = e)),
+            },
+            Message::OpenWithDefault => {
+                let Some(Dialog::List {
+                    kind: ListKind::OpenWith,
+                    cursor,
+                    items,
+                    ..
+                }) = &self.dialog
+                else {
+                    return Task::none();
+                };
+                let Some(item) = items.get(*cursor).filter(|it| it.kind == Item::App) else {
+                    return Task::none();
+                };
+                let (name, desktop, mime) = (
+                    item.label.clone(),
+                    item.path.clone(),
+                    self.open_with_mime.clone(),
+                );
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            openwith::set_default(&mime, &desktop).map(|()| name)
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    |r| cosmic::Action::App(Message::OpenWithDefaultSet(r)),
+                );
+            }
+            Message::OpenWithDefaultSet(r) => match r {
+                Ok(app) => {
+                    let mime = self.open_with_mime.clone();
+                    self.say(
+                        StatusKind::Info,
+                        fl!("open-with-default-set", app = app, mime = mime),
+                    );
+                }
                 Err(e) => self.say(StatusKind::Error, fl!("open-failed", err = e)),
             },
             Message::Tool(i) => return self.run_tool(i),
@@ -1773,6 +1831,7 @@ impl App {
                         label: v.name,
                         path: v.device.into(),
                         kind: Item::Mount,
+                        icon: String::new(),
                     }));
                 }
             }
@@ -2631,6 +2690,7 @@ impl App {
                         label: format::dir_title(&p),
                         path: p,
                         kind: Item::Dir,
+                        icon: String::new(),
                     })
                     .collect(),
             }),
@@ -2647,6 +2707,7 @@ impl App {
                         label: d.label.clone(),
                         path: d.path.clone(),
                         kind: Item::Dir,
+                        icon: String::new(),
                     })
                     .collect(),
             }),
@@ -2855,6 +2916,26 @@ impl App {
                 input,
                 ..
             } => self.new_file(side, input.trim()),
+            Dialog::Input {
+                op: InputOp::OpenWith,
+                side,
+                sources,
+                input,
+            } => {
+                if input.trim().is_empty() {
+                    return Task::none();
+                }
+                let dir = self.panes[side].active().panel.cwd().to_path_buf();
+                let line = openwith::other_line(&input, &sources);
+                // Watched like a toolbar command: a typo ("gimpp") is reported, not silent.
+                match run_watched(&cmdline::argv(&line, &dir, None), &dir) {
+                    Ok(task) => task,
+                    Err(e) => {
+                        self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
+                        Task::none()
+                    }
+                }
+            }
             Dialog::Input {
                 op: InputOp::TabName,
                 side,
@@ -4195,6 +4276,15 @@ impl App {
         };
         if kind == ListKind::OpenWith {
             let files = std::mem::take(&mut self.open_with);
+            if items.get(i).is_some_and(|it| it.kind == Item::Other) {
+                self.dialog = Some(Dialog::Input {
+                    op: InputOp::OpenWith,
+                    side,
+                    sources: files,
+                    input: String::new(),
+                });
+                return widget::text_input::focus(self.input_id.clone());
+            }
             if let Some(item) = items.get(i)
                 && let Err(e) = spawn_detached(&openwith::launch_argv(&item.path, &files))
             {
@@ -4256,6 +4346,7 @@ impl App {
             label,
             path: PathBuf::new(),
             kind,
+            icon: String::new(),
         };
         let list = &self.config.hotlist;
         // A stale index (the config changed under the open menu): back to the top.
@@ -4280,6 +4371,7 @@ impl App {
                     label: e.name.clone(),
                     path: e.path.clone(),
                     kind: Item::Hot(i),
+                    icon: String::new(),
                 },
             }
         }));
@@ -4498,6 +4590,7 @@ impl App {
                                 label: c.clone(),
                                 path: PathBuf::new(),
                                 kind: Item::Dir,
+                                icon: String::new(),
                             })
                             .collect(),
                     });
@@ -5002,24 +5095,45 @@ mod tests {
     }
 
     #[test]
-    fn open_with_lists_programs_or_says_none() {
+    fn open_with_lists_programs_and_other() {
         let mut app = app_with(Config::default(), State::default());
-        let _ = app.update(Message::OpenWithApps(0, Vec::new(), Ok(Vec::new())));
-        assert!(app.dialog.is_none());
-        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
+        // No programs: still "Other program…".
+        let _ = app.update(Message::OpenWithApps(0, Vec::new(), Ok(Default::default())));
+        let Some(Dialog::List { items, .. }) = &app.dialog else {
+            panic!("no list")
+        };
+        assert_eq!(
+            items.iter().map(|i| i.kind).collect::<Vec<_>>(),
+            [Item::Other]
+        );
+        app.dialog = None;
         let ed = openwith::App {
             name: "Editor".into(),
+            icon: "ed".into(),
             desktop: "/usr/share/applications/ed.desktop".into(),
         };
-        let _ = app.update(Message::OpenWithApps(0, Vec::new(), Ok(vec![ed])));
+        let found = openwith::Found {
+            mime: "text/plain".into(),
+            apps: vec![ed],
+        };
+        let files = vec![PathBuf::from("/x/a b.txt")];
+        let _ = app.update(Message::OpenWithApps(0, files.clone(), Ok(found)));
         let Some(Dialog::List { kind, items, .. }) = &app.dialog else {
             panic!("no list")
         };
         assert_eq!(*kind, ListKind::OpenWith);
         assert_eq!(
-            (items[0].label.as_str(), items[0].kind),
-            ("Editor", Item::App)
+            (items[0].label.as_str(), items[0].icon.as_str()),
+            ("Editor", "ed")
         );
+        let kinds: Vec<Item> = items.iter().map(|i| i.kind).collect();
+        assert_eq!(kinds, [Item::App, Item::Sep, Item::Other]);
+        // "Other program…" asks for a command, with the files taken when the list was asked for.
+        let _ = app.update(Message::ListPick(2));
+        let Some(Dialog::Input { op, sources, .. }) = &app.dialog else {
+            panic!("no input")
+        };
+        assert_eq!((*op, sources.clone()), (InputOp::OpenWith, files));
     }
 
     #[test]
