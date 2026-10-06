@@ -12,9 +12,39 @@ pub fn matches(pattern: &str, name: &str) -> bool {
         )
 }
 
+/// A menu's letter key: the next label after `from` (round, so the same letter steps through
+/// them) that starts with `c`, case-insensitive.
+pub fn next_with<'a>(
+    labels: impl IntoIterator<Item = &'a str>,
+    from: usize,
+    c: char,
+) -> Option<usize> {
+    let labels: Vec<&str> = labels.into_iter().collect();
+    let starts = |l: &str| {
+        l.chars()
+            .find(|ch| ch.is_alphanumeric())
+            .is_some_and(|ch| ch.to_lowercase().eq(c.to_lowercase()))
+    };
+    (1..=labels.len())
+        .map(|k| (from + k) % labels.len())
+        .find(|&i| starts(labels[i]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn letter_steps_through_matches_round() {
+        let l = ["Alpha", "", "beta", "‹ Back", "Bravo", "Аня"];
+        assert_eq!(next_with(l, 0, 'b'), Some(2));
+        assert_eq!(next_with(l, 2, 'B'), Some(3)); // the first letter, past "‹ "
+        assert_eq!(next_with(l, 4, 'b'), Some(2)); // round
+        assert_eq!(next_with(l, 0, 'а'), Some(5)); // Cyrillic
+        assert_eq!(next_with(l, 0, 'a'), Some(0)); // the only one: stays
+        assert_eq!(next_with(l, 0, 'z'), None);
+        assert_eq!(next_with([], 0, 'a'), None);
+    }
 
     #[test]
     fn prefix_match() {

@@ -779,16 +779,7 @@ impl App {
                         }
                         _ => return Task::none(),
                     }
-                    // Scrolled in proportion to the cursor: its row is always in view
-                    // (separators are shorter, close enough).
-                    let y = *cursor as f32 / items.len().saturating_sub(1).max(1) as f32;
-                    return scrollable::snap_to(
-                        dialogs::list_scroll_id(),
-                        scrollable::RelativeOffset {
-                            x: None,
-                            y: Some(y),
-                        },
-                    );
+                    return list_snap(*cursor, items.len());
                 }
                 if let Some(Dialog::Diff(_)) = &self.dialog {
                     return match action {
@@ -1756,6 +1747,15 @@ impl App {
             }
             Message::CmdEnter => return self.cmd_run(self.mods.shift()),
             Message::CmdType(c) => {
+                // A list dialog's letter key, as in TC's menus: the next item with that letter.
+                if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
+                    let labels = items.iter().map(|it| it.label.as_str());
+                    if let Some(i) = shagoff_core::quicksearch::next_with(labels, *cursor, c) {
+                        *cursor = i;
+                        return list_snap(i, items.len());
+                    }
+                    return Task::none();
+                }
                 if self.cmd_ready() {
                     self.cmdline.push(c);
                     return self.cmd_focus();
@@ -4956,6 +4956,19 @@ fn count_dirs(
     }))
 }
 
+/// Scroll a list dialog in proportion to its cursor: the row is always in view (separators are
+/// shorter, close enough).
+fn list_snap(cursor: usize, len: usize) -> Task<Message> {
+    let y = cursor as f32 / len.saturating_sub(1).max(1) as f32;
+    scrollable::snap_to(
+        dialogs::list_scroll_id(),
+        scrollable::RelativeOffset {
+            x: None,
+            y: Some(y),
+        },
+    )
+}
+
 /// "Open with…" rows: the programs, a line, "All programs…" (unless they are all shown already),
 /// "Other program…".
 fn open_with_items(apps: Vec<openwith::App>, all: bool) -> Vec<ListItem> {
@@ -5270,6 +5283,12 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::Down)); // clamped at 1
         assert!(matches!(app.dialog, Some(Dialog::List { cursor: 1, .. })));
+        // A letter jumps as in a menu, and never reaches the command line.
+        let _ = app.update(Message::CmdType('/'));
+        let _ = app.update(Message::Key(Action::Up));
+        let _ = app.update(Message::CmdType('T'));
+        assert!(matches!(app.dialog, Some(Dialog::List { cursor: 1, .. })));
+        assert!(app.cmdline.is_empty());
         app.panes[1].active_mut().pending = None;
         let _ = app.update(Message::Key(Action::Enter));
         assert!(app.dialog.is_none());
