@@ -17,6 +17,9 @@ use shagoff_core::panel::PARENT;
 use shagoff_core::sort::{Sort, SortKey};
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
+use std::cell::OnceCell;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 const TEXT: u16 = 13;
 
@@ -67,7 +70,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
 
     let list = if p.brief {
-        brief_list(side, p, active, skin)
+        brief_list(side, p, active, skin, app.drop_hover, app.window_id())
     } else {
         full_list(app, side, p, active)
     };
@@ -79,18 +82,37 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         },
         _ => crate::menu::Ctx::Dir,
     };
-    // A popup surface, not an overlay: libcosmic's overlay menu closes on the press that should
-    // pick an item.
-    let list = widget::context_menu(
-        mouse_area(list).on_right_press(Message::RightEmpty(side)),
+    // Dropped on no dir row: into the pane's dir (not into search results: no one dir there).
+    let list = if p.results.is_none() {
+        let on = move |paths, mv| Message::Drop {
+            side,
+            dir: None,
+            paths,
+            mv,
+        };
+        crate::clip::drop_zone(list, on, None)
+    } else {
+        list
+    };
+    // The right-click menu and the size sensor sit in a layer under the list, not around it:
+    // neither passes drop zones through (`drag_destinations`), so rows inside them never got
+    // drops. A press reaches the rows first, then this layer, as before (`RightClick`, then
+    // `RightEmpty`). A popup surface, not an overlay: libcosmic's overlay menu closes on the
+    // press that should pick an item. The sensor: on_scroll misses window resizes.
+    let under = cosmic::iced::widget::sensor(
+        widget::Space::new()
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_show(move |size| Message::Resized(side, size))
+    .on_resize(move |size| Message::Resized(side, size));
+    let under = widget::context_menu(
+        mouse_area(under).on_right_press(Message::RightEmpty(side)),
         Some(crate::menu::context(ctx)),
     )
     .window_id(app.window_id())
     .on_surface_action(Message::Surface);
-    // on_scroll misses window resizes: the sensor reports the list's real size.
-    let list = cosmic::iced::widget::sensor(list)
-        .on_show(move |size| Message::Resized(side, size))
-        .on_resize(move |size| Message::Resized(side, size));
+    let list = cosmic::iced::widget::stack![under, list];
 
     let drives = match app.config.skin {
         Skin::Classic => drive_list(app, side),
@@ -226,16 +248,24 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
     let row_h = app.row_h();
     let range = viewport::visible_range(entries.len(), row_h, p.offset, p.height);
     let mut list = column![widget::Space::new().height(range.start as f32 * row_h)];
+    let marked = OnceCell::new();
     for i in range.clone() {
-        list = list.push(file_row(
+        let row = file_row(
             app,
             side,
             i,
             &entries[i],
-            i == cursor,
+            i == cursor || app.drop_hover == Some((side, i)),
             active,
             p.panel.is_marked(&entries[i]),
-        ));
+        );
+        // While a header edge is dragged, rows must not take the pointer's moves (a drag
+        // source captures them, and the pane follows the edge through them).
+        list = list.push(if app.col_drag.is_none() {
+            dnd_row(app.window_id(), side, p, i, &marked, row)
+        } else {
+            row
+        });
     }
     list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * row_h));
     scrollable(list)
@@ -246,11 +276,19 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
 }
 
 /// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
-fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, skin: Skin) -> Element<'a, Message> {
+fn brief_list<'a>(
+    side: usize,
+    p: &'a Tab,
+    active: bool,
+    skin: Skin,
+    hover: Option<(usize, usize)>,
+    window: cosmic::iced::window::Id,
+) -> Element<'a, Message> {
     let row_h = skin.row_h();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
     let (rows, cols) = p.brief_grid(row_h);
     let mut grid = row![].spacing(2);
+    let marked = OnceCell::new();
     for c in p.col..p.col + cols {
         let mut list = column![];
         for (i, e) in entries.iter().enumerate().skip(c * rows).take(rows) {
@@ -265,17 +303,16 @@ fn brief_list<'a>(side: usize, p: &'a Tab, active: bool, skin: Skin) -> Element<
                 .width(Length::Fill)
                 .clip(true)
                 .class(cursor_style(
-                    i == cursor,
+                    i == cursor || hover == Some((side, i)),
                     active,
                     p.panel.is_marked(e),
                     skin,
                 ));
-            list = list.push(
-                mouse_area(cell)
-                    .on_press(Message::Click(side, i))
-                    .on_right_press(Message::RightClick(side, i))
-                    .on_double_click(Message::DoubleClick(side, i)),
-            );
+            let cell = mouse_area(cell)
+                .on_press(Message::Click(side, i))
+                .on_right_press(Message::RightClick(side, i))
+                .on_double_click(Message::DoubleClick(side, i));
+            list = list.push(dnd_row(window, side, p, i, &marked, cell.into()));
         }
         grid = grid.push(container(list).width(Length::FillPortion(1)).clip(true));
     }
@@ -529,6 +566,52 @@ fn file_row<'a>(
         .on_right_press(Message::RightClick(side, i))
         .on_double_click(Message::DoubleClick(side, i))
         .into()
+}
+
+/// A row can be dragged (the marked files if it is one of them, TC); a dir row also takes drops.
+/// `marked`: the pane's marked files, gathered once per frame and only if a marked row is shown.
+fn dnd_row<'a>(
+    window: cosmic::iced::window::Id,
+    side: usize,
+    p: &'a Tab,
+    i: usize,
+    marked: &OnceCell<Arc<Vec<PathBuf>>>,
+    row: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let e = &p.panel.entries()[i];
+    // Not `..`; not from inside an archive either: other programs would get paths that are not
+    // on disk (Ctrl+C extracts for that, a drag cannot).
+    let row = if e.name == PARENT || in_archive(p.panel.cwd()) {
+        row
+    } else {
+        let paths = if p.panel.is_marked(e) {
+            marked.get_or_init(|| Arc::new(p.panel.targets())).clone()
+        } else {
+            Arc::new(vec![p.panel.cwd().join(&e.os_name)])
+        };
+        crate::clip::drag(row, paths, window)
+    };
+    if !e.is_dir() || p.results.is_some() {
+        return row;
+    }
+    // The dir itself, not the row number: a rescan before the drop may move the rows.
+    let dir = p.panel.drop_dir(Some(i));
+    let on = move |paths, mv| Message::Drop {
+        side,
+        dir: Some(dir.clone()),
+        paths,
+        mv,
+    };
+    crate::clip::drop_zone(row, on, Some((side, i)))
+}
+
+/// Inside an archive (`/x/a.zip/docs`), by the names alone: no disk access while drawing.
+fn in_archive(cwd: &std::path::Path) -> bool {
+    cwd.ancestors().any(|a| {
+        (a.file_name().map(|n| n.to_string_lossy()))
+            .and_then(|n| shagoff_core::archive::Format::detect(&n))
+            .is_some_and(|f| f.is_tree())
+    })
 }
 
 /// One-line table cell: long text is cut with "…" instead of wrapping.
