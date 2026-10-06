@@ -3823,7 +3823,7 @@ impl App {
         l.side = side;
         // Inside an archive? As F3 decides (a real dir named `x.zip` is none).
         let in_archive = archive::split_path(self.panes[side].active().panel.cwd());
-        if dir.is_none() || (dir == Some(true) && in_archive.is_some()) {
+        if dir.is_none() {
             l.set_loaded(Arc::new(Err(fl!("quick-none"))));
             return Task::none();
         }
@@ -3838,24 +3838,33 @@ impl App {
             l.set_loaded(Arc::new(Err(fl!("quick-counting"))));
             return Task::perform(
                 async move {
-                    tokio::task::spawn_blocking(move || {
-                        // A link to a dir: what it points to (`usage` does not follow links).
-                        let root = std::fs::canonicalize(&file).unwrap_or(file);
-                        shagoff_core::props::usage(&[root], &stop)
+                    tokio::task::spawn_blocking(move || match in_archive {
+                        // From the archive's index: nothing is unpacked.
+                        Some((arc, inner)) => {
+                            let entry = file.file_name().map(PathBuf::from).unwrap_or_default();
+                            // An unreadable index (archive gone, cut): say so, not a blank.
+                            archive::usage(&arc, &inner.join(entry)).map_err(|_| ())
+                        }
+                        None => {
+                            // A link to a dir: what it points to (`usage` does not follow links).
+                            let root = std::fs::canonicalize(&file).unwrap_or(file);
+                            // Stopped: dropped anyway (the cursor moved on, its id is stale).
+                            shagoff_core::props::usage(&[root], &stop).ok_or(())
+                        }
                     })
                     .await
-                    .ok()
-                    .flatten()
+                    .unwrap_or(Err(()))
                 },
                 move |u| {
-                    let text = u.map_or_else(String::new, |u| {
-                        fl!(
+                    let text = match u {
+                        Ok(u) => fl!(
                             "quick-dir",
                             files = u.files,
                             dirs = u.dirs.saturating_sub(1),
                             size = crate::view::human(u.bytes)
-                        )
-                    });
+                        ),
+                        Err(()) => fl!("quick-none"),
+                    };
                     cosmic::Action::App(Message::ListerLoaded(id, Arc::new(Err(text))))
                 },
             );
@@ -5889,7 +5898,10 @@ mod tests {
         let _ = app.update(Message::Key(Action::QuickView));
         let l = app.lister.as_ref().unwrap();
         assert_eq!(l.name, "d");
-        assert!(matches!(l.loaded.as_deref(), Some(Err(t)) if *t == fl!("quick-none")));
+        // Counted from the archive's index, nothing unpacked.
+        assert!(matches!(l.loaded.as_deref(), Some(Err(t)) if *t == fl!("quick-counting")));
+        let u = archive::usage(&z, Path::new("d")).unwrap();
+        assert_eq!((u.files, u.dirs), (0, 1));
         let _ = app.update(Message::Key(Action::Down));
         let l = app.lister.as_ref().unwrap();
         assert_eq!(l.name, "f.txt");
