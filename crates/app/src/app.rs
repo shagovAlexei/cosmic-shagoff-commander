@@ -279,6 +279,8 @@ pub struct App {
     open_with_mime: String,
     /// Ctrl+Q: id of the newest read; an older one waiting out its delay is skipped.
     quick_latest: Arc<std::sync::atomic::AtomicU64>,
+    /// Ctrl+Q on a dir: stops its count when the cursor moves on.
+    quick_stop: Arc<AtomicBool>,
     /// User / group names for the status bar.
     pub owners: shagoff_core::owners::Owners,
     /// The last right press landed on a row (else below them): which context menu to show.
@@ -676,6 +678,7 @@ impl App {
             open_with: Vec::new(),
             open_with_mime: String::new(),
             quick_latest: Arc::default(),
+            quick_stop: Arc::default(),
             owners: shagoff_core::owners::Owners::load(),
             ctx_entry: false,
             ctx_row: false,
@@ -3788,18 +3791,29 @@ impl App {
             || (panel.cwd().to_path_buf(), 0, std::time::UNIX_EPOCH),
             |e| (panel.cwd().join(&e.os_name), e.size, e.mtime),
         );
-        let (name, dir) = entry.map_or((String::new(), true), |e| (e.name.clone(), e.is_dir()));
+        let (name, dir) = entry.map_or((String::new(), None), |e| {
+            (e.name.clone(), Some(e.is_dir()))
+        });
         match self.lister.as_deref() {
             // Only the Ctrl+Q one; the F3 viewer stays on its file.
             Some(l)
                 if l.quick
                     .as_ref()
                     .is_some_and(|q| *q != key || l.side != side) => {}
-            _ => return Task::none(),
+            Some(l) if l.quick.is_some() => return Task::none(),
+            // Closed (or never open): a dir count left running has no one to show it to.
+            _ => {
+                self.quick_stop.store(true, Ordering::Relaxed);
+                return Task::none();
+            }
         }
         let id = self.next_id();
         self.quick_latest.store(id, Ordering::Relaxed);
         let latest = self.quick_latest.clone();
+        // A dir still being counted for the last entry: not any more.
+        let stop = std::mem::take(&mut self.quick_stop);
+        stop.store(true, Ordering::Relaxed);
+        let stop = self.quick_stop.clone();
         let Some(l) = self.lister.as_deref_mut() else {
             return Task::none();
         };
@@ -3809,9 +3823,36 @@ impl App {
         l.side = side;
         // As F3 decides: a real dir named `x.zip` is no archive.
         let cwd = self.panes[side].active().panel.cwd();
-        if dir || archive::split_path(cwd).is_some() {
+        if dir.is_none() || archive::split_path(cwd).is_some() {
             l.set_loaded(Arc::new(Err(fl!("quick-none"))));
             return Task::none();
+        }
+        // TC: a dir shows what is in it, counted in the background.
+        if dir == Some(true) {
+            l.set_loaded(Arc::new(Err(fl!("quick-counting"))));
+            return Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        // A link to a dir: what it points to (`usage` does not follow links).
+                        let root = std::fs::canonicalize(&file).unwrap_or(file);
+                        shagoff_core::props::usage(&[root], &stop)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                },
+                move |u| {
+                    let text = u.map_or_else(String::new, |u| {
+                        fl!(
+                            "quick-dir",
+                            files = u.files,
+                            dirs = u.dirs.saturating_sub(1),
+                            size = crate::view::human(u.bytes)
+                        )
+                    });
+                    cosmic::Action::App(Message::ListerLoaded(id, Arc::new(Err(text))))
+                },
+            );
         }
         let read = Task::perform(
             async move {
@@ -5780,14 +5821,23 @@ mod tests {
         let _ = app.update(Message::Key(Action::Up));
         let l = app.lister.as_ref().unwrap();
         assert_eq!(l.name, "sub");
-        assert!(matches!(l.loaded.as_deref(), Some(Err(_))));
+        // A dir is counted (TC: its size), and the count stops once the cursor leaves it.
+        assert!(matches!(l.loaded.as_deref(), Some(Err(t)) if *t == fl!("quick-counting")));
+        let counting = app.quick_stop.clone();
+        let _ = app.update(Message::Key(Action::Up)); // `..`
+        assert!(counting.load(Ordering::Relaxed));
+        let l = app.lister.as_ref().unwrap();
+        assert!(matches!(l.loaded.as_deref(), Some(Err(t)) if *t == fl!("quick-none")));
+        let _ = app.update(Message::Key(Action::Down));
         // F8 is the panel's: it asks to delete.
         let _ = app.update(Message::Key(Action::Delete));
         assert!(app.dialog.is_some());
         let _ = app.update(Message::DialogCancel);
         assert!(app.lister.is_some()); // Esc closed the dialog, not the view
+        let counting = app.quick_stop.clone();
         let _ = app.update(Message::Key(Action::QuickView));
         assert!(app.lister.is_none());
+        assert!(counting.load(Ordering::Relaxed), "closed: its count stops");
     }
 
     #[test]

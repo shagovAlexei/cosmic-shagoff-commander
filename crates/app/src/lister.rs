@@ -433,10 +433,15 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
                 .into(),
         ]);
     }
-    let bar = column::with_children(vec![
-        title.into(),
-        widget::flex_row(buttons).spacing(4).into(),
-    ])
+    // Ctrl+Q on a dir or `..`: just the name and the note, no view modes to pick.
+    let bar = if l.quick.is_some() && l.ok().is_none() {
+        column::with_children(vec![title.into()])
+    } else {
+        column::with_children(vec![
+            title.into(),
+            widget::flex_row(buttons).spacing(4).into(),
+        ])
+    }
     .spacing(4);
     let mut col = column::with_capacity(4).spacing(6).push(bar);
     if l.searching {
