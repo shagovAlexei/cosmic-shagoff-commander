@@ -92,7 +92,10 @@ impl Panel {
             self.filter = None;
             self.dir_sizes.clear();
         }
-        sort_entries(&mut entries, self.sort, &self.dir_sizes);
+        // Usually sorted already, off the UI thread (`App::load_tab`); again only if not.
+        if !crate::sort::is_sorted(&entries, self.sort, &self.dir_sizes) {
+            sort_entries(&mut entries, self.sort, &self.dir_sizes);
+        }
         self.cwd = cwd;
         self.all = entries;
         self.rebuild(keep, old);

@@ -30,22 +30,31 @@ impl Default for Sort {
 /// Case-insensitive comparison where digit runs compare as numbers (`file2 < file10`).
 /// Names equal under that rule fall back to byte order, so the result is never `Equal` for different strings.
 pub fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    // Byte offsets, always on char boundaries: ASCII steps one byte, other chars their length.
+    // No allocation per comparison: a 400 000-entry branch view sorts millions of times.
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    let (mut i, mut j) = (0, 0);
     loop {
-        let ord = match (x.peek().copied(), y.peek().copied()) {
+        let (c, d) = match (x.get(i), y.get(j)) {
             (None, None) => return a.cmp(b),
             (None, Some(_)) => return Ordering::Less,
             (Some(_), None) => return Ordering::Greater,
-            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
-                let (n, m) = (take_digits(&mut x), take_digits(&mut y));
-                let (n, m) = (n.trim_start_matches('0'), m.trim_start_matches('0'));
-                n.len().cmp(&m.len()).then_with(|| n.cmp(m))
-            }
-            (Some(c), Some(d)) => {
-                x.next();
-                y.next();
-                c.to_lowercase().cmp(d.to_lowercase())
-            }
+            (Some(&c), Some(&d)) => (c, d),
+        };
+        let ord = if c.is_ascii_digit() && d.is_ascii_digit() {
+            let (n, m) = (digits(x, &mut i), digits(y, &mut j));
+            n.len().cmp(&m.len()).then_with(|| n.cmp(m))
+        } else if c.is_ascii() && d.is_ascii() {
+            i += 1;
+            j += 1;
+            c.to_ascii_lowercase().cmp(&d.to_ascii_lowercase())
+        } else {
+            let (Some(c), Some(d)) = (a[i..].chars().next(), b[j..].chars().next()) else {
+                return a.cmp(b); // unreachable: both have bytes left on a boundary
+            };
+            i += c.len_utf8();
+            j += d.len_utf8();
+            c.to_lowercase().cmp(d.to_lowercase())
         };
         if ord != Ordering::Equal {
             return ord;
@@ -53,38 +62,48 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
-fn take_digits(it: &mut std::iter::Peekable<std::str::Chars>) -> String {
-    let mut s = String::new();
-    while let Some(c) = it.next_if(char::is_ascii_digit) {
-        s.push(c);
+/// The digit run at `*k` without leading zeros; `*k` moves past it.
+fn digits<'a>(s: &'a [u8], k: &mut usize) -> &'a [u8] {
+    let start = *k;
+    while s.get(*k).is_some_and(u8::is_ascii_digit) {
+        *k += 1;
     }
-    s
+    let run = &s[start..*k];
+    &run[run.iter().take_while(|&&b| b == b'0').count()..]
 }
 
 /// TC order: dirs above files in both directions. By size, dirs go by their counted size
 /// (`dir_sizes`, Space / Alt+Shift+Enter; uncounted as 0), so by name until counted.
 pub fn sort_entries(entries: &mut [Entry], sort: Sort, dir_sizes: &HashMap<OsString, u64>) {
+    entries.sort_by(|a, b| entry_cmp(a, b, sort, dir_sizes));
+}
+
+/// Already in `sort` order: a listing sorted in the background needs no second sort on the UI
+/// thread (a 400 000-file branch takes a second to sort, one pass to check).
+pub fn is_sorted(entries: &[Entry], sort: Sort, dir_sizes: &HashMap<OsString, u64>) -> bool {
+    entries.is_sorted_by(|a, b| entry_cmp(a, b, sort, dir_sizes) != Ordering::Greater)
+}
+
+fn entry_cmp(a: &Entry, b: &Entry, sort: Sort, dir_sizes: &HashMap<OsString, u64>) -> Ordering {
     let size = |e: &Entry| match e.is_dir() {
         true => dir_sizes.get(&e.os_name).copied().unwrap_or(0),
         false => e.size,
     };
-    entries.sort_by(|a, b| {
-        match (a.is_dir(), b.is_dir()) {
-            (true, false) => return Ordering::Less,
-            (false, true) => return Ordering::Greater,
-            _ => {}
-        }
-        let ord = match sort.key {
-            SortKey::Name => Ordering::Equal,
-            SortKey::Ext => natural_cmp(&a.ext, &b.ext),
-            SortKey::Size => size(a).cmp(&size(b)),
-            SortKey::Date => a.mtime.cmp(&b.mtime),
-        }
-        .then_with(|| natural_cmp(&a.name, &b.name))
-        // lossy names can collide; the real name keeps the order total
-        .then_with(|| a.os_name.cmp(&b.os_name));
-        if sort.asc { ord } else { ord.reverse() }
-    });
+    match (a.is_dir(), b.is_dir()) {
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        _ => {}
+    }
+    let ord = match sort.key {
+        SortKey::Name => Ordering::Equal,
+        SortKey::Ext => natural_cmp(&a.ext, &b.ext),
+        SortKey::Size => size(a).cmp(&size(b)),
+        SortKey::Date => a.mtime.cmp(&b.mtime),
+    }
+    .then_with(|| natural_cmp(&a.name, &b.name))
+    // lossy names can collide; the real name keeps the order total
+    .then_with(|| a.os_name.cmp(&b.os_name));
+    if sort.asc { ord } else { ord.reverse() }
 }
 
 #[cfg(test)]
@@ -114,6 +133,22 @@ mod tests {
 
     fn names(v: &[Entry]) -> Vec<&str> {
         v.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn regression_presorted_listing_is_not_sorted_again_on_the_ui_thread() {
+        let mut v = vec![
+            e("b10.txt", Kind::File, 1, 0),
+            e("B2.txt", Kind::File, 1, 0),
+            e("dir", Kind::Dir, 0, 0),
+            e("Ёлка", Kind::File, 1, 0),
+        ];
+        let (s, sizes) = (Sort::default(), HashMap::new());
+        assert!(!is_sorted(&v, s, &sizes));
+        sort_entries(&mut v, s, &sizes);
+        assert!(is_sorted(&v, s, &sizes));
+        let desc = Sort { asc: false, ..s };
+        assert!(!is_sorted(&v, desc, &sizes)); // another order: the panel sorts again
     }
 
     #[test]

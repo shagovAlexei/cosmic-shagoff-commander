@@ -33,7 +33,7 @@ use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -2205,12 +2205,18 @@ impl App {
         }
         let results = t.results.as_ref().map(|(_, r)| r.clone());
         let tab = t.id;
-        let show_hidden = t.panel.show_hidden();
+        let (show_hidden, sort) = (t.panel.show_hidden(), t.panel.sort());
         Task::perform(
             async move {
                 let p = path.clone();
                 let (result, space) = tokio::task::spawn_blocking(move || {
-                    let result = read_listing(&p, show_hidden, results.as_deref());
+                    let mut result = read_listing(&p, show_hidden, results.as_deref());
+                    // Sorted here, not on the UI thread; the panel only checks the order.
+                    // ponytail: counted dir sizes are not known here; a Size sort with them is
+                    // redone by the panel.
+                    if let Ok(entries) = &mut result {
+                        shagoff_core::sort::sort_entries(entries, sort, &HashMap::new());
+                    }
                     (result, drives::space(&p))
                 })
                 .await
