@@ -1,6 +1,6 @@
 //! Modal dialogs: one enum, one view per variant.
 
-use crate::app::{Message, OpKind, Running};
+use crate::app::{Message, OpKind, Queued, Running};
 use crate::fl;
 use cosmic::iced::Length;
 use cosmic::iced::widget::text::Wrapping;
@@ -646,12 +646,20 @@ pub fn view<'a>(
                 InputOp::TabName => fl!("tab-rename"),
                 InputOp::OpenWith => fl!("open-with-other-title"),
             };
-            widget::dialog()
+            let dialog = widget::dialog()
                 .title(title)
                 .control(field(input))
                 .primary_action(ok)
-                .secondary_action(cancel)
-                .into()
+                .secondary_action(cancel);
+            match op {
+                // TC: F2 puts it in the background queue.
+                InputOp::Copy | InputOp::Move => dialog
+                    .tertiary_action(
+                        widget::button::text(fl!("job-queue")).on_press(Message::DialogQueue),
+                    )
+                    .into(),
+                _ => dialog.into(),
+            }
         }
         Dialog::UpdateArchive { archive, entry, .. } => widget::dialog()
             .title(fl!("archive-update-title"))
@@ -1693,7 +1701,12 @@ pub fn job_fraction(job: &Running) -> f32 {
 }
 
 /// Shown while a job runs, its window is not hidden and no question is pending.
-pub fn progress(job: &Running) -> Element<'_, Message> {
+/// Shown while a job runs, its window is not hidden and no question is pending; under the bar,
+/// what waits in the queue (TC's background transfer manager), each with ✕.
+pub fn progress<'a>(
+    job: &'a Running,
+    queue: &'a std::collections::VecDeque<Queued>,
+) -> Element<'a, Message> {
     let counts = match job.kind {
         OpKind::Delete => fl!(
             "progress-items",
@@ -1708,24 +1721,56 @@ pub fn progress(job: &Running) -> Element<'_, Message> {
     };
     let fraction = job_fraction(job);
     let percent = format!("{} %", (fraction * 100.0).round() as u32);
-    widget::dialog()
-        .title(job_title(job.kind))
-        .body(job.current.clone())
-        .control(
-            column![
-                widget::progress_bar::determinate_linear(fraction)
+    let mut title = job_title(job.kind);
+    if job.paused() {
+        title = format!("{title} — {}", fl!("job-paused"));
+    }
+    let mut control = column![
+        widget::progress_bar::determinate_linear(fraction)
+            .width(Length::Fill)
+            .girth(12),
+        row![
+            widget::text(counts).width(Length::Fill),
+            widget::text::heading(percent)
+        ],
+    ]
+    .spacing(8)
+    .width(Length::Fill);
+    if !queue.is_empty() {
+        let rows = queue.iter().enumerate().map(|(i, q)| {
+            row![
+                widget::text(format!("{}: {}", job_title(q.kind), q.label()))
                     .width(Length::Fill)
-                    .girth(12),
-                row![
-                    widget::text(counts).width(Length::Fill),
-                    widget::text::heading(percent)
-                ],
+                    .wrapping(Wrapping::None)
+                    .ellipsize(cosmic::iced::core::text::Ellipsize::Middle(
+                        cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1)
+                    )),
+                widget::button::icon(widget::icon::from_name("window-close-symbolic"))
+                    .tooltip(fl!("job-unqueue"))
+                    .on_press(Message::Unqueue(i)),
             ]
-            .spacing(8)
-            .width(Length::Fill),
-        )
+            .align_y(cosmic::iced::Alignment::Center)
+            .into()
+        });
+        control = control
+            .push(widget::text::heading(fl!("job-queued", n = queue.len())))
+            .push(
+                widget::scrollable(widget::Column::with_children(rows))
+                    .height(Length::Fixed((queue.len() as f32 * 36.0).min(108.0))),
+            );
+    }
+    let pause = if job.paused() {
+        fl!("job-resume")
+    } else {
+        fl!("job-pause")
+    };
+    widget::dialog()
+        .title(title)
+        .body(job.current.clone())
+        .control(control)
         // TC "Background": the panels work again, the job goes on (shown in the status line).
         .primary_action(widget::button::standard(fl!("cancel")).on_press(Message::CancelJob))
         .secondary_action(widget::button::suggested(fl!("job-hide")).on_press(Message::JobHide))
+        .tertiary_action(widget::button::text(pause).on_press(Message::JobPause))
         .into()
 }
