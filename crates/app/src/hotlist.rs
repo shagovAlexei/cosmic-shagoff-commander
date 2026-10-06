@@ -12,6 +12,11 @@ use std::path::Path;
 /// TC's menu separator: an entry named `-` with no path.
 pub const SEP: &str = "-";
 
+/// A dir's name as a favourite's name: its `&` doubled, so it is no hot letter (`R&D`).
+pub fn menu_name(dir: &std::path::Path) -> String {
+    format::dir_title(dir).replace('&', "&&")
+}
+
 pub fn is_sep(e: &HotEntry) -> bool {
     e.name == SEP && e.path.as_os_str().is_empty()
 }
@@ -175,7 +180,7 @@ impl HotEdit {
                 self.select(i);
             }
             (HotMsg::Add, _) => self.insert(HotEntry {
-                name: format::dir_title(cwd),
+                name: menu_name(cwd),
                 path: cwd.into(),
             }),
             (HotMsg::AddSep, _) => self.insert(HotEntry {

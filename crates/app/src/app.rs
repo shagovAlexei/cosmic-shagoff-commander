@@ -1763,9 +1763,32 @@ impl App {
             Message::CmdEnter => return self.cmd_run(self.mods.shift()),
             Message::CmdType(c) => {
                 // A list dialog's letter key, as in TC's menus: the next item with that letter.
-                if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
+                if let Some(Dialog::List {
+                    kind,
+                    cursor,
+                    items,
+                    ..
+                }) = &mut self.dialog
+                {
+                    use shagoff_core::quicksearch::{hotkey, next_with};
+                    // Ctrl+D: a `&` hot letter picks its item at once; shared by several, it
+                    // steps through them.
+                    let hot: Vec<usize> = (items.iter().enumerate())
+                        .filter(|(_, it)| {
+                            *kind == ListKind::Hotlist
+                                && hotkey(&it.label).1.map(|(_, k)| k) == c.to_lowercase().next()
+                        })
+                        .map(|(i, _)| i)
+                        .collect();
+                    if let [i] = hot[..] {
+                        return self.pick(i);
+                    }
+                    if let Some(&i) = hot.iter().find(|&&i| i > *cursor).or(hot.first()) {
+                        *cursor = i;
+                        return list_snap(i, items.len());
+                    }
                     let labels = items.iter().map(|it| it.label.as_str());
-                    if let Some(i) = shagoff_core::quicksearch::next_with(labels, *cursor, c) {
+                    if let Some(i) = next_with(labels, *cursor, c) {
                         *cursor = i;
                         return list_snap(i, items.len());
                     }
@@ -4387,7 +4410,7 @@ impl App {
                 list.insert(
                     at,
                     HotEntry {
-                        name: format::dir_title(&cwd),
+                        name: hotlist::menu_name(&cwd),
                         path: cwd,
                     },
                 );
@@ -4428,7 +4451,8 @@ impl App {
         let mut items: Vec<ListItem> = Vec::new();
         if let Some(s) = open {
             items.push(own(
-                format!("‹ {}", hotlist::sub_name(&list[s])),
+                // No hot letter of its own: the submenu's would take it from the items inside.
+                format!("‹ {}", hotkey_free(hotlist::sub_name(&list[s]))),
                 Item::Back,
             ));
         }
@@ -4987,6 +5011,11 @@ fn count_dirs(
             )))
         })
     }))
+}
+
+/// A menu name shown as is, with no hot letter: `&` markers dropped, plain `&`s kept (doubled).
+fn hotkey_free(name: &str) -> String {
+    shagoff_core::quicksearch::hotkey(name).0.replace('&', "&&")
 }
 
 /// Scroll a list dialog in proportion to its cursor: the row is always in view (separators are
@@ -6278,6 +6307,65 @@ mod tests {
             }) => items.iter().map(|i| i.path.clone()).collect(),
             _ => panic!("hotlist not open"),
         }
+    }
+
+    #[test]
+    fn hotlist_hot_letters_pick_or_step() {
+        let hot = |name: &str, path: &str| HotEntry {
+            name: name.into(),
+            path: path.into(),
+        };
+        let tmp = std::env::temp_dir();
+        let config = Config {
+            hotlist: vec![
+                hot("&Wiki", "/w1"),
+                hot("&Temp", &tmp.display().to_string()),
+                hot("&Work", "/w2"),
+                hot("R&&D", "/rd"),
+            ],
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let cursor = |app: &App| match &app.dialog {
+            Some(Dialog::List { cursor, .. }) => *cursor,
+            _ => panic!("hotlist not open"),
+        };
+        let _ = app.update(Message::Key(Action::Hotlist));
+        // Shared hot letter: steps, does not open.
+        let _ = app.update(Message::CmdType('W'));
+        assert_eq!(cursor(&app), 2);
+        let _ = app.update(Message::CmdType('w'));
+        assert_eq!(cursor(&app), 0);
+        // `&&` is no hot letter: "r" only moves there.
+        let _ = app.update(Message::CmdType('r'));
+        assert_eq!(cursor(&app), 3);
+        // The only one with "t": opened at once.
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::CmdType('t'));
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn regression_hot_letters_not_taken_by_back_row_or_dir_names() {
+        let hot = |name: &str, path: &str| HotEntry {
+            name: name.into(),
+            path: path.into(),
+        };
+        let tmp = std::env::temp_dir();
+        let config = Config {
+            hotlist: vec![
+                hot("-&Projects", ""),
+                hot("&Pop", &tmp.display().to_string()),
+                hot("--", ""),
+            ],
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::CmdType('p')); // the only "p" here: into the submenu
+        let _ = app.update(Message::CmdType('p')); // "‹ Projects" has no hot letter: Pop opens
+        assert!(app.dialog.is_none());
+        assert_eq!(crate::hotlist::menu_name(Path::new("/x/R&D")), "R&&D");
     }
 
     #[test]

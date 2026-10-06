@@ -515,34 +515,54 @@ pub fn menu_row<'a>(
     selected: bool,
     on: Message,
 ) -> Element<'a, Message> {
-    menu_row_with(None, name, path, selected, on)
+    menu_row_with(None, None, name, path, selected, on)
 }
 
-/// `menu_row` with an icon before the name.
+/// `menu_row` with an icon before the name and the letter at byte `hot` of it underlined.
 pub fn menu_row_with<'a>(
     icon: Option<Element<'a, Message>>,
+    hot: Option<usize>,
     name: String,
     path: String,
     selected: bool,
     on: Message,
 ) -> Element<'a, Message> {
     use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
-    let cut = |t: widget::Text<'a, cosmic::Theme>, portion| {
-        widget::container(
-            t.wrapping(Wrapping::None)
-                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
-        )
-        .width(Length::FillPortion(portion))
-        .clip(true)
-        // Empty style: the default one sets its own text colour over the selection's.
-        .class(cosmic::theme::Container::custom(|_| Default::default()))
+    use cosmic::iced::widget::{rich_text, span};
+    let one_line = Ellipsize::End(EllipsizeHeightLimit::Lines(1));
+    let cut = |t: Element<'a, Message>, portion| {
+        widget::container(t)
+            .width(Length::FillPortion(portion))
+            .clip(true)
+            // Empty style: the default one sets its own text colour over the selection's.
+            .class(cosmic::theme::Container::custom(|_| Default::default()))
     };
-    let line = row![
-        // Plain `text`: body / caption carry their own colour, not the cursor's.
-        cut(widget::text(name).size(14), 2),
-        cut(widget::text(path).size(12), 3)
-    ]
-    .spacing(12);
+    // Plain `text`: body / caption carry their own colour, not the cursor's.
+    let plain = |t: String, size| -> Element<'a, Message> {
+        widget::text(t)
+            .size(size)
+            .wrapping(Wrapping::None)
+            .ellipsize(one_line)
+            .into()
+    };
+    let name = match hot.filter(|&at| name.is_char_boundary(at) && at < name.len()) {
+        Some(at) => {
+            let len = name[at..].chars().next().map_or(0, char::len_utf8);
+            let (head, rest) = name.split_at(at);
+            let (key, tail) = rest.split_at(len);
+            rich_text::<(), Message, cosmic::Theme, cosmic::Renderer>([
+                span(head.to_string()),
+                span(key.to_string()).underline(true),
+                span(tail.to_string()),
+            ])
+            .size(14)
+            .wrapping(Wrapping::None)
+            .ellipsize(one_line)
+            .into()
+        }
+        None => plain(name, 14),
+    };
+    let line = row![cut(name, 2), cut(plain(path, 12), 3)].spacing(12);
     let line = match icon {
         Some(icon) => row![icon, line]
             .spacing(8)
@@ -910,9 +930,17 @@ pub fn view<'a>(
                 };
                 // Programs get an icon, or the same room without one, so names line up.
                 let icon = (*kind == ListKind::OpenWith).then(|| app_icon(&item.icon));
+                // Favourites' names are TC menu names: `&` marks the hot letter, underlined.
+                let (label, hot) = if *kind == ListKind::Hotlist {
+                    let (shown, key) = shagoff_core::quicksearch::hotkey(&item.label);
+                    (shown, key.map(|(at, _)| at))
+                } else {
+                    (item.label.clone(), None)
+                };
                 list = list.push(menu_row_with(
                     icon,
-                    item.label.clone(),
+                    hot,
+                    label,
                     path,
                     i == *cursor,
                     Message::ListPick(i),
