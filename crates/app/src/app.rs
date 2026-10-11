@@ -590,6 +590,8 @@ pub enum Message {
     EditTick,
     /// Window ×, Alt+F4, menu «Exit»: asks first while a job runs or waits.
     Quit,
+    /// Alt+F4 / the compositor's close on window `Id` (`exit_on_close(false)` keeps it open).
+    CloseRequested(cosmic::iced::window::Id),
     Exit,
 }
 
@@ -645,7 +647,7 @@ impl Application for App {
         let mut subs = vec![
             event::listen_with(route_event),
             // Alt+F4 / the compositor's close: the window stays until Quit decides.
-            cosmic::iced::window::close_requests().map(|_| Message::Quit),
+            cosmic::iced::window::close_requests().map(Message::CloseRequested),
             self.core()
                 .watch_config::<Config>(APP_ID)
                 .map(|u| Message::Config(u.config)),
@@ -666,13 +668,13 @@ impl Application for App {
         Subscription::batch(subs)
     }
 
-    /// The title bar's × and Alt+F4: the same temp cleanup as Exit (libcosmic exits after it).
-    /// Only for the main window: a context menu's popup closes through here too.
     /// The header bar's ×: asks first while a job runs or waits (`exit_on_close(false)`).
     fn on_app_exit(&mut self) -> Option<Message> {
         Some(Message::Quit)
     }
 
+    /// The window is gone (closed by something other than Quit): the same temp cleanup as Exit.
+    /// Only for the main window: a context menu's popup closes through here too.
     fn on_close_requested(&self, id: cosmic::iced::window::Id) -> Option<Message> {
         (id == self.window_id()).then_some(Message::Exit)
     }
@@ -2174,8 +2176,20 @@ impl App {
                     log::warn!("xdg-open: {e}");
                 }
             }
+            Message::CloseRequested(id) if id == self.window_id() => {
+                return self.handle(Message::Quit);
+            }
+            Message::CloseRequested(_) => {}
+            // Confirmed, but the worker hangs in blocking I/O (a dead network mount): × again quits.
+            Message::Quit if self.quitting => return self.handle(Message::Exit),
             Message::Quit if self.job.is_some() || !self.queue.is_empty() => {
-                self.ask(Dialog::ConfirmExit);
+                // A job's question steps aside (its reply kept); any other dialog gives way.
+                if let Some(d @ (Dialog::Conflict { .. } | Dialog::Error { .. })) =
+                    self.dialog.take()
+                {
+                    self.held = Some(d);
+                }
+                self.dialog = Some(Dialog::ConfirmExit);
             }
             Message::Quit => return self.handle(Message::Exit),
             Message::Exit => {
@@ -4431,10 +4445,8 @@ impl App {
     /// The job waits for the answer: an open dialog is not replaced, the question comes after it.
     fn ask(&mut self, d: Dialog) {
         if self.dialog.is_some() {
-            // Never over a held job question: dropping its reply would cancel the job.
-            if matches!(self.held, None | Some(Dialog::ConfirmExit)) {
-                self.held = Some(d);
-            }
+            self.held = Some(d);
+            self.say(StatusKind::Info, fl!("job-waits-answer"));
         } else {
             self.dialog = Some(d);
         }
@@ -7180,8 +7192,20 @@ mod tests {
                 .cancel
                 .load(Ordering::Relaxed)
         );
+        // A job's question steps aside for the exit dialog and comes back after Cancel.
+        let (reply, _rx) = std::sync::mpsc::channel();
+        let _ = app.on_job_event(jobs::Event::Error {
+            path: "x".into(),
+            error: "e".into(),
+            reply,
+        });
+        let _ = app.update(Message::Quit);
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmExit)));
+        let _ = app.update(Message::DialogCancel);
+        assert!(matches!(app.dialog, Some(Dialog::Error { .. })));
         let _ = app.update(Message::Quit);
         let _ = app.update(Message::DialogSubmit);
+        assert!(app.held.is_none() && app.quitting);
         assert!(
             app.job
                 .as_ref()

@@ -334,6 +334,7 @@ help-lister-close = Close
 
 # Writing into archives
 repacking = Updating the archive
+job-waits-answer = The file operation waits for an answer: close this window
 exit-busy-title = A file operation is running
 exit-busy = Exiting stops it and drops the operations waiting in the queue.
 exit-busy-ok = Stop and exit
