@@ -335,6 +335,9 @@ help-lister-close = Закрыть
 
 # Запись в архив
 repacking = Обновление архива
+exit-busy-title = Идёт файловая операция
+exit-busy = Выход прервёт её и отменит операции в очереди.
+exit-busy-ok = Прервать и выйти
 archive-update-title = Файл изменён
 archive-update = { $entry } сохранён в редакторе. Обновить его в архиве { $archive }?
 archive-update-ok = Обновить архив

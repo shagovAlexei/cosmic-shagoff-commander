@@ -334,6 +334,9 @@ help-lister-close = Close
 
 # Writing into archives
 repacking = Updating the archive
+exit-busy-title = A file operation is running
+exit-busy = Exiting stops it and drops the operations waiting in the queue.
+exit-busy-ok = Stop and exit
 archive-update-title = File changed
 archive-update = { $entry } was saved in the editor. Put it back into { $archive }?
 archive-update-ok = Update the archive

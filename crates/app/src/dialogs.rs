@@ -100,6 +100,8 @@ pub enum Dialog {
         archive: PathBuf,
         entry: PathBuf,
     },
+    /// Quit while a job runs or waits in the queue.
+    ConfirmExit,
     /// Ctrl+F: network location and password.
     Connect {
         side: usize,
@@ -670,6 +672,14 @@ pub fn view<'a>(
             ))
             .primary_action(
                 widget::button::suggested(fl!("archive-update-ok")).on_press(Message::DialogSubmit),
+            )
+            .secondary_action(cancel)
+            .into(),
+        Dialog::ConfirmExit => widget::dialog()
+            .title(fl!("exit-busy-title"))
+            .body(fl!("exit-busy"))
+            .primary_action(
+                widget::button::destructive(fl!("exit-busy-ok")).on_press(Message::DialogSubmit),
             )
             .secondary_action(cancel)
             .into(),

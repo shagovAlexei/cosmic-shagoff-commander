@@ -25,6 +25,9 @@ fn main() -> cosmic::iced::Result {
     let flags = app::Flags {
         left: std::env::args_os().nth(1).map(Into::into),
     };
-    let settings = cosmic::app::Settings::default().size(cosmic::iced::Size::new(1200.0, 800.0));
+    let settings = cosmic::app::Settings::default()
+        .size(cosmic::iced::Size::new(1200.0, 800.0))
+        // The window stays on × / Alt+F4: `Message::Quit` asks first while a job runs.
+        .exit_on_close(false);
     cosmic::app::run::<app::App>(settings, flags)
 }
