@@ -80,7 +80,10 @@ pub fn mask_name(name: &str, mask: &str) -> String {
     let Some((mname, mext)) = mask.rsplit_once('.') else {
         return apply(name, mask);
     };
-    let (sname, sext) = name.rsplit_once('.').unwrap_or((name, ""));
+    let (sname, sext) = match name.rsplit_once('.') {
+        Some((n, e)) if !n.is_empty() => (n, e),
+        _ => (name, ""),
+    };
     let (n, e) = (apply(sname, mname), apply(sext, mext));
     if e.is_empty() { n } else { format!("{n}.{e}") }
 }
@@ -148,6 +151,8 @@ pub enum PlanError {
     BadName,
     /// Rename onto an existing entry where a dir is involved (would merge or clash).
     Exists(PathBuf),
+    /// A rename mask gives two sources this one name.
+    SameTarget(PathBuf),
 }
 
 /// Shift+F6 / F2: the single pair for renaming `src` to `name` in the same dir. Empty = unchanged.
@@ -225,7 +230,7 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
     // TC: a trailing `/` means "into this dir", even when it does not exist yet.
     let slash = dest.as_os_str().as_encoded_bytes().ends_with(b"/");
     // TC: a mask as the last part renames each source into that part's dir.
-    let mask = (!slash && is_mask(dest)).then(|| {
+    let mask = (!slash && is_mask(dest) && fs::symlink_metadata(dest).is_err()).then(|| {
         let m = dest.file_name().unwrap_or_default().to_string_lossy();
         (dest.parent().unwrap_or(dest).to_path_buf(), m.into_owned())
     });
@@ -234,6 +239,7 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
     for src in sources {
         let dst = match (&mask, into_dir, src.file_name()) {
             (Some((dir, m)), _, Some(name)) => {
+                // ponytail: lossy, a non-UTF-8 name gets U+FFFD; mask bytes if that ever matters.
                 let new = mask_name(&name.to_string_lossy(), m);
                 if !valid_name(&new) {
                     return Err(PlanError::BadName);
@@ -251,6 +257,9 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
         if src_is_dir && d.starts_with(&s) {
             return Err(PlanError::IntoItself(src.clone()));
         }
+        if mask.is_some() && pairs.iter().any(|(_, d)| *d == dst) {
+            return Err(PlanError::SameTarget(dst));
+        }
         pairs.push((src.clone(), dst));
     }
     Ok(pairs)
@@ -265,6 +274,7 @@ pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handle
         total,
         policy: None,
         approved: None,
+        aside: None,
     };
     let mut report = Report::default();
     for (src, dst) in pairs {
@@ -305,6 +315,8 @@ struct Transfer<'a> {
     policy: Option<Resolution>,
     /// Target already approved for replacing when a move falls back from rename to copy.
     approved: Option<PathBuf>,
+    /// «Rename old» answered for this target: moved aside only once the new one is ready.
+    aside: Option<PathBuf>,
 }
 
 impl Transfer<'_> {
@@ -369,6 +381,10 @@ impl Transfer<'_> {
             }
         }
         let dst = dst.as_path();
+        if let Err(s) = self.put_aside(dst) {
+            return Some(s);
+        }
+        replacing &= fs::symlink_metadata(dst).is_ok(); // not after «Rename old»
         let size = tree_size(src);
         loop {
             match fs::rename(src, dst) {
@@ -470,7 +486,10 @@ impl Transfer<'_> {
                 },
             }
         };
-        if let Err(s) = self.retry(dst, || fs::rename(&part, dst)) {
+        if let Err(s) = self
+            .put_aside(dst)
+            .and_then(|()| self.retry(dst, || fs::rename(&part, dst)))
+        {
             let _ = fs::remove_file(&part);
             return s;
         }
@@ -511,7 +530,10 @@ impl Transfer<'_> {
                 },
             }
         };
-        if let Err(s) = self.retry(dst, || fs::rename(&part, dst)) {
+        if let Err(s) = self
+            .put_aside(dst)
+            .and_then(|()| self.retry(dst, || fs::rename(&part, dst)))
+        {
             let _ = fs::remove_file(&part);
             return s;
         }
@@ -553,12 +575,20 @@ impl Transfer<'_> {
                 Decision::Cancel => return Err(Step::Cancel),
                 Decision::Rename(new) => dst = new,
                 Decision::RenameOld => {
-                    // Not replacing: a name taken meanwhile is an error (Retry picks a new one).
-                    self.retry(&dst, || rename_noreplace(&dst, &unique_name(&dst)))?;
+                    self.aside = Some(dst.clone());
                     return Ok(dst);
                 }
             }
         }
+    }
+
+    /// Right before the new one takes `dst`: a skip or failure until then leaves the old one as is.
+    /// Not replacing: a name taken meanwhile is an error (Retry picks a new one).
+    fn put_aside(&mut self, dst: &Path) -> Result<(), Step> {
+        if self.aside.take_if(|p| p == dst).is_some() {
+            self.retry(dst, || rename_noreplace(dst, &unique_name(dst)))?;
+        }
+        Ok(())
     }
 
     /// Copy bytes, then mtime and permissions, into `part`. `Ok(false)` = cancelled.
@@ -950,6 +980,7 @@ mod tests {
         assert_eq!(mask_name("README", "*.old"), "README.old");
         assert_eq!(mask_name("a.tar.gz", "*.*"), "a.tar.gz");
         assert_eq!(mask_name("ab", "???"), "ab"); // `?` past the end adds nothing
+        assert_eq!(mask_name(".bashrc", "*.bak"), ".bashrc.bak"); // a leading dot is the name
     }
 
     #[test]
@@ -972,6 +1003,20 @@ mod tests {
             Err(PlanError::SameFile(a.clone()))
         );
         assert_eq!(mask_name("x", ".?"), "");
+        // Two sources onto one name: refused, a move would lose the first.
+        let doc = d.path().join("a.doc");
+        write(&doc, "3");
+        assert_eq!(
+            plan(&[a.clone(), doc], &d.path().join("*.bak")),
+            Err(PlanError::SameTarget(d.path().join("a.bak")))
+        );
+        // An existing dir with `?` in its name is a dir, not a mask.
+        let q = d.path().join("why?");
+        fs::create_dir(&q).unwrap();
+        assert_eq!(
+            plan(std::slice::from_ref(&a), &q).unwrap()[0].1,
+            q.join("a.txt")
+        );
         let x = d.path().join("x");
         assert_eq!(plan(&[x], &d.path().join(".?")), Err(PlanError::BadName));
     }
@@ -982,6 +1027,19 @@ mod tests {
         assert_eq!(read(&d.path().join("to/a")), "new");
         assert_eq!(read(&d.path().join("to/a (1)")), "old");
         assert_eq!((h.asked, r.completed.len()), (1, 1));
+        // Cancelled while copying: the old one keeps its name.
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("a"), "new");
+        write(&d.path().join("to/a"), "old");
+        let mut h = Script {
+            conflicts: vec![Resolution::RenameOld],
+            cancel_after_progress: true,
+            ..Default::default()
+        };
+        let r = copy(&[d.path().join("a")], &d.path().join("to"), &mut h);
+        assert!(r.cancelled);
+        assert_eq!(read(&d.path().join("to/a")), "old");
+        assert!(!d.path().join("to/a (1)").exists());
     }
 
     #[test]

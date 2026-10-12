@@ -53,6 +53,7 @@ rename-all = Rename all
 op-error = Error
 retry = Retry
 plan-into-itself = Cannot copy a folder into itself: { $path }
+plan-same-target = Two files would get one name: { $path }
 plan-same-file = Source and target are the same: { $path }
 rename-bad-name = Invalid name: use a plain name without "/"
 rename-exists = Name is taken by a folder: { $path }

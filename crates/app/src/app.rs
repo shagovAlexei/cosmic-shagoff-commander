@@ -2922,7 +2922,14 @@ impl App {
                 (!paths.is_empty()).then(|| self.props_dialog(side, paths))
             }
             // TC: marked files get a rename mask, copied in this dir (`*.bak`, `copy_*`).
-            Action::CopySame if panel.entries().iter().any(|e| panel.is_marked(e)) => {
+            // Not in search results: those come from many dirs, and «this dir» is only the root.
+            Action::CopySame
+                if panel.has_marks()
+                    && panel
+                        .targets()
+                        .iter()
+                        .all(|p| p.parent() == Some(panel.cwd())) =>
+            {
                 Some(input(InputOp::Copy, panel.targets(), "*.*".to_string()))
             }
             Action::CopySame => {
@@ -5421,6 +5428,7 @@ fn plan_error(e: &PlanError) -> String {
         PlanError::SameFile(p) => fl!("plan-same-file", path = p.display().to_string()),
         PlanError::BadName => fl!("rename-bad-name"),
         PlanError::Exists(p) => fl!("rename-exists", path = p.display().to_string()),
+        PlanError::SameTarget(p) => fl!("plan-same-target", path = p.display().to_string()),
         PlanError::Empty => String::new(),
     }
 }
