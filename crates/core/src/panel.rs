@@ -251,6 +251,10 @@ impl Panel {
         }
     }
 
+    pub fn has_marks(&self) -> bool {
+        !self.marked.is_empty()
+    }
+
     pub fn marked_totals(&self) -> Totals {
         self.sum(self.entries.iter().filter(|e| self.is_marked(e)))
     }

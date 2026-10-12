@@ -467,6 +467,8 @@ pub enum Message {
     JobPause,
     /// ✕ on a queue row: it will not run.
     Unqueue(usize),
+    /// ↑ on a queue row: it runs one place earlier.
+    QueueUp(usize),
     /// A panel key a focused text field captured (F-keys, PgUp/PgDn, Insert, Ctrl+…).
     FieldKey(Action),
     /// Click on entry i of the open list dialog.
@@ -1720,6 +1722,11 @@ impl App {
                     j.control.pause.fetch_xor(true, Ordering::Relaxed);
                 }
             }
+            Message::QueueUp(i) => {
+                if (1..self.queue.len()).contains(&i) {
+                    self.queue.swap(i - 1, i);
+                }
+            }
             Message::Unqueue(i) => {
                 if i < self.queue.len() {
                     self.queue.remove(i);
@@ -2913,6 +2920,17 @@ impl App {
             Action::Properties => {
                 let paths = panel.targets();
                 (!paths.is_empty()).then(|| self.props_dialog(side, paths))
+            }
+            // TC: marked files get a rename mask, copied in this dir (`*.bak`, `copy_*`).
+            // Not in search results: those come from many dirs, and «this dir» is only the root.
+            Action::CopySame
+                if panel.has_marks()
+                    && panel
+                        .targets()
+                        .iter()
+                        .all(|p| p.parent() == Some(panel.cwd())) =>
+            {
+                Some(input(InputOp::Copy, panel.targets(), "*.*".to_string()))
             }
             Action::CopySame => {
                 let e = panel.current().filter(|e| e.name != PARENT)?;
@@ -5410,6 +5428,7 @@ fn plan_error(e: &PlanError) -> String {
         PlanError::SameFile(p) => fl!("plan-same-file", path = p.display().to_string()),
         PlanError::BadName => fl!("rename-bad-name"),
         PlanError::Exists(p) => fl!("rename-exists", path = p.display().to_string()),
+        PlanError::SameTarget(p) => fl!("plan-same-target", path = p.display().to_string()),
         PlanError::Empty => String::new(),
     }
 }
@@ -6681,6 +6700,23 @@ mod tests {
     }
 
     #[test]
+    fn shift_f5_with_marks_offers_a_mask_for_all_of_them() {
+        let mut app = files_app(&["a.txt", "b.txt"]);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::MarkDown));
+        let _ = app.update(Message::Key(Action::MarkDown));
+        let _ = app.update(Message::Key(Action::CopySame));
+        let Some(Dialog::Input {
+            op, input, sources, ..
+        }) = &app.dialog
+        else {
+            panic!("no dialog");
+        };
+        assert_eq!((*op, input.as_str()), (InputOp::Copy, "*.*"));
+        assert_eq!(sources.len(), 2);
+    }
+
+    #[test]
     fn conflict_rename_sends_the_typed_name() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("a.txt"), "").unwrap();
@@ -7069,8 +7105,12 @@ mod tests {
         assert!(!app.job.as_ref().unwrap().paused());
         let labels = |app: &App| app.queue.iter().map(Queued::label).collect::<Vec<_>>();
         assert_eq!(labels(&app), ["b", "c"]);
+        let _ = app.update(Message::QueueUp(1));
+        assert_eq!(labels(&app), ["c", "b"]);
+        let _ = app.update(Message::QueueUp(0)); // already first
+        assert_eq!(labels(&app), ["c", "b"]);
         let _ = app.update(Message::Unqueue(0));
-        assert_eq!(labels(&app), ["c"]);
+        assert_eq!(labels(&app), ["b"]);
         app.cancel_job();
     }
 
