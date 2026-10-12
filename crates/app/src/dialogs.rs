@@ -791,7 +791,7 @@ pub fn view<'a>(
                         row![
                             answer(fl!("skip"), false, Resolution::Skip),
                             answer(fl!("skip-all"), false, Resolution::SkipAll),
-                            answer(fl!("cancel"), false, Resolution::Cancel),
+                            answer(fl!("rename-old"), false, Resolution::RenameOld),
                         ]
                         .spacing(8)
                         .width(Length::Fill),
@@ -820,6 +820,8 @@ pub fn view<'a>(
                     .spacing(10)
                     .width(Length::Fill),
                 )
+                // Esc / Cancel answers Cancel (DialogCancel).
+                .secondary_action(cancel)
                 .into()
         }
         Dialog::Hotlist(h) => crate::hotlist::view(h, cancel.into()),
@@ -1755,6 +1757,9 @@ pub fn progress<'a>(
                     .ellipsize(cosmic::iced::core::text::Ellipsize::Middle(
                         cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1)
                     )),
+                widget::button::icon(widget::icon::from_name("go-up-symbolic"))
+                    .tooltip(fl!("job-queue-up"))
+                    .on_press_maybe((i > 0).then_some(Message::QueueUp(i))),
                 widget::button::icon(widget::icon::from_name("window-close-symbolic"))
                     .tooltip(fl!("job-unqueue"))
                     .on_press(Message::Unqueue(i)),

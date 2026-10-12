@@ -1632,6 +1632,14 @@ fn place(
             // Asked again if the new name is taken too.
             Resolution::Rename(name) if ops::valid_name(&name) => dest.set_file_name(name),
             Resolution::RenameAll => dest = ops::unique_name(&dest),
+            // Then written without replacing (next round), as if it had never been there.
+            Resolution::RenameOld => {
+                let aside = || ops::rename_noreplace(&dest, &ops::unique_name(&dest));
+                if let Err(cancel) = attempt(h, &dest, aside) {
+                    drop_part();
+                    return (!cancel).then_some(false);
+                }
+            }
             Resolution::Skip | Resolution::SkipAll | Resolution::Rename(_) => {
                 drop_part();
                 return Some(false);

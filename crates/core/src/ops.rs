@@ -26,6 +26,8 @@ pub enum Resolution {
     Rename(String),
     /// Every conflict from now on: the first free `name (N).ext` (TC "keep both").
     RenameAll,
+    /// Move the existing one aside to the first free `name (N).ext`, then write this one.
+    RenameOld,
     Cancel,
 }
 
@@ -51,6 +53,41 @@ pub fn unique_name(dst: &Path) -> PathBuf {
         })
         .find(|p| fs::symlink_metadata(p).is_err())
         .expect("some number is free")
+}
+
+/// TC's rename mask in a copy target: `*.bak`, `copy_*`, `??_*.*`. With a dot, name and extension
+/// are masked apart (split at the last dot); without one, the whole name. `*` takes the rest of the
+/// source part, `?` its next character, anything else is literal (and takes none).
+pub fn mask_name(name: &str, mask: &str) -> String {
+    fn apply(src: &str, mask: &str) -> String {
+        let src: Vec<char> = src.chars().collect();
+        let (mut out, mut i) = (String::new(), 0);
+        for c in mask.chars() {
+            match c {
+                '*' => {
+                    out.extend(src.get(i..).unwrap_or_default());
+                    i = src.len();
+                }
+                '?' => {
+                    out.extend(src.get(i));
+                    i += 1;
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    }
+    let Some((mname, mext)) = mask.rsplit_once('.') else {
+        return apply(name, mask);
+    };
+    let (sname, sext) = name.rsplit_once('.').unwrap_or((name, ""));
+    let (n, e) = (apply(sname, mname), apply(sext, mext));
+    if e.is_empty() { n } else { format!("{n}.{e}") }
+}
+
+fn is_mask(dest: &Path) -> bool {
+    dest.file_name()
+        .is_some_and(|n| n.to_string_lossy().contains(['*', '?']))
 }
 
 /// A name `Resolution::Rename` accepts: one path component.
@@ -187,11 +224,23 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
     }
     // TC: a trailing `/` means "into this dir", even when it does not exist yet.
     let slash = dest.as_os_str().as_encoded_bytes().ends_with(b"/");
+    // TC: a mask as the last part renames each source into that part's dir.
+    let mask = (!slash && is_mask(dest)).then(|| {
+        let m = dest.file_name().unwrap_or_default().to_string_lossy();
+        (dest.parent().unwrap_or(dest).to_path_buf(), m.into_owned())
+    });
     let into_dir = slash || dest.is_dir() || sources.len() > 1;
     let mut pairs = Vec::with_capacity(sources.len());
     for src in sources {
-        let dst = match (into_dir, src.file_name()) {
-            (true, Some(name)) => dest.join(name),
+        let dst = match (&mask, into_dir, src.file_name()) {
+            (Some((dir, m)), _, Some(name)) => {
+                let new = mask_name(&name.to_string_lossy(), m);
+                if !valid_name(&new) {
+                    return Err(PlanError::BadName);
+                }
+                dir.join(new)
+            }
+            (None, true, Some(name)) => dest.join(name),
             _ => dest.to_path_buf(),
         };
         let (s, d) = (resolve(src), resolve(&dst));
@@ -243,6 +292,8 @@ enum Decision {
     Cancel,
     /// Write to this path instead.
     Rename(PathBuf),
+    /// Move what is at the destination aside first.
+    RenameOld,
 }
 
 struct Transfer<'a> {
@@ -501,6 +552,11 @@ impl Transfer<'_> {
                 }
                 Decision::Cancel => return Err(Step::Cancel),
                 Decision::Rename(new) => dst = new,
+                Decision::RenameOld => {
+                    // Not replacing: a name taken meanwhile is an error (Retry picks a new one).
+                    self.retry(&dst, || rename_noreplace(&dst, &unique_name(&dst)))?;
+                    return Ok(dst);
+                }
             }
         }
     }
@@ -558,6 +614,7 @@ impl Transfer<'_> {
             }
             Resolution::Rename(_) => Decision::Skip,
             Resolution::RenameAll => Decision::Rename(unique_name(dst)),
+            Resolution::RenameOld => Decision::RenameOld,
             Resolution::Cancel => Decision::Cancel,
         }
     }
@@ -882,6 +939,49 @@ mod tests {
         };
         let r = copy(&[d.path().join("a")], &d.path().join("to"), &mut h);
         (d, h, r)
+    }
+
+    #[test]
+    fn mask_name_like_tc() {
+        assert_eq!(mask_name("a.txt", "*.*"), "a.txt");
+        assert_eq!(mask_name("a.txt", "*.bak"), "a.bak");
+        assert_eq!(mask_name("a.txt", "copy_*"), "copy_a.txt"); // no dot: the whole name
+        assert_eq!(mask_name("report.txt", "??_*.*"), "re_port.txt");
+        assert_eq!(mask_name("README", "*.old"), "README.old");
+        assert_eq!(mask_name("a.tar.gz", "*.*"), "a.tar.gz");
+        assert_eq!(mask_name("ab", "???"), "ab"); // `?` past the end adds nothing
+    }
+
+    #[test]
+    fn plan_with_a_mask_renames_each_source_in_that_dir() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("a.txt"), d.path().join("b.txt"));
+        write(&a, "1");
+        write(&b, "2");
+        let pairs = plan(&[a.clone(), b.clone()], &d.path().join("*.bak")).unwrap();
+        assert_eq!(
+            pairs,
+            vec![
+                (a.clone(), d.path().join("a.bak")),
+                (b, d.path().join("b.bak"))
+            ]
+        );
+        // `*.*` in the same dir: copying a file onto itself
+        assert_eq!(
+            plan(std::slice::from_ref(&a), &d.path().join("*.*")),
+            Err(PlanError::SameFile(a.clone()))
+        );
+        assert_eq!(mask_name("x", ".?"), "");
+        let x = d.path().join("x");
+        assert_eq!(plan(&[x], &d.path().join(".?")), Err(PlanError::BadName));
+    }
+
+    #[test]
+    fn conflict_rename_old_moves_the_existing_one_aside() {
+        let (d, h, r) = conflict_case(vec![Resolution::RenameOld]);
+        assert_eq!(read(&d.path().join("to/a")), "new");
+        assert_eq!(read(&d.path().join("to/a (1)")), "old");
+        assert_eq!((h.asked, r.completed.len()), (1, 1));
     }
 
     #[test]
