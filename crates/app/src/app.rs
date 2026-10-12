@@ -129,7 +129,7 @@ impl Tab {
 
     /// Where the tab is going: the dir being scanned, else the shown one. Rescans use this so they
     /// never cancel a navigation still in flight.
-    fn target(&self) -> PathBuf {
+    pub(crate) fn target(&self) -> PathBuf {
         match &self.pending {
             Some((_, p)) => p.clone(),
             None => self.panel.cwd().to_path_buf(),

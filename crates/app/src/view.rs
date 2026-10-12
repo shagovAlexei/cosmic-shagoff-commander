@@ -84,13 +84,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
     // Dropped on no dir row: into the pane's dir (not into search results: no one dir there).
     let list = if p.results.is_none() {
-        let on = move |paths, mv| Message::Drop {
-            side,
-            dir: None,
-            paths,
-            mv,
-        };
-        crate::clip::drop_zone(list, on, None)
+        drop_into(side, None, None, list)
     } else {
         list
     };
@@ -386,7 +380,7 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
             button::text(d.label.clone())
         };
         let b = b.on_press(Message::Drive(side, d.path.clone()));
-        bar = bar.push(drop_into(side, d.path.clone(), b));
+        bar = bar.push(drop_into(side, Some(d.path.clone()), None, b));
     }
     for v in &app.volumes {
         let b = button::text(unmounted_label(v));
@@ -411,19 +405,21 @@ pub fn human(n: u64) -> String {
     format::human(n, &units, sep)
 }
 
-/// Files dropped on `child` open the F5 / F6 dialog aimed at `dir`.
+/// Files dropped on `child` open the F5 / F6 dialog aimed at `dir` (`None`: the pane's dir);
+/// `hover`: the row that lights up meanwhile.
 fn drop_into<'a>(
     side: usize,
-    dir: std::path::PathBuf,
+    dir: Option<std::path::PathBuf>,
+    hover: Option<(usize, usize)>,
     child: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let on = move |paths, mv| Message::Drop {
         side,
-        dir: Some(dir.clone()),
+        dir: dir.clone(),
         paths,
         mv,
     };
-    crate::clip::drop_zone(child, on, None)
+    crate::clip::drop_zone(child, on, hover)
 }
 
 /// Shown only with 2+ tabs; the active tab is styled like the cursor row.
@@ -459,7 +455,8 @@ fn tab_bar(
         bar = bar.push(if t.results.is_some() {
             tab.into()
         } else {
-            drop_into(side, t.panel.cwd().to_path_buf(), tab)
+            // Where it is going: a scan still in flight has not moved `cwd` yet.
+            drop_into(side, Some(t.target()), None, tab)
         });
     }
     bar.into()
@@ -615,14 +612,7 @@ fn dnd_row<'a>(
         return row;
     }
     // The dir itself, not the row number: a rescan before the drop may move the rows.
-    let dir = p.panel.drop_dir(Some(i));
-    let on = move |paths, mv| Message::Drop {
-        side,
-        dir: Some(dir.clone()),
-        paths,
-        mv,
-    };
-    crate::clip::drop_zone(row, on, Some((side, i)))
+    drop_into(side, Some(p.panel.drop_dir(Some(i))), Some((side, i)), row)
 }
 
 /// Inside an archive (`/x/a.zip/docs`), by the names alone: no disk access while drawing.
