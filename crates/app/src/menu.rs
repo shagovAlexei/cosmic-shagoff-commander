@@ -25,7 +25,7 @@ impl menu::Action for MenuAct {
         match *self {
             MenuAct::Key(a) => Message::Key(a),
             MenuAct::Open => Message::OpenEntry,
-            MenuAct::Exit => Message::Exit,
+            MenuAct::Exit => Message::Quit,
         }
     }
 }

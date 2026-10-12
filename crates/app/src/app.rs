@@ -203,6 +203,9 @@ pub struct Queued {
     pub kind: OpKind,
     job: Job,
     focus: Option<String>,
+    /// F5 / F6: sources and target, planned again when it starts (the running one may have
+    /// made the target dir meanwhile).
+    replan: Option<(Vec<PathBuf>, PathBuf)>,
 }
 
 impl Queued {
@@ -274,6 +277,10 @@ pub struct App {
     pub(crate) job: Option<Running>,
     /// TC's background queue: started one after another once `job` ends.
     pub(crate) queue: VecDeque<Queued>,
+    /// A background job's question while another dialog is open: shown once that one closes.
+    held: Option<Dialog>,
+    /// Quit confirmed while a job ran: exit when it has stopped.
+    quitting: bool,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
     pub(crate) input_id: widget::Id,
     /// Quick search / filter field, if open.
@@ -581,6 +588,10 @@ pub enum Message {
     ListerClose,
     /// Every 2 s while files from archives are in the editor: look for saved changes.
     EditTick,
+    /// Window ×, Alt+F4, menu «Exit»: asks first while a job runs or waits.
+    Quit,
+    /// Alt+F4 / the compositor's close on window `Id` (`exit_on_close(false)` keeps it open).
+    CloseRequested(cosmic::iced::window::Id),
     Exit,
 }
 
@@ -624,6 +635,9 @@ impl Application for App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
+        if self.dialog.is_none() {
+            self.dialog = self.held.take();
+        }
         let follow = self.quick_follow();
         self.save_state();
         Task::batch([task, follow])
@@ -632,6 +646,8 @@ impl Application for App {
     fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
             event::listen_with(route_event),
+            // Alt+F4 / the compositor's close: the window stays until Quit decides.
+            cosmic::iced::window::close_requests().map(Message::CloseRequested),
             self.core()
                 .watch_config::<Config>(APP_ID)
                 .map(|u| Message::Config(u.config)),
@@ -652,7 +668,12 @@ impl Application for App {
         Subscription::batch(subs)
     }
 
-    /// The title bar's × and Alt+F4: the same temp cleanup as Exit (libcosmic exits after it).
+    /// The header bar's ×: asks first while a job runs or waits (`exit_on_close(false)`).
+    fn on_app_exit(&mut self) -> Option<Message> {
+        Some(Message::Quit)
+    }
+
+    /// The window is gone (closed by something other than Quit): the same temp cleanup as Exit.
     /// Only for the main window: a context menu's popup closes through here too.
     fn on_close_requested(&self, id: cosmic::iced::window::Id) -> Option<Message> {
         (id == self.window_id()).then_some(Message::Exit)
@@ -717,6 +738,8 @@ impl App {
             about: drawer::about(),
             job: None,
             queue: VecDeque::new(),
+            held: None,
+            quitting: false,
             input_id: widget::Id::unique(),
             search: None,
             home,
@@ -2153,6 +2176,22 @@ impl App {
                     log::warn!("xdg-open: {e}");
                 }
             }
+            Message::CloseRequested(id) if id == self.window_id() => {
+                return self.handle(Message::Quit);
+            }
+            Message::CloseRequested(_) => {}
+            // Confirmed, but the worker hangs in blocking I/O (a dead network mount): × again quits.
+            Message::Quit if self.quitting => return self.handle(Message::Exit),
+            Message::Quit if self.job.is_some() || !self.queue.is_empty() => {
+                // A job's question steps aside (its reply kept); any other dialog gives way.
+                if let Some(d @ (Dialog::Conflict { .. } | Dialog::Error { .. })) =
+                    self.dialog.take()
+                {
+                    self.held = Some(d);
+                }
+                self.dialog = Some(Dialog::ConfirmExit);
+            }
+            Message::Quit => return self.handle(Message::Exit),
             Message::Exit => {
                 let mine = archive::temp_root().join(std::process::id().to_string());
                 let _ = std::fs::remove_dir_all(mine);
@@ -3365,6 +3404,15 @@ impl App {
                 };
                 self.start_job(self.active, OpKind::Repack, job, None)
             }
+            // Exits once the worker has stopped and cleaned its part file (finish_job).
+            Dialog::ConfirmExit => {
+                self.cancel_job();
+                self.quitting = true;
+                if self.job.is_none() {
+                    return self.handle(Message::Exit);
+                }
+                Task::none()
+            }
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
                 self.dialog = Some(d);
@@ -3524,7 +3572,8 @@ impl App {
                 return Task::none();
             }
         };
-        self.start_job(side, kind, Job::Transfer { method, pairs }, focus)
+        let replan = (op != InputOp::Rename).then_some((sources, target));
+        self.start_queued(side, kind, Job::Transfer { method, pairs }, focus, replan)
     }
 
     /// Ctrl+Shift+D: two marked files of this panel, else the files under both cursors.
@@ -4311,6 +4360,17 @@ impl App {
         job: Job,
         focus: Option<String>,
     ) -> Task<Message> {
+        self.start_queued(side, kind, job, focus, None)
+    }
+
+    fn start_queued(
+        &mut self,
+        side: usize,
+        kind: OpKind,
+        job: Job,
+        focus: Option<String>,
+        replan: Option<(Vec<PathBuf>, PathBuf)>,
+    ) -> Task<Message> {
         // One at a time: a second one waits in the queue for the first to end (TC F2 «В очередь»).
         if self.job.is_some() {
             self.queue.push_back(Queued {
@@ -4318,6 +4378,7 @@ impl App {
                 kind,
                 job,
                 focus,
+                replan,
             });
             self.say(StatusKind::Info, fl!("job-queued", n = self.queue.len()));
             return Task::none();
@@ -4343,6 +4404,7 @@ impl App {
             j.control.cancel.store(true, Ordering::Relaxed);
         }
         self.queue.clear();
+        self.held = None; // dropping the reply answers Cancel
     }
 
     fn on_job_event(&mut self, event: jobs::Event) -> Task<Message> {
@@ -4365,7 +4427,7 @@ impl App {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.dialog = Some(Dialog::Conflict {
+                self.ask(Dialog::Conflict {
                     src,
                     dst,
                     reply,
@@ -4373,11 +4435,21 @@ impl App {
                 });
             }
             jobs::Event::Error { path, error, reply } => {
-                self.dialog = Some(Dialog::Error { path, error, reply });
+                self.ask(Dialog::Error { path, error, reply });
             }
             jobs::Event::Finished(report) => return self.finish_job(&report),
         }
         Task::none()
+    }
+
+    /// The job waits for the answer: an open dialog is not replaced, the question comes after it.
+    fn ask(&mut self, d: Dialog) {
+        if self.dialog.is_some() {
+            self.held = Some(d);
+            self.say(StatusKind::Info, fl!("job-waits-answer"));
+        } else {
+            self.dialog = Some(d);
+        }
     }
 
     /// Unmark what was processed and reload both panes (cursor on the renamed entry, if any).
@@ -4385,6 +4457,9 @@ impl App {
         let Some(job) = self.job.take() else {
             return Task::none();
         };
+        if self.quitting {
+            return self.handle(Message::Exit);
+        }
         let side = job.side;
         let mut view = Task::none();
         if let Some((open, file)) = job.open
@@ -4431,15 +4506,25 @@ impl App {
             self.reload(1 - side, there, None),
             view,
         ]);
-        let Some(q) = self.queue.pop_front() else {
-            return reload;
-        };
         // The next one in the background, as TC's queue.
-        let next = self.start_job(q.side, q.kind, q.job, q.focus);
-        if let Some(j) = &mut self.job {
-            j.hidden = true;
+        while let Some(mut q) = self.queue.pop_front() {
+            if let (Some((sources, target)), Job::Transfer { pairs, .. }) = (&q.replan, &mut q.job)
+            {
+                match ops::plan(sources, target) {
+                    Ok(p) => *pairs = p,
+                    Err(e) => {
+                        self.say(StatusKind::Error, plan_error(&e));
+                        continue;
+                    }
+                }
+            }
+            let next = self.start_job(q.side, q.kind, q.job, q.focus);
+            if let Some(j) = &mut self.job {
+                j.hidden = true;
+            }
+            return Task::batch([reload, next]);
         }
-        Task::batch([reload, next])
+        reload
     }
 
     /// Keep tab `tab`'s cursor row fully visible. An inactive tab only gets its offset updated;
@@ -7052,6 +7137,98 @@ mod tests {
         assert_eq!(app.queue.len(), 1);
         let _ = app.update(Message::CancelJob);
         assert!(app.queue.is_empty());
+    }
+
+    fn idle_job() -> Job {
+        Job::Delete {
+            paths: Vec::new(),
+            permanent: true,
+        }
+    }
+
+    #[test]
+    fn regression_a_queued_copy_is_planned_when_it_starts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (f, new) = (tmp.path().join("f"), tmp.path().join("new"));
+        std::fs::write(&f, "x").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.start_job(0, OpKind::Delete, idle_job(), None);
+        app.dialog = Some(Dialog::Input {
+            op: InputOp::Copy,
+            side: 0,
+            sources: vec![f],
+            input: new.display().to_string(),
+        });
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.queue.len(), 1);
+        // The running one made the target dir meanwhile: the file goes into it, not over it.
+        std::fs::create_dir(&new).unwrap();
+        let _ = app.finish_job(&Report::default());
+        let copied = new.join("f");
+        for _ in 0..300 {
+            if copied.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(copied.exists());
+    }
+
+    #[test]
+    fn regression_closing_the_window_asks_while_a_job_runs_or_waits() {
+        let mut app = files_app(&[]);
+        assert!(matches!(app.on_app_exit(), Some(Message::Quit)));
+        let _ = app.start_job(0, OpKind::Delete, idle_job(), None);
+        let _ = app.update(Message::Quit);
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmExit)));
+        let _ = app.update(Message::DialogCancel); // stay: the job goes on
+        assert!(app.dialog.is_none());
+        assert!(
+            !app.job
+                .as_ref()
+                .unwrap()
+                .control
+                .cancel
+                .load(Ordering::Relaxed)
+        );
+        // A job's question steps aside for the exit dialog and comes back after Cancel.
+        let (reply, _rx) = std::sync::mpsc::channel();
+        let _ = app.on_job_event(jobs::Event::Error {
+            path: "x".into(),
+            error: "e".into(),
+            reply,
+        });
+        let _ = app.update(Message::Quit);
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmExit)));
+        let _ = app.update(Message::DialogCancel);
+        assert!(matches!(app.dialog, Some(Dialog::Error { .. })));
+        let _ = app.update(Message::Quit);
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.held.is_none() && app.quitting);
+        assert!(
+            app.job
+                .as_ref()
+                .unwrap()
+                .control
+                .cancel
+                .load(Ordering::Relaxed)
+        );
+    }
+
+    #[test]
+    fn regression_a_background_question_waits_for_the_open_dialog() {
+        let mut app = files_app(&["a"]);
+        let _ = app.update(Message::Key(Action::Mkdir));
+        let (reply, _rx) = std::sync::mpsc::channel();
+        let _ = app.on_job_event(jobs::Event::Error {
+            path: "x".into(),
+            error: "e".into(),
+            reply,
+        });
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+        let _ = app.update(Message::DialogCancel);
+        assert!(matches!(app.dialog, Some(Dialog::Error { .. })));
     }
 
     #[test]
