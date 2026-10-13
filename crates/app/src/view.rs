@@ -78,7 +78,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             skin,
             app.drop_hover,
             app.window_id(),
-            &app.config.colors,
+            &app.scheme,
         )
     } else {
         full_list(app, side, p, active)
@@ -286,7 +286,7 @@ fn brief_list<'a>(
     skin: Skin,
     hover: Option<(usize, usize)>,
     window: cosmic::iced::window::Id,
-    rules: &'a [colors::Rule],
+    scheme: &'a colors::Scheme,
 ) -> Element<'a, Message> {
     let row_h = skin.row_h();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
@@ -302,7 +302,7 @@ fn brief_list<'a>(
                 e.name.clone()
             };
             let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
-            let paint = (!lit).then(|| colors::pick(rules, e)).flatten();
+            let paint = (!lit).then(|| scheme.pick(e)).flatten();
             let cell = container(name_cell(e, label, skin, paint))
                 .padding([0, 6])
                 .height(Length::Fixed(row_h))
@@ -590,7 +590,7 @@ fn file_row<'a>(
             format::display_name(e),
             app.config.skin,
             (!(is_cursor || is_marked))
-                .then(|| colors::pick(&app.config.colors, e))
+                .then(|| app.scheme.pick(e))
                 .flatten(),
         ))
         .width(Length::Fill)

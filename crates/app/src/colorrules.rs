@@ -41,7 +41,11 @@ impl ColorEdit {
         match (m, sel) {
             (ColorMsg::Select(i), _) => self.sel = (i < self.list.len()).then_some(i),
             (ColorMsg::Mask(s), Some(i)) => self.list[i].mask = s,
-            (ColorMsg::What(w), Some(i)) => self.list[i].what = What::ALL[w.min(4)],
+            (ColorMsg::What(w), Some(i)) => {
+                if let Some(&what) = What::ALL.get(w) {
+                    self.list[i].what = what;
+                }
+            }
             (ColorMsg::Color(s), Some(i)) => self.list[i].color = s,
             (ColorMsg::Add, _) => {
                 let at = sel.map_or(self.list.len(), |i| i + 1);

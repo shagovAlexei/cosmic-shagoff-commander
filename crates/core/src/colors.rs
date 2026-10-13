@@ -25,7 +25,8 @@ impl What {
             What::Files => !e.is_dir(),
             What::Dirs => e.is_dir(),
             What::Links => e.is_link,
-            What::Exec => !e.is_dir() && e.mode & 0o111 != 0,
+            // Not links: a dangling one has the link's own mode, 0o777.
+            What::Exec => !e.is_dir() && !e.is_link && e.mode & 0o111 != 0,
         }
     }
 }
@@ -48,11 +49,13 @@ pub enum Paint {
 
 /// `#RRGGBB` (the `#` optional); empty → the accent; anything else → `None`.
 pub fn parse(color: &str) -> Option<Paint> {
-    let hex = color.trim().trim_start_matches('#');
+    let t = color.trim();
+    let hex = t.strip_prefix('#').unwrap_or(t);
     if hex.is_empty() {
         return Some(Paint::Accent);
     }
-    if hex.len() != 6 || !hex.is_ascii() {
+    // Hex digits only: `from_str_radix` would also take a sign.
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
@@ -68,14 +71,33 @@ pub fn defaults() -> Vec<Rule> {
     }]
 }
 
-/// The colour of `e`'s name: the first rule whose kind and mask fit and whose colour parses.
-// ponytail: masks are parsed per row per frame; cache them if long rule lists get slow.
-pub fn pick(rules: &[Rule], e: &Entry) -> Option<Paint> {
-    rules
-        .iter()
-        .filter(|r| r.what.matches(e))
-        .filter(|r| r.mask.trim().is_empty() || Mask::parse(&r.mask).matches(&e.name))
-        .find_map(|r| parse(&r.color))
+/// The rules ready to apply: masks parsed and bad colours dropped once, not per row and frame.
+#[derive(Clone, Debug, Default)]
+pub struct Scheme(Vec<(Option<Mask>, What, Paint)>);
+
+impl Scheme {
+    pub fn new(rules: &[Rule]) -> Self {
+        Self(
+            rules
+                .iter()
+                .filter_map(|r| {
+                    let mask = (!r.mask.trim().is_empty()).then(|| Mask::parse(&r.mask));
+                    Some((mask, r.what, parse(&r.color)?))
+                })
+                .collect(),
+        )
+    }
+
+    /// The colour of `e`'s name: the first rule whose kind and mask fit. `..` has none.
+    pub fn pick(&self, e: &Entry) -> Option<Paint> {
+        if e.name == crate::panel::PARENT {
+            return None;
+        }
+        self.0
+            .iter()
+            .find(|(m, w, _)| w.matches(e) && m.as_ref().is_none_or(|m| m.matches(&e.name)))
+            .map(|(_, _, p)| *p)
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +129,8 @@ mod tests {
         assert_eq!(parse("#fff"), None);
         assert_eq!(parse("#gg0000"), None);
         assert_eq!(parse("#ффф"), None);
+        assert_eq!(parse("##ff0000"), None);
+        assert_eq!(parse("#+1+2+3"), None);
     }
 
     #[test]
@@ -116,31 +140,34 @@ mod tests {
             what,
             color: color.into(),
         };
-        let rules = [
+        let rules = Scheme::new(&[
             rule("", What::Links, ""),
             rule("*.rs", What::Files, "#ff0000"),
             rule("", What::Dirs, "#0000ff"),
             rule("", What::Exec, "bad"), // never applies: the colour does not parse
             rule("", What::Exec, "#00ff00"),
-        ];
+        ]);
         let file = |n: &str, mode| entry(n, Kind::File, false, mode);
         assert_eq!(
-            pick(&rules, &file("a.rs", 0o644)),
+            rules.pick(&file("a.rs", 0o644)),
             Some(Paint::Rgb([255, 0, 0]))
         );
         assert_eq!(
-            pick(&rules, &file("run", 0o755)),
+            rules.pick(&file("run", 0o755)),
             Some(Paint::Rgb([0, 255, 0]))
         );
-        assert_eq!(pick(&rules, &file("a.txt", 0o644)), None);
+        assert_eq!(rules.pick(&file("a.txt", 0o644)), None);
+        assert_eq!(rules.pick(&entry("..", Kind::Dir, false, 0o755)), None);
+        let broken = Scheme::new(&[rule("", What::Exec, "#00ff00")]);
+        assert_eq!(broken.pick(&entry("gone", Kind::File, true, 0o777)), None);
         assert_eq!(
-            pick(&rules, &entry("a.rs", Kind::File, true, 0o644)),
+            rules.pick(&entry("a.rs", Kind::File, true, 0o644)),
             Some(Paint::Accent)
         );
         assert_eq!(
-            pick(&rules, &entry("src", Kind::Dir, false, 0o755)),
+            rules.pick(&entry("src", Kind::Dir, false, 0o755)),
             Some(Paint::Rgb([0, 0, 255]))
         );
-        assert_eq!(pick(&defaults(), &file("a", 0o644)), None);
+        assert_eq!(Scheme::new(&defaults()).pick(&file("a", 0o644)), None);
     }
 }

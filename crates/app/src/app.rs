@@ -279,6 +279,8 @@ pub struct App {
     pub(crate) queue: VecDeque<Queued>,
     /// A background job's question while another dialog is open: shown once that one closes.
     held: Option<Dialog>,
+    /// `config.colors`, parsed (`Scheme::new` on every change of them).
+    pub(crate) scheme: shagoff_core::colors::Scheme,
     /// Files of the right-button drag in flight (`Message::DragStart`).
     right_drag: Option<Arc<Vec<PathBuf>>>,
     /// Quit confirmed while a job ran: exit when it has stopped.
@@ -749,6 +751,7 @@ impl App {
             job: None,
             queue: VecDeque::new(),
             held: None,
+            scheme: shagoff_core::colors::Scheme::new(&config.colors),
             right_drag: None,
             quitting: false,
             input_id: widget::Id::unique(),
@@ -3452,6 +3455,7 @@ impl App {
                     }
                     None => self.config.colors = c.list,
                 }
+                self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors);
                 Task::none()
             }
             Dialog::Toolbar(t) => {
@@ -4848,6 +4852,7 @@ impl App {
     /// New settings, from the settings drawer or the config watcher (a hand edit).
     fn apply_config(&mut self, c: Config) -> Task<Message> {
         let old = std::mem::replace(&mut self.config, c);
+        self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors);
         self.cols = self.config.columns;
         let mut tasks = Vec::new();
         if old.language != self.config.language {
