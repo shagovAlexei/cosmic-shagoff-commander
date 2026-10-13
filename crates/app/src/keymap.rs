@@ -35,6 +35,8 @@ pub enum Action {
     Copy,
     /// Shift+F5: copy the file under the cursor in its own dir under a new name.
     CopySame,
+    /// Ctrl+Shift+F5: symbolic links to the targets (TC "Create shortcut").
+    Link,
     Move,
     Rename,
     Mkdir,
@@ -192,6 +194,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F3, true, false) => Action::Sort(SortKey::Name),
             (Named::F4, true, false) => Action::Sort(SortKey::Ext),
             (Named::F5, true, false) => Action::Sort(SortKey::Date),
+            (Named::F5, true, true) => Action::Link,
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
             (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
             (Named::ArrowUp, false, true) => Action::MarkUp,
@@ -355,6 +358,10 @@ mod tests {
         assert_eq!(named(Named::F3, CTRL), Some(Action::Sort(SortKey::Name)));
         assert_eq!(named(Named::F4, CTRL), Some(Action::Sort(SortKey::Ext)));
         assert_eq!(named(Named::F5, CTRL), Some(Action::Sort(SortKey::Date)));
+        assert_eq!(
+            named(Named::F5, CTRL | Modifiers::SHIFT),
+            Some(Action::Link)
+        );
         assert_eq!(named(Named::F6, CTRL), Some(Action::Sort(SortKey::Size)));
     }
 

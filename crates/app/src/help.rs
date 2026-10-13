@@ -57,6 +57,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("F4", fl!("menu-edit"), Action::Edit),
                 r("F5", fl!("menu-copy"), Action::Copy),
                 r("Shift+F5", fl!("menu-copy-same"), Action::CopySame),
+                r("Ctrl+Shift+F5", fl!("menu-link"), Action::Link),
                 r("Alt+Enter", fl!("menu-properties"), Action::Properties),
                 r("Alt+Shift+Enter", fl!("menu-count-dirs"), Action::CountDirs),
                 r("F6", fl!("menu-move"), Action::Move),
