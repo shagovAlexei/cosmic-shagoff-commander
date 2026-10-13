@@ -33,14 +33,25 @@ impl AppTheme {
             // The user's COSMIC palette (accent…), pinned to light / dark. `Custom`, not
             // `System` + prefer_dark: libcosmic replaces a System theme with the system's
             // own palette on its startup theme event, so "Light" on a dark desktop was lost.
-            AppTheme::Light => pinned(cosmic::theme::system_light()),
-            AppTheme::Dark => pinned(cosmic::theme::system_dark()),
+            AppTheme::Light => pinned(cosmic::theme::system_light(), false),
+            AppTheme::Dark => pinned(cosmic::theme::system_dark(), true),
         }
     }
 }
 
-fn pinned(t: cosmic::Theme) -> cosmic::Theme {
-    cosmic::Theme::custom(std::sync::Arc::new(t.cosmic().clone()))
+fn pinned(t: cosmic::Theme, dark: bool) -> cosmic::Theme {
+    use cosmic::cosmic_theme::Theme as Palette;
+    let mut p = t.cosmic().clone();
+    // Outside COSMIC (Xfce on Linux Lite: no theme config, no /usr/share/cosmic) libcosmic hands
+    // back its default palette, dark: "Light" stayed dark. Then COSMIC's stock one.
+    if p.is_dark != dark {
+        p = if dark {
+            Palette::dark_default()
+        } else {
+            Palette::light_default()
+        };
+    }
+    cosmic::Theme::custom(std::sync::Arc::new(p))
 }
 
 /// Look of the window (Ctrl+, → Interface): the same layout and keys, drawn differently.
@@ -242,6 +253,14 @@ mod tests {
             let ty = t.theme().theme_type;
             assert!(matches!(ty, cosmic::theme::ThemeType::Custom(_)), "{t:?}");
         }
+    }
+
+    #[test]
+    fn regression_light_is_light_without_a_cosmic_theme_config() {
+        // No theme config: libcosmic's default palette is dark.
+        let dark = cosmic::theme::Theme::dark();
+        assert!(!pinned(dark.clone(), false).cosmic().is_dark);
+        assert!(pinned(dark, true).cosmic().is_dark);
     }
 
     #[test]

@@ -4453,12 +4453,14 @@ dependencies = [
  "libcosmic",
  "log",
  "notify",
+ "pollster",
  "rust-embed",
  "serde",
  "shagoff-core",
  "simple_logger",
  "tempfile",
  "tokio",
+ "wgpu",
  "zip",
 ]
 
