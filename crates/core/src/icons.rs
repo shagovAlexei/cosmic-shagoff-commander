@@ -16,6 +16,27 @@ pub fn symbolic(roots: &[PathBuf], themes: &[&str]) -> Vec<String> {
     names.into_iter().collect()
 }
 
+/// An icon theme `name` under `<data dir>/icons/` (`openwith::data_dirs`).
+pub fn theme_installed(name: &str, data_dirs: &[PathBuf]) -> bool {
+    data_dirs
+        .iter()
+        .any(|d| d.join("icons").join(name).join("index.theme").is_file())
+}
+
+/// A theme name as the desktop's tools print it: `Papirus` (xfconf-query), `'Adwaita'` (gsettings).
+pub fn theme_name(out: &str) -> Option<String> {
+    let t = out.trim().trim_matches('\'');
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+/// `gtk-icon-theme-name=…` of a GTK `settings.ini`.
+pub fn ini_theme(ini: &str) -> Option<String> {
+    ini.lines()
+        .filter_map(|l| l.split_once('='))
+        .find(|(k, _)| k.trim() == "gtk-icon-theme-name")
+        .and_then(|(_, v)| theme_name(v.trim().trim_matches('"')))
+}
+
 fn walk(dir: &Path, names: &mut BTreeSet<String>) {
     let Ok(rd) = fs::read_dir(dir) else {
         return;
@@ -61,5 +82,20 @@ mod tests {
             symbolic(&roots, &["Cosmic", "Adwaita"]),
             ["edit-copy-symbolic", "go-up-symbolic"]
         );
+    }
+
+    #[test]
+    fn desktop_icon_theme_names() {
+        assert_eq!(theme_name("Papirus\n").as_deref(), Some("Papirus"));
+        assert_eq!(theme_name("'Adwaita'\n").as_deref(), Some("Adwaita"));
+        assert_eq!(theme_name("  \n"), None);
+        let ini = "[Settings]\ngtk-theme-name=Materia\ngtk-icon-theme-name = \"Papirus-Dark\"\n";
+        assert_eq!(ini_theme(ini).as_deref(), Some("Papirus-Dark"));
+        assert_eq!(ini_theme("[Settings]\n"), None);
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("icons/Papirus")).unwrap();
+        std::fs::write(d.path().join("icons/Papirus/index.theme"), "").unwrap();
+        let dirs = [d.path().to_path_buf()];
+        assert!(theme_installed("Papirus", &dirs) && !theme_installed("Cosmic", &dirs));
     }
 }

@@ -31,6 +31,8 @@ sudo just install                # binary, .desktop, metainfo, icon into /usr (r
 just deb                         # target/deb/*.deb (dpkg-deb, deps by dpkg-shlibdeps); tag vX.Y.Z → release with it
 ```
 
+`main.rs` probes the GPU first: without `SHADER_F16_IN_F32` (old / software GL, e.g. X11 without DRI3) iced_wgpu panics on its shaders, so it sets `ICED_BACKEND=tiny-skia` (software renderer); a hand-set `ICED_BACKEND` wins. Without the "Cosmic" icon theme (outside COSMIC) it passes the desktop's icon theme (xfconf, gtk-3.0 `settings.ini`, gsettings) as `default_icon_theme`, else libcosmic's icons (title bar buttons, toolbar) come out blank.
+
 At startup libcosmic logs `error loading system dark theme ... GetKey("list_button")`. This is harmless: the pinned libcosmic expects theme keys that the system config doesn't have.
 
 ## Architecture
