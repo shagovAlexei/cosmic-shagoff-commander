@@ -577,6 +577,7 @@
 Автотеста нет (нужна такая видеокарта); в headless переключение проверено через `WGPU_BACKEND=dx12` (адаптера нет → tiny-skia), tiny-skia под X11 — Xwayland (`ICED_BACKEND=tiny-skia`: прозрачное окно давало 32-битный visual, softbuffer падал).
 
 - [ ] Linux Lite (X11 без DRI3): `shagoff-commander` открывает окно; в выводе `software rendering (ICED_BACKEND=tiny-skia)`, паники `unpack2x16float` нет
+- [ ] Linux Lite: Ctrl+, → Тема «Светлая» — окно светлое (и после перезапуска); «Тёмная» — тёмное
 
 ## Регрессионные тесты
 
@@ -669,3 +670,4 @@
 | `regression_a_queued_copy_is_planned_when_it_starts` | Операция из очереди копировала по плану, посчитанному при постановке: файл в каталог, созданный предыдущей операцией, давал конфликт «заменить каталог» | 69 |
 | `regression_closing_the_window_asks_while_a_job_runs_or_waits` | Закрытие окна во время операции молча теряло её и очередь | 69 |
 | `regression_a_background_question_waits_for_the_open_dialog` | Вопрос фоновой операции (конфликт, ошибка) заменял открытый диалог, его ввод терялся | 69 |
+| `regression_light_is_light_without_a_cosmic_theme_config` | Вне COSMIC (Linux Lite: нет конфига темы и `/usr/share/cosmic`) тема «Светлая» оставалась тёмной: libcosmic отдаёт тёмную палитру по умолчанию | 0.13.1 |
