@@ -574,7 +574,7 @@
 
 ### Видеокарта без SHADER_F16_IN_F32 (0.13.1)
 
-Автотеста нет (нужна такая видеокарта); в headless переключение проверено через `WGPU_BACKEND=dx12` (адаптера нет → tiny-skia).
+Автотеста нет (нужна такая видеокарта); в headless переключение проверено через `WGPU_BACKEND=dx12` (адаптера нет → tiny-skia), tiny-skia под X11 — Xwayland (`ICED_BACKEND=tiny-skia`: прозрачное окно давало 32-битный visual, softbuffer падал).
 
 - [ ] Linux Lite (X11 без DRI3): `shagoff-commander` открывает окно; в выводе `software rendering (ICED_BACKEND=tiny-skia)`, паники `unpack2x16float` нет
 

@@ -21,7 +21,7 @@ fn main() -> cosmic::iced::Result {
         .env()
         .init()
         .ok();
-    pick_renderer();
+    let software = pick_renderer();
     i18n::init(&i18n_embed::DesktopLanguageRequester::requested_languages());
     let flags = app::Flags {
         left: std::env::args_os().nth(1).map(Into::into),
@@ -29,16 +29,18 @@ fn main() -> cosmic::iced::Result {
     let settings = cosmic::app::Settings::default()
         .size(cosmic::iced::Size::new(1200.0, 800.0))
         // The window stays on × / Alt+F4: `Message::Quit` asks first while a job runs.
-        .exit_on_close(false);
+        .exit_on_close(false)
+        // softbuffer (tiny-skia) takes only 24-bit X11 visuals; a transparent window gets a 32-bit one.
+        .transparent(!software);
     cosmic::app::run::<app::App>(settings, flags)
 }
 
 /// iced's wgpu shaders need `SHADER_F16_IN_F32`. An old or software OpenGL (X11 without DRI3, as
 /// on Linux Lite in a VM) lacks it and the app panicked on its first frame. There: the software
-/// renderer. `ICED_BACKEND` set by hand wins. Costs ~70 ms at startup.
-fn pick_renderer() {
-    if std::env::var_os("ICED_BACKEND").is_some() {
-        return;
+/// renderer. `ICED_BACKEND` set by hand wins. Costs ~70 ms at startup. `true`: software.
+fn pick_renderer() -> bool {
+    if let Some(b) = std::env::var_os("ICED_BACKEND") {
+        return b.to_string_lossy().starts_with("tiny-skia");
     }
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::all()),
@@ -53,5 +55,7 @@ fn pick_renderer() {
         log::warn!("GPU without SHADER_F16_IN_F32: software rendering (ICED_BACKEND=tiny-skia)");
         // SAFETY: first thing in main, before any other thread exists.
         unsafe { std::env::set_var("ICED_BACKEND", "tiny-skia") };
+        return true;
     }
+    false
 }
