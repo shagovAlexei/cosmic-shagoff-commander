@@ -84,13 +84,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
     // Dropped on no dir row: into the pane's dir (not into search results: no one dir there).
     let list = if p.results.is_none() {
-        let on = move |paths, mv| Message::Drop {
-            side,
-            dir: None,
-            paths,
-            mv,
-        };
-        crate::clip::drop_zone(list, on, None)
+        drop_into(side, None, None, list)
     } else {
         list
     };
@@ -385,7 +379,8 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
         } else {
             button::text(d.label.clone())
         };
-        bar = bar.push(b.on_press(Message::Drive(side, d.path.clone())));
+        let b = b.on_press(Message::Drive(side, d.path.clone()));
+        bar = bar.push(drop_into(side, Some(d.path.clone()), None, b));
     }
     for v in &app.volumes {
         let b = button::text(unmounted_label(v));
@@ -408,6 +403,23 @@ pub fn human(n: u64) -> String {
         .unwrap_or(["B", "KB", "MB", "GB", "TB", "PB"]);
     let sep = fl!("decimal-sep").chars().next().unwrap_or('.');
     format::human(n, &units, sep)
+}
+
+/// Files dropped on `child` open the F5 / F6 dialog aimed at `dir` (`None`: the pane's dir);
+/// `hover`: the row that lights up meanwhile.
+fn drop_into<'a>(
+    side: usize,
+    dir: Option<std::path::PathBuf>,
+    hover: Option<(usize, usize)>,
+    child: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let on = move |paths, mv| Message::Drop {
+        side,
+        dir: dir.clone(),
+        paths,
+        mv,
+    };
+    crate::clip::drop_zone(child, on, hover)
 }
 
 /// Shown only with 2+ tabs; the active tab is styled like the cursor row.
@@ -436,11 +448,16 @@ fn tab_bar(
             .on_middle_press(Message::CloseTabAt(side, i))
             .on_double_click(Message::CloseTabAt(side, i));
         let ctx = crate::menu::Ctx::Tab { locked: t.locked };
-        bar = bar.push(
-            widget::context_menu(tab, Some(crate::menu::context(ctx)))
-                .window_id(window)
-                .on_surface_action(Message::Surface),
-        );
+        let tab = widget::context_menu(tab, Some(crate::menu::context(ctx)))
+            .window_id(window)
+            .on_surface_action(Message::Surface);
+        // Files dropped on a tab go into its dir (TC); outside the menu, which hides drop zones.
+        bar = bar.push(if t.results.is_some() {
+            tab.into()
+        } else {
+            // Where it is going: a scan still in flight has not moved `cwd` yet.
+            drop_into(side, Some(t.target()), None, tab)
+        });
     }
     bar.into()
 }
@@ -595,14 +612,7 @@ fn dnd_row<'a>(
         return row;
     }
     // The dir itself, not the row number: a rescan before the drop may move the rows.
-    let dir = p.panel.drop_dir(Some(i));
-    let on = move |paths, mv| Message::Drop {
-        side,
-        dir: Some(dir.clone()),
-        paths,
-        mv,
-    };
-    crate::clip::drop_zone(row, on, Some((side, i)))
+    drop_into(side, Some(p.panel.drop_dir(Some(i))), Some((side, i)), row)
 }
 
 /// Inside an archive (`/x/a.zip/docs`), by the names alone: no disk access while drawing.

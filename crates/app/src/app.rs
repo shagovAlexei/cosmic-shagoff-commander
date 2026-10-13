@@ -129,7 +129,7 @@ impl Tab {
 
     /// Where the tab is going: the dir being scanned, else the shown one. Rescans use this so they
     /// never cancel a navigation still in flight.
-    fn target(&self) -> PathBuf {
+    pub(crate) fn target(&self) -> PathBuf {
         match &self.pending {
             Some((_, p)) => p.clone(),
             None => self.panel.cwd().to_path_buf(),
@@ -1682,7 +1682,11 @@ impl App {
                 self.drop_hover = None;
                 let t = self.panes[side].active();
                 // A job "In background" does not stop it: OK then says the job is running, as F5.
-                if paths.is_empty() || self.dialog.is_some() || t.results.is_some() {
+                // Search results have no one dir; a drop on a tab or a drive button names its own.
+                if paths.is_empty()
+                    || self.dialog.is_some()
+                    || (dir.is_none() && t.results.is_some())
+                {
                     return Task::none();
                 }
                 let dir = dir.unwrap_or_else(|| t.panel.cwd().to_path_buf());
@@ -7791,6 +7795,27 @@ mod tests {
         let _ = app.update(drop(None, false));
         assert!(app.dialog.is_none());
         assert_eq!(app.drop_hover, None);
+    }
+
+    #[test]
+    fn drop_on_a_tab_or_drive_button_works_beside_search_results() {
+        let (tmp, mut app, a) = paste_setup();
+        let t = app.panes[0].active_mut();
+        t.results = Some((tmp.path().to_path_buf(), Arc::new(Vec::new())));
+        let drop = |dir: Option<PathBuf>| Message::Drop {
+            side: 0,
+            dir,
+            paths: vec![a.clone()],
+            mv: false,
+        };
+        let _ = app.update(drop(None)); // the results list itself: no one dir
+        assert!(app.dialog.is_none());
+        let other = tmp.path().join("dst");
+        let _ = app.update(drop(Some(other.clone()))); // another tab's dir / a drive
+        let Some(Dialog::Input { input, .. }) = app.dialog.take() else {
+            panic!("no dialog")
+        };
+        assert_eq!(input, dir_input(&other));
     }
 
     #[test]
