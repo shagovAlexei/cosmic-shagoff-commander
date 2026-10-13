@@ -132,6 +132,8 @@ pub enum Action {
     NewFile,
     /// Right click on the toolbar: TC "Change button bar".
     ConfigureToolbar,
+    /// Configuration → "Colors by type…".
+    ConfigureColors,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {

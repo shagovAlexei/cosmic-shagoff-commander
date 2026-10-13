@@ -496,6 +496,8 @@ pub enum Message {
     OpenWithDefaultSet(Result<String, String>),
     /// Hotlist settings (Ctrl+D → "Configure…").
     Hot(HotMsg),
+    /// Configuration → "Colors by type…".
+    Colors(crate::colorrules::ColorMsg),
     /// Toolbar button `i` of `config.toolbar`.
     Tool(usize),
     /// A toolbar program exited with an error: its last stderr line (or exit status).
@@ -1915,6 +1917,11 @@ impl App {
             },
             Message::Tool(i) => return self.run_tool(i),
             Message::ToolFailed(e) => self.say(StatusKind::Error, fl!("cmd-failed", error = e)),
+            Message::Colors(m) => {
+                if let Some(Dialog::Colors(c)) = &mut self.dialog {
+                    c.update(m);
+                }
+            }
             Message::ToolEdit(m) => {
                 if let Some(Dialog::Toolbar(t)) = &mut self.dialog {
                     let open = matches!(m, crate::toolbar::ToolMsg::PickOpen);
@@ -2552,6 +2559,13 @@ impl App {
             Action::Left if brief => panel.move_cursor(-rows),
             Action::Right if brief => panel.move_cursor(rows),
             Action::Left | Action::Right => {}
+            Action::ConfigureColors => {
+                let list = self.config.colors.clone();
+                self.dialog = Some(Dialog::Colors(Box::new(crate::colorrules::ColorEdit::new(
+                    list,
+                ))));
+                return Task::none();
+            }
             Action::ConfigureToolbar => {
                 let list = self.config.toolbar.clone();
                 self.dialog = Some(Dialog::Toolbar(Box::new(crate::toolbar::ToolEdit::new(
@@ -3427,6 +3441,17 @@ impl App {
             }
             Dialog::Hotlist(h) => {
                 self.save_hotlist(h.list);
+                Task::none()
+            }
+            Dialog::Colors(c) => {
+                match &self.config_handler {
+                    Some(h) => {
+                        if let Err(e) = self.config.set_colors(h, c.list) {
+                            log::warn!("config: {e}");
+                        }
+                    }
+                    None => self.config.colors = c.list,
+                }
                 Task::none()
             }
             Dialog::Toolbar(t) => {
@@ -7910,6 +7935,22 @@ mod tests {
         let _ = app.update(drop(None, false));
         assert!(app.dialog.is_none());
         assert_eq!(app.drop_hover, None);
+    }
+
+    #[test]
+    fn colors_by_type_are_edited_on_a_copy_and_saved_on_ok() {
+        use crate::colorrules::ColorMsg;
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::ConfigureColors));
+        assert!(matches!(app.dialog, Some(Dialog::Colors(_))));
+        let _ = app.update(Message::Colors(ColorMsg::Add));
+        assert_eq!(app.config.colors, shagoff_core::colors::defaults()); // not yet
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.config.colors.len(), 2);
+        let _ = app.update(Message::Key(Action::ConfigureColors));
+        let _ = app.update(Message::Colors(ColorMsg::Delete));
+        let _ = app.update(Message::DialogCancel); // Cancel: unchanged
+        assert_eq!(app.config.colors.len(), 2);
     }
 
     #[test]

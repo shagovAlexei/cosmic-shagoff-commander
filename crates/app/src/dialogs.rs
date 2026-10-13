@@ -79,6 +79,8 @@ pub enum Dialog {
     /// Ctrl+D → "Configure…".
     Hotlist(Box<crate::hotlist::HotEdit>),
     Toolbar(Box<crate::toolbar::ToolEdit>),
+    /// Configuration → "Colors by type…".
+    Colors(Box<crate::colorrules::ColorEdit>),
     /// Ctrl+M: files snapshot at open (panel order) and the form. Boxed: the form is large.
     MultiRename(Box<MultiRename>),
     /// Alt+F5. Boxed: the form is large.
@@ -853,6 +855,7 @@ pub fn view<'a>(
         }
         Dialog::Hotlist(h) => crate::hotlist::view(h, cancel.into()),
         Dialog::Toolbar(t) => crate::toolbar::view(t, cancel.into()),
+        Dialog::Colors(c) => crate::colorrules::view(c, cancel.into()),
         Dialog::Props(p) => {
             const LABEL: f32 = 150.0;
             const CELL: f32 = 70.0;

@@ -122,6 +122,8 @@ pub struct Config {
     pub columns: [f32; 4],
     /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
     pub toolbar: Vec<ToolButton>,
+    /// Name colours by type (TC "Color by file type"), first match wins.
+    pub colors: Vec<shagoff_core::colors::Rule>,
 }
 
 /// A toolbar button: `cmd` is an internal `cm_*` command, a program (`params` with `%P`, `%N`, …
@@ -163,6 +165,7 @@ impl Default for Config {
             skin: Skin::Classic,
             columns: [60.0, 90.0, 130.0, 80.0],
             toolbar: crate::toolbar::default_bar(),
+            colors: shagoff_core::colors::defaults(),
         }
     }
 }

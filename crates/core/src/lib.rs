@@ -4,6 +4,7 @@
 pub mod archive;
 pub mod clipboard;
 pub mod cmdline;
+pub mod colors;
 pub mod diff;
 pub mod drives;
 pub mod format;
