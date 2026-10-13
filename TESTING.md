@@ -577,6 +577,7 @@
 Автотеста нет (нужна такая видеокарта); в headless переключение проверено через `WGPU_BACKEND=dx12` (адаптера нет → tiny-skia), tiny-skia под X11 — Xwayland (`ICED_BACKEND=tiny-skia`: прозрачное окно давало 32-битный visual, softbuffer падал).
 
 - [ ] Linux Lite (X11 без DRI3): `shagoff-commander` открывает окно; в выводе `software rendering (ICED_BACKEND=tiny-skia)`, паники `unpack2x16float` нет
+- [ ] Linux Lite: в заголовке видны кнопки «свернуть» / «развернуть» / «закрыть», значки панели инструментов и папок (тема иконок Xfce: «Cosmic» там нет)
 - [ ] Linux Lite: Ctrl+, → Тема «Светлая» — окно светлое (и после перезапуска); «Тёмная» — тёмное
 
 ## Регрессионные тесты
