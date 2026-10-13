@@ -66,6 +66,19 @@ pub fn perms(mode: u32) -> String {
         .collect()
 }
 
+/// Attr column, as `ls -l`: the type (`d` dir, `l` symlink, `-` other), then `perms` (of the
+/// link's target for a link).
+pub fn attrs(e: &Entry) -> String {
+    let kind = if e.is_link {
+        'l'
+    } else if e.is_dir() {
+        'd'
+    } else {
+        '-'
+    };
+    format!("{kind}{}", perms(e.mode))
+}
+
 /// TC name column: dirs as `[name]`, files without the extension shown in its own column.
 pub fn display_name(e: &Entry) -> String {
     if e.is_dir() {
@@ -243,6 +256,23 @@ mod tests {
         assert_eq!(perms(0o755), "rwxr-xr-x");
         assert_eq!(perms(0o100640), "rw-r-----");
         assert_eq!(perms(0), "---------");
+        let mut e = Entry {
+            name: "a".into(),
+            os_name: "a".into(),
+            ext: String::new(),
+            size: 0,
+            mtime: std::time::SystemTime::UNIX_EPOCH,
+            kind: crate::listing::Kind::File,
+            is_link: false,
+            mode: 0o644,
+            owner: None,
+            target: None,
+        };
+        assert_eq!(attrs(&e), "-rw-r--r--");
+        e.is_link = true;
+        assert_eq!(attrs(&e), "lrw-r--r--");
+        (e.is_link, e.kind) = (false, crate::listing::Kind::Dir);
+        assert_eq!(attrs(&e), "drw-r--r--");
     }
 
     #[test]
