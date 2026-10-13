@@ -134,7 +134,12 @@ impl<Message: Clone + 'static, D: AsMimeTypes + Send + 'static> Widget<Message, 
                     }
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(_)) => state.pressed = None,
+            // As libcosmic's: the left release and motion over the row stay with the row.
+            Event::Mouse(mouse::Event::ButtonReleased(_)) => {
+                if let Some((_, false)) = state.pressed.take() {
+                    shell.capture_event();
+                }
+            }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let (Some((from, right)), Some(p)) = (state.pressed, cursor.position())
                     && p.distance(from) > THRESHOLD
@@ -149,6 +154,9 @@ impl<Message: Clone + 'static, D: AsMimeTypes + Send + 'static> Widget<Message, 
                         Box::new((self.content)()),
                         self.action,
                     );
+                }
+                if cursor.is_over(layout.bounds()) {
+                    shell.capture_event();
                 }
             }
             Event::Dnd(DndEvent::Source(SourceEvent::Cancelled | SourceEvent::Finished))

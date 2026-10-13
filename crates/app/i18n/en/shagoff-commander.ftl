@@ -186,6 +186,7 @@ drop-move = Move
 drop-link = Link
 link-to = Create symbolic links to { $what } in:
 link-failed = Cannot create the link { $path }: { $err }
+links-failed = { $n } links not created; { $path }: { $err }
 menu-link = Create symbolic link…
 menu-copy-same = Copy in the same folder
 menu-move = Move

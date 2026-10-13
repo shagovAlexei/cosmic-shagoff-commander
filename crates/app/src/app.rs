@@ -1675,7 +1675,7 @@ impl App {
             }
             Message::Pasted(_) => {}
             Message::DragStart(right) => self.right_drag = right,
-            Message::DropAs(op) => {
+            Message::DropAs(op) if matches!(self.dialog, Some(Dialog::DropMenu { .. })) => {
                 if let Some(Dialog::DropMenu { side, dir, sources }) = self.dialog.take() {
                     self.dialog = Some(Dialog::Input {
                         op,
@@ -1686,6 +1686,7 @@ impl App {
                     return widget::text_input::focus(self.input_id.clone());
                 }
             }
+            Message::DropAs(_) => {} // the menu is gone already
             Message::DropHover(h) => self.drop_hover = h,
             Message::DropLeave(h) => {
                 if self.drop_hover == Some(h) {
@@ -1699,6 +1700,9 @@ impl App {
                 mv,
             } => {
                 self.drop_hover = None;
+                // Any drop ends that drag, used or not: a later drop of the same files from
+                // another program must not get the menu.
+                let right_drag = self.right_drag.take();
                 let t = self.panes[side].active();
                 // A job "In background" does not stop it: OK then says the job is running, as F5.
                 // Search results have no one dir; a drop on a tab or a drive button names its own.
@@ -1717,7 +1721,7 @@ impl App {
                 let from = (0..2).find(|&s| Some(self.panes[s].active().panel.cwd()) == parent);
                 let side = from.unwrap_or(side);
                 // Our own right-button drag (the same files): ask, as TC's drop menu.
-                if self.right_drag.take().is_some_and(|r| *r == paths) {
+                if right_drag.is_some_and(|r| *r == paths) {
                     self.dialog = Some(Dialog::DropMenu {
                         side,
                         dir,
@@ -3544,6 +3548,17 @@ impl App {
             self.say(StatusKind::Error, fl!("archive-read-only"));
             return Task::none();
         }
+        // As F5: a trailing `/` names a dir to put them in, made if missing.
+        if target.as_os_str().as_encoded_bytes().ends_with(b"/")
+            && let Err(e) = std::fs::create_dir_all(target)
+        {
+            let path = target.display().to_string();
+            self.say(
+                StatusKind::Error,
+                fl!("link-failed", path = path, err = e.to_string()),
+            );
+            return Task::none();
+        }
         let pairs = match ops::plan(sources, target) {
             Ok(p) => p,
             Err(e) => {
@@ -3551,14 +3566,22 @@ impl App {
                 return Task::none();
             }
         };
-        if let Some((path, e)) = ops::symlinks(&pairs).into_iter().next() {
-            let path = path.display().to_string();
-            self.say(
-                StatusKind::Error,
-                fl!("link-failed", path = path, err = e.to_string()),
-            );
+        let failed = ops::symlinks(&pairs);
+        if let Some((path, e)) = failed.first() {
+            let (path, err) = (path.display().to_string(), e.to_string());
+            let msg = match failed.len() {
+                1 => fl!("link-failed", path = path, err = err),
+                n => fl!("links-failed", n = n, path = path, err = err),
+            };
+            self.say(StatusKind::Error, msg);
         }
-        self.panes[side].active_mut().panel.unmark(sources);
+        // Marks stay on the ones not linked, to try again.
+        let done: Vec<PathBuf> = pairs
+            .iter()
+            .filter(|(_, d)| !failed.iter().any(|(f, _)| f == d))
+            .map(|(s, _)| s.clone())
+            .collect();
+        self.panes[side].active_mut().panel.unmark(&done);
         let reload = |app: &mut Self, s: usize| {
             let cwd = app.panes[s].active().panel.cwd().to_path_buf();
             app.reload(s, cwd, None)
