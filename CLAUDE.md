@@ -93,4 +93,6 @@ Never commit to `main` directly. Bugs get a `regression_<what>` test and a row i
 
 **Versions:** every PR that changes the program bumps `version` in the root `Cargo.toml` (and `Cargo.lock`) in the same PR: a feature → minor (0.2.0 → 0.3.0), a bug fix → patch (0.2.0 → 0.2.1); docs / tests / tooling only → no bump. After the user approves the merge: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z` → the `release` workflow publishes the .deb.
 
+**README:** two files kept in step: `README.md` (English) and `README_ru.md` (Russian), each linking to the other at the top. A change to one goes into the other in the same PR.
+
 Docs and skills live in `.claude/` and are committed (only `.claude/settings.local.json` is ignored). Lessons that are general to libcosmic go into the global `cosmic-applet` skill.
