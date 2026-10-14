@@ -157,6 +157,18 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             ],
         ),
         (
+            fl!("help-colors"),
+            vec![
+                o("*.rs;*.toml", fl!("help-colors-mask")),
+                o(">1M / <10k", fl!("help-colors-size")),
+                o("<7 / >365", fl!("help-colors-age")),
+                o("#RRGGBB", fl!("help-colors-color")),
+                o("▾", fl!("help-colors-palette")),
+                o("■", fl!("help-colors-bg")),
+                o("⚠", fl!("help-colors-bad")),
+            ],
+        ),
+        (
             fl!("help-mouse"),
             vec![
                 o("LMB", fl!("help-mouse-click")),

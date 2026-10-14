@@ -592,6 +592,7 @@ pub fn menu_row_with<'a>(
                 true,
                 false,
                 crate::config::Skin::Modern,
+                None,
             )),
     )
     .padding(0)

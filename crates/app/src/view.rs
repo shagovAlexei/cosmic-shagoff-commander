@@ -302,7 +302,8 @@ fn brief_list<'a>(
                 e.name.clone()
             };
             let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
-            let paint = (!lit).then(|| scheme.pick(e)).flatten();
+            let look = scheme.pick(e, std::time::SystemTime::now());
+            let paint = look.filter(|_| !lit).and_then(|l| l.fg);
             let cell = container(name_cell(e, label, skin, paint))
                 .padding([0, 6])
                 .height(Length::Fixed(row_h))
@@ -313,6 +314,7 @@ fn brief_list<'a>(
                     active,
                     p.panel.is_marked(e),
                     skin,
+                    look.and_then(|l| l.bg),
                 ));
             let cell = mouse_area(cell)
                 .on_press(Message::Click(side, i))
@@ -464,6 +466,7 @@ fn tab_bar(
                 pane_active,
                 false,
                 Skin::Classic,
+                None,
             ));
         let tab = mouse_area(label)
             .on_press(Message::TabPress(side, i))
@@ -583,15 +586,15 @@ fn file_row<'a>(
     } else {
         (format::date(e.mtime, &app.tz), format::attrs(e))
     };
+    let look = app.scheme.pick(e, std::time::SystemTime::now());
     let cells = row![
         // Empty style: the default (Transparent) sets its own text colour over the cursor's.
         container(name_cell(
             e,
             format::display_name(e),
             app.config.skin,
-            (!(is_cursor || is_marked))
-                .then(|| app.scheme.pick(e))
-                .flatten(),
+            look.filter(|_| !(is_cursor || is_marked))
+                .and_then(|l| l.fg),
         ))
         .width(Length::Fill)
         .class(theme::Container::custom(|_| container::Style::default())),
@@ -609,7 +612,13 @@ fn file_row<'a>(
         .height(Length::Fixed(app.row_h()))
         .width(Length::Fill)
         .clip(true)
-        .class(cursor_style(is_cursor, active, is_marked, app.config.skin));
+        .class(cursor_style(
+            is_cursor,
+            active,
+            is_marked,
+            app.config.skin,
+            look.and_then(|l| l.bg),
+        ));
     mouse_area(row)
         .on_press(Message::Click(side, i))
         .on_right_press(Message::RightClick(side, i))
@@ -939,6 +948,7 @@ pub(crate) fn cursor_style(
     active: bool,
     marked: bool,
     skin: Skin,
+    bg: Option<[u8; 3]>,
 ) -> theme::Container<'static> {
     theme::Container::custom(move |t| {
         let c = t.cosmic();
@@ -962,7 +972,18 @@ pub(crate) fn cursor_style(
                 bg.a = 0.35;
                 style.background = Some(bg.into());
             }
-            _ => {}
+            // Not under the cursor: the background of its colour rule.
+            // Not marked either (its red text wins); text black or white by the background's
+            // brightness (the theme's could be either).
+            _ => {
+                if let Some(c @ [r, g, b]) = bg.filter(|_| !marked) {
+                    style.background = Some(Color::from_rgb8(r, g, b).into());
+                    style.text_color = Some(match colors::dark_text_on(c) {
+                        true => Color::BLACK,
+                        false => Color::WHITE,
+                    });
+                }
+            }
         }
         if marked && !(is_cursor && active) {
             style.text_color = Some(c.destructive_text_color().into());
