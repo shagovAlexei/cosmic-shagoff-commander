@@ -463,6 +463,7 @@ colors-links = Links
 colors-exec = Executables
 colors-every = (every name)
 colors-empty = No rules: names in the normal colour.
+colors-accent = The theme's accent
 colors-add = Add rule
 colors-reset = Defaults
 colors-mask = Mask (*.rs;*.toml; empty — every name)

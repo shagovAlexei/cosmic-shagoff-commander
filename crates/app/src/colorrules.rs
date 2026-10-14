@@ -87,12 +87,22 @@ pub fn what_label(w: What) -> String {
     }
 }
 
+/// Clicked into the colour field: the theme's accent (empty), then GNOME's palette, dark and light.
+const PALETTE: [&str; 17] = [
+    "", "#3584e4", "#33d17a", "#f6d32d", "#ff7800", "#e01b24", "#9141ac", "#986a44", "#9a9996",
+    "#99c1f1", "#8ff0a4", "#f9f06b", "#ffbe6f", "#f66151", "#dc8add", "#cdab8f", "#ffffff",
+];
+
 /// A square of the rule's colour; the accent's for an empty one, a frame for a bad one.
 fn swatch<'a>(color: &str) -> Element<'a, Message> {
+    swatch_sized(color, 14.0)
+}
+
+fn swatch_sized<'a>(color: &str, size: f32) -> Element<'a, Message> {
     let paint = colors::parse(color);
     widget::container(widget::Space::new())
-        .width(Length::Fixed(14.0))
-        .height(Length::Fixed(14.0))
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
         .class(theme::Container::custom(move |t| {
             let fill = match paint {
                 Some(Paint::Accent) => Some(Color::from(t.cosmic().accent_text_color())),
@@ -110,6 +120,28 @@ fn swatch<'a>(color: &str) -> Element<'a, Message> {
             }
         }))
         .into()
+}
+
+/// One click per colour; the first is the accent (an empty field).
+fn palette<'a>(on: bool) -> Element<'a, Message> {
+    let mut row = row![].spacing(4);
+    for color in PALETTE {
+        let tip = if color.is_empty() {
+            fl!("colors-accent")
+        } else {
+            color.to_string()
+        };
+        let b = widget::button::custom(swatch_sized(color, 18.0))
+            .padding(3)
+            .class(theme::Button::Icon)
+            .on_press_maybe(on.then(|| Message::Colors(ColorMsg::Color(color.into()))));
+        row = row.push(widget::tooltip(
+            b,
+            widget::text(tip),
+            widget::tooltip::Position::Bottom,
+        ));
+    }
+    row.into()
 }
 
 pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, Message> {
@@ -141,7 +173,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     let some = c.sel.is_some();
     let btn = |label: String, m: ColorMsg, on: bool| {
         widget::button::standard(label)
-            .width(Length::Fixed(150.0))
+            .width(Length::Fixed(190.0))
             .on_press_maybe(on.then(|| msg(m)))
     };
     let arrow = |name: &'static str, m: ColorMsg, on: bool| {
@@ -193,12 +225,16 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
         .spacing(12),
         labelled(
             fl!("colors-color"),
-            row![
-                input(rule.map_or("", |r| r.color.as_str()), ColorMsg::Color),
-                swatch(rule.map_or("", |r| r.color.as_str())),
+            column![
+                row![
+                    input(rule.map_or("", |r| r.color.as_str()), ColorMsg::Color),
+                    swatch(rule.map_or("", |r| r.color.as_str())),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                palette(rule.is_some()),
             ]
-            .spacing(8)
-            .align_y(Alignment::Center)
+            .spacing(6)
             .into()
         ),
     ]

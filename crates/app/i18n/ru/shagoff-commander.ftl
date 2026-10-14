@@ -464,6 +464,7 @@ colors-links = Ссылки
 colors-exec = Исполняемые
 colors-every = (любое имя)
 colors-empty = Правил нет: имена обычным цветом.
+colors-accent = Цвет акцента темы
 colors-add = Добавить правило
 colors-reset = По умолчанию
 colors-mask = Маска (*.rs;*.toml; пусто — любое имя)
