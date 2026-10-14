@@ -34,7 +34,8 @@ impl What {
 
 /// `mask`: as Num+ (`*.rs;*.toml`), empty = every name. `color`: `#RRGGBB`, empty = the theme's
 /// accent. `bg`: the row's background, empty = none. `size` (`>100M`, `<1k`, files only) and `age`
-/// in days (`<7` newer than a week, `>365` older than a year): empty = any.
+/// in days (`<7` newer than a week, `>365` older than a year), `attr` (letters, all must hold:
+/// `h` hidden, `r` read-only, `s` setuid / setgid / sticky): empty = any.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rule {
@@ -44,6 +45,130 @@ pub struct Rule {
     pub bg: String,
     pub size: String,
     pub age: String,
+    pub attr: String,
+}
+
+/// What `attr` asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Attrs {
+    pub hidden: bool,
+    pub readonly: bool,
+    pub special: bool,
+}
+
+/// `h r s` in any order and case (spaces and commas ignored); another letter → `None`.
+pub fn attrs(s: &str) -> Option<Attrs> {
+    let mut a = Attrs::default();
+    for c in s.chars().filter(|c| !c.is_whitespace() && *c != ',') {
+        match c.to_ascii_lowercase() {
+            'h' => a.hidden = true,
+            'r' => a.readonly = true,
+            's' => a.special = true,
+            _ => return None,
+        }
+    }
+    Some(a)
+}
+
+impl Attrs {
+    fn fits(self, e: &Entry) -> bool {
+        // A link's own mode is always 0o777: not read-only, never special.
+        (!self.hidden || e.name.starts_with('.'))
+            && (!self.readonly || (!e.is_link && e.mode & 0o200 == 0))
+            && (!self.special || (!e.is_link && e.mode & 0o7000 != 0))
+    }
+}
+
+/// Marked rows' text and background, the cursor's background (TC "Mark color", "Cursor color"):
+/// `#RRGGBB`, empty = the theme's.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MarkColors {
+    pub color: String,
+    pub bg: String,
+    pub cursor: String,
+}
+
+/// `MarkColors` parsed; `None`: the theme's (empty or not a colour).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub fg: Option<[u8; 3]>,
+    pub bg: Option<[u8; 3]>,
+    pub cursor: Option<[u8; 3]>,
+}
+
+/// A panel row's background, from the theme or ours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fill {
+    None,
+    Rgb([u8; 3]),
+    /// The theme's cursor: the accent button.
+    Accent,
+    /// The theme's cursor on a marked row: the destructive button.
+    Destructive,
+    /// The cursor of the inactive pane: ours, else the accent, faint.
+    Faint(Option<[u8; 3]>),
+}
+
+/// A panel row's text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ink {
+    /// The theme's (or the name's colour rule).
+    Theme,
+    /// On the theme's `Fill::Accent` / `Fill::Destructive`: its button text.
+    OnButton,
+    /// Marked: the theme's red.
+    Marked,
+    Rgb([u8; 3]),
+}
+
+/// Black or white text on `bg`, by its brightness (the theme's text could be either).
+fn on(bg: [u8; 3]) -> (Fill, Ink) {
+    let ink = match dark_text_on(bg) {
+        true => [0, 0, 0],
+        false => [255, 255, 255],
+    };
+    (Fill::Rgb(bg), Ink::Rgb(ink))
+}
+
+/// How a row is painted: the cursor (of the active pane, or faint in the other), the marks, the
+/// background of its colour rule (`rule_bg`), in that order.
+pub fn row_paint(
+    cursor: bool,
+    active: bool,
+    marked: bool,
+    rule_bg: Option<[u8; 3]>,
+    m: Marks,
+) -> (Fill, Ink) {
+    // A marked row's text where it has no background of ours.
+    let marked_ink = || m.fg.map_or(Ink::Marked, Ink::Rgb);
+    match (cursor && active, cursor, marked) {
+        // As the theme's: the marks' colour becomes the cursor's background.
+        (true, _, true) => m.fg.map_or((Fill::Destructive, Ink::OnButton), on),
+        (true, _, false) => m.cursor.map_or((Fill::Accent, Ink::OnButton), on),
+        (false, true, true) => (Fill::Faint(m.cursor), marked_ink()),
+        (false, true, false) => (Fill::Faint(m.cursor), Ink::Theme),
+        (false, false, true) => match (m.bg, m.fg) {
+            (Some(bg), Some(fg)) => (Fill::Rgb(bg), Ink::Rgb(fg)),
+            (Some(bg), None) => on(bg),
+            (None, _) => (Fill::None, marked_ink()),
+        },
+        (false, false, false) => rule_bg.map_or((Fill::None, Ink::Theme), on),
+    }
+}
+
+impl MarkColors {
+    pub fn marks(&self) -> Marks {
+        let rgb = |s: &str| match parse(s) {
+            Some(Paint::Rgb(c)) => Some(c),
+            _ => None,
+        };
+        Marks {
+            fg: rgb(&self.color),
+            bg: rgb(&self.bg),
+            cursor: rgb(&self.cursor),
+        }
+    }
 }
 
 /// `>N` (more than) or `<N` (less than).
@@ -113,6 +238,15 @@ pub fn parse(color: &str) -> Option<Paint> {
     Some(Paint::Rgb([byte(0)?, byte(2)?, byte(4)?]))
 }
 
+/// Out of the box, marked rows: light yellow on dark blue (TC-like); the cursor: the theme's.
+pub fn default_marks() -> MarkColors {
+    MarkColors {
+        color: "#f9f06b".into(),
+        bg: "#1a5fb4".into(),
+        cursor: String::new(),
+    }
+}
+
 /// The out-of-the-box list: links cyan, executables orange.
 pub fn defaults() -> Vec<Rule> {
     let rule = |what, color: &str| Rule {
@@ -144,6 +278,7 @@ struct Ready {
     size: Option<Bound>,
     /// In days.
     age: Option<Bound>,
+    attr: Attrs,
     look: Look,
 }
 
@@ -160,13 +295,14 @@ impl Ready {
             && self.mask.as_ref().is_none_or(|m| m.matches(&e.name))
             && self.size.is_none_or(|b| !e.is_dir() && b.fits(e.size))
             && self.age.is_none_or(|b| b.fits(days()))
+            && self.attr.fits(e)
     }
 }
 
 /// The rules ready to apply: masks and bounds parsed, bad rules dropped once, not per row and
 /// frame.
 #[derive(Clone, Debug, Default)]
-pub struct Scheme(Vec<Ready>);
+pub struct Scheme(Vec<Ready>, Marks);
 
 impl Rule {
     /// Parsed for use; `None` if its colour, background or a bound does not parse.
@@ -180,6 +316,7 @@ impl Rule {
             what: self.what,
             size: bound(&self.size, true)?,
             age: bound(&self.age, false)?,
+            attr: attrs(&self.attr)?,
             look: Look {
                 fg: Some(parse(&self.color)?).filter(|p| bg.is_none() || *p != Paint::Accent),
                 bg,
@@ -195,7 +332,18 @@ impl Rule {
 
 impl Scheme {
     pub fn new(rules: &[Rule]) -> Self {
-        Self(rules.iter().filter_map(Rule::ready).collect())
+        Self(
+            rules.iter().filter_map(Rule::ready).collect(),
+            Marks::default(),
+        )
+    }
+
+    pub fn with_marks(self, m: &MarkColors) -> Self {
+        Self(self.0, m.marks())
+    }
+
+    pub fn marks(&self) -> Marks {
+        self.1
     }
 
     /// `e`'s look: the first rule whose kind, mask, size and age fit. `..` has none.
@@ -289,6 +437,109 @@ mod tests {
         assert_eq!(
             fg(&stock, &entry("l", Kind::File, true, 0o777)),
             Some(Paint::Rgb([0x33, 0xc7, 0xde]))
+        );
+    }
+
+    #[test]
+    fn attributes() {
+        assert_eq!(attrs(""), Some(Attrs::default()));
+        assert_eq!(
+            attrs("H, r"),
+            Some(Attrs {
+                hidden: true,
+                readonly: true,
+                special: false
+            })
+        );
+        assert_eq!(attrs("hx"), None);
+        let rule = |attr: &str| {
+            Scheme::new(&[Rule {
+                attr: attr.into(),
+                color: "#ff0000".into(),
+                ..Default::default()
+            }])
+        };
+        let file = |n: &str, mode| entry(n, Kind::File, false, mode);
+        let hit = |s: &Scheme, e: &Entry| fg(s, e).is_some();
+        let (h, r, s, hr) = (rule("h"), rule("r"), rule("s"), rule("hr"));
+        assert!(hit(&h, &file(".bashrc", 0o644)) && !hit(&h, &file("a", 0o644)));
+        assert!(hit(&r, &file("a", 0o444)) && !hit(&r, &file("a", 0o644)));
+        assert!(!hit(&r, &entry("l", Kind::File, true, 0o444))); // links: their own mode
+        assert!(hit(&s, &file("su", 0o4755)) && hit(&s, &entry("tmp", Kind::Dir, false, 0o1777)));
+        assert!(!hit(&s, &file("a", 0o755)));
+        assert!(hit(&hr, &file(".a", 0o444)) && !hit(&hr, &file(".a", 0o644)));
+        assert!(
+            Scheme::new(&[Rule {
+                attr: "q".into(),
+                ..Default::default()
+            }])
+            .0
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn rows_paint_cursor_then_marks_then_rule() {
+        let (y, b, o, g) = (
+            [0xf9, 0xf0, 0x6b],
+            [0x1a, 0x5f, 0xb4],
+            [0xff, 0x78, 0],
+            [9, 9, 9],
+        );
+        let (black, white) = (Ink::Rgb([0, 0, 0]), Ink::Rgb([255, 255, 255]));
+        let theme = Marks::default();
+        let ours = Marks {
+            fg: Some(y),
+            bg: Some(b),
+            cursor: Some(o),
+        };
+        let p = |c, a, mk, m| row_paint(c, a, mk, Some(g), m);
+        // The theme's.
+        assert_eq!(p(true, true, false, theme), (Fill::Accent, Ink::OnButton));
+        assert_eq!(
+            p(true, true, true, theme),
+            (Fill::Destructive, Ink::OnButton)
+        );
+        assert_eq!(
+            p(true, false, true, theme),
+            (Fill::Faint(None), Ink::Marked)
+        );
+        assert_eq!(p(false, true, true, theme), (Fill::None, Ink::Marked));
+        assert_eq!(p(false, true, false, theme), (Fill::Rgb(g), white)); // the rule's
+        // Ours.
+        assert_eq!(p(true, true, false, ours), (Fill::Rgb(o), black));
+        assert_eq!(p(true, true, true, ours), (Fill::Rgb(y), black));
+        assert_eq!(
+            p(true, false, false, ours),
+            (Fill::Faint(Some(o)), Ink::Theme)
+        );
+        assert_eq!(
+            p(true, false, true, ours),
+            (Fill::Faint(Some(o)), Ink::Rgb(y))
+        );
+        assert_eq!(p(false, true, true, ours), (Fill::Rgb(b), Ink::Rgb(y)));
+        // Only a marks background: text black or white on it.
+        let bg_only = Marks {
+            bg: Some(b),
+            ..theme
+        };
+        assert_eq!(p(false, false, true, bg_only), (Fill::Rgb(b), white));
+    }
+
+    #[test]
+    fn mark_colours() {
+        let m = MarkColors {
+            color: "#ff0000".into(),
+            bg: "".into(),
+            cursor: "bad".into(),
+        };
+        assert_eq!(
+            m.marks(),
+            Marks {
+                fg: Some([255, 0, 0]),
+                bg: None,
+                cursor: None
+            }
         );
     }
 

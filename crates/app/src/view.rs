@@ -315,6 +315,7 @@ fn brief_list<'a>(
                     p.panel.is_marked(e),
                     skin,
                     look.and_then(|l| l.bg),
+                    scheme.marks(),
                 ));
             let cell = mouse_area(cell)
                 .on_press(Message::Click(side, i))
@@ -467,6 +468,7 @@ fn tab_bar(
                 false,
                 Skin::Classic,
                 None,
+                Default::default(),
             ));
         let tab = mouse_area(label)
             .on_press(Message::TabPress(side, i))
@@ -618,6 +620,7 @@ fn file_row<'a>(
             is_marked,
             app.config.skin,
             look.and_then(|l| l.bg),
+            app.scheme.marks(),
         ));
     mouse_area(row)
         .on_press(Message::Click(side, i))
@@ -949,45 +952,39 @@ pub(crate) fn cursor_style(
     marked: bool,
     skin: Skin,
     bg: Option<[u8; 3]>,
+    marks: colors::Marks,
 ) -> theme::Container<'static> {
+    let (fill, ink) = colors::row_paint(is_cursor, active, marked, bg, marks);
     theme::Container::custom(move |t| {
         let c = t.cosmic();
+        let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);
         let mut style = container::Style::default();
         if skin == Skin::Modern {
             style.border.radius = c.corner_radii.radius_s.into();
         }
-        match (is_cursor, active, marked) {
-            // The button pairs: `accent.on` is not meant for text on the accent and was
-            // unreadable (light on cyan in dark, dark on teal in light).
-            (true, true, true) => {
-                style.background = Some(Color::from(c.destructive_button.base).into());
-                style.text_color = Some(c.destructive_button.on.into());
-            }
-            (true, true, false) => {
-                style.background = Some(Color::from(c.accent_button.base).into());
-                style.text_color = Some(c.accent_button.on.into());
-            }
-            (true, false, _) => {
-                let mut bg = Color::from(c.accent_color());
+        // The button pairs: `accent.on` is not meant for text on the accent and was unreadable
+        // (light on cyan in dark, dark on teal in light).
+        let (background, on) = match fill {
+            colors::Fill::None => (None, None),
+            colors::Fill::Rgb(b) => (Some(rgb(b)), None),
+            colors::Fill::Accent => (Some(c.accent_button.base.into()), Some(c.accent_button.on)),
+            colors::Fill::Destructive => (
+                Some(c.destructive_button.base.into()),
+                Some(c.destructive_button.on),
+            ),
+            colors::Fill::Faint(b) => {
+                let mut bg = b.map_or(Color::from(c.accent_color()), rgb);
                 bg.a = 0.35;
-                style.background = Some(bg.into());
+                (Some(bg), None)
             }
-            // Not under the cursor: the background of its colour rule.
-            // Not marked either (its red text wins); text black or white by the background's
-            // brightness (the theme's could be either).
-            _ => {
-                if let Some(c @ [r, g, b]) = bg.filter(|_| !marked) {
-                    style.background = Some(Color::from_rgb8(r, g, b).into());
-                    style.text_color = Some(match colors::dark_text_on(c) {
-                        true => Color::BLACK,
-                        false => Color::WHITE,
-                    });
-                }
-            }
-        }
-        if marked && !(is_cursor && active) {
-            style.text_color = Some(c.destructive_text_color().into());
-        }
+        };
+        style.background = background.map(Into::into);
+        style.text_color = match ink {
+            colors::Ink::Theme => None,
+            colors::Ink::OnButton => on.map(Into::into),
+            colors::Ink::Marked => Some(c.destructive_text_color().into()),
+            colors::Ink::Rgb(i) => Some(rgb(i)),
+        };
         style
     })
 }

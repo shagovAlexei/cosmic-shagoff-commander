@@ -566,7 +566,7 @@ pub enum Message {
     Mounted(usize, Result<PathBuf, mount::Error>),
     /// (unmounted drive root, result).
     Unmounted(PathBuf, Result<(), mount::Error>),
-    Config(Config),
+    Config(Box<Config>),
     /// Ctrl+F finished: (side, address, mount result).
     Connected(usize, String, Result<PathBuf, mount::Error>),
     /// Ctrl+F: a saved or found address into the field.
@@ -668,7 +668,7 @@ impl Application for App {
             cosmic::iced::window::close_requests().map(Message::CloseRequested),
             self.core()
                 .watch_config::<Config>(APP_ID)
-                .map(|u| Message::Config(u.config)),
+                .map(|u| Message::Config(Box::new(u.config))),
         ];
         if !self.edited.is_empty() {
             subs.push(
@@ -758,7 +758,7 @@ impl App {
             job: None,
             queue: VecDeque::new(),
             held: None,
-            scheme: shagoff_core::colors::Scheme::new(&config.colors),
+            scheme: shagoff_core::colors::Scheme::new(&config.colors).with_marks(&config.marks),
             right_drag: None,
             quitting: false,
             input_id: widget::Id::unique(),
@@ -2228,7 +2228,7 @@ impl App {
                 let home = self.home.clone();
                 return Task::batch(inside.into_iter().map(|s| self.load(s, home.clone(), None)));
             }
-            Message::Config(c) => return self.apply_config(c),
+            Message::Config(c) => return self.apply_config(*c),
             Message::CloseDrawer => self.set_drawer(None),
             Message::FocusNext => return cosmic::iced::widget::operation::focus_next(),
             Message::Setting(s) => return self.set(s),
@@ -2583,10 +2583,9 @@ impl App {
             Action::Right if brief => panel.move_cursor(rows),
             Action::Left | Action::Right => {}
             Action::ConfigureColors => {
-                let list = self.config.colors.clone();
-                self.dialog = Some(Dialog::Colors(Box::new(crate::colorrules::ColorEdit::new(
-                    list,
-                ))));
+                let mut edit = crate::colorrules::ColorEdit::new(self.config.colors.clone());
+                edit.marks = self.config.marks.clone();
+                self.dialog = Some(Dialog::Colors(Box::new(edit)));
                 return Task::none();
             }
             Action::ConfigureToolbar => {
@@ -3472,10 +3471,14 @@ impl App {
                         if let Err(e) = self.config.set_colors(h, c.list) {
                             log::warn!("config: {e}");
                         }
+                        if let Err(e) = self.config.set_marks(h, c.marks) {
+                            log::warn!("config: {e}");
+                        }
                     }
-                    None => self.config.colors = c.list,
+                    None => (self.config.colors, self.config.marks) = (c.list, c.marks),
                 }
-                self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors);
+                self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors)
+                    .with_marks(&self.config.marks);
                 Task::none()
             }
             Dialog::Toolbar(t) => {
@@ -4876,7 +4879,8 @@ impl App {
     /// New settings, from the settings drawer or the config watcher (a hand edit).
     fn apply_config(&mut self, c: Config) -> Task<Message> {
         let old = std::mem::replace(&mut self.config, c);
-        self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors);
+        self.scheme =
+            shagoff_core::colors::Scheme::new(&self.config.colors).with_marks(&self.config.marks);
         self.cols = self.config.columns;
         let mut tasks = Vec::new();
         if old.language != self.config.language {
@@ -7718,10 +7722,10 @@ mod tests {
     #[test]
     fn config_change_of_show_hidden_applies_to_tabs() {
         let mut app = app_with(Config::default(), State::default());
-        let _ = app.update(Message::Config(Config {
+        let _ = app.update(Message::Config(Box::new(Config {
             show_hidden: true,
             ..Config::default()
-        }));
+        })));
         assert!(app.panes[1].active().panel.show_hidden());
     }
 
