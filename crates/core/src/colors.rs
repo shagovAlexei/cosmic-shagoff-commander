@@ -97,6 +97,66 @@ pub struct Marks {
     pub cursor: Option<[u8; 3]>,
 }
 
+/// A panel row's background, from the theme or ours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fill {
+    None,
+    Rgb([u8; 3]),
+    /// The theme's cursor: the accent button.
+    Accent,
+    /// The theme's cursor on a marked row: the destructive button.
+    Destructive,
+    /// The cursor of the inactive pane: ours, else the accent, faint.
+    Faint(Option<[u8; 3]>),
+}
+
+/// A panel row's text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ink {
+    /// The theme's (or the name's colour rule).
+    Theme,
+    /// On the theme's `Fill::Accent` / `Fill::Destructive`: its button text.
+    OnButton,
+    /// Marked: the theme's red.
+    Marked,
+    Rgb([u8; 3]),
+}
+
+/// Black or white text on `bg`, by its brightness (the theme's text could be either).
+fn on(bg: [u8; 3]) -> (Fill, Ink) {
+    let ink = match dark_text_on(bg) {
+        true => [0, 0, 0],
+        false => [255, 255, 255],
+    };
+    (Fill::Rgb(bg), Ink::Rgb(ink))
+}
+
+/// How a row is painted: the cursor (of the active pane, or faint in the other), the marks, the
+/// background of its colour rule (`rule_bg`), in that order.
+pub fn row_paint(
+    cursor: bool,
+    active: bool,
+    marked: bool,
+    rule_bg: Option<[u8; 3]>,
+    m: Marks,
+) -> (Fill, Ink) {
+    // A marked row's text where it has no background of ours.
+    let marked_ink = || m.fg.map_or(Ink::Marked, Ink::Rgb);
+    match (cursor && active, cursor, marked) {
+        // As the theme's: the marks' colour becomes the cursor's background.
+        (true, _, true) => m.fg.map_or((Fill::Destructive, Ink::OnButton), on),
+        (true, _, false) => m.cursor.map_or((Fill::Accent, Ink::OnButton), on),
+        (false, true, true) => (Fill::Faint(m.cursor), marked_ink()),
+        (false, true, false) => (Fill::Faint(m.cursor), Ink::Theme),
+        (false, false, true) => match (m.bg, m.fg) {
+            (Some(bg), Some(fg)) => (Fill::Rgb(bg), Ink::Rgb(fg)),
+            (Some(bg), None) => on(bg),
+            (None, _) => (Fill::None, marked_ink()),
+        },
+        (false, false, false) => rule_bg.map_or((Fill::None, Ink::Theme), on),
+    }
+}
+
 impl MarkColors {
     pub fn marks(&self) -> Marks {
         let rgb = |s: &str| match parse(s) {
@@ -233,7 +293,7 @@ impl Ready {
 /// The rules ready to apply: masks and bounds parsed, bad rules dropped once, not per row and
 /// frame.
 #[derive(Clone, Debug, Default)]
-pub struct Scheme(Vec<Ready>, pub Marks);
+pub struct Scheme(Vec<Ready>, Marks);
 
 impl Rule {
     /// Parsed for use; `None` if its colour, background or a bound does not parse.
@@ -407,6 +467,54 @@ mod tests {
             .0
             .is_empty()
         );
+    }
+
+    #[test]
+    fn rows_paint_cursor_then_marks_then_rule() {
+        let (y, b, o, g) = (
+            [0xf9, 0xf0, 0x6b],
+            [0x1a, 0x5f, 0xb4],
+            [0xff, 0x78, 0],
+            [9, 9, 9],
+        );
+        let (black, white) = (Ink::Rgb([0, 0, 0]), Ink::Rgb([255, 255, 255]));
+        let theme = Marks::default();
+        let ours = Marks {
+            fg: Some(y),
+            bg: Some(b),
+            cursor: Some(o),
+        };
+        let p = |c, a, mk, m| row_paint(c, a, mk, Some(g), m);
+        // The theme's.
+        assert_eq!(p(true, true, false, theme), (Fill::Accent, Ink::OnButton));
+        assert_eq!(
+            p(true, true, true, theme),
+            (Fill::Destructive, Ink::OnButton)
+        );
+        assert_eq!(
+            p(true, false, true, theme),
+            (Fill::Faint(None), Ink::Marked)
+        );
+        assert_eq!(p(false, true, true, theme), (Fill::None, Ink::Marked));
+        assert_eq!(p(false, true, false, theme), (Fill::Rgb(g), white)); // the rule's
+        // Ours.
+        assert_eq!(p(true, true, false, ours), (Fill::Rgb(o), black));
+        assert_eq!(p(true, true, true, ours), (Fill::Rgb(y), black));
+        assert_eq!(
+            p(true, false, false, ours),
+            (Fill::Faint(Some(o)), Ink::Theme)
+        );
+        assert_eq!(
+            p(true, false, true, ours),
+            (Fill::Faint(Some(o)), Ink::Rgb(y))
+        );
+        assert_eq!(p(false, true, true, ours), (Fill::Rgb(b), Ink::Rgb(y)));
+        // Only a marks background: text black or white on it.
+        let bg_only = Marks {
+            bg: Some(b),
+            ..theme
+        };
+        assert_eq!(p(false, false, true, bg_only), (Fill::Rgb(b), white));
     }
 
     #[test]

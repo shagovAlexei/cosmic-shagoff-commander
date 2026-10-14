@@ -80,6 +80,38 @@ impl ColorEdit {
         c
     }
 
+    /// The colour being edited (see `color_mut`).
+    pub fn edited(&self) -> &str {
+        let (bg, m) = (self.bg, &self.marks);
+        match self.special {
+            Some(Special::Cursor) => &m.cursor,
+            Some(Special::Marked) => {
+                if bg {
+                    &m.bg
+                } else {
+                    &m.color
+                }
+            }
+            None => self
+                .sel
+                .and_then(|i| self.list.get(i))
+                .map_or("", |r| if bg { &r.bg } else { &r.color }),
+        }
+    }
+
+    /// An empty colour means none of ours: a background, the marks', the cursor's ("None"), not
+    /// the accent of a name.
+    pub fn empty_is_none(&self) -> bool {
+        self.bg || self.special.is_some()
+    }
+
+    /// Back to the rules from the marks / the cursor: the cursor's forced background goes too.
+    fn leave_special(&mut self) {
+        if self.special.take() == Some(Special::Cursor) {
+            self.bg = false;
+        }
+    }
+
     /// The colour being edited: the marks' or the cursor's, else the selected rule's; the
     /// background or the text's.
     fn color_mut(&mut self) -> Option<&mut String> {
@@ -97,13 +129,10 @@ impl ColorEdit {
 
     /// The field from what is edited, in the chosen form (a colour without a name: its code).
     fn show(&mut self) {
-        // Empty marks / cursor: the theme's, named "None" as an empty background.
-        let bg = self.bg || self.special.is_some();
-        let color = self.color_mut().map(|c| c.clone());
-        self.field = match color {
-            Some(c) if self.names => color_name(&c, bg).unwrap_or(c),
-            Some(c) => c,
-            None => String::new(),
+        let c = self.edited().to_string();
+        self.field = match self.names {
+            true => color_name(&c, self.empty_is_none()).unwrap_or(c),
+            false => c,
         };
     }
 
@@ -121,9 +150,10 @@ impl ColorEdit {
         match (m, sel) {
             (ColorMsg::Select(i), _) => {
                 self.sel = (i < self.list.len()).then_some(i);
-                self.special = None;
+                self.leave_special();
             }
             (ColorMsg::Special(s), _) => {
+                self.leave_special();
                 self.special = Some(s);
                 self.sel = None;
                 if s == Special::Cursor {
@@ -140,8 +170,7 @@ impl ColorEdit {
                 }
             }
             (ColorMsg::Color(s), _) => {
-                let code =
-                    color_code(&s, self.bg || self.special.is_some()).unwrap_or_else(|| s.clone());
+                let code = color_code(&s, self.empty_is_none()).unwrap_or_else(|| s.clone());
                 if let Some(c) = self.color_mut() {
                     *c = code;
                 }
@@ -158,7 +187,7 @@ impl ColorEdit {
             (ColorMsg::Palette, _) => self.palette = !self.palette,
             (ColorMsg::Add, _) => {
                 let at = sel.map_or(self.list.len(), |i| i + 1);
-                self.special = None;
+                self.leave_special();
                 self.list.insert(
                     at,
                     Rule {
@@ -183,9 +212,10 @@ impl ColorEdit {
                 self.sel = Some(i + 1);
             }
             (ColorMsg::Reset, _) => {
-                let (names, palette) = (self.names, self.palette);
+                self.leave_special();
+                let (names, bg, palette) = (self.names, self.bg, self.palette);
                 *self = Self::new(colors::defaults());
-                (self.names, self.palette) = (names, palette);
+                (self.names, self.bg, self.palette) = (names, bg, palette);
             }
             _ => {}
         }
@@ -401,6 +431,11 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     let last = c.sel.is_some_and(|i| i + 1 >= c.list.len());
     // Marked rows / the cursor: their swatches, lit while the colour field edits them.
     let special = |label: String, s: Special, colors: &[(&str, bool)]| -> Element<'a, Message> {
+        // A colour that does not parse is the theme's: say so, as on a rule.
+        let label = match colors.iter().all(|(c, _)| colors::parse(c).is_some()) {
+            true => label,
+            false => format!("⚠ {label}"),
+        };
         let mut swatches = row![].spacing(2);
         for &(color, bg) in colors {
             swatches = swatches.push(swatch(color, bg));
@@ -449,18 +484,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     let input = |value: &'a str, on: fn(String) -> ColorMsg| hinted("", value, on);
     // The colour field edits a rule's colour, or the marks' / the cursor's.
     let editable = rule.is_some() || c.special.is_some();
-    let edited = match c.special {
-        Some(Special::Cursor) => m.cursor.as_str(),
-        Some(Special::Marked) if c.bg => m.bg.as_str(),
-        Some(Special::Marked) => m.color.as_str(),
-        None => rule.map_or("", |r| {
-            if c.bg {
-                r.bg.as_str()
-            } else {
-                r.color.as_str()
-            }
-        }),
-    };
+    let none = c.empty_is_none();
     // Text / Background: which colour the field and the palette edit; the edited one is lit.
     let target = |label: String, bg: bool| -> Element<'a, Message> {
         let b = match c.bg == bg {
@@ -529,7 +553,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
                     // The colour, and the palette under it: open / fold.
                     widget::button::custom(
                         row![
-                            swatch(edited, c.bg || c.special.is_some()),
+                            swatch(c.edited(), none),
                             widget::icon::from_name(match c.palette {
                                 true => "pan-up-symbolic",
                                 false => "pan-down-symbolic",
@@ -549,10 +573,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
                 .spacing(8)
                 .align_y(Alignment::Center),
             ]
-            .push_maybe(
-                c.palette
-                    .then(|| palette(editable, c.bg || c.special.is_some()))
-            )
+            .push_maybe(c.palette.then(|| palette(editable, none)))
             .spacing(6)
             .into()
         ),
@@ -670,6 +691,7 @@ mod tests {
         assert_eq!(c.list, colors::defaults()); // rules untouched
         c.update(ColorMsg::Select(1));
         assert_eq!(c.special, None);
+        assert!(!c.bg); // the cursor's forced background stays with it
         c.update(ColorMsg::Attr("h".into()));
         assert_eq!(c.list[1].attr, "h");
         c.update(ColorMsg::Reset);

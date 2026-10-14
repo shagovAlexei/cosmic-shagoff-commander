@@ -954,70 +954,37 @@ pub(crate) fn cursor_style(
     bg: Option<[u8; 3]>,
     marks: colors::Marks,
 ) -> theme::Container<'static> {
-    // A colour of ours as a background, with black or white text by its brightness (the theme's
-    // could be either).
-    let fill = |style: &mut container::Style, c @ [r, g, b]: [u8; 3]| {
-        style.background = Some(Color::from_rgb8(r, g, b).into());
-        style.text_color = Some(match colors::dark_text_on(c) {
-            true => Color::BLACK,
-            false => Color::WHITE,
-        });
-    };
+    let (fill, ink) = colors::row_paint(is_cursor, active, marked, bg, marks);
     theme::Container::custom(move |t| {
         let c = t.cosmic();
+        let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);
         let mut style = container::Style::default();
         if skin == Skin::Modern {
             style.border.radius = c.corner_radii.radius_s.into();
         }
-        match (is_cursor, active, marked) {
-            // The button pairs: `accent.on` is not meant for text on the accent and was
-            // unreadable (light on cyan in dark, dark on teal in light).
-            (true, true, true) => match marks.fg {
-                // As the theme's: the marks' colour becomes the cursor's background.
-                Some(m) => fill(&mut style, m),
-                None => {
-                    style.background = Some(Color::from(c.destructive_button.base).into());
-                    style.text_color = Some(c.destructive_button.on.into());
-                }
-            },
-            (true, true, false) => match marks.cursor {
-                Some(m) => fill(&mut style, m),
-                None => {
-                    style.background = Some(Color::from(c.accent_button.base).into());
-                    style.text_color = Some(c.accent_button.on.into());
-                }
-            },
-            (true, false, _) => {
-                let mut bg = marks
-                    .cursor
-                    .map_or(Color::from(c.accent_color()), |[r, g, b]| {
-                        Color::from_rgb8(r, g, b)
-                    });
+        // The button pairs: `accent.on` is not meant for text on the accent and was unreadable
+        // (light on cyan in dark, dark on teal in light).
+        let (background, on) = match fill {
+            colors::Fill::None => (None, None),
+            colors::Fill::Rgb(b) => (Some(rgb(b)), None),
+            colors::Fill::Accent => (Some(c.accent_button.base.into()), Some(c.accent_button.on)),
+            colors::Fill::Destructive => (
+                Some(c.destructive_button.base.into()),
+                Some(c.destructive_button.on),
+            ),
+            colors::Fill::Faint(b) => {
+                let mut bg = b.map_or(Color::from(c.accent_color()), rgb);
                 bg.a = 0.35;
-                style.background = Some(bg.into());
+                (Some(bg), None)
             }
-            // Marked: the marks' background, if set.
-            (false, _, true) => {
-                if let Some(m) = marks.bg {
-                    fill(&mut style, m);
-                }
-            }
-            // Neither: the background of its colour rule.
-            _ => {
-                if let Some(b) = bg {
-                    fill(&mut style, b);
-                }
-            }
-        }
-        // Marked text: the marks' colour, else the theme's red, unless the marks' background
-        // already chose black or white for it.
-        if marked && !(is_cursor && active) {
-            match marks.fg {
-                Some([r, g, b]) => style.text_color = Some(Color::from_rgb8(r, g, b)),
-                None if marks.bg.is_some() && !is_cursor => {}
-                None => style.text_color = Some(c.destructive_text_color().into()),
-            }
-        }
+        };
+        style.background = background.map(Into::into);
+        style.text_color = match ink {
+            colors::Ink::Theme => None,
+            colors::Ink::OnButton => on.map(Into::into),
+            colors::Ink::Marked => Some(c.destructive_text_color().into()),
+            colors::Ink::Rgb(i) => Some(rgb(i)),
+        };
         style
     })
 }
