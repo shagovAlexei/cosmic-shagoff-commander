@@ -87,10 +87,22 @@ pub fn what_label(w: What) -> String {
     }
 }
 
-/// Clicked into the colour field: the theme's accent (empty), then GNOME's palette, dark and light.
-const PALETTE: [&str; 17] = [
-    "", "#3584e4", "#33d17a", "#f6d32d", "#ff7800", "#e01b24", "#9141ac", "#986a44", "#9a9996",
-    "#99c1f1", "#8ff0a4", "#f9f06b", "#ffbe6f", "#f66151", "#dc8add", "#cdab8f", "#ffffff",
+/// Clicked into the colour field, by rows: light, mid, dark shades of GNOME's palette (blue,
+/// cyan, green, yellow, orange, red, purple, brown, grey); the first column is the theme's accent
+/// (an empty field), a light grey and black.
+const PALETTE: [[&str; 10]; 3] = [
+    [
+        "", "#99c1f1", "#99e3f0", "#8ff0a4", "#f9f06b", "#ffbe6f", "#f66151", "#dc8add", "#cdab8f",
+        "#ffffff",
+    ],
+    [
+        "#deddda", "#3584e4", "#33c7de", "#33d17a", "#f6d32d", "#ff7800", "#e01b24", "#9141ac",
+        "#986a44", "#9a9996",
+    ],
+    [
+        "#000000", "#1a5fb4", "#1c8fa8", "#26a269", "#e5a50a", "#c64600", "#a51d2d", "#613583",
+        "#63452c", "#3d3846",
+    ],
 ];
 
 /// A square of the rule's colour; the accent's for an empty one, a frame for a bad one.
@@ -124,24 +136,28 @@ fn swatch_sized<'a>(color: &str, size: f32) -> Element<'a, Message> {
 
 /// One click per colour; the first is the accent (an empty field).
 fn palette<'a>(on: bool) -> Element<'a, Message> {
-    let mut row = row![].spacing(4);
-    for color in PALETTE {
-        let tip = if color.is_empty() {
-            fl!("colors-accent")
-        } else {
-            color.to_string()
-        };
-        let b = widget::button::custom(swatch_sized(color, 18.0))
-            .padding(3)
-            .class(theme::Button::Icon)
-            .on_press_maybe(on.then(|| Message::Colors(ColorMsg::Color(color.into()))));
-        row = row.push(widget::tooltip(
-            b,
-            widget::text(tip),
-            widget::tooltip::Position::Bottom,
-        ));
+    let mut grid = column![].spacing(2);
+    for line in PALETTE {
+        let mut row = row![].spacing(4);
+        for color in line {
+            let tip = if color.is_empty() {
+                fl!("colors-accent")
+            } else {
+                color.to_string()
+            };
+            let b = widget::button::custom(swatch_sized(color, 18.0))
+                .padding(3)
+                .class(theme::Button::Icon)
+                .on_press_maybe(on.then(|| Message::Colors(ColorMsg::Color(color.into()))));
+            row = row.push(widget::tooltip(
+                b,
+                widget::text(tip),
+                widget::tooltip::Position::Bottom,
+            ));
+        }
+        grid = grid.push(row);
     }
-    row.into()
+    grid.into()
 }
 
 pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, Message> {
@@ -165,7 +181,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     if c.list.is_empty() {
         list = list.push(widget::text::caption(fl!("colors-empty")));
     }
-    let list = widget::container(widget::scrollable(list).height(Length::Fixed(140.0)))
+    let list = widget::container(widget::scrollable(list).height(Length::Fixed(96.0)))
         .padding(4)
         .width(Length::Fill)
         .class(theme::Container::Card);
@@ -275,8 +291,9 @@ mod tests {
         assert_eq!((c.sel, c.list[0].mask.as_str()), (Some(0), "*.rs"));
         c.update(ColorMsg::Up); // first: stays
         assert_eq!(c.sel, Some(0));
-        c.update(ColorMsg::Delete);
-        c.update(ColorMsg::Delete);
+        for _ in 0..3 {
+            c.update(ColorMsg::Delete);
+        }
         assert!(c.list.is_empty() && c.sel.is_none());
         c.update(ColorMsg::Mask("x".into())); // nothing selected: nothing to edit
         c.update(ColorMsg::Reset);

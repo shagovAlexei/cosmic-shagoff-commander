@@ -62,13 +62,14 @@ pub fn parse(color: &str) -> Option<Paint> {
     Some(Paint::Rgb([byte(0)?, byte(2)?, byte(4)?]))
 }
 
-/// The out-of-the-box list: links in the accent colour (as before the rules existed).
+/// The out-of-the-box list: links cyan, executables orange.
 pub fn defaults() -> Vec<Rule> {
-    vec![Rule {
+    let rule = |what, color: &str| Rule {
         mask: String::new(),
-        what: What::Links,
-        color: String::new(),
-    }]
+        what,
+        color: color.into(),
+    };
+    vec![rule(What::Links, "#33c7de"), rule(What::Exec, "#ff7800")]
 }
 
 /// The rules ready to apply: masks parsed and bad colours dropped once, not per row and frame.
@@ -168,6 +169,15 @@ mod tests {
             rules.pick(&entry("src", Kind::Dir, false, 0o755)),
             Some(Paint::Rgb([0, 0, 255]))
         );
-        assert_eq!(Scheme::new(&defaults()).pick(&file("a", 0o644)), None);
+        let stock = Scheme::new(&defaults());
+        assert_eq!(stock.pick(&file("a", 0o644)), None);
+        assert_eq!(
+            stock.pick(&file("run", 0o755)),
+            Some(Paint::Rgb([0xff, 0x78, 0]))
+        );
+        assert_eq!(
+            stock.pick(&entry("l", Kind::File, true, 0o777)),
+            Some(Paint::Rgb([0x33, 0xc7, 0xde]))
+        );
     }
 }

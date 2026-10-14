@@ -7951,11 +7951,11 @@ mod tests {
         let _ = app.update(Message::Colors(ColorMsg::Add));
         assert_eq!(app.config.colors, shagoff_core::colors::defaults()); // not yet
         let _ = app.update(Message::DialogSubmit);
-        assert_eq!(app.config.colors.len(), 2);
+        assert_eq!(app.config.colors.len(), 3);
         let _ = app.update(Message::Key(Action::ConfigureColors));
         let _ = app.update(Message::Colors(ColorMsg::Delete));
         let _ = app.update(Message::DialogCancel); // Cancel: unchanged
-        assert_eq!(app.config.colors.len(), 2);
+        assert_eq!(app.config.colors.len(), 3);
     }
 
     #[test]
