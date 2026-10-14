@@ -2,7 +2,7 @@
 
 **Goal:** from Help → About, see whether a newer release exists, without leaving the program.
 
-- A «Check for updates» button under «Support the project» in the About drawer. Nothing is sent
+- A «Check for updates» button right under the version in the About drawer (libcosmic's `about` widget drawn in two parts around it). Nothing is sent
   until it is pressed (no check at startup); opening About again forgets the last answer.
 - Pressed: `curl -sSfL -m 10` on `api.github.com/repos/<repo>/releases/latest`, off the UI thread;
   `tag_name` is pulled out of the JSON by hand (no JSON crate for one field).

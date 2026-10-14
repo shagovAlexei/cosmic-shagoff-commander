@@ -272,8 +272,9 @@ pub struct App {
     dialog: Option<Dialog>,
     /// Help / about / settings in the side drawer.
     pub(crate) drawer: Option<Drawer>,
-    /// Built once (the widget borrows it), rebuilt when the language changes.
-    pub(crate) about: cosmic::widget::about::About,
+    /// Built once (the widget borrows it), rebuilt when the language changes. Two parts, so
+    /// «Check for updates» sits under the version: [icon … version, links … comments].
+    pub(crate) about: [cosmic::widget::about::About; 2],
     /// About → «Check for updates»: `None` not asked since About opened.
     pub(crate) update_check: Option<shagoff_core::update::Status>,
     pub(crate) job: Option<Running>,

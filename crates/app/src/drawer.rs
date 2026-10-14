@@ -52,19 +52,21 @@ pub enum Setting {
     PackFormat(usize),
 }
 
-pub fn about() -> About {
-    About::default()
+pub fn about() -> [About; 2] {
+    let head = About::default()
         .name(fl!("app-title"))
         .icon(widget::icon::from_name(APP_ID))
         .version(env!("CARGO_PKG_VERSION"))
-        .author("Shagov Alexei")
+        .author("Shagov Alexei");
+    let rest = About::default()
         .comments(fl!("about-comments"))
         .license("GPL-3.0-only")
         .license_url("https://www.gnu.org/licenses/gpl-3.0.html")
         .links([
             (fl!("about-source"), REPO.to_string()),
             (fl!("about-issues"), format!("{REPO}/issues")),
-        ])
+        ]);
+    [head, rest]
 }
 
 pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
@@ -75,8 +77,9 @@ pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
         Drawer::About => {
             let content = widget::column::with_children(vec![
                 donate(),
+                widget::about(&app.about[0], |url| Message::OpenUrl(url.to_string())),
                 update_check(app.update_check.as_ref()),
-                widget::about(&app.about, |url| Message::OpenUrl(url.to_string())),
+                widget::about(&app.about[1], |url| Message::OpenUrl(url.to_string())),
             ])
             .spacing(24);
             context_drawer::context_drawer(content, Message::CloseDrawer).title(fl!("menu-about"))
