@@ -6,13 +6,13 @@ use crate::fl;
 use cosmic::iced::widget::{column, row};
 use cosmic::iced::{Alignment, Color, Length};
 use cosmic::{Element, theme, widget};
-use shagoff_core::colors::{self, MarkColors, Paint, Rule, What};
+use shagoff_core::colors::{self, Paint, PanelColors, Rule, What};
 
 #[derive(Clone, Debug)]
 pub struct ColorEdit {
     pub list: Vec<Rule>,
     pub sel: Option<usize>,
-    pub marks: MarkColors,
+    pub panel: PanelColors,
     /// The colour field edits marked rows' or the cursor's colours, not a rule's (`sel` is `None`).
     pub special: Option<Special>,
     /// The colour field shows names ("Orange") instead of codes (`#ff7800`).
@@ -31,6 +31,8 @@ pub enum Special {
     Marked,
     /// Background only: its text is black or white by it.
     Cursor,
+    /// The list's text and background.
+    Panel,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +63,8 @@ pub enum ColorMsg {
     Down,
     /// Back to `colors::defaults()`.
     Reset,
+    /// The «Blue» palette for the list, marks and cursor; the rules stay.
+    Blue,
 }
 
 impl ColorEdit {
@@ -69,7 +73,7 @@ impl ColorEdit {
         let mut c = Self {
             list,
             sel,
-            marks: colors::default_marks(),
+            panel: colors::default_panel(),
             special: None,
             names: true,
             bg: false,
@@ -82,9 +86,16 @@ impl ColorEdit {
 
     /// The colour being edited (see `color_mut`).
     pub fn edited(&self) -> &str {
-        let (bg, m) = (self.bg, &self.marks);
+        let (bg, m) = (self.bg, &self.panel);
         match self.special {
             Some(Special::Cursor) => &m.cursor,
+            Some(Special::Panel) => {
+                if bg {
+                    &m.back
+                } else {
+                    &m.text
+                }
+            }
             Some(Special::Marked) => {
                 if bg {
                     &m.bg
@@ -116,9 +127,10 @@ impl ColorEdit {
     /// background or the text's.
     fn color_mut(&mut self) -> Option<&mut String> {
         let bg = self.bg;
-        let m = &mut self.marks;
+        let m = &mut self.panel;
         match self.special {
             Some(Special::Cursor) => Some(&mut m.cursor),
+            Some(Special::Panel) => Some(if bg { &mut m.back } else { &mut m.text }),
             Some(Special::Marked) => Some(if bg { &mut m.bg } else { &mut m.color }),
             None => {
                 let r = self.sel.and_then(|i| self.list.get_mut(i))?;
@@ -211,6 +223,7 @@ impl ColorEdit {
                 self.list.swap(i, i + 1);
                 self.sel = Some(i + 1);
             }
+            (ColorMsg::Blue, _) => self.panel = colors::blue_panel(),
             (ColorMsg::Reset, _) => {
                 self.leave_special();
                 let (names, bg, palette) = (self.names, self.bg, self.palette);
@@ -419,11 +432,6 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     .class(theme::Container::Card);
 
     let some = c.sel.is_some();
-    let btn = |label: String, m: ColorMsg, on: bool| {
-        widget::button::standard(label)
-            .width(Length::Fixed(190.0))
-            .on_press_maybe(on.then(|| msg(m)))
-    };
     let arrow = |name: &'static str, m: ColorMsg, on: bool| {
         widget::button::icon(widget::icon::from_name(name).size(16))
             .on_press_maybe(on.then(|| msg(m)))
@@ -452,16 +460,31 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             .on_press(msg(ColorMsg::Special(s)))
             .into()
     };
-    let m = &c.marks;
+    let m = &c.panel;
+    // Icons with tips: one row for the rule buttons leaves room for the list's colours.
+    let tip = |b: Element<'a, Message>, t: String| -> Element<'a, Message> {
+        widget::tooltip(b, widget::text(t), widget::tooltip::Position::Bottom).into()
+    };
     let buttons = column![
-        btn(fl!("colors-add"), ColorMsg::Add, true),
         row![
-            btn(fl!("hotlist-delete"), ColorMsg::Delete, some).width(Length::Fixed(110.0)),
+            tip(
+                arrow("list-add-symbolic", ColorMsg::Add, true).into(),
+                fl!("colors-add")
+            ),
+            tip(
+                arrow("list-remove-symbolic", ColorMsg::Delete, some).into(),
+                fl!("hotlist-delete")
+            ),
             arrow("go-up-symbolic", ColorMsg::Up, c.sel.is_some_and(|i| i > 0)),
             arrow("go-down-symbolic", ColorMsg::Down, some && !last),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
+        special(
+            fl!("colors-panel"),
+            Special::Panel,
+            &[(&m.text, true), (&m.back, true)]
+        ),
         special(
             fl!("colors-marked"),
             Special::Marked,
@@ -589,7 +612,10 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
         )
         .primary_action(widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit))
         .secondary_action(cancel)
-        .tertiary_action(widget::button::text(fl!("colors-reset")).on_press(msg(ColorMsg::Reset)))
+        .tertiary_action(row![
+            widget::button::text(fl!("colors-reset")).on_press(msg(ColorMsg::Reset)),
+            widget::button::text(fl!("colors-blue")).on_press(msg(ColorMsg::Blue)),
+        ])
         .into()
 }
 
@@ -682,19 +708,25 @@ mod tests {
         c.update(ColorMsg::Bg(false));
         assert!(c.bg);
         c.update(ColorMsg::Pick("#1a5fb4"));
-        let want = MarkColors {
+        let want = PanelColors {
             color: "#f6d32d".into(),
             bg: "#000000".into(),
             cursor: "#1a5fb4".into(),
+            ..Default::default()
         };
-        assert_eq!(c.marks, want);
+        assert_eq!(c.panel, want);
         assert_eq!(c.list, colors::defaults()); // rules untouched
         c.update(ColorMsg::Select(1));
         assert_eq!(c.special, None);
         assert!(!c.bg); // the cursor's forced background stays with it
         c.update(ColorMsg::Attr("h".into()));
         assert_eq!(c.list[1].attr, "h");
+        c.update(ColorMsg::Special(Special::Panel));
+        c.update(ColorMsg::Pick("#000080")); // text
+        assert_eq!(c.panel.text, "#000080");
+        c.update(ColorMsg::Blue);
+        assert_eq!(c.panel, colors::blue_panel());
         c.update(ColorMsg::Reset);
-        assert_eq!(c.marks, colors::default_marks());
+        assert_eq!(c.panel, colors::default_panel());
     }
 }

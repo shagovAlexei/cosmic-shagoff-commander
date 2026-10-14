@@ -79,22 +79,27 @@ impl Attrs {
     }
 }
 
-/// Marked rows' text and background, the cursor's background (TC "Mark color", "Cursor color"):
-/// `#RRGGBB`, empty = the theme's.
+/// The file list's colours (TC Configuration → Colors): marked rows' text (`color`) and
+/// background (`bg`), the cursor's background, the list's text and background. `#RRGGBB`, empty
+/// = the theme's.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct MarkColors {
+pub struct PanelColors {
     pub color: String,
     pub bg: String,
     pub cursor: String,
+    pub text: String,
+    pub back: String,
 }
 
-/// `MarkColors` parsed; `None`: the theme's (empty or not a colour).
+/// `PanelColors` parsed; `None`: the theme's (empty or not a colour).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Marks {
+pub struct PanelPaint {
     pub fg: Option<[u8; 3]>,
     pub bg: Option<[u8; 3]>,
     pub cursor: Option<[u8; 3]>,
+    pub text: Option<[u8; 3]>,
+    pub back: Option<[u8; 3]>,
 }
 
 /// A panel row's background, from the theme or ours.
@@ -138,7 +143,7 @@ pub fn row_paint(
     active: bool,
     marked: bool,
     rule_bg: Option<[u8; 3]>,
-    m: Marks,
+    m: PanelPaint,
 ) -> (Fill, Ink) {
     // A marked row's text where it has no background of ours.
     let marked_ink = || m.fg.map_or(Ink::Marked, Ink::Rgb);
@@ -157,16 +162,18 @@ pub fn row_paint(
     }
 }
 
-impl MarkColors {
-    pub fn marks(&self) -> Marks {
+impl PanelColors {
+    pub fn paint(&self) -> PanelPaint {
         let rgb = |s: &str| match parse(s) {
             Some(Paint::Rgb(c)) => Some(c),
             _ => None,
         };
-        Marks {
+        PanelPaint {
             fg: rgb(&self.color),
             bg: rgb(&self.bg),
             cursor: rgb(&self.cursor),
+            text: rgb(&self.text),
+            back: rgb(&self.back),
         }
     }
 }
@@ -239,11 +246,24 @@ pub fn parse(color: &str) -> Option<Paint> {
 }
 
 /// Out of the box, marked rows: light yellow on dark blue (TC-like); the cursor: the theme's.
-pub fn default_marks() -> MarkColors {
-    MarkColors {
+pub fn default_panel() -> PanelColors {
+    PanelColors {
         color: "#f9f06b".into(),
         bg: "#1a5fb4".into(),
         cursor: String::new(),
+        ..Default::default()
+    }
+}
+
+/// The «Blue» palette, as Norton / early TC: white on navy (cyan would hide the links' rule),
+/// yellow marks, a teal cursor light enough for black text.
+pub fn blue_panel() -> PanelColors {
+    PanelColors {
+        color: "#ffff55".into(),
+        bg: String::new(),
+        cursor: "#00c0c0".into(),
+        text: "#ffffff".into(),
+        back: "#000080".into(),
     }
 }
 
@@ -302,7 +322,7 @@ impl Ready {
 /// The rules ready to apply: masks and bounds parsed, bad rules dropped once, not per row and
 /// frame.
 #[derive(Clone, Debug, Default)]
-pub struct Scheme(Vec<Ready>, Marks);
+pub struct Scheme(Vec<Ready>, PanelPaint);
 
 impl Rule {
     /// Parsed for use; `None` if its colour, background or a bound does not parse.
@@ -334,15 +354,15 @@ impl Scheme {
     pub fn new(rules: &[Rule]) -> Self {
         Self(
             rules.iter().filter_map(Rule::ready).collect(),
-            Marks::default(),
+            PanelPaint::default(),
         )
     }
 
-    pub fn with_marks(self, m: &MarkColors) -> Self {
-        Self(self.0, m.marks())
+    pub fn with_panel(self, m: &PanelColors) -> Self {
+        Self(self.0, m.paint())
     }
 
-    pub fn marks(&self) -> Marks {
+    pub fn paint(&self) -> PanelPaint {
         self.1
     }
 
@@ -487,11 +507,12 @@ mod tests {
             [9, 9, 9],
         );
         let (black, white) = (Ink::Rgb([0, 0, 0]), Ink::Rgb([255, 255, 255]));
-        let theme = Marks::default();
-        let ours = Marks {
+        let theme = PanelPaint::default();
+        let ours = PanelPaint {
             fg: Some(y),
             bg: Some(b),
             cursor: Some(o),
+            ..theme
         };
         let p = |c, a, mk, m| row_paint(c, a, mk, Some(g), m);
         // The theme's.
@@ -519,7 +540,7 @@ mod tests {
         );
         assert_eq!(p(false, true, true, ours), (Fill::Rgb(b), Ink::Rgb(y)));
         // Only a marks background: text black or white on it.
-        let bg_only = Marks {
+        let bg_only = PanelPaint {
             bg: Some(b),
             ..theme
         };
@@ -527,18 +548,29 @@ mod tests {
     }
 
     #[test]
+    fn blue_cursor_has_black_text() {
+        let p = blue_panel().paint();
+        assert!(dark_text_on(p.cursor.unwrap()));
+        assert!(!dark_text_on(p.back.unwrap()));
+    }
+
+    #[test]
     fn mark_colours() {
-        let m = MarkColors {
+        let m = PanelColors {
             color: "#ff0000".into(),
             bg: "".into(),
             cursor: "bad".into(),
+            text: "#000080".into(),
+            back: String::new(),
         };
         assert_eq!(
-            m.marks(),
-            Marks {
+            m.paint(),
+            PanelPaint {
                 fg: Some([255, 0, 0]),
                 bg: None,
-                cursor: None
+                cursor: None,
+                text: Some([0, 0, 0x80]),
+                back: None,
             }
         );
     }

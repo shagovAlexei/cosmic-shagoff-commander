@@ -758,7 +758,7 @@ impl App {
             job: None,
             queue: VecDeque::new(),
             held: None,
-            scheme: shagoff_core::colors::Scheme::new(&config.colors).with_marks(&config.marks),
+            scheme: shagoff_core::colors::Scheme::new(&config.colors).with_panel(&config.panel),
             right_drag: None,
             quitting: false,
             input_id: widget::Id::unique(),
@@ -2584,7 +2584,7 @@ impl App {
             Action::Left | Action::Right => {}
             Action::ConfigureColors => {
                 let mut edit = crate::colorrules::ColorEdit::new(self.config.colors.clone());
-                edit.marks = self.config.marks.clone();
+                edit.panel = self.config.panel.clone();
                 self.dialog = Some(Dialog::Colors(Box::new(edit)));
                 return Task::none();
             }
@@ -3471,14 +3471,14 @@ impl App {
                         if let Err(e) = self.config.set_colors(h, c.list) {
                             log::warn!("config: {e}");
                         }
-                        if let Err(e) = self.config.set_marks(h, c.marks) {
+                        if let Err(e) = self.config.set_panel(h, c.panel) {
                             log::warn!("config: {e}");
                         }
                     }
-                    None => (self.config.colors, self.config.marks) = (c.list, c.marks),
+                    None => (self.config.colors, self.config.panel) = (c.list, c.panel),
                 }
                 self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors)
-                    .with_marks(&self.config.marks);
+                    .with_panel(&self.config.panel);
                 Task::none()
             }
             Dialog::Toolbar(t) => {
@@ -4880,7 +4880,7 @@ impl App {
     fn apply_config(&mut self, c: Config) -> Task<Message> {
         let old = std::mem::replace(&mut self.config, c);
         self.scheme =
-            shagoff_core::colors::Scheme::new(&self.config.colors).with_marks(&self.config.marks);
+            shagoff_core::colors::Scheme::new(&self.config.colors).with_panel(&self.config.panel);
         self.cols = self.config.columns;
         let mut tasks = Vec::new();
         if old.language != self.config.language {
