@@ -160,7 +160,7 @@ impl<Message: Clone + 'static, D: AsMimeTypes + Send + 'static> Widget<Message, 
                         Some(clipboard::IconSurface::new(
                             (self.icon)(),
                             tree::State::None,
-                            Vector::new(-12.0, -12.0),
+                            Vector::new(12.0, 12.0), // the card's corner from the pointer
                         )),
                         Box::new((self.content)()),
                         self.action,
