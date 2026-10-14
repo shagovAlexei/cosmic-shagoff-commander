@@ -1,5 +1,7 @@
 # Shagoff Commander
 
+English | [Русский](README_ru.md)
+
 A dual-pane file manager in the spirit of Total Commander, built with libcosmic for the COSMIC desktop (Pop!_OS 24.04).
 
 **Status:** early development. See [.claude/docs/ROADMAP.md](.claude/docs/ROADMAP.md).
@@ -48,7 +50,12 @@ Install the new `.deb` over the old one — settings, tabs and history stay (the
 `~/.config/cosmic/` and `~/.local/state/cosmic/`):
 
 ```sh
-# with the GitHub CLI
+# download the .deb of the latest release
+curl -sL https://api.github.com/repos/shagovAlexei/cosmic-shagoff-commander/releases/latest \
+  | grep -o 'https://[^"]*_amd64\.deb' | xargs curl -L -o /tmp/shagoff-commander.deb
+sudo apt install /tmp/shagoff-commander.deb
+
+# or with the GitHub CLI
 gh release download -R shagovAlexei/cosmic-shagoff-commander -p '*.deb' -O /tmp/shagoff-commander.deb --clobber
 sudo apt install /tmp/shagoff-commander.deb
 
