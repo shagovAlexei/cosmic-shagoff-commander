@@ -564,3 +564,6 @@ update-failed = Could not check: { $error }
 colors-attr = Attributes
 colors-marked = Marked
 colors-cursor = Cursor
+colors-panel = Panel
+colors-blue = Blue
+help-colors-panel = + / − add and delete a rule. "Panel": the file list's text and background; "Blue" (below): cyan on navy with yellow marks, as Norton Commander; "Defaults": the theme's

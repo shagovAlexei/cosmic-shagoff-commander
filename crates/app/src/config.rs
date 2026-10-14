@@ -125,7 +125,7 @@ pub struct Config {
     /// Name colours by type (TC "Color by file type"), first match wins.
     pub colors: Vec<shagoff_core::colors::Rule>,
     /// Marked rows' text / background and the cursor's background; empty: the theme's.
-    pub marks: shagoff_core::colors::MarkColors,
+    pub marks: shagoff_core::colors::PanelColors,
 }
 
 /// A toolbar button: `cmd` is an internal `cm_*` command, a program (`params` with `%P`, `%N`, …

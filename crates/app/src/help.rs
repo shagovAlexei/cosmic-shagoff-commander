@@ -167,6 +167,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 o("▾", fl!("help-colors-palette")),
                 o("■", fl!("help-colors-bg")),
                 o("Insert", fl!("help-colors-marks")),
+                o("+ / −", fl!("help-colors-panel")),
                 o("⚠", fl!("help-colors-bad")),
             ],
         ),

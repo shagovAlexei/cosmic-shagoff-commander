@@ -565,3 +565,6 @@ update-failed = Не удалось проверить: { $error }
 colors-attr = Атрибуты
 colors-marked = Отмеченные
 colors-cursor = Курсор
+colors-panel = Панель
+colors-blue = Синяя
+help-colors-panel = + / − — добавить и удалить правило. «Панель»: текст и фон списка файлов; «Синяя» (внизу): голубой на тёмно-синем, жёлтые отметки, как в Norton Commander; «По умолчанию» — как в теме

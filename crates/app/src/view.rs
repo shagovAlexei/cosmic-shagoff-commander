@@ -116,6 +116,18 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     .window_id(app.window_id())
     .on_surface_action(Message::Surface);
     let list = cosmic::iced::widget::stack![under, list];
+    // The list's own text and background (TC Colors), if set; rows without a colour of their
+    // own take both.
+    let paint = app.scheme.marks();
+    let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);
+    let list = container(list)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .class(theme::Container::custom(move |_| container::Style {
+            background: paint.back.map(|c| rgb(c).into()),
+            text_color: paint.text.map(rgb),
+            ..Default::default()
+        }));
 
     let drives = match app.config.skin {
         Skin::Classic => drive_list(app, side),
@@ -952,7 +964,7 @@ pub(crate) fn cursor_style(
     marked: bool,
     skin: Skin,
     bg: Option<[u8; 3]>,
-    marks: colors::Marks,
+    marks: colors::PanelPaint,
 ) -> theme::Container<'static> {
     let (fill, ink) = colors::row_paint(is_cursor, active, marked, bg, marks);
     theme::Container::custom(move |t| {

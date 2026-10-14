@@ -3627,7 +3627,7 @@ impl App {
             };
             self.say(StatusKind::Error, msg);
         }
-        // Marks stay on the ones not linked, to try again.
+        // PanelPaint stay on the ones not linked, to try again.
         let done: Vec<PathBuf> = pairs
             .iter()
             .filter(|(_, d)| !failed.iter().any(|(f, _)| f == d))
