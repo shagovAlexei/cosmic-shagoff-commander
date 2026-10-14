@@ -13,3 +13,6 @@ ROADMAP «Drag & drop, дальше: картинка под указателе�
   (X11) puts the card's corner at the pointer.
 - The headless sway check cannot finish a drag (the drop never arrives even on main), so the
   picture is checked by hand (TESTING § 80).
+- Esc while one of our rows is dragged: the compositor does not cancel a drag on Esc, so the app
+  does (`App::dragging`, set by `DragStart`, cleared by `DragEnd` — the source's end — and by Esc,
+  which sends `iced::runtime::dnd::end_dnd()`).

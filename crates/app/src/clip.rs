@@ -93,7 +93,7 @@ pub fn drag<'a>(
         move || Files(fmt::encode(Kind::Copy, &paths)),
         icon,
         move |right| Message::DragStart(right.then(|| started.clone())),
-        Message::DropHover(None),
+        Message::DragEnd,
     )
     .into()
 }
