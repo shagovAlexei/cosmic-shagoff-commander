@@ -8,6 +8,7 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{self, about::About, settings};
 use cosmic::{Element, theme};
 use shagoff_core::archive::Format;
+use shagoff_core::update::Status;
 
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
@@ -147,11 +148,9 @@ fn help() -> Element<'static, Message> {
 }
 
 /// «Check for updates» and what it found: up to date, a newer release (with its link), or why not.
-fn update_check(state: Option<&Option<Result<String, String>>>) -> Element<'static, Message> {
-    use shagoff_core::update::newer;
-    let current = env!("CARGO_PKG_VERSION");
+fn update_check(state: Option<&Status>) -> Element<'static, Message> {
     let mut button = widget::button::standard(fl!("update-check"));
-    if !matches!(state, Some(None)) {
+    if state != Some(&Status::Checking) {
         button = button.on_press(Message::CheckUpdate);
     }
     let mut col = widget::column::with_capacity(3)
@@ -159,24 +158,20 @@ fn update_check(state: Option<&Option<Result<String, String>>>) -> Element<'stat
         .align_x(Alignment::Center)
         .width(Length::Fill)
         .push(button);
+    let text = |s: String| widget::text::body(s);
     match state {
         None => {}
-        Some(None) => col = col.push(widget::text::body(fl!("update-checking"))),
-        Some(Some(Ok(tag))) if newer(current, tag) => {
+        Some(Status::Checking) => col = col.push(text(fl!("update-checking"))),
+        Some(Status::Latest) => col = col.push(text(fl!("update-latest"))),
+        Some(Status::Available(tag)) => {
             col = col
-                .push(widget::text::body(fl!(
-                    "update-available",
-                    tag = tag.as_str()
-                )))
+                .push(text(fl!("update-available", tag = tag.as_str())))
                 .push(
                     widget::button::suggested(fl!("update-open"))
-                        .on_press(Message::OpenUrl(format!("{REPO}/releases/latest"))),
+                        .on_press(Message::OpenUrl(format!("{REPO}/releases/tag/{tag}"))),
                 );
         }
-        Some(Some(Ok(_))) => col = col.push(widget::text::body(fl!("update-latest"))),
-        Some(Some(Err(e))) => {
-            col = col.push(widget::text::body(fl!("update-failed", error = e.as_str())))
-        }
+        Some(Status::Failed(e)) => col = col.push(text(fl!("update-failed", error = e.as_str()))),
     }
     col.into()
 }

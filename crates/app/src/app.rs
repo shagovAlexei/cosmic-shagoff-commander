@@ -274,8 +274,8 @@ pub struct App {
     pub(crate) drawer: Option<Drawer>,
     /// Built once (the widget borrows it), rebuilt when the language changes.
     pub(crate) about: cosmic::widget::about::About,
-    /// About → «Check for updates»: `None` not asked yet, `Some(None)` asking.
-    pub(crate) update_check: Option<Option<Result<String, String>>>,
+    /// About → «Check for updates»: `None` not asked since About opened.
+    pub(crate) update_check: Option<shagoff_core::update::Status>,
     pub(crate) job: Option<Running>,
     /// TC's background queue: started one after another once `job` ends.
     pub(crate) queue: VecDeque<Queued>,
@@ -552,7 +552,7 @@ pub enum Message {
     OpenUrl(String),
     /// About → «Check for updates», and its answer (the latest tag).
     CheckUpdate,
-    UpdateChecked(Result<String, String>),
+    UpdateChecked(shagoff_core::update::Status),
     /// Ctrl+F dialog: the password field.
     ConnectPassword(String),
     /// Volumes from gio for the drive list of this side.
@@ -2232,17 +2232,18 @@ impl App {
             Message::FocusNext => return cosmic::iced::widget::operation::focus_next(),
             Message::Setting(s) => return self.set(s),
             Message::CheckUpdate => {
-                self.update_check = Some(None);
+                use shagoff_core::update::{Status, check};
+                self.update_check = Some(Status::Checking);
                 return Task::perform(
                     async {
-                        tokio::task::spawn_blocking(shagoff_core::update::latest)
+                        tokio::task::spawn_blocking(|| check(env!("CARGO_PKG_VERSION")))
                             .await
-                            .unwrap_or_else(|e| Err(e.to_string()))
+                            .unwrap_or_else(|e| Status::Failed(e.to_string()))
                     },
                     |r| cosmic::Action::App(Message::UpdateChecked(r)),
                 );
             }
-            Message::UpdateChecked(r) => self.update_check = Some(Some(r)),
+            Message::UpdateChecked(s) => self.update_check = Some(s),
             Message::OpenUrl(url) => {
                 if let Err(e) = spawn_detached(&["xdg-open".into(), url.into()]) {
                     log::warn!("xdg-open: {e}");
@@ -4783,6 +4784,10 @@ impl App {
 
     fn set_drawer(&mut self, d: Option<Drawer>) {
         self.core.window.show_context = d.is_some();
+        // A new look at About asks again: an old answer may no longer hold.
+        if d == Some(Drawer::About) {
+            self.update_check = None;
+        }
         self.drawer = d;
     }
 
