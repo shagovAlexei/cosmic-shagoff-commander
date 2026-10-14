@@ -34,7 +34,8 @@ impl What {
 
 /// `mask`: as Num+ (`*.rs;*.toml`), empty = every name. `color`: `#RRGGBB`, empty = the theme's
 /// accent. `bg`: the row's background, empty = none. `size` (`>100M`, `<1k`, files only) and `age`
-/// in days (`<7` newer than a week, `>365` older than a year): empty = any.
+/// in days (`<7` newer than a week, `>365` older than a year), `attr` (letters, all must hold:
+/// `h` hidden, `r` read-only, `s` setuid / setgid / sticky): empty = any.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rule {
@@ -44,6 +45,70 @@ pub struct Rule {
     pub bg: String,
     pub size: String,
     pub age: String,
+    pub attr: String,
+}
+
+/// What `attr` asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Attrs {
+    pub hidden: bool,
+    pub readonly: bool,
+    pub special: bool,
+}
+
+/// `h r s` in any order and case (spaces and commas ignored); another letter → `None`.
+pub fn attrs(s: &str) -> Option<Attrs> {
+    let mut a = Attrs::default();
+    for c in s.chars().filter(|c| !c.is_whitespace() && *c != ',') {
+        match c.to_ascii_lowercase() {
+            'h' => a.hidden = true,
+            'r' => a.readonly = true,
+            's' => a.special = true,
+            _ => return None,
+        }
+    }
+    Some(a)
+}
+
+impl Attrs {
+    fn fits(self, e: &Entry) -> bool {
+        // A link's own mode is always 0o777: not read-only, never special.
+        (!self.hidden || e.name.starts_with('.'))
+            && (!self.readonly || (!e.is_link && e.mode & 0o200 == 0))
+            && (!self.special || (!e.is_link && e.mode & 0o7000 != 0))
+    }
+}
+
+/// Marked rows' text and background, the cursor's background (TC "Mark color", "Cursor color"):
+/// `#RRGGBB`, empty = the theme's.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MarkColors {
+    pub color: String,
+    pub bg: String,
+    pub cursor: String,
+}
+
+/// `MarkColors` parsed; `None`: the theme's (empty or not a colour).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub fg: Option<[u8; 3]>,
+    pub bg: Option<[u8; 3]>,
+    pub cursor: Option<[u8; 3]>,
+}
+
+impl MarkColors {
+    pub fn marks(&self) -> Marks {
+        let rgb = |s: &str| match parse(s) {
+            Some(Paint::Rgb(c)) => Some(c),
+            _ => None,
+        };
+        Marks {
+            fg: rgb(&self.color),
+            bg: rgb(&self.bg),
+            cursor: rgb(&self.cursor),
+        }
+    }
 }
 
 /// `>N` (more than) or `<N` (less than).
@@ -144,6 +209,7 @@ struct Ready {
     size: Option<Bound>,
     /// In days.
     age: Option<Bound>,
+    attr: Attrs,
     look: Look,
 }
 
@@ -160,13 +226,14 @@ impl Ready {
             && self.mask.as_ref().is_none_or(|m| m.matches(&e.name))
             && self.size.is_none_or(|b| !e.is_dir() && b.fits(e.size))
             && self.age.is_none_or(|b| b.fits(days()))
+            && self.attr.fits(e)
     }
 }
 
 /// The rules ready to apply: masks and bounds parsed, bad rules dropped once, not per row and
 /// frame.
 #[derive(Clone, Debug, Default)]
-pub struct Scheme(Vec<Ready>);
+pub struct Scheme(Vec<Ready>, pub Marks);
 
 impl Rule {
     /// Parsed for use; `None` if its colour, background or a bound does not parse.
@@ -180,6 +247,7 @@ impl Rule {
             what: self.what,
             size: bound(&self.size, true)?,
             age: bound(&self.age, false)?,
+            attr: attrs(&self.attr)?,
             look: Look {
                 fg: Some(parse(&self.color)?).filter(|p| bg.is_none() || *p != Paint::Accent),
                 bg,
@@ -195,7 +263,18 @@ impl Rule {
 
 impl Scheme {
     pub fn new(rules: &[Rule]) -> Self {
-        Self(rules.iter().filter_map(Rule::ready).collect())
+        Self(
+            rules.iter().filter_map(Rule::ready).collect(),
+            Marks::default(),
+        )
+    }
+
+    pub fn with_marks(self, m: &MarkColors) -> Self {
+        Self(self.0, m.marks())
+    }
+
+    pub fn marks(&self) -> Marks {
+        self.1
     }
 
     /// `e`'s look: the first rule whose kind, mask, size and age fit. `..` has none.
@@ -289,6 +368,61 @@ mod tests {
         assert_eq!(
             fg(&stock, &entry("l", Kind::File, true, 0o777)),
             Some(Paint::Rgb([0x33, 0xc7, 0xde]))
+        );
+    }
+
+    #[test]
+    fn attributes() {
+        assert_eq!(attrs(""), Some(Attrs::default()));
+        assert_eq!(
+            attrs("H, r"),
+            Some(Attrs {
+                hidden: true,
+                readonly: true,
+                special: false
+            })
+        );
+        assert_eq!(attrs("hx"), None);
+        let rule = |attr: &str| {
+            Scheme::new(&[Rule {
+                attr: attr.into(),
+                color: "#ff0000".into(),
+                ..Default::default()
+            }])
+        };
+        let file = |n: &str, mode| entry(n, Kind::File, false, mode);
+        let hit = |s: &Scheme, e: &Entry| fg(s, e).is_some();
+        let (h, r, s, hr) = (rule("h"), rule("r"), rule("s"), rule("hr"));
+        assert!(hit(&h, &file(".bashrc", 0o644)) && !hit(&h, &file("a", 0o644)));
+        assert!(hit(&r, &file("a", 0o444)) && !hit(&r, &file("a", 0o644)));
+        assert!(!hit(&r, &entry("l", Kind::File, true, 0o444))); // links: their own mode
+        assert!(hit(&s, &file("su", 0o4755)) && hit(&s, &entry("tmp", Kind::Dir, false, 0o1777)));
+        assert!(!hit(&s, &file("a", 0o755)));
+        assert!(hit(&hr, &file(".a", 0o444)) && !hit(&hr, &file(".a", 0o644)));
+        assert!(
+            Scheme::new(&[Rule {
+                attr: "q".into(),
+                ..Default::default()
+            }])
+            .0
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn mark_colours() {
+        let m = MarkColors {
+            color: "#ff0000".into(),
+            bg: "".into(),
+            cursor: "bad".into(),
+        };
+        assert_eq!(
+            m.marks(),
+            Marks {
+                fg: Some([255, 0, 0]),
+                bg: None,
+                cursor: None
+            }
         );
     }
 

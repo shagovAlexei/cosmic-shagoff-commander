@@ -330,7 +330,9 @@ help-colors-size = Size: more (>) or less (<), units k / M / G, none = bytes. Fi
 help-colors-age = Age in days since modified: <7 = changed this week, >365 = over a year ago. Empty Size and Age = any
 help-colors-color = Name colour: a code or a palette name ("Names" shows names instead of codes); empty = the accent
 help-colors-palette = The button next to the swatch opens and folds the palette; clicking a swatch sets the colour
-help-colors-bg = "Background": the field and the palette edit the row's background; empty = none. Text on it is black or white by its brightness, an empty name colour too; the cursor row and marked rows get no background
+help-colors-bg = "Background": the field and the palette edit the row's background; empty = none. Text on it is black or white by its brightness, an empty name colour too; the cursor row and marked rows get no rule background
+help-colors-attr = Attributes, all of the given must hold: h hidden (name starts with a dot), r read-only (no write for the owner), s setuid / setgid / sticky
+help-colors-marks = "Marked": text and background of marked rows; "Cursor": the cursor's background (text black or white by it). Empty = the theme's
 help-colors-bad = A rule with an error (size without > or <, a bad colour code) is marked ⚠ and does nothing
 help-mouse = Mouse (LMB / RMB / MMB = left / right / middle button)
 help-mouse-click = Click a row: cursor there, the panel becomes active
@@ -559,3 +561,6 @@ update-latest = You have the latest version.
 update-available = Version { $tag } is available.
 update-open = Open the release page
 update-failed = Could not check: { $error }
+colors-attr = Attributes
+colors-marked = Marked
+colors-cursor = Cursor

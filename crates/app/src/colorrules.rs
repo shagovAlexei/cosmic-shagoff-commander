@@ -6,12 +6,15 @@ use crate::fl;
 use cosmic::iced::widget::{column, row};
 use cosmic::iced::{Alignment, Color, Length};
 use cosmic::{Element, theme, widget};
-use shagoff_core::colors::{self, Paint, Rule, What};
+use shagoff_core::colors::{self, MarkColors, Paint, Rule, What};
 
 #[derive(Clone, Debug)]
 pub struct ColorEdit {
     pub list: Vec<Rule>,
     pub sel: Option<usize>,
+    pub marks: MarkColors,
+    /// The colour field edits marked rows' or the cursor's colours, not a rule's (`sel` is `None`).
+    pub special: Option<Special>,
     /// The colour field shows names ("Orange") instead of codes (`#ff7800`).
     pub names: bool,
     /// The colour field and the palette edit the row's background, not the name's colour.
@@ -22,12 +25,23 @@ pub struct ColorEdit {
     pub field: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Special {
+    /// Text and background.
+    Marked,
+    /// Background only: its text is black or white by it.
+    Cursor,
+}
+
 #[derive(Clone, Debug)]
 pub enum ColorMsg {
     Select(usize),
     Mask(String),
     Size(String),
     Age(String),
+    Attr(String),
+    /// Edit marked rows' / the cursor's colours.
+    Special(Special),
     /// Index into `What::ALL`.
     What(usize),
     /// Typed into the colour field: a code, or a palette colour's name.
@@ -55,6 +69,8 @@ impl ColorEdit {
         let mut c = Self {
             list,
             sel,
+            marks: MarkColors::default(),
+            special: None,
             names: true,
             bg: false,
             palette: false,
@@ -64,19 +80,26 @@ impl ColorEdit {
         c
     }
 
-    /// The colour being edited: the background or the name's.
-    fn color_mut(&mut self, i: usize) -> &mut String {
-        let r = &mut self.list[i];
-        if self.bg { &mut r.bg } else { &mut r.color }
+    /// The colour being edited: the marks' or the cursor's, else the selected rule's; the
+    /// background or the text's.
+    fn color_mut(&mut self) -> Option<&mut String> {
+        let bg = self.bg;
+        let m = &mut self.marks;
+        match self.special {
+            Some(Special::Cursor) => Some(&mut m.cursor),
+            Some(Special::Marked) => Some(if bg { &mut m.bg } else { &mut m.color }),
+            None => {
+                let r = self.sel.and_then(|i| self.list.get_mut(i))?;
+                Some(if bg { &mut r.bg } else { &mut r.color })
+            }
+        }
     }
 
-    /// The field from the selected rule, in the chosen form (a colour without a name: its code).
+    /// The field from what is edited, in the chosen form (a colour without a name: its code).
     fn show(&mut self) {
-        let bg = self.bg;
-        let color = self
-            .sel
-            .and_then(|i| self.list.get(i))
-            .map(|r| if bg { r.bg.clone() } else { r.color.clone() });
+        // Empty marks / cursor: the theme's, named "None" as an empty background.
+        let bg = self.bg || self.special.is_some();
+        let color = self.color_mut().map(|c| c.clone());
         self.field = match color {
             Some(c) if self.names => color_name(&c, bg).unwrap_or(c),
             Some(c) => c,
@@ -96,7 +119,18 @@ impl ColorEdit {
 
     fn apply(&mut self, m: ColorMsg, sel: Option<usize>) {
         match (m, sel) {
-            (ColorMsg::Select(i), _) => self.sel = (i < self.list.len()).then_some(i),
+            (ColorMsg::Select(i), _) => {
+                self.sel = (i < self.list.len()).then_some(i);
+                self.special = None;
+            }
+            (ColorMsg::Special(s), _) => {
+                self.special = Some(s);
+                self.sel = None;
+                if s == Special::Cursor {
+                    self.bg = true;
+                }
+            }
+            (ColorMsg::Attr(s), Some(i)) => self.list[i].attr = s,
             (ColorMsg::Mask(s), Some(i)) => self.list[i].mask = s,
             (ColorMsg::Size(s), Some(i)) => self.list[i].size = s,
             (ColorMsg::Age(s), Some(i)) => self.list[i].age = s,
@@ -105,16 +139,26 @@ impl ColorEdit {
                     self.list[i].what = what;
                 }
             }
-            (ColorMsg::Color(s), Some(i)) => {
-                *self.color_mut(i) = color_code(&s, self.bg).unwrap_or_else(|| s.clone());
+            (ColorMsg::Color(s), _) => {
+                let code =
+                    color_code(&s, self.bg || self.special.is_some()).unwrap_or_else(|| s.clone());
+                if let Some(c) = self.color_mut() {
+                    *c = code;
+                }
                 self.field = s;
             }
-            (ColorMsg::Pick(code), Some(i)) => *self.color_mut(i) = code.into(),
+            (ColorMsg::Pick(code), _) => {
+                if let Some(c) = self.color_mut() {
+                    *c = code.into();
+                }
+            }
             (ColorMsg::Names(on), _) => self.names = on,
-            (ColorMsg::Bg(on), _) => self.bg = on,
+            // The cursor has a background only.
+            (ColorMsg::Bg(on), _) => self.bg = on || self.special == Some(Special::Cursor),
             (ColorMsg::Palette, _) => self.palette = !self.palette,
             (ColorMsg::Add, _) => {
                 let at = sel.map_or(self.list.len(), |i| i + 1);
+                self.special = None;
                 self.list.insert(
                     at,
                     Rule {
@@ -139,9 +183,9 @@ impl ColorEdit {
                 self.sel = Some(i + 1);
             }
             (ColorMsg::Reset, _) => {
-                let (names, bg, palette) = (self.names, self.bg, self.palette);
+                let (names, palette) = (self.names, self.palette);
                 *self = Self::new(colors::defaults());
-                (self.names, self.bg, self.palette) = (names, bg, palette);
+                (self.names, self.palette) = (names, palette);
             }
             _ => {}
         }
@@ -300,9 +344,13 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
         if !r.valid() {
             mask = format!("⚠ {mask}");
         }
-        // The kind, then the conditions: "Files  >1M  <7 d".
+        // The kind, then the conditions: "Files  >1M  <7 d  h".
         let mut what = what_label(r.what);
-        for (v, unit) in [(&r.size, String::new()), (&r.age, fl!("colors-days-short"))] {
+        for (v, unit) in [
+            (&r.size, String::new()),
+            (&r.age, fl!("colors-days-short")),
+            (&r.attr, String::new()),
+        ] {
             if !v.trim().is_empty() {
                 what = format!("{what}  {} {unit}", v.trim())
                     .trim_end()
@@ -351,15 +399,40 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             .on_press_maybe(on.then(|| msg(m)))
     };
     let last = c.sel.is_some_and(|i| i + 1 >= c.list.len());
+    // Marked rows / the cursor: their swatches, lit while the colour field edits them.
+    let special = |label: String, s: Special, colors: &[(&str, bool)]| -> Element<'a, Message> {
+        let mut swatches = row![].spacing(2);
+        for &(color, bg) in colors {
+            swatches = swatches.push(swatch(color, bg));
+        }
+        let content = row![widget::text::body(label).width(Length::Fill), swatches]
+            .spacing(6)
+            .align_y(Alignment::Center);
+        let b = match c.special == Some(s) {
+            true => widget::button::custom(content).class(theme::Button::Suggested),
+            false => widget::button::custom(content).class(theme::Button::Standard),
+        };
+        b.padding([4, 12])
+            .width(Length::Fixed(190.0))
+            .on_press(msg(ColorMsg::Special(s)))
+            .into()
+    };
+    let m = &c.marks;
     let buttons = column![
         btn(fl!("colors-add"), ColorMsg::Add, true),
-        btn(fl!("hotlist-delete"), ColorMsg::Delete, some),
-        btn(fl!("colors-reset"), ColorMsg::Reset, true),
         row![
+            btn(fl!("hotlist-delete"), ColorMsg::Delete, some).width(Length::Fixed(110.0)),
             arrow("go-up-symbolic", ColorMsg::Up, c.sel.is_some_and(|i| i > 0)),
             arrow("go-down-symbolic", ColorMsg::Down, some && !last),
         ]
-        .spacing(6),
+        .spacing(6)
+        .align_y(Alignment::Center),
+        special(
+            fl!("colors-marked"),
+            Special::Marked,
+            &[(&m.color, true), (&m.bg, true)]
+        ),
+        special(fl!("colors-cursor"), Special::Cursor, &[(&m.cursor, true)]),
     ]
     .spacing(6);
 
@@ -374,13 +447,29 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
         }
     };
     let input = |value: &'a str, on: fn(String) -> ColorMsg| hinted("", value, on);
+    // The colour field edits a rule's colour, or the marks' / the cursor's.
+    let editable = rule.is_some() || c.special.is_some();
+    let edited = match c.special {
+        Some(Special::Cursor) => m.cursor.as_str(),
+        Some(Special::Marked) if c.bg => m.bg.as_str(),
+        Some(Special::Marked) => m.color.as_str(),
+        None => rule.map_or("", |r| {
+            if c.bg {
+                r.bg.as_str()
+            } else {
+                r.color.as_str()
+            }
+        }),
+    };
     // Text / Background: which colour the field and the palette edit; the edited one is lit.
     let target = |label: String, bg: bool| -> Element<'a, Message> {
         let b = match c.bg == bg {
             true => widget::button::suggested(label),
             false => widget::button::standard(label),
         };
-        b.on_press(msg(ColorMsg::Bg(bg))).into()
+        // The cursor has a background only.
+        b.on_press_maybe((bg || c.special != Some(Special::Cursor)).then(|| msg(ColorMsg::Bg(bg))))
+            .into()
     };
     let whats: Vec<String> = What::ALL.into_iter().map(what_label).collect();
     let picked = rule.and_then(|r| What::ALL.iter().position(|w| *w == r.what));
@@ -410,6 +499,16 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
                 hinted("<7", rule.map_or("", |r| r.age.as_str()), ColorMsg::Age).into()
             )
             .width(Length::FillPortion(1)),
+            labelled(
+                fl!("colors-attr"),
+                hinted(
+                    "h r s",
+                    rule.map_or("", |r| r.attr.as_str()),
+                    ColorMsg::Attr
+                )
+                .into()
+            )
+            .width(Length::FillPortion(1)),
         ]
         .spacing(12),
         labelled(
@@ -418,18 +517,19 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
                 row![
                     target(fl!("colors-text"), false),
                     target(fl!("colors-bg"), true),
-                    input(&c.field, ColorMsg::Color),
+                    {
+                        let field = widget::text_input("", &c.field);
+                        match editable {
+                            true => field
+                                .on_input(|s| Message::Colors(ColorMsg::Color(s)))
+                                .on_submit(|_| Message::DialogSubmit),
+                            false => field,
+                        }
+                    },
                     // The colour, and the palette under it: open / fold.
                     widget::button::custom(
                         row![
-                            swatch(
-                                rule.map_or("", |r| if c.bg {
-                                    r.bg.as_str()
-                                } else {
-                                    r.color.as_str()
-                                }),
-                                c.bg
-                            ),
+                            swatch(edited, c.bg || c.special.is_some()),
                             widget::icon::from_name(match c.palette {
                                 true => "pan-up-symbolic",
                                 false => "pan-down-symbolic",
@@ -449,7 +549,10 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
                 .spacing(8)
                 .align_y(Alignment::Center),
             ]
-            .push_maybe(c.palette.then(|| palette(rule.is_some(), c.bg)))
+            .push_maybe(
+                c.palette
+                    .then(|| palette(editable, c.bg || c.special.is_some()))
+            )
             .spacing(6)
             .into()
         ),
@@ -465,6 +568,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
         )
         .primary_action(widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit))
         .secondary_action(cancel)
+        .tertiary_action(widget::button::text(fl!("colors-reset")).on_press(msg(ColorMsg::Reset)))
         .into()
 }
 
@@ -542,5 +646,33 @@ mod tests {
         assert_eq!(c.list[0].bg, "");
         c.update(ColorMsg::Bg(false));
         assert_eq!(c.field, color_name("#33c7de", false).unwrap());
+    }
+
+    #[test]
+    fn marks_and_cursor_are_edited_apart_from_rules() {
+        let mut c = ColorEdit::new(colors::defaults());
+        c.update(ColorMsg::Special(Special::Marked));
+        assert_eq!(c.sel, None);
+        c.update(ColorMsg::Pick("#f6d32d")); // text
+        c.update(ColorMsg::Bg(true));
+        c.update(ColorMsg::Color("#000000".into()));
+        c.update(ColorMsg::Special(Special::Cursor));
+        assert!(c.bg); // the cursor: a background only
+        c.update(ColorMsg::Bg(false));
+        assert!(c.bg);
+        c.update(ColorMsg::Pick("#1a5fb4"));
+        let want = MarkColors {
+            color: "#f6d32d".into(),
+            bg: "#000000".into(),
+            cursor: "#1a5fb4".into(),
+        };
+        assert_eq!(c.marks, want);
+        assert_eq!(c.list, colors::defaults()); // rules untouched
+        c.update(ColorMsg::Select(1));
+        assert_eq!(c.special, None);
+        c.update(ColorMsg::Attr("h".into()));
+        assert_eq!(c.list[1].attr, "h");
+        c.update(ColorMsg::Reset);
+        assert_eq!(c.marks, MarkColors::default());
     }
 }

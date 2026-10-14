@@ -315,6 +315,7 @@ fn brief_list<'a>(
                     p.panel.is_marked(e),
                     skin,
                     look.and_then(|l| l.bg),
+                    scheme.marks(),
                 ));
             let cell = mouse_area(cell)
                 .on_press(Message::Click(side, i))
@@ -467,6 +468,7 @@ fn tab_bar(
                 false,
                 Skin::Classic,
                 None,
+                Default::default(),
             ));
         let tab = mouse_area(label)
             .on_press(Message::TabPress(side, i))
@@ -618,6 +620,7 @@ fn file_row<'a>(
             is_marked,
             app.config.skin,
             look.and_then(|l| l.bg),
+            app.scheme.marks(),
         ));
     mouse_area(row)
         .on_press(Message::Click(side, i))
@@ -949,7 +952,17 @@ pub(crate) fn cursor_style(
     marked: bool,
     skin: Skin,
     bg: Option<[u8; 3]>,
+    marks: colors::Marks,
 ) -> theme::Container<'static> {
+    // A colour of ours as a background, with black or white text by its brightness (the theme's
+    // could be either).
+    let fill = |style: &mut container::Style, c @ [r, g, b]: [u8; 3]| {
+        style.background = Some(Color::from_rgb8(r, g, b).into());
+        style.text_color = Some(match colors::dark_text_on(c) {
+            true => Color::BLACK,
+            false => Color::WHITE,
+        });
+    };
     theme::Container::custom(move |t| {
         let c = t.cosmic();
         let mut style = container::Style::default();
@@ -959,34 +972,51 @@ pub(crate) fn cursor_style(
         match (is_cursor, active, marked) {
             // The button pairs: `accent.on` is not meant for text on the accent and was
             // unreadable (light on cyan in dark, dark on teal in light).
-            (true, true, true) => {
-                style.background = Some(Color::from(c.destructive_button.base).into());
-                style.text_color = Some(c.destructive_button.on.into());
-            }
-            (true, true, false) => {
-                style.background = Some(Color::from(c.accent_button.base).into());
-                style.text_color = Some(c.accent_button.on.into());
-            }
+            (true, true, true) => match marks.fg {
+                // As the theme's: the marks' colour becomes the cursor's background.
+                Some(m) => fill(&mut style, m),
+                None => {
+                    style.background = Some(Color::from(c.destructive_button.base).into());
+                    style.text_color = Some(c.destructive_button.on.into());
+                }
+            },
+            (true, true, false) => match marks.cursor {
+                Some(m) => fill(&mut style, m),
+                None => {
+                    style.background = Some(Color::from(c.accent_button.base).into());
+                    style.text_color = Some(c.accent_button.on.into());
+                }
+            },
             (true, false, _) => {
-                let mut bg = Color::from(c.accent_color());
+                let mut bg = marks
+                    .cursor
+                    .map_or(Color::from(c.accent_color()), |[r, g, b]| {
+                        Color::from_rgb8(r, g, b)
+                    });
                 bg.a = 0.35;
                 style.background = Some(bg.into());
             }
-            // Not under the cursor: the background of its colour rule.
-            // Not marked either (its red text wins); text black or white by the background's
-            // brightness (the theme's could be either).
+            // Marked: the marks' background, if set.
+            (false, _, true) => {
+                if let Some(m) = marks.bg {
+                    fill(&mut style, m);
+                }
+            }
+            // Neither: the background of its colour rule.
             _ => {
-                if let Some(c @ [r, g, b]) = bg.filter(|_| !marked) {
-                    style.background = Some(Color::from_rgb8(r, g, b).into());
-                    style.text_color = Some(match colors::dark_text_on(c) {
-                        true => Color::BLACK,
-                        false => Color::WHITE,
-                    });
+                if let Some(b) = bg {
+                    fill(&mut style, b);
                 }
             }
         }
+        // Marked text: the marks' colour, else the theme's red, unless the marks' background
+        // already chose black or white for it.
         if marked && !(is_cursor && active) {
-            style.text_color = Some(c.destructive_text_color().into());
+            match marks.fg {
+                Some([r, g, b]) => style.text_color = Some(Color::from_rgb8(r, g, b)),
+                None if marks.bg.is_some() && !is_cursor => {}
+                None => style.text_color = Some(c.destructive_text_color().into()),
+            }
         }
         style
     })
