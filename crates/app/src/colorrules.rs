@@ -69,7 +69,7 @@ impl ColorEdit {
         let mut c = Self {
             list,
             sel,
-            marks: MarkColors::default(),
+            marks: colors::default_marks(),
             special: None,
             names: true,
             bg: false,
@@ -695,6 +695,6 @@ mod tests {
         c.update(ColorMsg::Attr("h".into()));
         assert_eq!(c.list[1].attr, "h");
         c.update(ColorMsg::Reset);
-        assert_eq!(c.marks, MarkColors::default());
+        assert_eq!(c.marks, colors::default_marks());
     }
 }

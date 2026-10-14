@@ -168,7 +168,7 @@ impl Default for Config {
             columns: [60.0, 90.0, 130.0, 80.0],
             toolbar: crate::toolbar::default_bar(),
             colors: shagoff_core::colors::defaults(),
-            marks: Default::default(),
+            marks: shagoff_core::colors::default_marks(),
         }
     }
 }

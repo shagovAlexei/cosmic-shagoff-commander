@@ -238,6 +238,15 @@ pub fn parse(color: &str) -> Option<Paint> {
     Some(Paint::Rgb([byte(0)?, byte(2)?, byte(4)?]))
 }
 
+/// Out of the box, marked rows: light yellow on dark blue (TC-like); the cursor: the theme's.
+pub fn default_marks() -> MarkColors {
+    MarkColors {
+        color: "#f9f06b".into(),
+        bg: "#1a5fb4".into(),
+        cursor: String::new(),
+    }
+}
+
 /// The out-of-the-box list: links cyan, executables orange.
 pub fn defaults() -> Vec<Rule> {
     let rule = |what, color: &str| Rule {

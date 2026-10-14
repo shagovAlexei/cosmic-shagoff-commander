@@ -7,7 +7,7 @@ The rest of ROADMAP «Цвета, дальше».
   another letter → the rule is invalid (⚠). Links never match `r` / `s` (their own mode is 0o777).
   TC does attributes through a search template; we keep the three that matter on Linux.
 - **Marked / Cursor** (TC «Mark color», «Cursor color»): `Config.marks: MarkColors { color, bg,
-  cursor }`, `#RRGGBB`, empty = the theme's. Edited in the same «Colors by type» dialog: buttons
+  cursor }`, `#RRGGBB`, empty = the theme's; out of the box marked rows are light yellow on dark blue (`colors::default_marks`), the cursor the theme's. Edited in the same «Colors by type» dialog: buttons
   «Marked» (Text / Background) and «Cursor» (Background only) under the rule buttons; while one is
   lit the colour field and the palette edit it, no rule is selected; empty is named «None».
 - Drawing (`view::cursor_style`): cursor in the active pane → `cursor` bg (text black / white by
