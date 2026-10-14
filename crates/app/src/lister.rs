@@ -121,7 +121,16 @@ impl Lister {
         self.mono_w() * 8.0
     }
 
-    pub fn new(side: usize, name: String, id: u64) -> Self {
+    /// A new size (Settings → Fonts): wrapped lines follow the new column count.
+    pub fn set_size(&mut self, size: u16) {
+        let before = self.wrap_cols();
+        self.size = size;
+        if self.wrap && self.wrap_cols() != before {
+            self.retext();
+        }
+    }
+
+    pub fn new(side: usize, name: String, id: u64, size: u16) -> Self {
         Self {
             side,
             name,
@@ -134,7 +143,7 @@ impl Lister {
             encoding: Encoding::Auto,
             chosen: false,
             wrap: false,
-            size: crate::config::LISTER_SIZE,
+            size,
             text: None,
             hit: None,
             sel: None,
@@ -168,7 +177,7 @@ impl Lister {
             encoding,
             chosen,
             wrap,
-            ..Self::new(self.side, name, id)
+            ..Self::new(self.side, name, id, self.size)
         };
     }
 
@@ -590,7 +599,7 @@ mod tests {
     use super::*;
 
     fn text(s: &str) -> Lister {
-        let mut l = Lister::new(0, "a.txt".into(), 1);
+        let mut l = Lister::new(0, "a.txt".into(), 1, crate::config::LISTER_SIZE);
         let doc = Doc {
             bytes: s.as_bytes().to_vec(),
             decoded: None,
@@ -674,6 +683,10 @@ mod tests {
         assert_eq!(l.rows(), 4); // abcd efgh ij + NUL line
         l.resized(32.0 + 5.0 * MONO_W, 100.0);
         assert_eq!(l.rows(), 3); // abcde fghij, NUL
+        l.set_size(crate::config::LISTER_SIZE * 2); // twice the text: half the columns
+        assert_eq!(l.rows(), 6); // ab cd ef gh ij, NUL
+        assert_eq!(l.row_h(), 40.0);
+        l.set_size(crate::config::LISTER_SIZE);
         l.reopen("b.txt".into(), 2);
         assert_eq!((l.encoding, l.wrap), (Encoding::Cp1251, true));
         l.toggle_wrap();
@@ -683,7 +696,7 @@ mod tests {
 
     #[test]
     fn a_cp1251_file_opens_decoded() {
-        let mut l = Lister::new(0, "a.txt".into(), 1);
+        let mut l = Lister::new(0, "a.txt".into(), 1, crate::config::LISTER_SIZE);
         let doc = Doc {
             bytes: b"\xcf\xf0\xe8\xe2\xe5\xf2".to_vec(), // "Привет" in 1251
             decoded: None,
@@ -708,7 +721,7 @@ mod tests {
 
     #[test]
     fn mode_keys_wait_for_the_file() {
-        let mut l = Lister::new(0, "a.bin".into(), 1);
+        let mut l = Lister::new(0, "a.bin".into(), 1, crate::config::LISTER_SIZE);
         l.set_mode(Mode::Hex); // still reading: the detected mode would undo it
         assert_eq!(l.mode, Mode::Text);
     }

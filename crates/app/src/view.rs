@@ -296,7 +296,7 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
     let row_h = app.row_h();
     let font = app.panel_font();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
-    let (rows, cols) = p.brief_grid(row_h);
+    let (rows, cols) = p.brief_grid(row_h, app.config.text_scale());
     let mut grid = row![].spacing(2);
     let marked = OnceCell::new();
     for c in p.col..p.col + cols {

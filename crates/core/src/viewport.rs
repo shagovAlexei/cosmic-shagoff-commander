@@ -61,9 +61,10 @@ pub fn drag_target(edge: usize) -> usize {
 pub const BRIEF_MIN_W: f32 = 120.0;
 pub const BRIEF_MAX_W: f32 = 480.0;
 
-/// Brief column width for names up to `longest` chars (icon and padding included).
-pub fn brief_col_w(longest: usize) -> f32 {
-    (longest as f32 * 7.2 + 44.0).clamp(BRIEF_MIN_W, BRIEF_MAX_W)
+/// Brief column width for names up to `longest` chars (icon and padding included), at `scale`
+/// times the default text size.
+pub fn brief_col_w(longest: usize, scale: f32) -> f32 {
+    ((longest as f32 * 7.2 + 44.0) * scale).clamp(BRIEF_MIN_W, BRIEF_MAX_W * scale.max(1.0))
 }
 
 /// Brief view: rows per column that fit `height`, at least 1.
@@ -116,9 +117,11 @@ mod tests {
 
     #[test]
     fn brief_columns_fit_the_longest_name_within_bounds() {
-        assert_eq!(brief_col_w(3), BRIEF_MIN_W);
-        assert!((brief_col_w(40) - 332.0).abs() < 1.0);
-        assert_eq!(brief_col_w(500), BRIEF_MAX_W);
+        assert_eq!(brief_col_w(3, 1.0), BRIEF_MIN_W);
+        assert!((brief_col_w(40, 1.0) - 332.0).abs() < 1.0);
+        assert_eq!(brief_col_w(500, 1.0), BRIEF_MAX_W);
+        assert!((brief_col_w(40, 2.0) - 664.0).abs() < 1.0); // bigger text, wider columns
+        assert_eq!(brief_col_w(500, 2.0), 2.0 * BRIEF_MAX_W);
     }
 
     #[test]

@@ -140,9 +140,23 @@ pub const PANEL_SIZE: u16 = 13;
 pub const LISTER_SIZE: u16 = 14;
 
 impl Config {
+    /// The file list's text size, kept in `SIZES` (a hand edit could say anything).
+    pub fn panel_size(&self) -> u16 {
+        self.panel_size.clamp(*SIZES.start(), *SIZES.end())
+    }
+
+    pub fn lister_size(&self) -> u16 {
+        self.lister_size.clamp(*SIZES.start(), *SIZES.end())
+    }
+
+    /// The file list's text size over the default.
+    pub fn text_scale(&self) -> f32 {
+        self.panel_size() as f32 / PANEL_SIZE as f32
+    }
+
     /// A panel row's height: the skin's, grown or shrunk with the text.
     pub fn row_h(&self) -> f32 {
-        (self.skin.row_h() * self.panel_size.max(1) as f32 / PANEL_SIZE as f32).round()
+        (self.skin.row_h() * self.text_scale()).round()
     }
 }
 
@@ -277,11 +291,13 @@ mod tests {
     fn rows_grow_with_the_panel_text() {
         let mut c = Config::default();
         assert_eq!(c.row_h(), Skin::Classic.row_h()); // the default size: as before
-        c.panel_size = 26;
-        assert_eq!(c.row_h(), 40.0);
+        c.panel_size = 24;
+        assert_eq!(c.row_h(), (20.0 * 24.0 / 13.0_f32).round());
         c.skin = Skin::Modern;
-        c.panel_size = 0; // a hand edit: no zero-high rows
-        assert!(c.row_h() > 0.0);
+        c.panel_size = 0; // a hand edit: kept in bounds
+        assert_eq!(c.row_h(), (28.0 * 9.0 / 13.0_f32).round());
+        c.panel_size = 5000;
+        assert_eq!(c.panel_size(), 24);
     }
 
     #[test]

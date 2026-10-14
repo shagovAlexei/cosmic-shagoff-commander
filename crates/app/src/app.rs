@@ -115,7 +115,8 @@ impl Tab {
     }
 
     /// Brief view: (rows per column, columns on screen) for rows `row_h` px high.
-    pub fn brief_grid(&self, row_h: f32) -> (usize, usize) {
+    /// `scale`: the panel text size over the default.
+    pub fn brief_grid(&self, row_h: f32, scale: f32) -> (usize, usize) {
         // ponytail: a pass over the names per call; cache in the panel if huge dirs lag.
         let longest = (self.panel.entries().iter())
             .map(|e| format::display_name(e).chars().count())
@@ -123,7 +124,7 @@ impl Tab {
             .unwrap_or(0);
         (
             viewport::brief_rows(row_h, self.height),
-            viewport::brief_cols(self.width, viewport::brief_col_w(longest)),
+            viewport::brief_cols(self.width, viewport::brief_col_w(longest, scale)),
         )
     }
 
@@ -1106,7 +1107,7 @@ impl App {
                         steps
                     }
                 };
-                let (rows, cols) = t.brief_grid(row_h);
+                let (rows, cols) = t.brief_grid(row_h, self.config.text_scale());
                 let last = t.panel.entries().len().div_ceil(rows).saturating_sub(cols);
                 t.col = if y > 0.0 {
                     t.col.saturating_sub(1)
@@ -2363,12 +2364,12 @@ impl App {
             .unwrap_or(cosmic::iced::window::Id::RESERVED)
     }
 
-    /// File row height of the current skin; every scroll computation uses it.
     /// The file list's font and size.
     pub fn panel_font(&self) -> (cosmic::iced::Font, u16) {
-        (self.face, self.config.panel_size.max(1))
+        (self.face, self.config.panel_size())
     }
 
+    /// File row height of the current skin and text size; every scroll computation uses it.
     pub fn row_h(&self) -> f32 {
         self.config.row_h()
     }
@@ -2569,7 +2570,7 @@ impl App {
         }
         let row_h = self.row_h();
         let t = self.panes[side].active_mut();
-        let (rows, cols) = t.brief_grid(row_h);
+        let (rows, cols) = t.brief_grid(row_h, self.config.text_scale());
         let (brief, rows) = (t.brief, rows as isize);
         let page = if brief {
             rows * cols as isize
@@ -2814,8 +2815,7 @@ impl App {
                     Some(l) if l.quick.is_some() => self.lister = None,
                     Some(_) => {} // the full viewer is up: not from there
                     None => {
-                        let mut l = Lister::new(side, String::new(), 0);
-                        l.size = self.config.lister_size.max(1);
+                        let mut l = Lister::new(side, String::new(), 0, self.config.lister_size());
                         // Nothing yet: `quick_follow` loads it.
                         l.quick = Some((PathBuf::new(), 0, std::time::UNIX_EPOCH));
                         self.lister = Some(Box::new(l));
@@ -4377,9 +4377,12 @@ impl App {
         match &mut self.lister {
             Some(l) => l.reopen(name.clone(), id),
             None => {
-                let mut l = Lister::new(side, name.clone(), id);
-                l.size = self.config.lister_size.max(1);
-                self.lister = Some(Box::new(l));
+                self.lister = Some(Box::new(Lister::new(
+                    side,
+                    name.clone(),
+                    id,
+                    self.config.lister_size(),
+                )));
             }
         }
         self.search = None;
@@ -4718,7 +4721,7 @@ impl App {
             return Task::none();
         };
         if t.brief {
-            let (rows, cols) = t.brief_grid(row_h);
+            let (rows, cols) = t.brief_grid(row_h, self.config.text_scale());
             let len = t.panel.entries().len();
             t.col = viewport::brief_first_col(len, t.panel.cursor(), rows, cols, t.col);
             return Task::none();
@@ -4810,11 +4813,23 @@ impl App {
 
     /// F1 / About / Ctrl+,: open that drawer, or close it if it is the one open.
     fn toggle_drawer(&mut self, action: Action) {
-        let d = match action {
-            Action::Help => Drawer::Help,
-            Action::About => Drawer::About,
-            Action::Donate => Drawer::Donate,
-            _ => Drawer::Settings(SettingsForm {
+        let open = match action {
+            Action::Help => Some(Drawer::Help),
+            Action::About => Some(Drawer::About),
+            Action::Donate => Some(Drawer::Donate),
+            _ => None,
+        };
+        let same = match (&self.drawer, &open) {
+            (Some(cur), Some(d)) => std::mem::discriminant(cur) == std::mem::discriminant(d),
+            (Some(cur), None) => matches!(cur, Drawer::Settings(_)),
+            (None, _) => false,
+        };
+        if same {
+            return self.set_drawer(None);
+        }
+        // Settings: the form (and the installed fonts) only when they open.
+        let d = open.unwrap_or_else(|| {
+            Drawer::Settings(SettingsForm {
                 viewer: self.config.viewer.join(" "),
                 editor: self.config.editor.join(" "),
                 home: self
@@ -4824,13 +4839,9 @@ impl App {
                     .map(|p| p.display().to_string())
                     .unwrap_or_default(),
                 fonts: drawer::font_families(),
-            }),
-        };
-        let same = self
-            .drawer
-            .as_ref()
-            .is_some_and(|cur| std::mem::discriminant(cur) == std::mem::discriminant(&d));
-        self.set_drawer((!same).then_some(d));
+            })
+        });
+        self.set_drawer(Some(d));
     }
 
     /// A change in the settings drawer: written like a hand edit of the config, applied now.
@@ -4924,8 +4935,14 @@ impl App {
         if old.panel_font != self.config.panel_font {
             self.face = font_named(&self.config.panel_font);
         }
-        if let Some(l) = &mut self.lister {
-            l.size = self.config.lister_size.max(1);
+        if let Some(l) = &mut self.lister
+            && l.size != self.config.lister_size()
+        {
+            // The same top row at the new row height, the wrapped lines rewrapped.
+            let row = l.offset.1 / l.row_h();
+            l.set_size(self.config.lister_size());
+            let (x, y) = (l.offset.0, row * l.row_h());
+            tasks.push(lister_scroll(l, x, y));
         }
         if old.row_h() != self.config.row_h() {
             // Offsets are in pixels of the old row height: bring each cursor back into view.
