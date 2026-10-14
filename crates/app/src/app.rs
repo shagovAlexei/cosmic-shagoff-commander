@@ -284,6 +284,8 @@ pub struct App {
     held: Option<Dialog>,
     /// `config.colors`, parsed (`Scheme::new` on every change of them).
     pub(crate) scheme: shagoff_core::colors::Scheme,
+    /// `config.panel_font` as a font (built when it changes).
+    face: cosmic::iced::Font,
     /// Files of the right-button drag in flight (`Message::DragStart`).
     right_drag: Option<Arc<Vec<PathBuf>>>,
     /// Quit confirmed while a job ran: exit when it has stopped.
@@ -759,6 +761,7 @@ impl App {
             queue: VecDeque::new(),
             held: None,
             scheme: shagoff_core::colors::Scheme::new(&config.colors).with_panel(&config.panel),
+            face: font_named(&config.panel_font),
             right_drag: None,
             quitting: false,
             input_id: widget::Id::unique(),
@@ -2361,8 +2364,13 @@ impl App {
     }
 
     /// File row height of the current skin; every scroll computation uses it.
+    /// The file list's font and size.
+    pub fn panel_font(&self) -> (cosmic::iced::Font, u16) {
+        (self.face, self.config.panel_size.max(1))
+    }
+
     pub fn row_h(&self) -> f32 {
-        self.config.skin.row_h()
+        self.config.row_h()
     }
 
     fn next_id(&mut self) -> u64 {
@@ -2807,6 +2815,7 @@ impl App {
                     Some(_) => {} // the full viewer is up: not from there
                     None => {
                         let mut l = Lister::new(side, String::new(), 0);
+                        l.size = self.config.lister_size.max(1);
                         // Nothing yet: `quick_follow` loads it.
                         l.quick = Some((PathBuf::new(), 0, std::time::UNIX_EPOCH));
                         self.lister = Some(Box::new(l));
@@ -4367,7 +4376,11 @@ impl App {
         let id = self.next_id();
         match &mut self.lister {
             Some(l) => l.reopen(name.clone(), id),
-            None => self.lister = Some(Box::new(Lister::new(side, name.clone(), id))),
+            None => {
+                let mut l = Lister::new(side, name.clone(), id);
+                l.size = self.config.lister_size.max(1);
+                self.lister = Some(Box::new(l));
+            }
         }
         self.search = None;
         let read = Task::perform(
@@ -4810,6 +4823,7 @@ impl App {
                     .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default(),
+                fonts: drawer::font_families(),
             }),
         };
         let same = self
@@ -4862,6 +4876,18 @@ impl App {
                     f.editor = v;
                 }
             }
+            Setting::PanelFont(i) => {
+                c.panel_font = match &self.drawer {
+                    Some(Drawer::Settings(f)) => i
+                        .checked_sub(1)
+                        .and_then(|i| f.fonts.get(i))
+                        .cloned()
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                }
+            }
+            Setting::PanelSize(s) => c.panel_size = s,
+            Setting::ListerSize(s) => c.lister_size = s,
             Setting::PackFormat(i) => {
                 if let Some(f) = Format::PACK.get(i) {
                     c.pack_format = f.ext().into();
@@ -4895,9 +4921,15 @@ impl App {
         if old.show_hidden != self.config.show_hidden {
             tasks.push(self.apply_hidden());
         }
-        if old.skin != self.config.skin {
+        if old.panel_font != self.config.panel_font {
+            self.face = font_named(&self.config.panel_font);
+        }
+        if let Some(l) = &mut self.lister {
+            l.size = self.config.lister_size.max(1);
+        }
+        if old.row_h() != self.config.row_h() {
             // Offsets are in pixels of the old row height: bring each cursor back into view.
-            let scale = self.config.skin.row_h() / old.skin.row_h();
+            let scale = self.config.row_h() / old.row_h();
             for side in 0..2 {
                 // Hidden tabs too: they are shown with their stored offset.
                 for t in self.panes[side].items_mut() {
@@ -5851,6 +5883,18 @@ fn run_watched(argv: &[String], dir: &Path) -> std::io::Result<Task<Message>> {
 
 fn reap(mut child: std::process::Child) {
     std::thread::spawn(move || child.wait());
+}
+
+/// A font by family name; "" = the interface's.
+fn font_named(name: &str) -> cosmic::iced::Font {
+    match name.trim() {
+        "" => cosmic::font::default(),
+        // ponytail: leaks the name once per change of the setting (iced wants `&'static str`).
+        n => cosmic::iced::Font {
+            family: cosmic::iced::font::Family::Name(Box::leak(n.to_string().into_boxed_str())),
+            ..cosmic::font::default()
+        },
+    }
 }
 
 #[cfg(test)]

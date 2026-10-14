@@ -567,3 +567,7 @@ colors-cursor = Cursor
 colors-panel = Panel
 colors-blue = Blue
 help-colors-panel = Add and delete a rule. Under the rule buttons: "Panel": the file list's text and background; "Blue" (below): cyan on navy with yellow marks, as Norton Commander; "Defaults": the theme's
+settings-fonts = Fonts
+settings-panel-font = File list font
+settings-panel-size = File list size
+settings-lister-size = Viewer (F3) size

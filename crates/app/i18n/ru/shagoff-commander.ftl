@@ -568,3 +568,7 @@ colors-cursor = Курсор
 colors-panel = Панель
 colors-blue = Синяя
 help-colors-panel = Добавить и удалить правило. Под кнопками правил: «Панель»: текст и фон списка файлов; «Синяя» (внизу): голубой на тёмно-синем, жёлтые отметки, как в Norton Commander; «По умолчанию» — как в теме
+settings-fonts = Шрифты
+settings-panel-font = Шрифт панелей
+settings-panel-size = Размер в панелях
+settings-lister-size = Размер в просмотре (F3)

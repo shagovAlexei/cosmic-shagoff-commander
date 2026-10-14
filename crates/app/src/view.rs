@@ -2,12 +2,12 @@
 //! (each pane's half), the command line and the F-keys in the footer.
 
 use crate::app::{App, Message, StatusKind, Tab};
-use crate::config::Skin;
+use crate::config::{PANEL_SIZE, Skin};
 use crate::fl;
 use crate::keymap::Action;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
 use cosmic::iced::widget::{column, row};
-use cosmic::iced::{Alignment, Color, Length};
+use cosmic::iced::{Alignment, Color, Font, Length};
 use cosmic::widget::{self, button, container, mouse_area, scrollable, text};
 use cosmic::{Element, theme};
 use shagoff_core::colors::{self, Paint};
@@ -71,15 +71,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
 
     let list = if p.brief {
-        brief_list(
-            side,
-            p,
-            active,
-            skin,
-            app.drop_hover,
-            app.window_id(),
-            &app.scheme,
-        )
+        brief_list(app, side, p, active)
     } else {
         full_list(app, side, p, active)
     };
@@ -294,16 +286,15 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
 }
 
 /// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
-fn brief_list<'a>(
-    side: usize,
-    p: &'a Tab,
-    active: bool,
-    skin: Skin,
-    hover: Option<(usize, usize)>,
-    window: cosmic::iced::window::Id,
-    scheme: &'a colors::Scheme,
-) -> Element<'a, Message> {
-    let row_h = skin.row_h();
+fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
+    let (skin, hover, window, scheme) = (
+        app.config.skin,
+        app.drop_hover,
+        app.window_id(),
+        &app.scheme,
+    );
+    let row_h = app.row_h();
+    let font = app.panel_font();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
     let (rows, cols) = p.brief_grid(row_h);
     let mut grid = row![].spacing(2);
@@ -319,7 +310,7 @@ fn brief_list<'a>(
             let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
             let look = scheme.pick(e, std::time::SystemTime::now());
             let paint = look.filter(|_| !lit).and_then(|l| l.fg);
-            let cell = container(name_cell(e, label, skin, paint))
+            let cell = container(name_cell(e, label, skin, paint, font))
                 .padding([0, 6])
                 .height(Length::Fixed(row_h))
                 .width(Length::Fill)
@@ -352,17 +343,22 @@ fn name_cell(
     label: String,
     skin: Skin,
     paint: Option<Paint>,
+    (font, size): (Font, u16),
 ) -> Element<'static, Message> {
     let (name, generic) = format::icon_name(e);
     let icon = widget::icon::from_name(name)
         .fallback(Some(widget::icon::IconFallback::Names(vec![
             generic.into(),
         ])))
-        .size(match skin {
-            Skin::Classic => 16,
-            Skin::Modern => 20,
-        })
+        .size(
+            match skin {
+                Skin::Classic => 16,
+                Skin::Modern => 20,
+            } * size
+                / PANEL_SIZE,
+        )
         .icon();
+    let cell = |s| panel_cell(s, (font, size));
     let label = match paint {
         Some(Paint::Accent) => cell(label).class(theme::Text::Accent),
         Some(Paint::Rgb([r, g, b])) => {
@@ -604,6 +600,8 @@ fn file_row<'a>(
         (format::date(e.mtime, &app.tz), format::attrs(e))
     };
     let look = app.scheme.pick(e, std::time::SystemTime::now());
+    let font = app.panel_font();
+    let cell = |s| panel_cell(s, font);
     let cells = row![
         // Empty style: the default (Transparent) sets its own text colour over the cursor's.
         container(name_cell(
@@ -612,6 +610,7 @@ fn file_row<'a>(
             app.config.skin,
             look.filter(|_| !(is_cursor || is_marked))
                 .and_then(|l| l.fg),
+            font,
         ))
         .width(Length::Fill)
         .class(theme::Container::custom(|_| container::Style::default())),
@@ -685,8 +684,14 @@ fn in_archive(cwd: &std::path::Path) -> bool {
 
 /// One-line table cell: long text is cut with "…" instead of wrapping.
 fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
+    panel_cell(s, (cosmic::font::default(), TEXT))
+}
+
+/// A cell of the file list, in its font (Configuration → Settings → Fonts).
+fn panel_cell(s: String, (font, size): (Font, u16)) -> widget::Text<'static, cosmic::Theme> {
     text(s)
-        .size(TEXT)
+        .size(size)
+        .font(font)
         .wrapping(Wrapping::None)
         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
 }
