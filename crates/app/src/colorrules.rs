@@ -16,6 +16,8 @@ pub struct ColorEdit {
     pub names: bool,
     /// The colour field and the palette edit the row's background, not the name's colour.
     pub bg: bool,
+    /// The palette is open (it takes the rule list's room, so it is folded by default).
+    pub palette: bool,
     /// The colour field's text: the selected rule's colour (or background), as a name or a code.
     pub field: String,
 }
@@ -34,6 +36,8 @@ pub enum ColorMsg {
     Pick(&'static str),
     /// The field shows names / codes.
     Names(bool),
+    /// Open / fold the palette.
+    Palette,
     /// The field and the palette edit the background / the name's colour.
     Bg(bool),
     /// After the selection: every file, a colour to change.
@@ -53,6 +57,7 @@ impl ColorEdit {
             sel,
             names: true,
             bg: false,
+            palette: false,
             field: String::new(),
         };
         c.show();
@@ -107,6 +112,7 @@ impl ColorEdit {
             (ColorMsg::Pick(code), Some(i)) => *self.color_mut(i) = code.into(),
             (ColorMsg::Names(on), _) => self.names = on,
             (ColorMsg::Bg(on), _) => self.bg = on,
+            (ColorMsg::Palette, _) => self.palette = !self.palette,
             (ColorMsg::Add, _) => {
                 let at = sel.map_or(self.list.len(), |i| i + 1);
                 self.list.insert(
@@ -133,9 +139,9 @@ impl ColorEdit {
                 self.sel = Some(i + 1);
             }
             (ColorMsg::Reset, _) => {
-                let (names, bg) = (self.names, self.bg);
+                let (names, bg, palette) = (self.names, self.bg, self.palette);
                 *self = Self::new(colors::defaults());
-                (self.names, self.bg) = (names, bg);
+                (self.names, self.bg, self.palette) = (names, bg, palette);
             }
             _ => {}
         }
@@ -324,10 +330,15 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     if c.list.is_empty() {
         list = list.push(widget::text::caption(fl!("colors-empty")));
     }
-    let list = widget::container(widget::scrollable(list).height(Length::Fixed(96.0)))
-        .padding(4)
-        .width(Length::Fill)
-        .class(theme::Container::Card);
+    let list = widget::container(
+        widget::scrollable(list).height(Length::Fixed(match c.palette {
+            true => 96.0,
+            false => 176.0,
+        })),
+    )
+    .padding(4)
+    .width(Length::Fill)
+    .class(theme::Container::Card);
 
     let some = c.sel.is_some();
     let btn = |label: String, m: ColorMsg, on: bool| {
@@ -408,22 +419,37 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
                     target(fl!("colors-text"), false),
                     target(fl!("colors-bg"), true),
                     input(&c.field, ColorMsg::Color),
-                    swatch(
-                        rule.map_or("", |r| if c.bg {
-                            r.bg.as_str()
-                        } else {
-                            r.color.as_str()
-                        }),
-                        c.bg
-                    ),
+                    // The colour, and the palette under it: open / fold.
+                    widget::button::custom(
+                        row![
+                            swatch(
+                                rule.map_or("", |r| if c.bg {
+                                    r.bg.as_str()
+                                } else {
+                                    r.color.as_str()
+                                }),
+                                c.bg
+                            ),
+                            widget::icon::from_name(match c.palette {
+                                true => "pan-up-symbolic",
+                                false => "pan-down-symbolic",
+                            })
+                            .size(16),
+                        ]
+                        .spacing(2)
+                        .align_y(Alignment::Center)
+                    )
+                    .padding(4)
+                    .class(theme::Button::Icon)
+                    .on_press(msg(ColorMsg::Palette)),
                     widget::toggler(c.names)
                         .label(fl!("colors-names"))
                         .on_toggle(move |on| msg(ColorMsg::Names(on))),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
-                palette(rule.is_some(), c.bg),
             ]
+            .push_maybe(c.palette.then(|| palette(rule.is_some(), c.bg)))
             .spacing(6)
             .into()
         ),
