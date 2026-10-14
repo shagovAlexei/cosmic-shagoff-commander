@@ -272,8 +272,11 @@ pub struct App {
     dialog: Option<Dialog>,
     /// Help / about / settings in the side drawer.
     pub(crate) drawer: Option<Drawer>,
-    /// Built once (the widget borrows it), rebuilt when the language changes.
-    pub(crate) about: cosmic::widget::about::About,
+    /// Built once (the widget borrows it), rebuilt when the language changes. Two parts, so
+    /// «Check for updates» sits under the version: [icon … version, links … comments].
+    pub(crate) about: [cosmic::widget::about::About; 2],
+    /// About → «Check for updates»: `None` not asked since About opened.
+    pub(crate) update_check: Option<shagoff_core::update::Status>,
     pub(crate) job: Option<Running>,
     /// TC's background queue: started one after another once `job` ends.
     pub(crate) queue: VecDeque<Queued>,
@@ -548,6 +551,9 @@ pub enum Message {
     FocusNext,
     /// A link in the about drawer.
     OpenUrl(String),
+    /// About → «Check for updates», and its answer (the latest tag).
+    CheckUpdate,
+    UpdateChecked(shagoff_core::update::Status),
     /// Ctrl+F dialog: the password field.
     ConnectPassword(String),
     /// Volumes from gio for the drive list of this side.
@@ -748,6 +754,7 @@ impl App {
             dialog: None,
             drawer: None,
             about: drawer::about(),
+            update_check: None,
             job: None,
             queue: VecDeque::new(),
             held: None,
@@ -2225,6 +2232,19 @@ impl App {
             Message::CloseDrawer => self.set_drawer(None),
             Message::FocusNext => return cosmic::iced::widget::operation::focus_next(),
             Message::Setting(s) => return self.set(s),
+            Message::CheckUpdate => {
+                use shagoff_core::update::{Status, check};
+                self.update_check = Some(Status::Checking);
+                return Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(|| check(env!("CARGO_PKG_VERSION")))
+                            .await
+                            .unwrap_or_else(|e| Status::Failed(e.to_string()))
+                    },
+                    |r| cosmic::Action::App(Message::UpdateChecked(r)),
+                );
+            }
+            Message::UpdateChecked(s) => self.update_check = Some(s),
             Message::OpenUrl(url) => {
                 if let Err(e) = spawn_detached(&["xdg-open".into(), url.into()]) {
                     log::warn!("xdg-open: {e}");
@@ -4765,6 +4785,10 @@ impl App {
 
     fn set_drawer(&mut self, d: Option<Drawer>) {
         self.core.window.show_context = d.is_some();
+        // A new look at About asks again: an old answer may no longer hold.
+        if d == Some(Drawer::About) {
+            self.update_check = None;
+        }
         self.drawer = d;
     }
 

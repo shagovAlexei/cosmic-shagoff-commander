@@ -44,6 +44,7 @@ sudo apt install ./shagoff-commander_*_amd64.deb
 ## Обновление
 
 Какая версия стоит: **Справка → О программе** или `dpkg -s shagoff-commander | grep Version`.
+Кнопка **Проверить обновления** там спрашивает у GitHub последний релиз (только по нажатию).
 Самая новая — на [странице релизов](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/latest).
 
 Поставьте новый `.deb` поверх старого — настройки, вкладки и история сохранятся (они лежат в

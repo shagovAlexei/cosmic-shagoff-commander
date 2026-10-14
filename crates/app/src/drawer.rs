@@ -8,6 +8,7 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{self, about::About, settings};
 use cosmic::{Element, theme};
 use shagoff_core::archive::Format;
+use shagoff_core::update::Status;
 
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
@@ -51,19 +52,21 @@ pub enum Setting {
     PackFormat(usize),
 }
 
-pub fn about() -> About {
-    About::default()
+pub fn about() -> [About; 2] {
+    let head = About::default()
         .name(fl!("app-title"))
         .icon(widget::icon::from_name(APP_ID))
         .version(env!("CARGO_PKG_VERSION"))
-        .author("Shagov Alexei")
+        .author("Shagov Alexei");
+    let rest = About::default()
         .comments(fl!("about-comments"))
         .license("GPL-3.0-only")
         .license_url("https://www.gnu.org/licenses/gpl-3.0.html")
         .links([
             (fl!("about-source"), REPO.to_string()),
             (fl!("about-issues"), format!("{REPO}/issues")),
-        ])
+        ]);
+    [head, rest]
 }
 
 pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
@@ -74,7 +77,9 @@ pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
         Drawer::About => {
             let content = widget::column::with_children(vec![
                 donate(),
-                widget::about(&app.about, |url| Message::OpenUrl(url.to_string())),
+                widget::about(&app.about[0], |url| Message::OpenUrl(url.to_string())),
+                update_check(app.update_check.as_ref()),
+                widget::about(&app.about[1], |url| Message::OpenUrl(url.to_string())),
             ])
             .spacing(24);
             context_drawer::context_drawer(content, Message::CloseDrawer).title(fl!("menu-about"))
@@ -141,6 +146,35 @@ fn help() -> Element<'static, Message> {
             ]));
         }
         col = col.push(s);
+    }
+    col.into()
+}
+
+/// «Check for updates» and what it found: up to date, a newer release (with its link), or why not.
+fn update_check(state: Option<&Status>) -> Element<'static, Message> {
+    let mut button = widget::button::standard(fl!("update-check"));
+    if state != Some(&Status::Checking) {
+        button = button.on_press(Message::CheckUpdate);
+    }
+    let mut col = widget::column::with_capacity(3)
+        .spacing(8)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .push(button);
+    let text = |s: String| widget::text::body(s);
+    match state {
+        None => {}
+        Some(Status::Checking) => col = col.push(text(fl!("update-checking"))),
+        Some(Status::Latest) => col = col.push(text(fl!("update-latest"))),
+        Some(Status::Available(tag)) => {
+            col = col
+                .push(text(fl!("update-available", tag = tag.as_str())))
+                .push(
+                    widget::button::suggested(fl!("update-open"))
+                        .on_press(Message::OpenUrl(format!("{REPO}/releases/tag/{tag}"))),
+                );
+        }
+        Some(Status::Failed(e)) => col = col.push(text(fl!("update-failed", error = e.as_str()))),
     }
     col.into()
 }
