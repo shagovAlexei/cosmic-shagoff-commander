@@ -215,8 +215,14 @@ fn donate() -> Element<'static, Message> {
 }
 
 /// A text size from `config::SIZES`.
-fn size_pick<'a>(now: u16, f: fn(u16) -> Setting) -> Element<'a, Message> {
-    let sizes: Vec<String> = crate::config::SIZES.map(|s| s.to_string()).collect();
+/// The default one is labelled so.
+fn size_pick<'a>(now: u16, default: u16, f: fn(u16) -> Setting) -> Element<'a, Message> {
+    let sizes: Vec<String> = crate::config::SIZES
+        .map(|s| match s == default {
+            true => fl!("settings-size-default", size = s),
+            false => s.to_string(),
+        })
+        .collect();
     let at = crate::config::SIZES.clone().position(|s| s == now);
     widget::dropdown(sizes, at, move |i| {
         Message::Setting(f(*crate::config::SIZES.start() + i as u16))
@@ -327,11 +333,15 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             }))
             .add(settings::item(
                 fl!("settings-panel-size"),
-                size_pick(c.panel_size, Setting::PanelSize),
+                size_pick(c.panel_size, crate::config::PANEL_SIZE, Setting::PanelSize),
             ))
             .add(settings::item(
                 fl!("settings-lister-size"),
-                size_pick(c.lister_size, Setting::ListerSize),
+                size_pick(
+                    c.lister_size,
+                    crate::config::LISTER_SIZE,
+                    Setting::ListerSize,
+                ),
             ))
             .into(),
         settings::section()
