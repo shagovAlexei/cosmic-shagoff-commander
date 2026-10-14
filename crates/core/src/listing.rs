@@ -149,7 +149,7 @@ pub fn entries(paths: &[std::path::PathBuf], root: &Path) -> Vec<Entry> {
 
 /// Ctrl+B "branch" (TC): every file under `dirs`, at any depth — not the dirs themselves. Links to
 /// dirs are not followed (a link shows as an entry of its own); unreadable dirs are skipped.
-/// `stop` set (Esc, the dir left): `None`, checked before each dir.
+/// `stop` set (Esc, the dir left): `None`, checked at each entry (a dir can hold millions).
 pub fn branch(
     dirs: &[std::path::PathBuf],
     show_hidden: bool,
@@ -158,11 +158,11 @@ pub fn branch(
     let mut out = Vec::new();
     let mut todo = dirs.to_vec();
     while let Some(d) = todo.pop() {
-        if stop.load(std::sync::atomic::Ordering::Relaxed) {
-            return None;
-        }
         let Ok(rd) = fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
             if !show_hidden && e.file_name().to_string_lossy().starts_with('.') {
                 continue;
             }
