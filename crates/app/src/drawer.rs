@@ -74,6 +74,7 @@ pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
         Drawer::About => {
             let content = widget::column::with_children(vec![
                 donate(),
+                update_check(app.update_check.as_ref()),
                 widget::about(&app.about, |url| Message::OpenUrl(url.to_string())),
             ])
             .spacing(24);
@@ -141,6 +142,41 @@ fn help() -> Element<'static, Message> {
             ]));
         }
         col = col.push(s);
+    }
+    col.into()
+}
+
+/// «Check for updates» and what it found: up to date, a newer release (with its link), or why not.
+fn update_check(state: Option<&Option<Result<String, String>>>) -> Element<'static, Message> {
+    use shagoff_core::update::newer;
+    let current = env!("CARGO_PKG_VERSION");
+    let mut button = widget::button::standard(fl!("update-check"));
+    if !matches!(state, Some(None)) {
+        button = button.on_press(Message::CheckUpdate);
+    }
+    let mut col = widget::column::with_capacity(3)
+        .spacing(8)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .push(button);
+    match state {
+        None => {}
+        Some(None) => col = col.push(widget::text::body(fl!("update-checking"))),
+        Some(Some(Ok(tag))) if newer(current, tag) => {
+            col = col
+                .push(widget::text::body(fl!(
+                    "update-available",
+                    tag = tag.as_str()
+                )))
+                .push(
+                    widget::button::suggested(fl!("update-open"))
+                        .on_press(Message::OpenUrl(format!("{REPO}/releases/latest"))),
+                );
+        }
+        Some(Some(Ok(_))) => col = col.push(widget::text::body(fl!("update-latest"))),
+        Some(Some(Err(e))) => {
+            col = col.push(widget::text::body(fl!("update-failed", error = e.as_str())))
+        }
     }
     col.into()
 }

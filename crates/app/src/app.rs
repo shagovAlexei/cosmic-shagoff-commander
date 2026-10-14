@@ -274,6 +274,8 @@ pub struct App {
     pub(crate) drawer: Option<Drawer>,
     /// Built once (the widget borrows it), rebuilt when the language changes.
     pub(crate) about: cosmic::widget::about::About,
+    /// About → «Check for updates»: `None` not asked yet, `Some(None)` asking.
+    pub(crate) update_check: Option<Option<Result<String, String>>>,
     pub(crate) job: Option<Running>,
     /// TC's background queue: started one after another once `job` ends.
     pub(crate) queue: VecDeque<Queued>,
@@ -548,6 +550,9 @@ pub enum Message {
     FocusNext,
     /// A link in the about drawer.
     OpenUrl(String),
+    /// About → «Check for updates», and its answer (the latest tag).
+    CheckUpdate,
+    UpdateChecked(Result<String, String>),
     /// Ctrl+F dialog: the password field.
     ConnectPassword(String),
     /// Volumes from gio for the drive list of this side.
@@ -748,6 +753,7 @@ impl App {
             dialog: None,
             drawer: None,
             about: drawer::about(),
+            update_check: None,
             job: None,
             queue: VecDeque::new(),
             held: None,
@@ -2225,6 +2231,18 @@ impl App {
             Message::CloseDrawer => self.set_drawer(None),
             Message::FocusNext => return cosmic::iced::widget::operation::focus_next(),
             Message::Setting(s) => return self.set(s),
+            Message::CheckUpdate => {
+                self.update_check = Some(None);
+                return Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(shagoff_core::update::latest)
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    |r| cosmic::Action::App(Message::UpdateChecked(r)),
+                );
+            }
+            Message::UpdateChecked(r) => self.update_check = Some(Some(r)),
             Message::OpenUrl(url) => {
                 if let Err(e) = spawn_detached(&["xdg-open".into(), url.into()]) {
                     log::warn!("xdg-open: {e}");
