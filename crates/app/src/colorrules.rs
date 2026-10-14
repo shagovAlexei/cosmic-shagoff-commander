@@ -12,7 +12,7 @@ use shagoff_core::colors::{self, Paint, PanelColors, Rule, What};
 pub struct ColorEdit {
     pub list: Vec<Rule>,
     pub sel: Option<usize>,
-    pub marks: PanelColors,
+    pub panel: PanelColors,
     /// The colour field edits marked rows' or the cursor's colours, not a rule's (`sel` is `None`).
     pub special: Option<Special>,
     /// The colour field shows names ("Orange") instead of codes (`#ff7800`).
@@ -73,7 +73,7 @@ impl ColorEdit {
         let mut c = Self {
             list,
             sel,
-            marks: colors::default_marks(),
+            panel: colors::default_panel(),
             special: None,
             names: true,
             bg: false,
@@ -86,7 +86,7 @@ impl ColorEdit {
 
     /// The colour being edited (see `color_mut`).
     pub fn edited(&self) -> &str {
-        let (bg, m) = (self.bg, &self.marks);
+        let (bg, m) = (self.bg, &self.panel);
         match self.special {
             Some(Special::Cursor) => &m.cursor,
             Some(Special::Panel) => {
@@ -127,7 +127,7 @@ impl ColorEdit {
     /// background or the text's.
     fn color_mut(&mut self) -> Option<&mut String> {
         let bg = self.bg;
-        let m = &mut self.marks;
+        let m = &mut self.panel;
         match self.special {
             Some(Special::Cursor) => Some(&mut m.cursor),
             Some(Special::Panel) => Some(if bg { &mut m.back } else { &mut m.text }),
@@ -223,7 +223,7 @@ impl ColorEdit {
                 self.list.swap(i, i + 1);
                 self.sel = Some(i + 1);
             }
-            (ColorMsg::Blue, _) => self.marks = colors::blue_panel(),
+            (ColorMsg::Blue, _) => self.panel = colors::blue_panel(),
             (ColorMsg::Reset, _) => {
                 self.leave_special();
                 let (names, bg, palette) = (self.names, self.bg, self.palette);
@@ -460,7 +460,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             .on_press(msg(ColorMsg::Special(s)))
             .into()
     };
-    let m = &c.marks;
+    let m = &c.panel;
     // Icons with tips: one row for the rule buttons leaves room for the list's colours.
     let tip = |b: Element<'a, Message>, t: String| -> Element<'a, Message> {
         widget::tooltip(b, widget::text(t), widget::tooltip::Position::Bottom).into()
@@ -714,7 +714,7 @@ mod tests {
             cursor: "#1a5fb4".into(),
             ..Default::default()
         };
-        assert_eq!(c.marks, want);
+        assert_eq!(c.panel, want);
         assert_eq!(c.list, colors::defaults()); // rules untouched
         c.update(ColorMsg::Select(1));
         assert_eq!(c.special, None);
@@ -723,10 +723,10 @@ mod tests {
         assert_eq!(c.list[1].attr, "h");
         c.update(ColorMsg::Special(Special::Panel));
         c.update(ColorMsg::Pick("#000080")); // text
-        assert_eq!(c.marks.text, "#000080");
+        assert_eq!(c.panel.text, "#000080");
         c.update(ColorMsg::Blue);
-        assert_eq!(c.marks, colors::blue_panel());
+        assert_eq!(c.panel, colors::blue_panel());
         c.update(ColorMsg::Reset);
-        assert_eq!(c.marks, colors::default_marks());
+        assert_eq!(c.panel, colors::default_panel());
     }
 }

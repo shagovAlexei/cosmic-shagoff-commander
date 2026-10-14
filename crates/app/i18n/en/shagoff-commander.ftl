@@ -566,4 +566,4 @@ colors-marked = Marked
 colors-cursor = Cursor
 colors-panel = Panel
 colors-blue = Blue
-help-colors-panel = + / − add and delete a rule. "Panel": the file list's text and background; "Blue" (below): cyan on navy with yellow marks, as Norton Commander; "Defaults": the theme's
+help-colors-panel = Add and delete a rule. Under the rule buttons: "Panel": the file list's text and background; "Blue" (below): cyan on navy with yellow marks, as Norton Commander; "Defaults": the theme's

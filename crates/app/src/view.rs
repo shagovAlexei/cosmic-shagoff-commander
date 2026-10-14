@@ -116,18 +116,21 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     .window_id(app.window_id())
     .on_surface_action(Message::Surface);
     let list = cosmic::iced::widget::stack![under, list];
-    // The list's own text and background (TC Colors), if set; rows without a colour of their
-    // own take both.
-    let paint = app.scheme.marks();
-    let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);
-    let list = container(list)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .class(theme::Container::custom(move |_| container::Style {
+    // The list's own text and background (TC Colors), if set, under the header and the rows;
+    // rows without a colour of their own take both.
+    let paint = app.scheme.paint();
+    let panel_style = move || {
+        let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);
+        theme::Container::custom(move |_| container::Style {
             background: paint.back.map(|c| rgb(c).into()),
             text_color: paint.text.map(rgb),
             ..Default::default()
-        }));
+        })
+    };
+    let list = container(list)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .class(panel_style());
 
     let drives = match app.config.skin {
         Skin::Classic => drive_list(app, side),
@@ -139,7 +142,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     }
     let col = col
         .push(path)
-        .push(header(side, p.panel.sort(), skin, app.cols))
+        .push(container(header(side, p.panel.sort(), skin, app.cols)).class(panel_style()))
         .push(list)
         .width(Length::Fill);
     let pane: Element<'_, Message> = match skin {
@@ -327,7 +330,7 @@ fn brief_list<'a>(
                     p.panel.is_marked(e),
                     skin,
                     look.and_then(|l| l.bg),
-                    scheme.marks(),
+                    scheme.paint(),
                 ));
             let cell = mouse_area(cell)
                 .on_press(Message::Click(side, i))
@@ -632,7 +635,7 @@ fn file_row<'a>(
             is_marked,
             app.config.skin,
             look.and_then(|l| l.bg),
-            app.scheme.marks(),
+            app.scheme.paint(),
         ));
     mouse_area(row)
         .on_press(Message::Click(side, i))

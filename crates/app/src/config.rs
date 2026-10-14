@@ -124,8 +124,8 @@ pub struct Config {
     pub toolbar: Vec<ToolButton>,
     /// Name colours by type (TC "Color by file type"), first match wins.
     pub colors: Vec<shagoff_core::colors::Rule>,
-    /// Marked rows' text / background and the cursor's background; empty: the theme's.
-    pub marks: shagoff_core::colors::PanelColors,
+    /// The file list's colours: its text and background, marked rows, the cursor; empty: the theme's.
+    pub panel: shagoff_core::colors::PanelColors,
 }
 
 /// A toolbar button: `cmd` is an internal `cm_*` command, a program (`params` with `%P`, `%N`, …
@@ -168,7 +168,7 @@ impl Default for Config {
             columns: [60.0, 90.0, 130.0, 80.0],
             toolbar: crate::toolbar::default_bar(),
             colors: shagoff_core::colors::defaults(),
-            marks: shagoff_core::colors::default_marks(),
+            panel: shagoff_core::colors::default_panel(),
         }
     }
 }

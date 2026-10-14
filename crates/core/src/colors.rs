@@ -163,7 +163,7 @@ pub fn row_paint(
 }
 
 impl PanelColors {
-    pub fn marks(&self) -> PanelPaint {
+    pub fn paint(&self) -> PanelPaint {
         let rgb = |s: &str| match parse(s) {
             Some(Paint::Rgb(c)) => Some(c),
             _ => None,
@@ -246,7 +246,7 @@ pub fn parse(color: &str) -> Option<Paint> {
 }
 
 /// Out of the box, marked rows: light yellow on dark blue (TC-like); the cursor: the theme's.
-pub fn default_marks() -> PanelColors {
+pub fn default_panel() -> PanelColors {
     PanelColors {
         color: "#f9f06b".into(),
         bg: "#1a5fb4".into(),
@@ -255,13 +255,14 @@ pub fn default_marks() -> PanelColors {
     }
 }
 
-/// The «Blue» palette, as Norton / early TC: cyan on navy, yellow marks, a teal cursor.
+/// The «Blue» palette, as Norton / early TC: white on navy (cyan would hide the links' rule),
+/// yellow marks, a teal cursor light enough for black text.
 pub fn blue_panel() -> PanelColors {
     PanelColors {
         color: "#ffff55".into(),
         bg: String::new(),
-        cursor: "#00aaaa".into(),
-        text: "#55ffff".into(),
+        cursor: "#00c0c0".into(),
+        text: "#ffffff".into(),
         back: "#000080".into(),
     }
 }
@@ -357,11 +358,11 @@ impl Scheme {
         )
     }
 
-    pub fn with_marks(self, m: &PanelColors) -> Self {
-        Self(self.0, m.marks())
+    pub fn with_panel(self, m: &PanelColors) -> Self {
+        Self(self.0, m.paint())
     }
 
-    pub fn marks(&self) -> PanelPaint {
+    pub fn paint(&self) -> PanelPaint {
         self.1
     }
 
@@ -547,6 +548,13 @@ mod tests {
     }
 
     #[test]
+    fn blue_cursor_has_black_text() {
+        let p = blue_panel().paint();
+        assert!(dark_text_on(p.cursor.unwrap()));
+        assert!(!dark_text_on(p.back.unwrap()));
+    }
+
+    #[test]
     fn mark_colours() {
         let m = PanelColors {
             color: "#ff0000".into(),
@@ -556,7 +564,7 @@ mod tests {
             back: String::new(),
         };
         assert_eq!(
-            m.marks(),
+            m.paint(),
             PanelPaint {
                 fg: Some([255, 0, 0]),
                 bg: None,
