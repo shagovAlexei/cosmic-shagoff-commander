@@ -149,11 +149,18 @@ pub fn entries(paths: &[std::path::PathBuf], root: &Path) -> Vec<Entry> {
 
 /// Ctrl+B "branch" (TC): every file under `dirs`, at any depth — not the dirs themselves. Links to
 /// dirs are not followed (a link shows as an entry of its own); unreadable dirs are skipped.
-// ponytail: no stop and no cap; a huge tree (all of `~`) is read whole in the background.
-pub fn branch(dirs: &[std::path::PathBuf], show_hidden: bool) -> Vec<std::path::PathBuf> {
+/// `stop` set (Esc, the dir left): `None`, checked before each dir.
+pub fn branch(
+    dirs: &[std::path::PathBuf],
+    show_hidden: bool,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Option<Vec<std::path::PathBuf>> {
     let mut out = Vec::new();
     let mut todo = dirs.to_vec();
     while let Some(d) = todo.pop() {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
         let Ok(rd) = fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
             if !show_hidden && e.file_name().to_string_lossy().starts_with('.') {
@@ -168,7 +175,7 @@ pub fn branch(dirs: &[std::path::PathBuf], show_hidden: bool) -> Vec<std::path::
             }
         }
     }
-    out
+    Some(out)
 }
 
 pub(crate) fn ext_of(name: &str) -> String {
@@ -207,12 +214,16 @@ mod tests {
             v.sort();
             v
         };
+        let go = std::sync::atomic::AtomicBool::new(false);
+        let b = |dirs: &[std::path::PathBuf], hidden| branch(dirs, hidden, &go).unwrap();
         assert_eq!(
-            rel(branch(&[r.to_path_buf()], false)),
+            rel(b(&[r.to_path_buf()], false)),
             ["a/b/y.rs", "a/x.rs", "flink", "top.txt"]
         );
-        assert_eq!(rel(branch(&[r.to_path_buf()], true)).len(), 6);
-        assert_eq!(rel(branch(&[r.join("a/b")], false)), ["a/b/y.rs"]);
+        assert_eq!(rel(b(&[r.to_path_buf()], true)).len(), 6);
+        assert_eq!(rel(b(&[r.join("a/b")], false)), ["a/b/y.rs"]);
+        let stop = std::sync::atomic::AtomicBool::new(true);
+        assert_eq!(branch(&[r.to_path_buf()], false, &stop), None);
     }
 
     #[test]
