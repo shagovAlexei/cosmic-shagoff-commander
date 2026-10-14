@@ -45,7 +45,7 @@ impl ColorEdit {
         let mut c = Self {
             list,
             sel,
-            names: false,
+            names: true,
             field: String::new(),
         };
         c.show();
@@ -400,10 +400,11 @@ mod tests {
 
     #[test]
     fn the_colour_field_shows_and_takes_names_or_codes() {
-        let mut c = ColorEdit::new(colors::defaults()); // links: cyan
+        let mut c = ColorEdit::new(colors::defaults()); // links: cyan, shown by name
+        assert_eq!(c.field, color_name("#33c7de").unwrap());
+        c.update(ColorMsg::Names(false));
         assert_eq!(c.field, "#33c7de");
         c.update(ColorMsg::Names(true));
-        assert_eq!(c.field, color_name("#33c7de").unwrap());
         let orange = color_name("#ff7800").unwrap().to_uppercase();
         c.update(ColorMsg::Color(orange.clone())); // a name, any case: stored as its code
         assert_eq!(
