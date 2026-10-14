@@ -3,7 +3,8 @@
 
 //! Drag source for panel rows. As libcosmic's `dnd_source`, but the right button starts a drag as
 //! well (TC: drop → menu Copy / Move / Link) and `on_start` is told which button it was. The right
-//! press is not captured: the row under it still gets the cursor and its context menu.
+//! press is not captured: the row under it still gets the cursor and its context menu. `icon` is
+//! drawn under the pointer while dragging.
 
 use cosmic::iced::advanced::widget::{Operation, Tree, tree};
 use cosmic::iced::advanced::{
@@ -21,6 +22,8 @@ pub struct DragSource<'a, Message, D> {
     child: Element<'a, Message>,
     window: window::Id,
     content: Box<dyn Fn() -> D + 'a>,
+    /// What follows the pointer.
+    icon: Box<dyn Fn() -> Element<'static, ()> + 'a>,
     /// `true`: started with the right button.
     on_start: Box<dyn Fn(bool) -> Message + 'a>,
     on_end: Message,
@@ -31,6 +34,7 @@ pub fn drag_source<'a, Message: 'static, D>(
     window: window::Id,
     action: DndAction,
     content: impl Fn() -> D + 'a,
+    icon: impl Fn() -> Element<'static, ()> + 'a,
     on_start: impl Fn(bool) -> Message + 'a,
     on_end: Message,
 ) -> DragSource<'a, Message, D> {
@@ -40,6 +44,7 @@ pub fn drag_source<'a, Message: 'static, D>(
         child: container(child).into(),
         window,
         content: Box::new(content),
+        icon: Box::new(icon),
         on_start: Box::new(on_start),
         on_end,
     }
@@ -147,10 +152,16 @@ impl<Message: Clone + 'static, D: AsMimeTypes + Send + 'static> Widget<Message, 
                     state.pressed = None;
                     state.dragging = true;
                     shell.publish((self.on_start)(right));
-                    clipboard.start_dnd(
+                    clipboard::start_dnd(
+                        clipboard,
                         false,
                         Some(clipboard::DndSource::Surface(self.window)),
-                        None,
+                        // Just below and right of the pointer, as file managers do.
+                        Some(clipboard::IconSurface::new(
+                            (self.icon)(),
+                            tree::State::None,
+                            Vector::new(-12.0, -12.0),
+                        )),
                         Box::new((self.content)()),
                         self.action,
                     );

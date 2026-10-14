@@ -664,7 +664,11 @@ fn dnd_row<'a>(
         } else {
             Arc::new(vec![p.panel.cwd().join(&e.os_name)])
         };
-        crate::clip::drag(row, paths, window)
+        let (icon, label) = match paths.len() {
+            1 => (format::icon_name(e), e.name.clone()),
+            n => (("edit-copy".into(), "edit-copy"), fl!("drag-items", n = n)),
+        };
+        crate::clip::drag(row, paths, window, icon, label)
     };
     if !e.is_dir() || p.results.is_some() {
         return row;

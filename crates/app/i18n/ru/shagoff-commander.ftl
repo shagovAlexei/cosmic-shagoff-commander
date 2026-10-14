@@ -574,3 +574,4 @@ settings-panel-font = Шрифт панелей
 settings-panel-size = Размер в панелях
 settings-lister-size = Размер в просмотре (F3)
 settings-size-default = { $size } (по умолчанию)
+drag-items = Объектов: { $n }

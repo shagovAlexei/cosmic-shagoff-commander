@@ -77,10 +77,13 @@ pub fn take() -> Task<Message> {
 /// the files away (Shift-move between our own panes reads `App::mods`, not the action).
 /// The right button too (`crate::dnd`): `Message::DragStart` remembers that drag's files, so their
 /// drop on us asks Copy / Move / Link.
+/// `icon`: the theme icon (name, generic fallback) shown under the pointer with `label`.
 pub fn drag<'a>(
     child: impl Into<cosmic::Element<'a, Message>>,
     paths: std::sync::Arc<Vec<PathBuf>>,
     window: cosmic::iced::window::Id,
+    (icon, generic): (String, &'static str),
+    label: String,
 ) -> cosmic::Element<'a, Message> {
     use cosmic::iced::clipboard::dnd::DndAction;
     let started = paths.clone();
@@ -89,9 +92,29 @@ pub fn drag<'a>(
         window,
         DndAction::Copy,
         move || Files(fmt::encode(Kind::Copy, &paths)),
+        move || drag_icon(&icon, generic, label.clone()),
         move |right| Message::DragStart(right.then(|| started.clone())),
         Message::DropHover(None),
     )
+    .into()
+}
+
+/// The picture under the pointer: the file's icon and its name (or how many), on a card.
+fn drag_icon(icon: &str, generic: &'static str, label: String) -> cosmic::Element<'static, ()> {
+    use cosmic::widget;
+    let icon = widget::icon::from_name(icon.to_string())
+        .fallback(Some(widget::icon::IconFallback::Names(vec![
+            generic.into(),
+        ])))
+        .size(24)
+        .icon();
+    widget::container(
+        cosmic::iced::widget::row![icon, widget::text::body(label)]
+            .spacing(6)
+            .align_y(cosmic::iced::Alignment::Center),
+    )
+    .padding([4, 10])
+    .class(cosmic::theme::Container::Card)
     .into()
 }
 

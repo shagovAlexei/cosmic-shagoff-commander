@@ -573,3 +573,4 @@ settings-panel-font = File list font
 settings-panel-size = File list size
 settings-lister-size = Viewer (F3) size
 settings-size-default = { $size } (default)
+drag-items = { $n } items
