@@ -30,6 +30,24 @@ pub struct SettingsForm {
     pub viewer: String,
     pub editor: String,
     pub home: String,
+    /// Installed font families, read when the settings open (not on every frame).
+    pub fonts: Vec<String>,
+}
+
+/// The installed font families, sorted, each once.
+pub fn font_families() -> Vec<String> {
+    let mut fs = cosmic::iced::advanced::graphics::text::font_system()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut v: Vec<String> = fs
+        .raw()
+        .db()
+        .faces()
+        .filter_map(|f| f.families.first().map(|(n, _)| n.clone()))
+        .collect();
+    v.sort_unstable();
+    v.dedup();
+    v
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +68,10 @@ pub enum Setting {
     Viewer(String),
     Editor(String),
     PackFormat(usize),
+    /// Index into [the interface's, `SettingsForm::fonts`…].
+    PanelFont(usize),
+    PanelSize(u16),
+    ListerSize(u16),
 }
 
 pub fn about() -> [About; 2] {
@@ -192,6 +214,22 @@ fn donate() -> Element<'static, Message> {
         .into()
 }
 
+/// A text size from `config::SIZES`.
+/// The default one is labelled so.
+fn size_pick<'a>(now: u16, default: u16, f: fn(u16) -> Setting) -> Element<'a, Message> {
+    let sizes: Vec<String> = crate::config::SIZES
+        .map(|s| match s == default {
+            true => fl!("settings-size-default", size = s),
+            false => s.to_string(),
+        })
+        .collect();
+    let at = crate::config::SIZES.clone().position(|s| s == now);
+    widget::dropdown(sizes, at, move |i| {
+        Message::Setting(f(*crate::config::SIZES.start() + i as u16))
+    })
+    .into()
+}
+
 fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Message> {
     let c = &app.config;
     let set = |s: Setting| Message::Setting(s);
@@ -278,6 +316,32 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-editor"),
                 input(&form.editor, "cosmic-edit", Setting::Editor),
+            ))
+            .into(),
+        settings::section()
+            .title(fl!("settings-fonts"))
+            .add(settings::item(fl!("settings-panel-font"), {
+                let names: Vec<String> = std::iter::once(fl!("settings-system"))
+                    .chain(form.fonts.iter().cloned())
+                    .collect();
+                let at = form
+                    .fonts
+                    .iter()
+                    .position(|f| *f == c.panel_font)
+                    .map_or(0, |i| i + 1);
+                widget::dropdown(names, Some(at), |i| Message::Setting(Setting::PanelFont(i)))
+            }))
+            .add(settings::item(
+                fl!("settings-panel-size"),
+                size_pick(c.panel_size, crate::config::PANEL_SIZE, Setting::PanelSize),
+            ))
+            .add(settings::item(
+                fl!("settings-lister-size"),
+                size_pick(
+                    c.lister_size,
+                    crate::config::LISTER_SIZE,
+                    Setting::ListerSize,
+                ),
             ))
             .into(),
         settings::section()

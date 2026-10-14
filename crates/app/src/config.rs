@@ -126,6 +126,38 @@ pub struct Config {
     pub colors: Vec<shagoff_core::colors::Rule>,
     /// The file list's colours: its text and background, marked rows, the cursor; empty: the theme's.
     pub panel: shagoff_core::colors::PanelColors,
+    /// The file list's font family; "" = the interface's.
+    pub panel_font: String,
+    /// The file list's text size, pt (13: the skins' own).
+    pub panel_size: u16,
+    /// F3 viewer's text size (its font stays monospaced: hex and wrap count its columns).
+    pub lister_size: u16,
+}
+
+/// Text sizes offered in the settings.
+pub const SIZES: std::ops::RangeInclusive<u16> = 9..=24;
+pub const PANEL_SIZE: u16 = 13;
+pub const LISTER_SIZE: u16 = 14;
+
+impl Config {
+    /// The file list's text size, kept in `SIZES` (a hand edit could say anything).
+    pub fn panel_size(&self) -> u16 {
+        self.panel_size.clamp(*SIZES.start(), *SIZES.end())
+    }
+
+    pub fn lister_size(&self) -> u16 {
+        self.lister_size.clamp(*SIZES.start(), *SIZES.end())
+    }
+
+    /// The file list's text size over the default.
+    pub fn text_scale(&self) -> f32 {
+        self.panel_size() as f32 / PANEL_SIZE as f32
+    }
+
+    /// A panel row's height: the skin's, grown or shrunk with the text.
+    pub fn row_h(&self) -> f32 {
+        (self.skin.row_h() * self.text_scale()).round()
+    }
 }
 
 /// A toolbar button: `cmd` is an internal `cm_*` command, a program (`params` with `%P`, `%N`, …
@@ -169,6 +201,9 @@ impl Default for Config {
             toolbar: crate::toolbar::default_bar(),
             colors: shagoff_core::colors::defaults(),
             panel: shagoff_core::colors::default_panel(),
+            panel_font: String::new(),
+            panel_size: PANEL_SIZE,
+            lister_size: LISTER_SIZE,
         }
     }
 }
@@ -251,6 +286,19 @@ pub fn read<T: CosmicConfigEntry + Default>(h: Option<&cosmic_config::Config>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_grow_with_the_panel_text() {
+        let mut c = Config::default();
+        assert_eq!(c.row_h(), Skin::Classic.row_h()); // the default size: as before
+        c.panel_size = 24;
+        assert_eq!(c.row_h(), (20.0 * 24.0 / 13.0_f32).round());
+        c.skin = Skin::Modern;
+        c.panel_size = 0; // a hand edit: kept in bounds
+        assert_eq!(c.row_h(), (28.0 * 9.0 / 13.0_f32).round());
+        c.panel_size = 5000;
+        assert_eq!(c.panel_size(), 24);
+    }
 
     #[test]
     fn regression_light_or_dark_is_not_a_system_theme() {

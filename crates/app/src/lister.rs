@@ -12,12 +12,10 @@ use shagoff_core::viewport;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Fixed row height: the scroll math depends on it.
-pub const ROW_H: f32 = 20.0;
+/// Row height at the default text size: the scroll math depends on it.
+const ROW_H: f32 = 20.0;
 /// Monospace advance at the default text size.
 const MONO_W: f32 = 8.5;
-/// ← / →: this many chars.
-const STEP_X: f32 = MONO_W * 8.0;
 const HEX_COLS: usize = 77;
 /// Encodings in the order of the drop-down (code page names, not translated).
 pub const ENCODINGS: [(Encoding, &str); 4] = [
@@ -77,6 +75,8 @@ pub struct Lister {
     /// The encoding was picked by hand: kept for the next file; a guessed one is guessed again.
     chosen: bool,
     pub wrap: bool,
+    /// Text size (Settings → Fonts); rows and columns grow with it.
+    pub size: u16,
     /// Text for another encoding or wrapping, rebuilt from the file's bytes; `None` = `Loaded::text`.
     // ponytail: rebuilt on the UI thread (a 32 MB file takes a moment); spawn_blocking if it shows.
     text: Option<Text>,
@@ -104,7 +104,33 @@ pub struct Lister {
 }
 
 impl Lister {
-    pub fn new(side: usize, name: String, id: u64) -> Self {
+    fn scale(&self) -> f32 {
+        self.size.max(1) as f32 / crate::config::LISTER_SIZE as f32
+    }
+
+    pub fn row_h(&self) -> f32 {
+        (ROW_H * self.scale()).round()
+    }
+
+    fn mono_w(&self) -> f32 {
+        MONO_W * self.scale()
+    }
+
+    /// ← / →: this many pixels (8 chars).
+    fn step_x(&self) -> f32 {
+        self.mono_w() * 8.0
+    }
+
+    /// A new size (Settings → Fonts): wrapped lines follow the new column count.
+    pub fn set_size(&mut self, size: u16) {
+        let before = self.wrap_cols();
+        self.size = size;
+        if self.wrap && self.wrap_cols() != before {
+            self.retext();
+        }
+    }
+
+    pub fn new(side: usize, name: String, id: u64, size: u16) -> Self {
         Self {
             side,
             name,
@@ -117,6 +143,7 @@ impl Lister {
             encoding: Encoding::Auto,
             chosen: false,
             wrap: false,
+            size,
             text: None,
             hit: None,
             sel: None,
@@ -150,7 +177,7 @@ impl Lister {
             encoding,
             chosen,
             wrap,
-            ..Self::new(self.side, name, id)
+            ..Self::new(self.side, name, id, self.size)
         };
     }
 
@@ -178,7 +205,7 @@ impl Lister {
 
     /// Chars per wrapped line: the viewport minus padding and the scrollbar.
     fn wrap_cols(&self) -> usize {
-        ((self.width - 32.0).max(0.0) / MONO_W) as usize
+        ((self.width - 32.0).max(0.0) / self.mono_w()) as usize
     }
 
     fn retext(&mut self) {
@@ -240,17 +267,17 @@ impl Lister {
     }
 
     fn top(&self) -> usize {
-        (self.offset.1 / ROW_H) as usize
+        (self.offset.1 / self.row_h()) as usize
     }
 
     /// Where a scroll key moves the view to (y), `None` for other keys.
     pub fn scroll_y(&self, action: Action) -> Option<f32> {
-        let max = (self.rows() as f32 * ROW_H - self.height).max(0.0);
-        let page = viewport::page_rows(ROW_H, self.height) as f32 * ROW_H;
+        let max = (self.rows() as f32 * self.row_h() - self.height).max(0.0);
+        let page = viewport::page_rows(self.row_h(), self.height) as f32 * self.row_h();
         let y = self.offset.1;
         let to = match action {
-            Action::Up => y - ROW_H,
-            Action::Down => y + ROW_H,
+            Action::Up => y - self.row_h(),
+            Action::Down => y + self.row_h(),
             Action::PageUp => y - page,
             Action::PageDown => y + page,
             Action::Home => 0.0,
@@ -261,8 +288,8 @@ impl Lister {
     }
 
     pub fn scroll_x(&self, right: bool) -> f32 {
-        let x = self.offset.0 + if right { STEP_X } else { -STEP_X };
-        x.clamp(0.0, (self.width() - STEP_X).max(0.0))
+        let x = self.offset.0 + if right { self.step_x() } else { -self.step_x() };
+        x.clamp(0.0, (self.width() - self.step_x()).max(0.0))
     }
 
     fn width(&self) -> f32 {
@@ -270,7 +297,7 @@ impl Lister {
             Mode::Hex => HEX_COLS,
             _ => self.text().map_or(0, |(_, t)| t.cols),
         };
-        cols as f32 * MONO_W + 16.0
+        cols as f32 * self.mono_w() + 16.0
     }
 
     /// Search: from the top visible row (`again`: from the row after / before the last match).
@@ -291,7 +318,7 @@ impl Lister {
         }?;
         self.hit = Some(row);
         // A couple of rows of context above the match.
-        Some(row.saturating_sub(2) as f32 * ROW_H)
+        Some(row.saturating_sub(2) as f32 * self.row_h())
     }
 
     /// The text position under the pointer (the view's scroll offset added).
@@ -300,8 +327,8 @@ impl Lister {
         Some(lister::pos_at(
             x + self.offset.0,
             y + self.offset.1,
-            ROW_H,
-            MONO_W,
+            self.row_h(),
+            self.mono_w(),
             self.rows(),
         ))
     }
@@ -482,15 +509,16 @@ fn content(l: &Lister) -> Element<'_, Message> {
     }
     // Only the rows in view are built; spacers keep the scroll height.
     let rows = l.rows();
-    let range = viewport::visible_range(rows, ROW_H, l.offset.1, l.height);
+    let range = viewport::visible_range(rows, l.row_h(), l.offset.1, l.height);
     let width = Length::Fixed(l.width());
     let mut list = column::with_capacity(range.len() + 2).push(
         widget::Space::new()
             .width(width)
-            .height(Length::Fixed(range.start as f32 * ROW_H)),
+            .height(Length::Fixed(range.start as f32 * l.row_h())),
     );
     let mono = |s: String| {
         widget::text(s)
+            .size(l.size)
             .font(cosmic::font::mono())
             .wrapping(Wrapping::None)
     };
@@ -515,14 +543,14 @@ fn content(l: &Lister) -> Element<'_, Message> {
         list = list.push(
             widget::container(text)
                 .width(width)
-                .height(Length::Fixed(ROW_H))
+                .height(Length::Fixed(l.row_h()))
                 .class(hit_style(hit)),
         );
     }
     list = list.push(
         widget::Space::new()
             .width(Length::Fixed(1.0))
-            .height(Length::Fixed((rows - range.end) as f32 * ROW_H)),
+            .height(Length::Fixed((rows - range.end) as f32 * l.row_h())),
     );
     let list = widget::scrollable(list)
         .id(l.scroll.clone())
@@ -571,7 +599,7 @@ mod tests {
     use super::*;
 
     fn text(s: &str) -> Lister {
-        let mut l = Lister::new(0, "a.txt".into(), 1);
+        let mut l = Lister::new(0, "a.txt".into(), 1, crate::config::LISTER_SIZE);
         let doc = Doc {
             bytes: s.as_bytes().to_vec(),
             decoded: None,
@@ -655,6 +683,10 @@ mod tests {
         assert_eq!(l.rows(), 4); // abcd efgh ij + NUL line
         l.resized(32.0 + 5.0 * MONO_W, 100.0);
         assert_eq!(l.rows(), 3); // abcde fghij, NUL
+        l.set_size(crate::config::LISTER_SIZE * 2); // twice the text: half the columns
+        assert_eq!(l.rows(), 6); // ab cd ef gh ij, NUL
+        assert_eq!(l.row_h(), 40.0);
+        l.set_size(crate::config::LISTER_SIZE);
         l.reopen("b.txt".into(), 2);
         assert_eq!((l.encoding, l.wrap), (Encoding::Cp1251, true));
         l.toggle_wrap();
@@ -664,7 +696,7 @@ mod tests {
 
     #[test]
     fn a_cp1251_file_opens_decoded() {
-        let mut l = Lister::new(0, "a.txt".into(), 1);
+        let mut l = Lister::new(0, "a.txt".into(), 1, crate::config::LISTER_SIZE);
         let doc = Doc {
             bytes: b"\xcf\xf0\xe8\xe2\xe5\xf2".to_vec(), // "Привет" in 1251
             decoded: None,
@@ -689,7 +721,7 @@ mod tests {
 
     #[test]
     fn mode_keys_wait_for_the_file() {
-        let mut l = Lister::new(0, "a.bin".into(), 1);
+        let mut l = Lister::new(0, "a.bin".into(), 1, crate::config::LISTER_SIZE);
         l.set_mode(Mode::Hex); // still reading: the detected mode would undo it
         assert_eq!(l.mode, Mode::Text);
     }
