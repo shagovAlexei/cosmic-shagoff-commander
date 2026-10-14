@@ -338,6 +338,17 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
 
 /// Theme icon by type, then the name (cut with "…").
 /// `paint`: the name's colour by type (`None` on the cursor / a marked row: its own colour wins).
+/// The theme's icon for `e` (its type's, else the generic one).
+pub(crate) fn entry_icon(e: &Entry, size: u16) -> widget::Icon {
+    let (name, generic) = format::icon_name(e);
+    widget::icon::from_name(name)
+        .fallback(Some(widget::icon::IconFallback::Names(vec![
+            generic.into(),
+        ])))
+        .size(size)
+        .icon()
+}
+
 fn name_cell(
     e: &Entry,
     label: String,
@@ -345,19 +356,14 @@ fn name_cell(
     paint: Option<Paint>,
     (font, size): (Font, u16),
 ) -> Element<'static, Message> {
-    let (name, generic) = format::icon_name(e);
-    let icon = widget::icon::from_name(name)
-        .fallback(Some(widget::icon::IconFallback::Names(vec![
-            generic.into(),
-        ])))
-        .size(
-            match skin {
-                Skin::Classic => 16,
-                Skin::Modern => 20,
-            } * size
-                / PANEL_SIZE,
-        )
-        .icon();
+    let icon = entry_icon(
+        e,
+        match skin {
+            Skin::Classic => 16,
+            Skin::Modern => 20,
+        } * size
+            / PANEL_SIZE,
+    );
     let cell = |s| panel_cell(s, (font, size));
     let label = match paint {
         Some(Paint::Accent) => cell(label).class(theme::Text::Accent),
@@ -664,7 +670,18 @@ fn dnd_row<'a>(
         } else {
             Arc::new(vec![p.panel.cwd().join(&e.os_name)])
         };
-        crate::clip::drag(row, paths, window)
+        // Built when a drag starts, not for every row and frame.
+        let n = paths.len();
+        let one = (n == 1 && paths[0].file_name() == Some(e.os_name.as_os_str())).then_some(e);
+        let icon = move || match one {
+            Some(e) => crate::clip::drag_card(entry_icon(e, 24), e.name.clone()),
+            // Marked ones (or one that is not this row: Ctrl+B with a dir and its file marked).
+            None => crate::clip::drag_card(
+                widget::icon::from_name("edit-copy").size(24).icon(),
+                fl!("drag-items", n = n),
+            ),
+        };
+        crate::clip::drag(row, paths, window, icon)
     };
     if !e.is_dir() || p.results.is_some() {
         return row;

@@ -307,6 +307,8 @@ pub struct App {
     face: cosmic::iced::Font,
     /// Files of the right-button drag in flight (`Message::DragStart`).
     right_drag: Option<Arc<Vec<PathBuf>>>,
+    /// One of our rows is being dragged: Esc cancels it.
+    dragging: bool,
     /// Quit confirmed while a job ran: exit when it has stopped.
     quitting: bool,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
@@ -543,6 +545,8 @@ pub enum Message {
     },
     /// A row drag started; `Some(files)`: with the right button (their drop asks what to do).
     DragStart(Option<Arc<Vec<PathBuf>>>),
+    /// Our row drag ended (dropped or cancelled).
+    DragEnd,
     /// Right-button drop menu: Copy / Move / Link.
     DropAs(InputOp),
     /// Files are held over a dir row (it lights up) / no longer over any.
@@ -783,6 +787,7 @@ impl App {
             scheme: shagoff_core::colors::Scheme::new(&config.colors).with_panel(&config.panel),
             face: font_named(&config.panel_font),
             right_drag: None,
+            dragging: false,
             quitting: false,
             input_id: widget::Id::unique(),
             search: None,
@@ -1654,6 +1659,13 @@ impl App {
             {
                 return self.update(Message::ToolEdit(crate::toolbar::ToolMsg::PickClose));
             }
+            // A drag of ours: the compositor does not cancel it on Esc, we end it.
+            Message::Escape(_) if self.dragging => {
+                self.dragging = false;
+                self.right_drag = None;
+                self.drop_hover = None;
+                return cosmic::iced::runtime::dnd::end_dnd();
+            }
             Message::Escape(_) => return self.update(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
@@ -1718,7 +1730,14 @@ impl App {
                 return task;
             }
             Message::Pasted(_) => {}
-            Message::DragStart(right) => self.right_drag = right,
+            Message::DragStart(right) => {
+                self.right_drag = right;
+                self.dragging = true;
+            }
+            Message::DragEnd => {
+                self.dragging = false;
+                self.drop_hover = None;
+            }
             Message::DropAs(op) if matches!(self.dialog, Some(Dialog::DropMenu { .. })) => {
                 if let Some(Dialog::DropMenu { side, dir, sources }) = self.dialog.take() {
                     self.dialog = Some(Dialog::Input {
@@ -6638,6 +6657,24 @@ mod tests {
         let second = app.panes[0].active().branch_stop.clone();
         let _ = app.update(Message::Key(Action::CloseTab));
         assert!(second.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn esc_during_a_drag_ends_it_and_nothing_else() {
+        let mut app = app_with(Config::default(), State::default());
+        app.panes[0].active_mut().panel.set_filter(Some("x".into()));
+        let _ = app.update(Message::DragStart(Some(Arc::new(vec![PathBuf::from(
+            "/a",
+        )]))));
+        let _ = app.update(Message::Escape(app.window_id()));
+        assert!(!app.dragging && app.right_drag.is_none());
+        assert!(app.panes[0].active().panel.filter().is_some()); // the drag's Esc, not the filter's
+        let _ = app.update(Message::Escape(app.window_id()));
+        assert!(app.panes[0].active().panel.filter().is_none());
+        // A drag that ended (dropped) leaves Esc to the panels again.
+        let _ = app.update(Message::DragStart(None));
+        let _ = app.update(Message::DragEnd);
+        assert!(!app.dragging);
     }
 
     #[test]

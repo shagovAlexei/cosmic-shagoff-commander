@@ -77,10 +77,12 @@ pub fn take() -> Task<Message> {
 /// the files away (Shift-move between our own panes reads `App::mods`, not the action).
 /// The right button too (`crate::dnd`): `Message::DragStart` remembers that drag's files, so their
 /// drop on us asks Copy / Move / Link.
+/// `icon`: what follows the pointer (`drag_card`), built when the drag starts.
 pub fn drag<'a>(
     child: impl Into<cosmic::Element<'a, Message>>,
     paths: std::sync::Arc<Vec<PathBuf>>,
     window: cosmic::iced::window::Id,
+    icon: impl Fn() -> cosmic::Element<'static, ()> + 'a,
 ) -> cosmic::Element<'a, Message> {
     use cosmic::iced::clipboard::dnd::DndAction;
     let started = paths.clone();
@@ -89,9 +91,31 @@ pub fn drag<'a>(
         window,
         DndAction::Copy,
         move || Files(fmt::encode(Kind::Copy, &paths)),
+        icon,
         move |right| Message::DragStart(right.then(|| started.clone())),
-        Message::DropHover(None),
+        Message::DragEnd,
     )
+    .into()
+}
+
+/// The picture under the pointer: an icon and the file's name (or how many), on a card; a long
+/// name is cut, so the card stays small.
+pub fn drag_card(icon: cosmic::widget::Icon, label: String) -> cosmic::Element<'static, ()> {
+    use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
+    use cosmic::widget;
+    widget::container(
+        cosmic::iced::widget::row![
+            icon,
+            widget::text::body(label)
+                .wrapping(Wrapping::None)
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
+        ]
+        .spacing(6)
+        .align_y(cosmic::iced::Alignment::Center),
+    )
+    .padding([4, 10])
+    .max_width(320.0)
+    .class(cosmic::theme::Container::Card)
     .into()
 }
 
