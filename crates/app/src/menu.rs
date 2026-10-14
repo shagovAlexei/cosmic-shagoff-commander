@@ -331,6 +331,7 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
             vec![
                 b(fl!("menu-settings"), Action::Settings),
                 b(fl!("menu-toolbar"), Action::ConfigureToolbar),
+                b(fl!("menu-colors"), Action::ConfigureColors),
             ],
         ),
         (
@@ -590,6 +591,7 @@ mod tests {
                             | Action::TabRename
                             | Action::ResetColumns
                             | Action::ConfigureToolbar
+                            | Action::ConfigureColors
                     )
                 ) {
                     continue;

@@ -1,5 +1,6 @@
 mod app;
 mod clip;
+mod colorrules;
 mod config;
 mod dialogs;
 mod dnd;

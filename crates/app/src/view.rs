@@ -10,6 +10,7 @@ use cosmic::iced::widget::{column, row};
 use cosmic::iced::{Alignment, Color, Length};
 use cosmic::widget::{self, button, container, mouse_area, scrollable, text};
 use cosmic::{Element, theme};
+use shagoff_core::colors::{self, Paint};
 use shagoff_core::drives;
 use shagoff_core::format;
 use shagoff_core::listing::Entry;
@@ -70,7 +71,15 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
 
     let list = if p.brief {
-        brief_list(side, p, active, skin, app.drop_hover, app.window_id())
+        brief_list(
+            side,
+            p,
+            active,
+            skin,
+            app.drop_hover,
+            app.window_id(),
+            &app.scheme,
+        )
     } else {
         full_list(app, side, p, active)
     };
@@ -277,6 +286,7 @@ fn brief_list<'a>(
     skin: Skin,
     hover: Option<(usize, usize)>,
     window: cosmic::iced::window::Id,
+    scheme: &'a colors::Scheme,
 ) -> Element<'a, Message> {
     let row_h = skin.row_h();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
@@ -292,7 +302,8 @@ fn brief_list<'a>(
                 e.name.clone()
             };
             let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
-            let cell = container(name_cell(e, label, skin, lit))
+            let paint = (!lit).then(|| scheme.pick(e)).flatten();
+            let cell = container(name_cell(e, label, skin, paint))
                 .padding([0, 6])
                 .height(Length::Fixed(row_h))
                 .width(Length::Fill)
@@ -317,8 +328,13 @@ fn brief_list<'a>(
 }
 
 /// Theme icon by type, then the name (cut with "…").
-/// `plain`: on the cursor / a marked row, whose own text colour must win.
-fn name_cell(e: &Entry, label: String, skin: Skin, plain: bool) -> Element<'static, Message> {
+/// `paint`: the name's colour by type (`None` on the cursor / a marked row: its own colour wins).
+fn name_cell(
+    e: &Entry,
+    label: String,
+    skin: Skin,
+    paint: Option<Paint>,
+) -> Element<'static, Message> {
     let (name, generic) = format::icon_name(e);
     let icon = widget::icon::from_name(name)
         .fallback(Some(widget::icon::IconFallback::Names(vec![
@@ -329,11 +345,12 @@ fn name_cell(e: &Entry, label: String, skin: Skin, plain: bool) -> Element<'stat
             Skin::Modern => 20,
         })
         .icon();
-    // Symlinks in the accent colour, as `ls --color` sets them apart.
-    let label = if e.is_link && !plain {
-        cell(label).class(theme::Text::Accent)
-    } else {
-        cell(label)
+    let label = match paint {
+        Some(Paint::Accent) => cell(label).class(theme::Text::Accent),
+        Some(Paint::Rgb([r, g, b])) => {
+            cell(label).class(theme::Text::Color(Color::from_rgb8(r, g, b)))
+        }
+        None => cell(label),
     };
     row![icon, label]
         .spacing(4)
@@ -572,7 +589,9 @@ fn file_row<'a>(
             e,
             format::display_name(e),
             app.config.skin,
-            is_cursor || is_marked
+            (!(is_cursor || is_marked))
+                .then(|| app.scheme.pick(e))
+                .flatten(),
         ))
         .width(Length::Fill)
         .class(theme::Container::custom(|_| container::Style::default())),
