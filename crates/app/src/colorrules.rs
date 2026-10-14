@@ -14,7 +14,9 @@ pub struct ColorEdit {
     pub sel: Option<usize>,
     /// The colour field shows names ("Orange") instead of codes (`#ff7800`).
     pub names: bool,
-    /// The colour field's text: the selected rule's colour, as a name or a code.
+    /// The colour field and the palette edit the row's background, not the name's colour.
+    pub bg: bool,
+    /// The colour field's text: the selected rule's colour (or background), as a name or a code.
     pub field: String,
 }
 
@@ -22,6 +24,8 @@ pub struct ColorEdit {
 pub enum ColorMsg {
     Select(usize),
     Mask(String),
+    Size(String),
+    Age(String),
     /// Index into `What::ALL`.
     What(usize),
     /// Typed into the colour field: a code, or a palette colour's name.
@@ -30,6 +34,8 @@ pub enum ColorMsg {
     Pick(&'static str),
     /// The field shows names / codes.
     Names(bool),
+    /// The field and the palette edit the background / the name's colour.
+    Bg(bool),
     /// After the selection: every file, a colour to change.
     Add,
     Delete,
@@ -46,20 +52,28 @@ impl ColorEdit {
             list,
             sel,
             names: true,
+            bg: false,
             field: String::new(),
         };
         c.show();
         c
     }
 
+    /// The colour being edited: the background or the name's.
+    fn color_mut(&mut self, i: usize) -> &mut String {
+        let r = &mut self.list[i];
+        if self.bg { &mut r.bg } else { &mut r.color }
+    }
+
     /// The field from the selected rule, in the chosen form (a colour without a name: its code).
     fn show(&mut self) {
+        let bg = self.bg;
         let color = self
             .sel
             .and_then(|i| self.list.get(i))
-            .map(|r| r.color.clone());
+            .map(|r| if bg { r.bg.clone() } else { r.color.clone() });
         self.field = match color {
-            Some(c) if self.names => color_name(&c).unwrap_or(c),
+            Some(c) if self.names => color_name(&c, bg).unwrap_or(c),
             Some(c) => c,
             None => String::new(),
         };
@@ -79,17 +93,20 @@ impl ColorEdit {
         match (m, sel) {
             (ColorMsg::Select(i), _) => self.sel = (i < self.list.len()).then_some(i),
             (ColorMsg::Mask(s), Some(i)) => self.list[i].mask = s,
+            (ColorMsg::Size(s), Some(i)) => self.list[i].size = s,
+            (ColorMsg::Age(s), Some(i)) => self.list[i].age = s,
             (ColorMsg::What(w), Some(i)) => {
                 if let Some(&what) = What::ALL.get(w) {
                     self.list[i].what = what;
                 }
             }
             (ColorMsg::Color(s), Some(i)) => {
-                self.list[i].color = color_code(&s).unwrap_or_else(|| s.clone());
+                *self.color_mut(i) = color_code(&s, self.bg).unwrap_or_else(|| s.clone());
                 self.field = s;
             }
-            (ColorMsg::Pick(code), Some(i)) => self.list[i].color = code.into(),
+            (ColorMsg::Pick(code), Some(i)) => *self.color_mut(i) = code.into(),
             (ColorMsg::Names(on), _) => self.names = on,
+            (ColorMsg::Bg(on), _) => self.bg = on,
             (ColorMsg::Add, _) => {
                 let at = sel.map_or(self.list.len(), |i| i + 1);
                 self.list.insert(
@@ -98,6 +115,7 @@ impl ColorEdit {
                         mask: "*".into(),
                         what: What::Files,
                         color: "#e5a50a".into(),
+                        ..Default::default()
                     },
                 );
                 self.sel = Some(at);
@@ -115,18 +133,20 @@ impl ColorEdit {
                 self.sel = Some(i + 1);
             }
             (ColorMsg::Reset, _) => {
-                let names = self.names;
+                let (names, bg) = (self.names, self.bg);
                 *self = Self::new(colors::defaults());
-                self.names = names;
+                (self.names, self.bg) = (names, bg);
             }
             _ => {}
         }
     }
 }
 
-/// A palette colour's name ("Orange" for `#ff7800`, the accent's for an empty one); others: none.
-pub fn color_name(code: &str) -> Option<String> {
+/// A palette colour's name ("Orange" for `#ff7800`; an empty one: the accent, or "None" for a
+/// background); others: none.
+pub fn color_name(code: &str, bg: bool) -> Option<String> {
     Some(match code.trim().to_ascii_lowercase().as_str() {
+        "" if bg => fl!("colors-none"),
         "" => fl!("colors-accent"),
         "#99c1f1" => fl!("color-blue-light"),
         "#3584e4" => fl!("color-blue"),
@@ -162,12 +182,18 @@ pub fn color_name(code: &str) -> Option<String> {
 }
 
 /// A palette colour's code by its name, any case ("оранжевый" → `#ff7800`).
-fn color_code(name: &str) -> Option<String> {
+fn color_code(name: &str, bg: bool) -> Option<String> {
     let name = name.trim().to_lowercase();
     PALETTE
         .iter()
         .flatten()
-        .find(|c| color_name(c).is_some_and(|n| n.to_lowercase() == name))
+        // Either name of the empty one ("Accent" / "None") clears the field, in both modes.
+        .find(|c| {
+            [color_name(c, bg), color_name(c, !bg)]
+                .into_iter()
+                .flatten()
+                .any(|n| n.to_lowercase() == name)
+        })
         .map(|c| c.to_string())
 }
 
@@ -183,7 +209,7 @@ pub fn what_label(w: What) -> String {
 
 /// Clicked into the colour field, by rows: light, mid, dark shades of GNOME's palette (blue,
 /// cyan, green, yellow, orange, red, purple, brown, grey); the first column is the theme's accent
-/// (an empty field), a light grey and black.
+/// (an empty field; no background when editing that), a light grey and black.
 const PALETTE: [[&str; 10]; 3] = [
     [
         "", "#99c1f1", "#99e3f0", "#8ff0a4", "#f9f06b", "#ffbe6f", "#f66151", "#dc8add", "#cdab8f",
@@ -199,13 +225,14 @@ const PALETTE: [[&str; 10]; 3] = [
     ],
 ];
 
-/// A square of the rule's colour; the accent's for an empty one, a frame for a bad one.
-fn swatch<'a>(color: &str) -> Element<'a, Message> {
-    swatch_sized(color, 14.0)
+/// A square of the rule's colour; the accent's for an empty one (a background: a frame), a frame
+/// for a bad one.
+fn swatch<'a>(color: &str, bg: bool) -> Element<'a, Message> {
+    swatch_sized(color, bg, 14.0)
 }
 
-fn swatch_sized<'a>(color: &str, size: f32) -> Element<'a, Message> {
-    let paint = colors::parse(color);
+fn swatch_sized<'a>(color: &str, bg: bool, size: f32) -> Element<'a, Message> {
+    let paint = colors::parse(color).filter(|p| !(bg && *p == Paint::Accent));
     widget::container(widget::Space::new())
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
@@ -228,19 +255,19 @@ fn swatch_sized<'a>(color: &str, size: f32) -> Element<'a, Message> {
         .into()
 }
 
-/// One click per colour; the first is the accent (an empty field).
-fn palette<'a>(on: bool) -> Element<'a, Message> {
+/// One click per colour; the first is the accent / no background (an empty field).
+fn palette<'a>(on: bool, bg: bool) -> Element<'a, Message> {
     let mut grid = column![].spacing(2);
     for line in PALETTE {
         let mut row = row![].spacing(4);
         for color in line {
-            let name = color_name(color).unwrap_or_default();
+            let name = color_name(color, bg).unwrap_or_default();
             let tip = if color.is_empty() {
                 name
             } else {
                 format!("{name} {color}")
             };
-            let b = widget::button::custom(swatch_sized(color, 18.0))
+            let b = widget::button::custom(swatch_sized(color, bg, 18.0))
                 .padding(3)
                 .class(theme::Button::Icon)
                 .on_press_maybe(on.then(|| Message::Colors(ColorMsg::Pick(color))));
@@ -259,16 +286,37 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     let msg = Message::Colors;
     let mut list = column![].spacing(1);
     for (i, r) in c.list.iter().enumerate() {
-        let mask = if r.mask.trim().is_empty() {
+        let mut mask = if r.mask.trim().is_empty() {
             fl!("colors-every")
         } else {
             r.mask.clone()
         };
+        if !r.valid() {
+            mask = format!("⚠ {mask}");
+        }
+        // The kind, then the conditions: "Files  >1M  <7 d".
+        let mut what = what_label(r.what);
+        for (v, unit) in [(&r.size, String::new()), (&r.age, fl!("colors-days-short"))] {
+            if !v.trim().is_empty() {
+                what = format!("{what}  {} {unit}", v.trim())
+                    .trim_end()
+                    .to_string();
+            }
+        }
+        // The name's colour (not an empty one on a background: the row's text then), the background.
+        let mut swatches = row![].spacing(2);
+        let has_bg = !r.bg.trim().is_empty();
+        if !(has_bg && r.color.trim().is_empty()) {
+            swatches = swatches.push(swatch(&r.color, false));
+        }
+        if has_bg {
+            swatches = swatches.push(swatch(&r.bg, true));
+        }
         list = list.push(crate::dialogs::menu_row_with(
-            Some(swatch(&r.color)),
+            Some(swatches.into()),
             None,
             mask,
-            what_label(r.what),
+            what,
             c.sel == Some(i),
             msg(ColorMsg::Select(i)),
         ));
@@ -305,14 +353,23 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
     .spacing(6);
 
     let rule = c.sel.and_then(|i| c.list.get(i));
-    let input = |value: &'a str, on: fn(String) -> ColorMsg| {
-        let field = widget::text_input("", value);
+    let hinted = |hint: &'static str, value: &'a str, on: fn(String) -> ColorMsg| {
+        let field = widget::text_input(hint, value);
         match rule {
             Some(_) => field
                 .on_input(move |s| msg(on(s)))
                 .on_submit(|_| Message::DialogSubmit),
             None => field,
         }
+    };
+    let input = |value: &'a str, on: fn(String) -> ColorMsg| hinted("", value, on);
+    // Text / Background: which colour the field and the palette edit; the edited one is lit.
+    let target = |label: String, bg: bool| -> Element<'a, Message> {
+        let b = match c.bg == bg {
+            true => widget::button::suggested(label),
+            false => widget::button::standard(label),
+        };
+        b.on_press(msg(ColorMsg::Bg(bg))).into()
     };
     let whats: Vec<String> = What::ALL.into_iter().map(what_label).collect();
     let picked = rule.and_then(|r| What::ALL.iter().position(|w| *w == r.what));
@@ -332,21 +389,40 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
                 widget::dropdown(whats, picked, move |w| msg(ColorMsg::What(w))).into()
             )
             .width(Length::FillPortion(2)),
+            labelled(
+                fl!("colors-size"),
+                hinted(">1M", rule.map_or("", |r| r.size.as_str()), ColorMsg::Size).into()
+            )
+            .width(Length::FillPortion(1)),
+            labelled(
+                fl!("colors-age"),
+                hinted("<7", rule.map_or("", |r| r.age.as_str()), ColorMsg::Age).into()
+            )
+            .width(Length::FillPortion(1)),
         ]
         .spacing(12),
         labelled(
             fl!("colors-color"),
             column![
                 row![
+                    target(fl!("colors-text"), false),
+                    target(fl!("colors-bg"), true),
                     input(&c.field, ColorMsg::Color),
-                    swatch(rule.map_or("", |r| r.color.as_str())),
+                    swatch(
+                        rule.map_or("", |r| if c.bg {
+                            r.bg.as_str()
+                        } else {
+                            r.color.as_str()
+                        }),
+                        c.bg
+                    ),
                     widget::toggler(c.names)
                         .label(fl!("colors-names"))
                         .on_toggle(move |on| msg(ColorMsg::Names(on))),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
-                palette(rule.is_some()),
+                palette(rule.is_some(), c.bg),
             ]
             .spacing(6)
             .into()
@@ -382,7 +458,8 @@ mod tests {
             Rule {
                 mask: "*.rs".into(),
                 what: What::Dirs,
-                color: "#ff0000".into()
+                color: "#ff0000".into(),
+                ..Default::default()
             }
         );
         c.update(ColorMsg::Up);
@@ -401,11 +478,11 @@ mod tests {
     #[test]
     fn the_colour_field_shows_and_takes_names_or_codes() {
         let mut c = ColorEdit::new(colors::defaults()); // links: cyan, shown by name
-        assert_eq!(c.field, color_name("#33c7de").unwrap());
+        assert_eq!(c.field, color_name("#33c7de", false).unwrap());
         c.update(ColorMsg::Names(false));
         assert_eq!(c.field, "#33c7de");
         c.update(ColorMsg::Names(true));
-        let orange = color_name("#ff7800").unwrap().to_uppercase();
+        let orange = color_name("#ff7800", false).unwrap().to_uppercase();
         c.update(ColorMsg::Color(orange.clone())); // a name, any case: stored as its code
         assert_eq!(
             (c.list[0].color.as_str(), c.field.as_str()),
@@ -416,8 +493,28 @@ mod tests {
         c.update(ColorMsg::Select(0));
         assert_eq!(c.field, "#123456");
         c.update(ColorMsg::Pick("#e01b24"));
-        assert_eq!(c.field, color_name("#e01b24").unwrap());
+        assert_eq!(c.field, color_name("#e01b24", false).unwrap());
         c.update(ColorMsg::Names(false));
         assert_eq!(c.field, "#e01b24");
+    }
+
+    #[test]
+    fn the_background_is_edited_apart() {
+        let mut c = ColorEdit::new(colors::defaults());
+        c.update(ColorMsg::Bg(true));
+        assert_eq!(c.field, fl!("colors-none")); // no background yet
+        c.update(ColorMsg::Pick("#99c1f1"));
+        c.update(ColorMsg::Size(">1M".into()));
+        c.update(ColorMsg::Age("<7".into()));
+        let r = &c.list[0];
+        assert_eq!((r.bg.as_str(), r.color.as_str()), ("#99c1f1", "#33c7de"));
+        assert_eq!((r.size.as_str(), r.age.as_str()), (">1M", "<7"));
+        c.update(ColorMsg::Color(fl!("colors-none"))); // the name of "none" clears it
+        assert_eq!(c.list[0].bg, "");
+        c.update(ColorMsg::Pick("#99c1f1"));
+        c.update(ColorMsg::Color(fl!("colors-accent"))); // so does the accent's
+        assert_eq!(c.list[0].bg, "");
+        c.update(ColorMsg::Bg(false));
+        assert_eq!(c.field, color_name("#33c7de", false).unwrap());
     }
 }

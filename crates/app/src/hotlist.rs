@@ -239,6 +239,7 @@ pub fn sep_row<'a>(selected: bool, on: Message) -> Element<'a, Message> {
                 true,
                 false,
                 crate::config::Skin::Modern,
+                None,
             )),
     )
     .padding(0)

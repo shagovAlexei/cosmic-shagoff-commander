@@ -3,6 +3,7 @@
 use crate::listing::Entry;
 use crate::mask::Mask;
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, SystemTime};
 
 /// What a rule applies to, besides its mask.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,13 +33,63 @@ impl What {
 }
 
 /// `mask`: as Num+ (`*.rs;*.toml`), empty = every name. `color`: `#RRGGBB`, empty = the theme's
-/// accent.
+/// accent. `bg`: the row's background, empty = none. `size` (`>100M`, `<1k`, files only) and `age`
+/// in days (`<7` newer than a week, `>365` older than a year): empty = any.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rule {
     pub mask: String,
     pub what: What,
     pub color: String,
+    pub bg: String,
+    pub size: String,
+    pub age: String,
+}
+
+/// `>N` (more than) or `<N` (less than).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bound {
+    pub more: bool,
+    pub n: u64,
+}
+
+impl Bound {
+    fn fits(self, v: u64) -> bool {
+        if self.more { v > self.n } else { v < self.n }
+    }
+}
+
+/// `>N` / `<N`, N with an optional `k` / `M` / `G` (1024-based, Latin or Cyrillic, any case) when
+/// `units`; empty → `Some(None)`; anything else → `None`.
+pub fn bound(s: &str, units: bool) -> Option<Option<Bound>> {
+    let t: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    if t.is_empty() {
+        return Some(None);
+    }
+    let (more, rest) = match t.chars().next()? {
+        '>' => (true, &t[1..]),
+        '<' => (false, &t[1..]),
+        _ => return None,
+    };
+    let last = rest.chars().last()?;
+    let mul: u64 = match last.to_lowercase().next() {
+        Some('k' | 'к') if units => 1 << 10,
+        Some('m' | 'м') if units => 1 << 20,
+        Some('g' | 'г') if units => 1 << 30,
+        _ => 1,
+    };
+    let num = match mul {
+        1 => rest,
+        _ => &rest[..rest.len() - last.len_utf8()],
+    };
+    // Digits only: `parse` would also take a sign.
+    if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(Some(Bound {
+        more,
+        n: num.parse::<u64>().ok()?.checked_mul(mul)?,
+    }))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,42 +119,101 @@ pub fn defaults() -> Vec<Rule> {
         mask: String::new(),
         what,
         color: color.into(),
+        ..Default::default()
     };
     vec![rule(What::Links, "#33c7de"), rule(What::Exec, "#ff7800")]
 }
 
-/// The rules ready to apply: masks parsed and bad colours dropped once, not per row and frame.
+/// Text on `bg` is better black (a light background) than white.
+pub fn dark_text_on([r, g, b]: [u8; 3]) -> bool {
+    299 * r as u32 + 587 * g as u32 + 114 * b as u32 > 128_000
+}
+
+/// What a fitting rule gives a row: the name's colour and, maybe, a background.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Look {
+    /// `None`: an empty colour on a background — the row's own text (black or white on it).
+    pub fg: Option<Paint>,
+    pub bg: Option<[u8; 3]>,
+}
+
+#[derive(Clone, Debug)]
+struct Ready {
+    mask: Option<Mask>,
+    what: What,
+    size: Option<Bound>,
+    /// In days.
+    age: Option<Bound>,
+    look: Look,
+}
+
+impl Ready {
+    fn fits(&self, e: &Entry, now: SystemTime) -> bool {
+        // Dirs have no size; a date in the future is 0 days old.
+        let days = || {
+            now.duration_since(e.mtime)
+                .unwrap_or(Duration::ZERO)
+                .as_secs()
+                / 86400
+        };
+        self.what.matches(e)
+            && self.mask.as_ref().is_none_or(|m| m.matches(&e.name))
+            && self.size.is_none_or(|b| !e.is_dir() && b.fits(e.size))
+            && self.age.is_none_or(|b| b.fits(days()))
+    }
+}
+
+/// The rules ready to apply: masks and bounds parsed, bad rules dropped once, not per row and
+/// frame.
 #[derive(Clone, Debug, Default)]
-pub struct Scheme(Vec<(Option<Mask>, What, Paint)>);
+pub struct Scheme(Vec<Ready>);
+
+impl Rule {
+    /// Parsed for use; `None` if its colour, background or a bound does not parse.
+    fn ready(&self) -> Option<Ready> {
+        let bg = match parse(&self.bg)? {
+            Paint::Rgb(c) => Some(c),
+            Paint::Accent => None,
+        };
+        Some(Ready {
+            mask: (!self.mask.trim().is_empty()).then(|| Mask::parse(&self.mask)),
+            what: self.what,
+            size: bound(&self.size, true)?,
+            age: bound(&self.age, false)?,
+            look: Look {
+                fg: Some(parse(&self.color)?).filter(|p| bg.is_none() || *p != Paint::Accent),
+                bg,
+            },
+        })
+    }
+
+    /// Every field parses (else the rule never applies).
+    pub fn valid(&self) -> bool {
+        self.ready().is_some()
+    }
+}
 
 impl Scheme {
     pub fn new(rules: &[Rule]) -> Self {
-        Self(
-            rules
-                .iter()
-                .filter_map(|r| {
-                    let mask = (!r.mask.trim().is_empty()).then(|| Mask::parse(&r.mask));
-                    Some((mask, r.what, parse(&r.color)?))
-                })
-                .collect(),
-        )
+        Self(rules.iter().filter_map(Rule::ready).collect())
     }
 
-    /// The colour of `e`'s name: the first rule whose kind and mask fit. `..` has none.
-    pub fn pick(&self, e: &Entry) -> Option<Paint> {
+    /// `e`'s look: the first rule whose kind, mask, size and age fit. `..` has none.
+    pub fn pick(&self, e: &Entry, now: SystemTime) -> Option<Look> {
         if e.name == crate::panel::PARENT {
             return None;
         }
-        self.0
-            .iter()
-            .find(|(m, w, _)| w.matches(e) && m.as_ref().is_none_or(|m| m.matches(&e.name)))
-            .map(|(_, _, p)| *p)
+        self.0.iter().find(|r| r.fits(e, now)).map(|r| r.look)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fg(s: &Scheme, e: &Entry) -> Option<Paint> {
+        s.pick(e, SystemTime::now()).and_then(|l| l.fg)
+    }
     use crate::listing::Kind;
     use std::time::SystemTime;
 
@@ -140,6 +250,7 @@ mod tests {
             mask: mask.into(),
             what,
             color: color.into(),
+            ..Default::default()
         };
         let rules = Scheme::new(&[
             rule("", What::Links, ""),
@@ -150,34 +261,98 @@ mod tests {
         ]);
         let file = |n: &str, mode| entry(n, Kind::File, false, mode);
         assert_eq!(
-            rules.pick(&file("a.rs", 0o644)),
+            fg(&rules, &file("a.rs", 0o644)),
             Some(Paint::Rgb([255, 0, 0]))
         );
         assert_eq!(
-            rules.pick(&file("run", 0o755)),
+            fg(&rules, &file("run", 0o755)),
             Some(Paint::Rgb([0, 255, 0]))
         );
-        assert_eq!(rules.pick(&file("a.txt", 0o644)), None);
-        assert_eq!(rules.pick(&entry("..", Kind::Dir, false, 0o755)), None);
+        assert_eq!(fg(&rules, &file("a.txt", 0o644)), None);
+        assert_eq!(fg(&rules, &entry("..", Kind::Dir, false, 0o755)), None);
         let broken = Scheme::new(&[rule("", What::Exec, "#00ff00")]);
-        assert_eq!(broken.pick(&entry("gone", Kind::File, true, 0o777)), None);
+        assert_eq!(fg(&broken, &entry("gone", Kind::File, true, 0o777)), None);
         assert_eq!(
-            rules.pick(&entry("a.rs", Kind::File, true, 0o644)),
+            fg(&rules, &entry("a.rs", Kind::File, true, 0o644)),
             Some(Paint::Accent)
         );
         assert_eq!(
-            rules.pick(&entry("src", Kind::Dir, false, 0o755)),
+            fg(&rules, &entry("src", Kind::Dir, false, 0o755)),
             Some(Paint::Rgb([0, 0, 255]))
         );
         let stock = Scheme::new(&defaults());
-        assert_eq!(stock.pick(&file("a", 0o644)), None);
+        assert_eq!(fg(&stock, &file("a", 0o644)), None);
         assert_eq!(
-            stock.pick(&file("run", 0o755)),
+            fg(&stock, &file("run", 0o755)),
             Some(Paint::Rgb([0xff, 0x78, 0]))
         );
         assert_eq!(
-            stock.pick(&entry("l", Kind::File, true, 0o777)),
+            fg(&stock, &entry("l", Kind::File, true, 0o777)),
             Some(Paint::Rgb([0x33, 0xc7, 0xde]))
         );
+    }
+
+    #[test]
+    fn text_on_backgrounds() {
+        assert!(dark_text_on([0xf9, 0xf0, 0x6b])); // light yellow
+        assert!(dark_text_on([0x99, 0xc1, 0xf1])); // light blue
+        assert!(!dark_text_on([0x1a, 0x5f, 0xb4])); // dark blue
+        assert!(!dark_text_on([0, 0, 0]));
+    }
+
+    #[test]
+    fn bounds_parse() {
+        let b = |more, n| Some(Some(Bound { more, n }));
+        assert_eq!(bound("", true), Some(None));
+        assert_eq!(bound(">100", true), b(true, 100));
+        assert_eq!(bound("< 2k", true), b(false, 2048));
+        assert_eq!(bound(">1М", true), b(true, 1 << 20)); // Cyrillic
+        assert_eq!(bound(">3g", true), b(true, 3 << 30));
+        assert_eq!(bound("<7", false), b(false, 7));
+        assert_eq!(bound("<7k", false), None); // days take no units
+        assert_eq!(bound("7", true), None);
+        assert_eq!(bound(">", true), None);
+        assert_eq!(bound(">k", true), None);
+        assert_eq!(bound(">+5", true), None);
+        assert_eq!(bound(">99999999999999999999g", true), None);
+    }
+
+    #[test]
+    fn size_age_and_background() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100 * 86400);
+        let rule = |size: &str, age: &str, bg: &str| Rule {
+            what: What::Any,
+            color: "#ff0000".into(),
+            bg: bg.into(),
+            size: size.into(),
+            age: age.into(),
+            ..Default::default()
+        };
+        let at = |size, days_old: u64, kind| {
+            let mut e = entry("x", kind, false, 0o644);
+            e.size = size;
+            e.mtime = now - Duration::from_secs(days_old * 86400);
+            e
+        };
+        let big = Scheme::new(&[rule(">1k", "", "#00ff00")]);
+        let look = big.pick(&at(2048, 0, Kind::File), now).unwrap();
+        assert_eq!(look.bg, Some([0, 255, 0]));
+        assert_eq!(big.pick(&at(1024, 0, Kind::File), now), None);
+        assert_eq!(big.pick(&at(4096, 0, Kind::Dir), now), None); // dirs have no size
+        let fresh = Scheme::new(&[rule("", "<7", "")]);
+        assert_eq!(fresh.pick(&at(0, 6, Kind::Dir), now).unwrap().bg, None);
+        let plain = Scheme::new(&[Rule {
+            bg: "#ffffff".into(),
+            ..Default::default()
+        }]);
+        let look = plain.pick(&at(0, 0, Kind::File), now).unwrap();
+        assert_eq!((look.fg, look.bg), (None, Some([255, 255, 255]))); // accent → the row's text
+        assert_eq!(fresh.pick(&at(0, 7, Kind::File), now), None);
+        let mut future = at(0, 0, Kind::File);
+        future.mtime = now + Duration::from_secs(86400);
+        assert!(fresh.pick(&future, now).is_some());
+        // A bad bound or background drops the rule.
+        assert!(Scheme::new(&[rule("1k", "", "")]).0.is_empty());
+        assert!(Scheme::new(&[rule("", "", "#zz0000")]).0.is_empty());
     }
 }
