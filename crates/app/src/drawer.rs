@@ -134,7 +134,11 @@ fn help() -> Element<'static, Message> {
     for (title, rows) in crate::help::sections() {
         let mut s = settings::section().title(title);
         for (keys, what, _) in rows {
-            s = s.add(settings::item(what, keys_view(keys)));
+            // The text takes what the keys leave: a long one no longer pushes them off the edge.
+            s = s.add(settings::item_row(vec![
+                widget::text::body(what).width(Length::Fill).into(),
+                keys_view(keys),
+            ]));
         }
         col = col.push(s);
     }
