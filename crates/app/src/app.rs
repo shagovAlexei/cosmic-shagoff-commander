@@ -79,9 +79,25 @@ pub struct Tab {
     pub name: Option<String>,
     /// Stops the dir size counts (Space, Alt+Shift+Enter) of the dir shown; set when it is left.
     counting: Arc<AtomicBool>,
+    /// Stops the Ctrl+B read under way (Esc, the dir left).
+    branch_stop: Arc<AtomicBool>,
+}
+
+/// A closed tab's background reads (branch, dir sizes) stop with it.
+impl Drop for Tab {
+    fn drop(&mut self) {
+        self.counting.store(true, Ordering::Relaxed);
+        self.branch_stop.store(true, Ordering::Relaxed);
+    }
 }
 
 impl Tab {
+    /// Drop the Ctrl+B read under way, if any: its result is no longer wanted.
+    fn stop_branch(&mut self) {
+        self.branching = None;
+        self.branch_stop.store(true, Ordering::Relaxed);
+    }
+
     fn new(id: u64, cwd: PathBuf) -> Self {
         Self {
             id,
@@ -101,6 +117,7 @@ impl Tab {
             locked: false,
             name: None,
             counting: Arc::default(),
+            branch_stop: Arc::default(),
         }
     }
 
@@ -162,6 +179,7 @@ impl Tab {
             locked: false,
             name: None,
             counting: Arc::default(),
+            branch_stop: Arc::default(),
         }
     }
 }
@@ -494,7 +512,8 @@ pub enum Message {
         /// The request: dropped unless the tab still waits for this one.
         id: u64,
         root: PathBuf,
-        paths: Vec<PathBuf>,
+        /// `None`: stopped.
+        paths: Option<Vec<PathBuf>>,
     },
     /// "Open with…" → "All programs…": every installed one.
     OpenWithAll(Vec<openwith::App>),
@@ -1669,6 +1688,15 @@ impl App {
                         }
                     } else if let Some((_, cancel)) = &self.connecting {
                         cancel.store(true, Ordering::Relaxed);
+                    } else if (self.panes.iter())
+                        .flat_map(|p| p.items())
+                        .any(|t| t.branching.is_some())
+                    {
+                        // Every one under way: the hint does not say whose.
+                        for t in self.panes.iter_mut().flat_map(|p| p.items_mut()) {
+                            t.stop_branch();
+                        }
+                        self.say(StatusKind::Info, fl!("branch-stopped"));
                     } else if self.config.show_cmdline && !self.cmdline.is_empty() {
                         self.cmdline.clear();
                     } else {
@@ -1868,22 +1896,23 @@ impl App {
                 root,
                 paths,
             } => {
-                if self
-                    .status
-                    .as_ref()
-                    .is_some_and(|s| s.kind == StatusKind::Busy)
-                {
-                    self.status = None;
-                }
                 let Some(i) = (self.panes[side].items().iter()).position(|t| t.id == tab) else {
                     return Task::none();
                 };
                 let t = &mut self.panes[side].items_mut()[i];
-                // The tab went somewhere meanwhile (even back here), or asked again: not wanted.
+                // The tab went somewhere meanwhile (even back here), or asked again: not wanted
+                // (and the status is someone else's by now).
                 if t.branching != Some(id) {
                     return Task::none();
                 }
+                if (self.status.as_ref()).is_some_and(|s| s.kind == StatusKind::Busy) {
+                    self.status = None;
+                }
+                let t = &mut self.panes[side].items_mut()[i];
                 t.branching = None;
+                let Some(paths) = paths else {
+                    return Task::none(); // stopped
+                };
                 t.results = Some((root.clone(), Arc::new(paths)));
                 t.branch = true;
                 if self.panes[side].active().id == tab {
@@ -2388,7 +2417,7 @@ impl App {
         }
         let t = self.panes[side].active_mut();
         t.results = None;
-        t.branching = None; // a branch read for the dir left (or re-entered) is not wanted
+        t.stop_branch(); // a branch read for the dir left (or re-entered) is not wanted
         let volumes = self.refresh_volumes(false);
         Task::batch([self.reload(side, path, focus), volumes])
     }
@@ -4065,6 +4094,7 @@ impl App {
         let t = self.panes[side].active_mut();
         t.results = Some((root.clone(), paths));
         t.branch = false;
+        t.stop_branch(); // a branch read landing later would replace these
         self.reload(side, root, None)
     }
 
@@ -4197,13 +4227,17 @@ impl App {
         }
         let (tab, hidden) = (t.id, self.config.show_hidden);
         let id = self.next_id();
-        self.panes[side].active_mut().branching = Some(id);
+        let stop = Arc::new(AtomicBool::new(false));
+        let t = self.panes[side].active_mut();
+        t.branching = Some(id);
+        t.branch_stop.store(true, Ordering::Relaxed); // an earlier read still going
+        t.branch_stop = stop.clone();
         self.say(StatusKind::Busy, fl!("branch-reading"));
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || listing::branch(&dirs, hidden))
+                tokio::task::spawn_blocking(move || listing::branch(&dirs, hidden, &stop))
                     .await
-                    .unwrap_or_default()
+                    .unwrap_or(Some(Vec::new())) // the walker died: an empty branch, as before
             },
             move |paths| {
                 cosmic::Action::App(Message::BranchListed {
@@ -6528,7 +6562,8 @@ mod tests {
         let tab = app.panes[0].active().id;
         let root = tmp.path().to_path_buf();
         let listed = |app: &mut App, root: PathBuf| {
-            let paths = listing::branch(std::slice::from_ref(&root), false);
+            let paths =
+                listing::branch(std::slice::from_ref(&root), false, &AtomicBool::new(false));
             let id = app.panes[0].active().branching.unwrap_or(0);
             let _ = app.update(Message::BranchListed {
                 side: 0,
@@ -6555,15 +6590,54 @@ mod tests {
         let id = app.panes[0].active().branching.unwrap();
         let _ = app.load(0, root.join("sub"), None);
         let _ = app.load(0, root.clone(), None);
-        let paths = listing::branch(std::slice::from_ref(&root), false);
+        let paths = listing::branch(std::slice::from_ref(&root), false, &AtomicBool::new(false));
         let _ = app.update(Message::BranchListed {
             side: 0,
             tab,
             id,
-            root,
+            root: root.clone(),
             paths,
         });
         assert!(app.panes[0].active().results.is_none());
+        // Leaving the dir stops the read too.
+        let _ = app.update(Message::Key(Action::Branch));
+        let stop = app.panes[0].active().branch_stop.clone();
+        let _ = app.load(0, root.join("sub"), None);
+        assert!(stop.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn esc_stops_a_branch_read() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let tab = app.panes[0].active().id;
+        let _ = app.update(Message::Key(Action::Branch));
+        let (id, stop) = {
+            let t = app.panes[0].active();
+            (t.branching.unwrap(), t.branch_stop.clone())
+        };
+        let _ = app.update(Message::DialogCancel); // Esc
+        assert!(stop.load(Ordering::Relaxed));
+        assert_eq!(app.panes[0].active().branching, None);
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Info));
+        // What the worker sends back afterwards (stopped, or done just before) is dropped.
+        let _ = app.update(Message::BranchListed {
+            side: 0,
+            tab,
+            id,
+            root: tmp.path().to_path_buf(),
+            paths: Some(Vec::new()),
+        });
+        assert!(app.panes[0].active().results.is_none());
+        // Another tab's read: Esc stops it too; closing a tab stops its own.
+        let _ = app.update(Message::Key(Action::Branch));
+        let first = app.panes[0].active().branch_stop.clone();
+        let _ = app.update(Message::Key(Action::NewTab));
+        let _ = app.update(Message::DialogCancel);
+        assert!(first.load(Ordering::Relaxed));
+        let _ = app.update(Message::Key(Action::Branch));
+        let second = app.panes[0].active().branch_stop.clone();
+        let _ = app.update(Message::Key(Action::CloseTab));
+        assert!(second.load(Ordering::Relaxed));
     }
 
     #[test]
