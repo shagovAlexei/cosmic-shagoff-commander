@@ -279,6 +279,8 @@ pub struct App {
     pub(crate) queue: VecDeque<Queued>,
     /// A background job's question while another dialog is open: shown once that one closes.
     held: Option<Dialog>,
+    /// Files of the right-button drag in flight (`Message::DragStart`).
+    right_drag: Option<Arc<Vec<PathBuf>>>,
     /// Quit confirmed while a job ran: exit when it has stopped.
     quitting: bool,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
@@ -510,6 +512,10 @@ pub enum Message {
         paths: Vec<PathBuf>,
         mv: bool,
     },
+    /// A row drag started; `Some(files)`: with the right button (their drop asks what to do).
+    DragStart(Option<Arc<Vec<PathBuf>>>),
+    /// Right-button drop menu: Copy / Move / Link.
+    DropAs(InputOp),
     /// Files are held over a dir row (it lights up) / no longer over any.
     DropHover(Option<(usize, usize)>),
     /// The pointer left that row while dragging.
@@ -741,6 +747,7 @@ impl App {
             job: None,
             queue: VecDeque::new(),
             held: None,
+            right_drag: None,
             quitting: false,
             input_id: widget::Id::unique(),
             search: None,
@@ -1667,6 +1674,19 @@ impl App {
                 return task;
             }
             Message::Pasted(_) => {}
+            Message::DragStart(right) => self.right_drag = right,
+            Message::DropAs(op) if matches!(self.dialog, Some(Dialog::DropMenu { .. })) => {
+                if let Some(Dialog::DropMenu { side, dir, sources }) = self.dialog.take() {
+                    self.dialog = Some(Dialog::Input {
+                        op,
+                        side,
+                        sources,
+                        input: dir_input(&dir),
+                    });
+                    return widget::text_input::focus(self.input_id.clone());
+                }
+            }
+            Message::DropAs(_) => {} // the menu is gone already
             Message::DropHover(h) => self.drop_hover = h,
             Message::DropLeave(h) => {
                 if self.drop_hover == Some(h) {
@@ -1680,6 +1700,9 @@ impl App {
                 mv,
             } => {
                 self.drop_hover = None;
+                // Any drop ends that drag, used or not: a later drop of the same files from
+                // another program must not get the menu.
+                let right_drag = self.right_drag.take();
                 let t = self.panes[side].active();
                 // A job "In background" does not stop it: OK then says the job is running, as F5.
                 // Search results have no one dir; a drop on a tab or a drive button names its own.
@@ -1696,13 +1719,23 @@ impl App {
                 // The pane the files came from, if one shows them: its marks go when done, as F5.
                 let parent = paths.first().and_then(|p| p.parent());
                 let from = (0..2).find(|&s| Some(self.panes[s].active().panel.cwd()) == parent);
+                let side = from.unwrap_or(side);
+                // Our own right-button drag (the same files): ask, as TC's drop menu.
+                if right_drag.is_some_and(|r| *r == paths) {
+                    self.dialog = Some(Dialog::DropMenu {
+                        side,
+                        dir,
+                        sources: paths,
+                    });
+                    return Task::none();
+                }
                 // Shift as we see it: the compositor's chosen action ignores it (COSMIC keeps the
                 // destination's preferred Copy), but the window keeps the keyboard while dragging.
                 let mv = mv || self.mods.shift();
                 // As F5 / F6 in TC: the same dialog, aimed at the dir the files were dropped on.
                 self.dialog = Some(Dialog::Input {
                     op: if mv { InputOp::Move } else { InputOp::Copy },
-                    side: from.unwrap_or(side),
+                    side,
                     sources: paths,
                     input: dir_input(&dir),
                 });
@@ -2774,6 +2807,7 @@ impl App {
             Action::ClipPaste => return clip::take(),
             Action::Copy
             | Action::CopySame
+            | Action::Link
             | Action::Properties
             | Action::Move
             | Action::Rename
@@ -2905,15 +2939,15 @@ impl App {
                 select: action == Action::SelectGroup,
                 input: self.masks.first().cloned().unwrap_or_else(|| "*".into()),
             }),
-            Action::Copy | Action::Move => {
+            Action::Copy | Action::Move | Action::Link => {
                 let sources = panel.targets();
                 if sources.is_empty() {
                     return None;
                 }
-                let op = if action == Action::Copy {
-                    InputOp::Copy
-                } else {
-                    InputOp::Move
+                let op = match action {
+                    Action::Copy => InputOp::Copy,
+                    Action::Link => InputOp::Link,
+                    _ => InputOp::Move,
                 };
                 Some(input(
                     op,
@@ -3436,7 +3470,7 @@ impl App {
                 Task::none()
             }
             // Answered with their own buttons, not Enter/OK.
-            d @ (Dialog::Conflict { .. } | Dialog::Error { .. }) => {
+            d @ (Dialog::Conflict { .. } | Dialog::Error { .. } | Dialog::DropMenu { .. }) => {
                 self.dialog = Some(d);
                 Task::none()
             }
@@ -3504,6 +3538,57 @@ impl App {
         }
     }
 
+    /// Ctrl+Shift+F5: links placed by F5's rules; instant, so no job. Both panes reread.
+    fn make_links(&mut self, side: usize, sources: &[PathBuf], target: &Path) -> Task<Message> {
+        if [sources.first().map(PathBuf::as_path), Some(target)]
+            .into_iter()
+            .flatten()
+            .any(inside_archive)
+        {
+            self.say(StatusKind::Error, fl!("archive-read-only"));
+            return Task::none();
+        }
+        // As F5: a trailing `/` names a dir to put them in, made if missing.
+        if target.as_os_str().as_encoded_bytes().ends_with(b"/")
+            && let Err(e) = std::fs::create_dir_all(target)
+        {
+            let path = target.display().to_string();
+            self.say(
+                StatusKind::Error,
+                fl!("link-failed", path = path, err = e.to_string()),
+            );
+            return Task::none();
+        }
+        let pairs = match ops::plan(sources, target) {
+            Ok(p) => p,
+            Err(e) => {
+                self.say(StatusKind::Error, plan_error(&e));
+                return Task::none();
+            }
+        };
+        let failed = ops::symlinks(&pairs);
+        if let Some((path, e)) = failed.first() {
+            let (path, err) = (path.display().to_string(), e.to_string());
+            let msg = match failed.len() {
+                1 => fl!("link-failed", path = path, err = err),
+                n => fl!("links-failed", n = n, path = path, err = err),
+            };
+            self.say(StatusKind::Error, msg);
+        }
+        // Marks stay on the ones not linked, to try again.
+        let done: Vec<PathBuf> = pairs
+            .iter()
+            .filter(|(_, d)| !failed.iter().any(|(f, _)| f == d))
+            .map(|(s, _)| s.clone())
+            .collect();
+        self.panes[side].active_mut().panel.unmark(&done);
+        let reload = |app: &mut Self, s: usize| {
+            let cwd = app.panes[s].active().panel.cwd().to_path_buf();
+            app.reload(s, cwd, None)
+        };
+        Task::batch([reload(self, 0), reload(self, 1)])
+    }
+
     /// F5 / F6 / rename: resolve the target, then run the transfer on a worker thread.
     fn start_transfer(
         &mut self,
@@ -3521,6 +3606,9 @@ impl App {
             .map(Path::to_path_buf);
         let from_archive = from.as_deref().and_then(archive::split_path);
         let target = cwd.join(session::expand_home(Path::new(input), &self.home));
+        if op == InputOp::Link {
+            return self.make_links(side, &sources, &target);
+        }
         let to_archive = (op != InputOp::Rename)
             .then(|| archive::split_path(&target))
             .flatten();
@@ -4349,7 +4437,10 @@ impl App {
             | Action::CopySame
             | Action::NewFile
             | Action::Properties => inside(side),
-            Action::Pack | Action::Unpack | Action::SyncDirs => inside(side) || inside(1 - side),
+            // A link to or into an archive's inside would point at nothing on disk.
+            Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
+                inside(side) || inside(1 - side)
+            }
             Action::Copy | Action::Move | Action::ClipCopy => inside(side) && inside(1 - side),
             _ => false,
         }
@@ -6704,6 +6795,30 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_shift_f5_links_the_file_into_the_other_pane() {
+        let (tmp, mut app, a) = paste_setup();
+        let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+        listed_at(&mut app, 0, &src);
+        listed_at(&mut app, 1, &dst);
+        app.panes[0].active_mut().panel.set_cursor(1); // "a", after ".."
+        let _ = app.update(Message::Key(Action::Link));
+        let Some(Dialog::Input {
+            op: InputOp::Link,
+            input,
+            ..
+        }) = &app.dialog
+        else {
+            panic!("no link dialog");
+        };
+        assert_eq!(input, &dir_input(&dst));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(std::fs::read_link(dst.join("a")).unwrap(), a);
+        let _ = app.update(Message::Key(Action::Link)); // again: the name is taken
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.msg().is_some_and(|m| m.contains("dst/a")));
+    }
+
+    #[test]
     fn shift_f5_with_marks_offers_a_mask_for_all_of_them() {
         let mut app = files_app(&["a.txt", "b.txt"]);
         let _ = app.update(Message::Key(Action::Down));
@@ -7795,6 +7910,39 @@ mod tests {
         let _ = app.update(drop(None, false));
         assert!(app.dialog.is_none());
         assert_eq!(app.drop_hover, None);
+    }
+
+    #[test]
+    fn right_button_drop_asks_copy_move_or_link() {
+        let (tmp, mut app, a) = paste_setup();
+        let dst = tmp.path().join("dst");
+        let drop = |paths: Vec<PathBuf>| Message::Drop {
+            side: 0,
+            dir: None,
+            paths,
+            mv: false,
+        };
+        let _ = app.update(Message::DragStart(Some(Arc::new(vec![a.clone()]))));
+        let _ = app.update(drop(vec![a.clone()]));
+        assert!(matches!(app.dialog, Some(Dialog::DropMenu { .. })));
+        let _ = app.update(Message::DropAs(InputOp::Link));
+        let Some(Dialog::Input { op, input, .. }) = app.dialog.take() else {
+            panic!("no dialog")
+        };
+        assert_eq!((op, input), (InputOp::Link, dir_input(&dst)));
+        // Used once; a left drag (or files from another program) gets the copy dialog.
+        let _ = app.update(drop(vec![a.clone()]));
+        assert!(matches!(
+            app.dialog.take(),
+            Some(Dialog::Input {
+                op: InputOp::Copy,
+                ..
+            })
+        ));
+        let _ = app.update(Message::DragStart(Some(Arc::new(vec![a.clone()]))));
+        let other = tmp.path().join("src/other");
+        let _ = app.update(drop(vec![other]));
+        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
     }
 
     #[test]

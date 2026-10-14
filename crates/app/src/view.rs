@@ -291,7 +291,8 @@ fn brief_list<'a>(
             } else {
                 e.name.clone()
             };
-            let cell = container(name_cell(e, label, skin))
+            let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
+            let cell = container(name_cell(e, label, skin, lit))
                 .padding([0, 6])
                 .height(Length::Fixed(row_h))
                 .width(Length::Fill)
@@ -316,7 +317,8 @@ fn brief_list<'a>(
 }
 
 /// Theme icon by type, then the name (cut with "…").
-fn name_cell(e: &Entry, label: String, skin: Skin) -> Element<'static, Message> {
+/// `plain`: on the cursor / a marked row, whose own text colour must win.
+fn name_cell(e: &Entry, label: String, skin: Skin, plain: bool) -> Element<'static, Message> {
     let (name, generic) = format::icon_name(e);
     let icon = widget::icon::from_name(name)
         .fallback(Some(widget::icon::IconFallback::Names(vec![
@@ -327,7 +329,13 @@ fn name_cell(e: &Entry, label: String, skin: Skin) -> Element<'static, Message> 
             Skin::Modern => 20,
         })
         .icon();
-    row![icon, cell(label)]
+    // Symlinks in the accent colour, as `ls --color` sets them apart.
+    let label = if e.is_link && !plain {
+        cell(label).class(theme::Text::Accent)
+    } else {
+        cell(label)
+    };
+    row![icon, label]
         .spacing(4)
         .align_y(Alignment::Center)
         .into()
@@ -556,13 +564,18 @@ fn file_row<'a>(
     let (date, attrs) = if is_parent {
         (String::new(), String::new())
     } else {
-        (format::date(e.mtime, &app.tz), format::perms(e.mode))
+        (format::date(e.mtime, &app.tz), format::attrs(e))
     };
     let cells = row![
         // Empty style: the default (Transparent) sets its own text colour over the cursor's.
-        container(name_cell(e, format::display_name(e), app.config.skin))
-            .width(Length::Fill)
-            .class(theme::Container::custom(|_| container::Style::default())),
+        container(name_cell(
+            e,
+            format::display_name(e),
+            app.config.skin,
+            is_cursor || is_marked
+        ))
+        .width(Length::Fill)
+        .class(theme::Container::custom(|_| container::Style::default())),
         cell(e.ext.clone()).width(Length::Fixed(app.cols[0])),
         cell(size)
             .width(Length::Fixed(app.cols[1]))

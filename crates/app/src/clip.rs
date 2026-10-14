@@ -75,20 +75,24 @@ pub fn take() -> Task<Message> {
 /// desktop take them too. The source is the window: a widget id is new on every frame, so the
 /// runtime would not find the row it started from. Copy only: offered Move too, the desktop moved
 /// the files away (Shift-move between our own panes reads `App::mods`, not the action).
+/// The right button too (`crate::dnd`): `Message::DragStart` remembers that drag's files, so their
+/// drop on us asks Copy / Move / Link.
 pub fn drag<'a>(
     child: impl Into<cosmic::Element<'a, Message>>,
     paths: std::sync::Arc<Vec<PathBuf>>,
     window: cosmic::iced::window::Id,
 ) -> cosmic::Element<'a, Message> {
     use cosmic::iced::clipboard::dnd::DndAction;
-    use cosmic::widget;
-    widget::dnd_source(child)
-        .action(DndAction::Copy)
-        .drag_content(move || Files(fmt::encode(Kind::Copy, &paths)))
-        .window(window)
-        .on_finish(Some(Message::DropHover(None)))
-        .on_cancel(Some(Message::DropHover(None)))
-        .into()
+    let started = paths.clone();
+    crate::dnd::drag_source(
+        child,
+        window,
+        DndAction::Copy,
+        move || Files(fmt::encode(Kind::Copy, &paths)),
+        move |right| Message::DragStart(right.then(|| started.clone())),
+        Message::DropHover(None),
+    )
+    .into()
 }
 
 /// Files dropped on `child` (from us or another program) arrive as `on(paths, move?)`.

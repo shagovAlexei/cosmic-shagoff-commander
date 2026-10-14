@@ -2,6 +2,7 @@ mod app;
 mod clip;
 mod config;
 mod dialogs;
+mod dnd;
 mod drawer;
 mod find;
 mod help;

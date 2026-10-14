@@ -265,6 +265,20 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
     Ok(pairs)
 }
 
+/// Ctrl+Shift+F5: a symbolic link at each destination to its source (absolute, as resolved by
+/// `plan`). An existing name is never replaced. The failures, by destination.
+pub fn symlinks(pairs: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, io::Error)> {
+    pairs
+        .iter()
+        .filter_map(|(src, dst)| {
+            let abs = std::path::absolute(src).unwrap_or_else(|_| src.clone());
+            std::os::unix::fs::symlink(abs, dst)
+                .err()
+                .map(|e| (dst.clone(), e))
+        })
+        .collect()
+}
+
 pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handler) -> Report {
     let total = pairs.iter().map(|(s, _)| tree_size(s)).sum();
     let mut t = Transfer {
@@ -969,6 +983,21 @@ mod tests {
         };
         let r = copy(&[d.path().join("a")], &d.path().join("to"), &mut h);
         (d, h, r)
+    }
+
+    #[test]
+    fn symlinks_point_at_the_sources_and_never_replace() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, to) = (d.path().join("a"), d.path().join("to"));
+        write(&a, "x");
+        fs::create_dir(&to).unwrap();
+        write(&to.join("taken"), "keep");
+        let pairs = plan(std::slice::from_ref(&a), &to).unwrap();
+        assert!(symlinks(&pairs).is_empty());
+        assert_eq!(fs::read_link(to.join("a")).unwrap(), a);
+        let failed = symlinks(&[(a, to.join("taken"))]);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(read(&to.join("taken")), "keep");
     }
 
     #[test]

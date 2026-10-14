@@ -23,6 +23,8 @@ use std::time::SystemTime;
 pub enum InputOp {
     Copy,
     Move,
+    /// Ctrl+Shift+F5: where to put symbolic links to `sources`.
+    Link,
     Mkdir,
     /// Shift+F4: name of the file to create (or open) in the editor.
     NewFile,
@@ -102,6 +104,12 @@ pub enum Dialog {
     },
     /// Quit while a job runs or waits in the queue.
     ConfirmExit,
+    /// Files dragged with the right button were dropped (TC): what to do with them.
+    DropMenu {
+        side: usize,
+        dir: PathBuf,
+        sources: Vec<PathBuf>,
+    },
     /// Ctrl+F: network location and password.
     Connect {
         side: usize,
@@ -642,6 +650,7 @@ pub fn view<'a>(
             let title = match op {
                 InputOp::Copy => fl!("copy-to", what = what(sources)),
                 InputOp::Move => fl!("move-to", what = what(sources)),
+                InputOp::Link => fl!("link-to", what = what(sources)),
                 InputOp::Mkdir => fl!("mkdir"),
                 InputOp::NewFile => fl!("new-file"),
                 InputOp::Rename => fl!("rename"),
@@ -675,6 +684,24 @@ pub fn view<'a>(
             )
             .secondary_action(cancel)
             .into(),
+        Dialog::DropMenu { dir, sources, .. } => {
+            let b = |label: String, op: InputOp| {
+                widget::button::text(label).on_press(Message::DropAs(op))
+            };
+            widget::dialog()
+                .title(fl!("drop-menu", what = what(sources)))
+                .body(dir.display().to_string())
+                .control(
+                    row![
+                        b(fl!("drop-copy"), InputOp::Copy),
+                        b(fl!("drop-move"), InputOp::Move),
+                        b(fl!("drop-link"), InputOp::Link),
+                    ]
+                    .spacing(8),
+                )
+                .secondary_action(cancel)
+                .into()
+        }
         Dialog::ConfirmExit => widget::dialog()
             .title(fl!("exit-busy-title"))
             .body(fl!("exit-busy"))
