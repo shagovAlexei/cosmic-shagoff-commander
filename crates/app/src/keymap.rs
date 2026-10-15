@@ -265,8 +265,8 @@ pub enum ListerKey {
     Encoding(Encoding),
     /// W: wrap long lines.
     Wrap,
-    /// Plus / minus on the main keyboard: bigger / smaller text (Num+ and Num- come from the
-    /// main table as `SelectGroup` and `UnselectGroup`).
+    /// What types plus / equals / minus: bigger / smaller text (unshifted Num+ and Num- come
+    /// from the main table as `SelectGroup` and `UnselectGroup`).
     Zoom(bool),
 }
 
@@ -276,11 +276,8 @@ pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<List
         (Key::Named(Named::F3), _) if mods == Modifiers::SHIFT => {
             return Some(ListerKey::FindPrev);
         }
-        // + is Shift+= on most layouts, elsewhere a key of its own (German: right of Ü):
-        // by the key or by what it types.
-        (_, Physical::Code(Code::Equal)) if (mods - Modifiers::SHIFT).is_empty() => {
-            return Some(ListerKey::Zoom(true));
-        }
+        // By what the key types, not where it is: + is Shift+= on US and Russian, a key of its own
+        // on German (where `-`'s US place types ß).
         (Key::Character(c), _) if (mods - Modifiers::SHIFT).is_empty() => match c.as_str() {
             "+" | "=" => return Some(ListerKey::Zoom(true)),
             "-" => return Some(ListerKey::Zoom(false)),
@@ -298,7 +295,6 @@ pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<List
         Physical::Code(Code::KeyP) => ListerKey::Prev,
         Physical::Code(Code::KeyQ) => ListerKey::Close,
         Physical::Code(Code::KeyW) => ListerKey::Wrap,
-        Physical::Code(Code::Minus) => ListerKey::Zoom(false),
         Physical::Code(Code::KeyA) => ListerKey::Encoding(Encoding::Cp1251),
         Physical::Code(Code::KeyS) => ListerKey::Encoding(Encoding::Cp866),
         Physical::Code(Code::KeyK) => ListerKey::Encoding(Encoding::Koi8r),

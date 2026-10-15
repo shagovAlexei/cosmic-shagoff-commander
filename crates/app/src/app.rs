@@ -4544,6 +4544,14 @@ impl App {
     /// The viewer's text one size up or down: the same setting as in Settings, saved.
     fn lister_zoom(&mut self, up: bool) -> Task<Message> {
         let size = config::size_step(self.config.lister_size(), up);
+        // A picture has no text size (TC zooms it; not yet); at a bound nothing changes.
+        let image = self
+            .lister
+            .as_ref()
+            .is_some_and(|l| l.mode == shagoff_core::lister::Mode::Image);
+        if image || size == self.config.lister_size() {
+            return Task::none();
+        }
         self.set(crate::drawer::Setting::ListerSize(size))
     }
 
@@ -8123,6 +8131,10 @@ mod tests {
         assert_eq!(app.config.lister_size, 16);
         assert_eq!(app.lister.as_ref().map(|l| l.size), Some(16));
         let _ = app.update(Message::Key(Action::UnselectGroup)); // Num-
+        assert_eq!(app.config.lister_size, 15);
+        // A picture: no text to size.
+        app.lister.as_mut().unwrap().mode = shagoff_core::lister::Mode::Image;
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
         assert_eq!(app.config.lister_size, 15);
     }
 

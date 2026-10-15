@@ -346,6 +346,7 @@ help-lister = Просмотр (F3)
 help-lister-scroll = Прокрутка
 help-lister-modes = Текст / hex / картинка
 help-lister-wrap = Перенос длинных строк
+help-lister-zoom = Крупнее / мельче текст (запоминается)
 help-lister-encoding = Кодировка: Windows-1251 / DOS 866 / KOI8-R / UTF-8
 help-lister-step = Следующий / предыдущий файл
 help-lister-find = Поиск

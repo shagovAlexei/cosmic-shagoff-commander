@@ -345,6 +345,7 @@ help-lister = Viewer (F3)
 help-lister-scroll = Scroll
 help-lister-modes = Text / hex / image
 help-lister-wrap = Wrap long lines
+help-lister-zoom = Bigger / smaller text (saved)
 help-lister-encoding = Encoding: Windows-1251 / DOS 866 / KOI8-R / UTF-8
 help-lister-step = Next / previous file
 help-lister-find = Find
