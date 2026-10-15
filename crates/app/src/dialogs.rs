@@ -1429,20 +1429,24 @@ pub fn view<'a>(
                             .wrapping(Wrapping::None)
                     };
                     // `mid`: the bytes that differ from the other side (changed lines).
-                    let half = |c: &Option<(usize, String)>, w: f32, mid: Option<Range<usize>>| {
-                        let content = match (c, mid) {
-                            (Some((n, s)), Some(m)) => row![
-                                mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W)),
-                                mono(expand(&s[..m.start])),
-                                widget::container(mono(expand(&s[m.clone()])))
-                                    .class(diff_style(diff::Kind::Changed)),
-                                mono(expand(&s[m.end..])),
-                            ],
-                            (Some((n, s)), None) => row![
-                                mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W)),
-                                mono(expand(s)),
-                            ],
-                            (None, _) => row![],
+                    let half = |c: &Option<(usize, String)>, w: f32, marks: &[Range<usize>]| {
+                        let content = match c {
+                            Some((n, s)) => {
+                                let mut line =
+                                    row![mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W))];
+                                // Plain text between the changed words, each word tinted.
+                                let mut at = 0;
+                                for m in marks {
+                                    line = line.push(mono(expand(&s[at..m.start])));
+                                    line = line.push(
+                                        widget::container(mono(expand(&s[m.clone()])))
+                                            .class(diff_style(diff::Kind::Changed)),
+                                    );
+                                    at = m.end;
+                                }
+                                line.push(mono(expand(&s[at..])))
+                            }
+                            None => row![],
                         };
                         widget::container(content)
                             .width(Length::Fixed(w))
@@ -1467,12 +1471,11 @@ pub fn view<'a>(
                     for r in &t.rows[first..last] {
                         let (ml, mr) = match (&r.left, &r.right) {
                             (Some((_, a)), Some((_, b))) if r.kind == diff::Kind::Changed => {
-                                let (x, y) = diff::inline(a, b);
-                                (Some(x), Some(y))
+                                diff::words(a, b)
                             }
-                            _ => (None, None),
+                            _ => Default::default(),
                         };
-                        for (side, c, w, m) in [(0, &r.left, wl, ml), (1, &r.right, wr, mr)] {
+                        for (side, c, w, m) in [(0, &r.left, wl, &ml), (1, &r.right, wr, &mr)] {
                             lists[side].push(
                                 widget::container(half(c, w, m))
                                     .height(Length::Fixed(DIFF_ROW_H))

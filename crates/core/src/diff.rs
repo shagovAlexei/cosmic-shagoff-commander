@@ -231,24 +231,80 @@ pub fn rows_with(a: &str, b: &str, limit: usize, o: Opts) -> Text {
     t
 }
 
-/// The differing middle of a changed line pair: byte ranges after the common prefix and before
-/// the common suffix (on char boundaries; they never overlap).
-pub fn inline(a: &str, b: &str) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
-    let mut p = 0;
-    for (x, y) in a.chars().zip(b.chars()) {
-        if x != y {
-            break;
+/// A line cut into words (letters, digits, `_`), runs of spaces and single other chars.
+fn tokens(s: &str) -> Vec<std::ops::Range<usize>> {
+    let class = |c: char| match c {
+        c if c.is_alphanumeric() || c == '_' => 0,
+        c if c.is_whitespace() => 1,
+        _ => 2,
+    };
+    let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut last = None;
+    for (i, c) in s.char_indices() {
+        let k = class(c);
+        match out.last_mut() {
+            Some(r) if last == Some(k) && k != 2 => r.end = i + c.len_utf8(),
+            _ => out.push(i..i + c.len_utf8()),
         }
-        p += x.len_utf8();
+        last = Some(k);
     }
-    let mut q = 0;
-    for (x, y) in a[p..].chars().rev().zip(b[p..].chars().rev()) {
-        if x != y {
-            break;
+    out
+}
+
+/// What differs in a changed line pair, word by word (TC marks the words): byte ranges in `a`
+/// and in `b` of the words not in their longest common sequence; neighbours with only spaces
+/// between are one range.
+pub fn words(a: &str, b: &str) -> (Vec<std::ops::Range<usize>>, Vec<std::ops::Range<usize>>) {
+    let (ta, tb) = (tokens(a), tokens(b));
+    let (n, m) = (ta.len(), tb.len());
+    // ponytail: O(n·m) table; a very long line is marked whole instead.
+    if n * m > 250_000 {
+        return (vec![0..a.len()], vec![0..b.len()]);
+    }
+    let eq = |i: usize, j: usize| a[ta[i].clone()] == b[tb[j].clone()];
+    // lcs[i][j]: the common length of ta[i..] and tb[j..].
+    let mut lcs = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if eq(i, j) {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
         }
-        q += x.len_utf8();
     }
-    (p..a.len() - q, p..b.len() - q)
+    let (mut da, mut db) = (vec![true; n], vec![true; m]);
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if eq(i, j) {
+            (da[i], db[j]) = (false, false);
+            (i, j) = (i + 1, j + 1);
+        } else if lcs[i + 1][j] >= lcs[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    let marks = |s: &str, t: &[std::ops::Range<usize>], d: &[bool]| {
+        let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+        for (r, _) in t.iter().zip(d).filter(|(_, d)| **d) {
+            match out.last_mut() {
+                Some(l) if s[l.end..r.start].chars().all(char::is_whitespace) => l.end = r.end,
+                _ => out.push(r.clone()),
+            }
+        }
+        // Spaces at a mark's edges are not shown as changed (a change of spaces alone leaves
+        // the line marked as a whole, by its colour).
+        out.into_iter()
+            .map(|r| {
+                let t = &s[r.clone()];
+                let start = r.start + (t.len() - t.trim_start().len());
+                start..start + t.trim().len()
+            })
+            .filter(|r| !r.is_empty())
+            .collect::<Vec<_>>()
+    };
+    (marks(a, &ta, &da), marks(b, &tb, &db))
 }
 
 /// Size and mtime of a file when it was read: saving checks nothing changed it since.
@@ -549,12 +605,30 @@ mod tests {
     }
 
     #[test]
-    fn inline_marks_the_differing_middle() {
-        assert_eq!(inline("let x = 1;", "let y = 1;"), (4..5, 4..5));
-        assert_eq!(inline("abc", "abXYc"), (2..2, 2..4));
-        assert_eq!(inline("привет", "превет"), (4..6, 4..6)); // on char boundaries
-        assert_eq!(inline("same", "same"), (4..4, 4..4));
-        assert_eq!(inline("aa", "aaa"), (2..2, 2..3)); // prefix and suffix never overlap
+    fn words_mark_only_the_differing_words() {
+        let w = |a, b| words(a, b);
+        assert_eq!(w("let x = 1;", "let y = 1;"), (vec![4..5], vec![4..5]));
+        assert_eq!(
+            w("a b c d", "a X c Y"),
+            (vec![2..3, 6..7], vec![2..3, 6..7])
+        ); // two places
+        assert_eq!(w("привет мир", "привет мор"), (vec![13..19], vec![13..19])); // bytes
+        assert_eq!(w("same", "same"), (vec![], vec![]));
+        // Words next to each other (a space between) are one mark.
+        assert_eq!(
+            w("one two three", "one 2 3 three"),
+            (vec![4..7], vec![4..7])
+        );
+        // Inserted only: nothing on the left.
+        let (l, r) = w("f(a, c)", "f(a, b, c)");
+        assert!(l.is_empty());
+        assert_eq!(
+            r.iter()
+                .map(|m| &"f(a, b, c)"[m.clone()])
+                .collect::<String>()
+                .trim(),
+            "b,"
+        );
     }
 
     fn copy(a: &str, b: &str, block: usize, to_right: bool) -> Option<String> {
