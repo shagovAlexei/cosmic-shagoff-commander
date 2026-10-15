@@ -57,14 +57,15 @@ impl Query {
         self.min_size.is_some() || self.max_size.is_some() || self.newer_than.is_some()
     }
 
-    fn attrs_asked(&self) -> bool {
-        self.attrs.is_some_and(|a| !a.any())
+    /// Hidden names are looked at: asked for, or `h` among the attributes.
+    fn sees_hidden(&self) -> bool {
+        self.hidden || self.attrs.is_some_and(|a| a.hidden)
     }
 
     /// The attribute letters on the entry's own mode (a link is not followed).
     fn has_attrs(&self, e: &fs::DirEntry, name: &str) -> bool {
         use std::os::unix::fs::PermissionsExt;
-        let Some(a) = self.attrs.filter(|a| !a.any()) else {
+        let Some(a) = self.attrs.filter(|a| !a.is_empty()) else {
             return true;
         };
         e.metadata().is_ok_and(|m| {
@@ -112,7 +113,14 @@ impl Query {
                 .components()
                 .any(|c| c.as_os_str().as_encoded_bytes().starts_with(b"."));
             let name = inner.file_name().unwrap_or_default().to_string_lossy();
-            if (self.hidden || !hidden) && self.named(&name) && self.passes_meta(dir, size, mtime) {
+            let attrs = self
+                .attrs
+                .is_none_or(|a| !a.hidden || name.starts_with('.'));
+            if (self.sees_hidden() || !hidden)
+                && attrs
+                && self.named(&name)
+                && self.passes_meta(dir, size, mtime)
+            {
                 found(archive.join(inner));
             }
         }
@@ -178,7 +186,7 @@ pub fn find(
             continue;
         };
         let name = e.file_name().to_string_lossy().into_owned();
-        if !q.hidden && name.starts_with('.') {
+        if !q.sees_hidden() && name.starts_with('.') {
             continue;
         }
         let path = e.path();
@@ -200,11 +208,11 @@ pub fn find(
             }
         }
         // Content search reads real files only; archive members are matched by name.
-        // No modes inside archives: with attributes asked, their members are not listed.
+        // No modes inside archives: with r / s / x asked, their members are not listed.
         if !ft.is_dir()
             && q.archives
             && !q.reads_content()
-            && !q.attrs_asked()
+            && !q.attrs.is_some_and(|a| a.need_mode())
             && crate::archive::Format::detect(&name).is_some_and(|f| f.is_tree())
         {
             q.in_archive(&path, stop, found);
@@ -336,7 +344,6 @@ mod tests {
         mode(".dot", 0o644);
         let q = |a: &str| Query {
             attrs: crate::colors::attrs(a),
-            hidden: a.contains('h'),
             ..Query::default()
         };
         assert_eq!(rel(d.path(), run(d.path(), &q("x"))), ["run"]);

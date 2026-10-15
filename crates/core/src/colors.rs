@@ -54,7 +54,7 @@ pub struct Attrs {
     pub hidden: bool,
     pub readonly: bool,
     pub special: bool,
-    /// A file anyone may run (a dir's x is not that).
+    /// A program: a file with any run bit (owner, group or others); a dir's x is not that.
     pub exec: bool,
 }
 
@@ -74,9 +74,14 @@ pub fn attrs(s: &str) -> Option<Attrs> {
 }
 
 impl Attrs {
-    /// Nothing asked for.
-    pub fn any(self) -> bool {
+    /// No letter given: every entry fits.
+    pub fn is_empty(self) -> bool {
         self == Self::default()
+    }
+
+    /// Letters that need the entry's mode (not only its name).
+    pub fn need_mode(self) -> bool {
+        self.readonly || self.special || self.exec
     }
 
     fn fits(self, e: &Entry) -> bool {

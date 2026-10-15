@@ -4105,9 +4105,7 @@ impl App {
         let text = f.text.trim().to_string();
         let q = match find_query(f, text) {
             Ok(q) => shagoff_core::search::Query {
-                // `h` asks for hidden names: they are looked at even when the panel hides them.
-                hidden: self.panes[side].active().panel.show_hidden()
-                    || q.attrs.is_some_and(|a| a.hidden),
+                hidden: self.panes[side].active().panel.show_hidden(),
                 ..q
             },
             Err(e) => {
