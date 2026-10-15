@@ -240,6 +240,7 @@ pub fn sep_row<'a>(selected: bool, on: Message) -> Element<'a, Message> {
                 false,
                 crate::config::Skin::Modern,
                 None,
+                false,
                 Default::default(),
             )),
     )

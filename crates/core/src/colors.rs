@@ -90,6 +90,8 @@ pub struct PanelColors {
     pub cursor: String,
     pub text: String,
     pub back: String,
+    /// TC's «Background 2»: every second row's background.
+    pub back2: String,
 }
 
 /// `PanelColors` parsed; `None`: the theme's (empty or not a colour).
@@ -100,6 +102,7 @@ pub struct PanelPaint {
     pub cursor: Option<[u8; 3]>,
     pub text: Option<[u8; 3]>,
     pub back: Option<[u8; 3]>,
+    pub back2: Option<[u8; 3]>,
 }
 
 /// A panel row's background, from the theme or ours.
@@ -137,16 +140,25 @@ fn on(bg: [u8; 3]) -> (Fill, Ink) {
 }
 
 /// How a row is painted: the cursor (of the active pane, or faint in the other), the marks, the
-/// background of its colour rule (`rule_bg`), in that order.
+/// background of its colour rule (`rule_bg`), in that order; else an `odd` row gets
+/// «Background 2».
 pub fn row_paint(
     cursor: bool,
     active: bool,
     marked: bool,
     rule_bg: Option<[u8; 3]>,
+    odd: bool,
     m: PanelPaint,
 ) -> (Fill, Ink) {
     // A marked row's text where it has no background of ours.
     let marked_ink = || m.fg.map_or(Ink::Marked, Ink::Rgb);
+    // Background 2 under the panel's own text if it has one, else black or white by it.
+    let stripe = m.back2.filter(|_| odd);
+    let plain = stripe.map_or(Fill::None, Fill::Rgb);
+    let plain_ink = match (stripe, m.text) {
+        (Some(b), None) => on(b).1,
+        _ => Ink::Theme,
+    };
     match (cursor && active, cursor, marked) {
         // As the theme's: the marks' colour becomes the cursor's background.
         (true, _, true) => m.fg.map_or((Fill::Destructive, Ink::OnButton), on),
@@ -156,9 +168,9 @@ pub fn row_paint(
         (false, false, true) => match (m.bg, m.fg) {
             (Some(bg), Some(fg)) => (Fill::Rgb(bg), Ink::Rgb(fg)),
             (Some(bg), None) => on(bg),
-            (None, _) => (Fill::None, marked_ink()),
+            (None, _) => (plain, marked_ink()),
         },
-        (false, false, false) => rule_bg.map_or((Fill::None, Ink::Theme), on),
+        (false, false, false) => rule_bg.map_or((plain, plain_ink), on),
     }
 }
 
@@ -174,6 +186,7 @@ impl PanelColors {
             cursor: rgb(&self.cursor),
             text: rgb(&self.text),
             back: rgb(&self.back),
+            back2: rgb(&self.back2),
         }
     }
 }
@@ -264,6 +277,7 @@ pub fn blue_panel() -> PanelColors {
         cursor: "#00c0c0".into(),
         text: "#ffffff".into(),
         back: "#000080".into(),
+        back2: String::new(),
     }
 }
 
@@ -514,7 +528,7 @@ mod tests {
             cursor: Some(o),
             ..theme
         };
-        let p = |c, a, mk, m| row_paint(c, a, mk, Some(g), m);
+        let p = |c, a, mk, m| row_paint(c, a, mk, Some(g), false, m);
         // The theme's.
         assert_eq!(p(true, true, false, theme), (Fill::Accent, Ink::OnButton));
         assert_eq!(
@@ -548,6 +562,41 @@ mod tests {
     }
 
     #[test]
+    fn background_2_on_odd_rows_without_a_colour_of_their_own() {
+        let (b2, rule, o) = ([0, 0, 0x60], [9, 9, 9], [0xff, 0x78, 0]);
+        let m = PanelPaint {
+            back2: Some(b2),
+            cursor: Some(o),
+            ..Default::default()
+        };
+        let p = |cursor, marked, rule_bg, odd| row_paint(cursor, true, marked, rule_bg, odd, m);
+        // No panel text colour: black or white by the stripe; with one, the panel's.
+        assert_eq!(
+            p(false, false, None, true),
+            (Fill::Rgb(b2), Ink::Rgb([255, 255, 255]))
+        );
+        let with_text = PanelPaint {
+            text: Some([255, 255, 0]),
+            ..m
+        };
+        assert_eq!(
+            row_paint(false, true, false, None, true, with_text),
+            (Fill::Rgb(b2), Ink::Theme)
+        );
+        assert_eq!(p(false, false, None, false), (Fill::None, Ink::Theme));
+        // A marked row without a marks background, too; the rule's and the cursor's win.
+        assert_eq!(p(false, true, None, true), (Fill::Rgb(b2), Ink::Marked));
+        assert_eq!(p(false, false, Some(rule), true).0, Fill::Rgb(rule));
+        assert_eq!(p(true, false, None, true).0, Fill::Rgb(o));
+        // No Background 2: as before.
+        let plain = PanelPaint::default();
+        assert_eq!(
+            row_paint(false, true, false, None, true, plain),
+            (Fill::None, Ink::Theme)
+        );
+    }
+
+    #[test]
     fn blue_cursor_has_black_text() {
         let p = blue_panel().paint();
         assert!(dark_text_on(p.cursor.unwrap()));
@@ -562,6 +611,7 @@ mod tests {
             cursor: "bad".into(),
             text: "#000080".into(),
             back: String::new(),
+            back2: "#102030".into(),
         };
         assert_eq!(
             m.paint(),
@@ -571,6 +621,7 @@ mod tests {
                 cursor: None,
                 text: Some([0, 0, 0x80]),
                 back: None,
+                back2: Some([0x10, 0x20, 0x30]),
             }
         );
     }
