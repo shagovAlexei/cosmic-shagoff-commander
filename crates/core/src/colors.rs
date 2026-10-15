@@ -152,7 +152,13 @@ pub fn row_paint(
 ) -> (Fill, Ink) {
     // A marked row's text where it has no background of ours.
     let marked_ink = || m.fg.map_or(Ink::Marked, Ink::Rgb);
-    let plain = m.back2.filter(|_| odd).map_or(Fill::None, Fill::Rgb);
+    // Background 2 under the panel's own text if it has one, else black or white by it.
+    let stripe = m.back2.filter(|_| odd);
+    let plain = stripe.map_or(Fill::None, Fill::Rgb);
+    let plain_ink = match (stripe, m.text) {
+        (Some(b), None) => on(b).1,
+        _ => Ink::Theme,
+    };
     match (cursor && active, cursor, marked) {
         // As the theme's: the marks' colour becomes the cursor's background.
         (true, _, true) => m.fg.map_or((Fill::Destructive, Ink::OnButton), on),
@@ -164,7 +170,7 @@ pub fn row_paint(
             (Some(bg), None) => on(bg),
             (None, _) => (plain, marked_ink()),
         },
-        (false, false, false) => rule_bg.map_or((plain, Ink::Theme), on),
+        (false, false, false) => rule_bg.map_or((plain, plain_ink), on),
     }
 }
 
@@ -564,7 +570,19 @@ mod tests {
             ..Default::default()
         };
         let p = |cursor, marked, rule_bg, odd| row_paint(cursor, true, marked, rule_bg, odd, m);
-        assert_eq!(p(false, false, None, true), (Fill::Rgb(b2), Ink::Theme));
+        // No panel text colour: black or white by the stripe; with one, the panel's.
+        assert_eq!(
+            p(false, false, None, true),
+            (Fill::Rgb(b2), Ink::Rgb([255, 255, 255]))
+        );
+        let with_text = PanelPaint {
+            text: Some([255, 255, 0]),
+            ..m
+        };
+        assert_eq!(
+            row_paint(false, true, false, None, true, with_text),
+            (Fill::Rgb(b2), Ink::Theme)
+        );
         assert_eq!(p(false, false, None, false), (Fill::None, Ink::Theme));
         // A marked row without a marks background, too; the rule's and the cursor's win.
         assert_eq!(p(false, true, None, true), (Fill::Rgb(b2), Ink::Marked));

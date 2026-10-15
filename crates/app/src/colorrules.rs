@@ -126,7 +126,7 @@ impl ColorEdit {
         self.bg || self.special.is_some()
     }
 
-    /// Back to the rules from the marks / the cursor: the cursor's forced background goes too.
+    /// Back to the rules from a special: the forced background of a background-only one goes too.
     fn leave_special(&mut self) {
         if Special::bg_only(self.special.take()) {
             self.bg = false;
@@ -205,7 +205,7 @@ impl ColorEdit {
                 }
             }
             (ColorMsg::Names(on), _) => self.names = on,
-            // The cursor has a background only.
+            // The cursor and Background 2 have a background only.
             (ColorMsg::Bg(on), _) => self.bg = on || Special::bg_only(self.special),
             (ColorMsg::Palette, _) => self.palette = !self.palette,
             (ColorMsg::Add, _) => {
@@ -526,7 +526,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             true => widget::button::suggested(label),
             false => widget::button::standard(label),
         };
-        // The cursor has a background only.
+        // The cursor and Background 2 have a background only.
         b.on_press_maybe((bg || !Special::bg_only(c.special)).then(|| msg(ColorMsg::Bg(bg))))
             .into()
     };
