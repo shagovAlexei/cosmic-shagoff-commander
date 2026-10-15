@@ -623,6 +623,8 @@ pub enum Message {
     ListerPointerLeft,
     /// Comes instead of the second release.
     ListerDoubleClick,
+    /// The picture back to fitted in the window.
+    ListerFit,
     ListerResized(Size),
     /// Drop-down / A S K 8.
     ListerEncoding(shagoff_core::lister::Encoding),
@@ -1601,6 +1603,11 @@ impl App {
             Message::ListerScrolled(x, y, h) => {
                 if let Some(l) = &mut self.lister {
                     (l.offset, l.height) = ((x, y), h);
+                }
+            }
+            Message::ListerFit => {
+                if let Some(l) = &mut self.lister {
+                    l.zoom = None;
                 }
             }
             Message::ListerResized(size) => {
@@ -4544,12 +4551,14 @@ impl App {
     /// The viewer's text one size up or down: the same setting as in Settings, saved.
     fn lister_zoom(&mut self, up: bool) -> Task<Message> {
         let size = config::size_step(self.config.lister_size(), up);
-        // A picture has no text size (TC zooms it; not yet); at a bound nothing changes.
-        let image = self
-            .lister
-            .as_ref()
-            .is_some_and(|l| l.mode == shagoff_core::lister::Mode::Image);
-        if image || size == self.config.lister_size() {
+        // A picture: its zoom (TC), never the text size; still reading: not known which yet.
+        if let Some(l) = self.lister.as_deref_mut()
+            && (l.loaded.is_none() || l.mode == shagoff_core::lister::Mode::Image)
+        {
+            l.zoom_image(up);
+            return Task::none();
+        }
+        if size == self.config.lister_size() {
             return Task::none();
         }
         self.set(crate::drawer::Setting::ListerSize(size))
@@ -8126,6 +8135,10 @@ mod tests {
     fn viewer_plus_minus_change_its_text_size_and_save_it() {
         let (_tmp, mut app, _) = paste_setup();
         app.lister = Some(Box::new(Lister::new(0, String::new(), 0, 14)));
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true))); // still reading: nothing
+        assert_eq!(app.config.lister_size, 14);
+        let text = crate::lister::Loaded::read(&_tmp.path().join("src/a"), "a").unwrap();
+        app.lister.as_mut().unwrap().set_loaded(Arc::new(Ok(text)));
         let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
         let _ = app.update(Message::Key(Action::SelectGroup)); // Num+
         assert_eq!(app.config.lister_size, 16);
