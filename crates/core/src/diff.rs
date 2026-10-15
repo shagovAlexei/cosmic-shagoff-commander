@@ -254,6 +254,7 @@ fn tokens(s: &str) -> Vec<std::ops::Range<usize>> {
 /// What differs in a changed line pair, word by word (TC marks the words): byte ranges in `a`
 /// and in `b` of the words not in their longest common sequence; neighbours with only spaces
 /// between are one range.
+#[allow(clippy::single_range_in_vec_init)] // lists of marks, one here
 pub fn words(a: &str, b: &str) -> (Vec<std::ops::Range<usize>>, Vec<std::ops::Range<usize>>) {
     let (ta, tb) = (tokens(a), tokens(b));
     let (n, m) = (ta.len(), tb.len());
@@ -605,6 +606,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
     fn words_mark_only_the_differing_words() {
         let w = |a, b| words(a, b);
         assert_eq!(w("let x = 1;", "let y = 1;"), (vec![4..5], vec![4..5]));
