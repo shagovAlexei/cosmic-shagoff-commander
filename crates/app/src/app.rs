@@ -552,6 +552,8 @@ pub enum Message {
     DragEnd,
     /// Right-button drop menu: Copy / Move / Link.
     DropAs(InputOp),
+    /// The pointer is over drop menu row `i`: the menu cursor follows it, as in TC.
+    DropRow(usize),
     /// Where held files are now (window coordinates): a right-button drop's menu opens there.
     DropAt(f64, f64),
     /// Files are held over a dir row (it lights up) / no longer over any.
@@ -876,6 +878,20 @@ impl App {
                 return self.act(self.active, action);
             }
             Message::Key(action) => {
+                // The drop menu as TC's: ↑ / ↓ over Copy, Move, Link, Cancel; Enter picks.
+                if let Some(Dialog::DropMenu { cursor, .. }) = &mut self.dialog {
+                    let last = dialogs::DROP_OPS.len();
+                    match action {
+                        Action::Up => *cursor = cursor.checked_sub(1).unwrap_or(last),
+                        Action::Down => *cursor = (*cursor + 1) % (last + 1),
+                        Action::Enter => {
+                            let op = dialogs::DROP_OPS.get(*cursor).copied();
+                            return self.handle(op.map_or(Message::DialogCancel, Message::DropAs));
+                        }
+                        _ => {}
+                    }
+                    return Task::none();
+                }
                 if let Some(Dialog::List {
                     kind,
                     cursor,
@@ -1759,6 +1775,11 @@ impl App {
                 }
             }
             Message::DropAs(_) => {} // the menu is gone already
+            Message::DropRow(i) => {
+                if let Some(Dialog::DropMenu { cursor, .. }) = &mut self.dialog {
+                    *cursor = i;
+                }
+            }
             Message::DropAt(x, y) => {
                 self.drop_at = Some(cosmic::iced::Point::new(x as f32, y as f32));
             }
@@ -1803,8 +1824,10 @@ impl App {
                         dir,
                         sources: paths,
                         at,
+                        cursor: 0,
                     });
-                    return Task::none();
+                    // A focused command line would take the menu's letters and Enter.
+                    return unfocus();
                 }
                 // Shift as we see it: the compositor's chosen action ignores it (COSMIC keeps the
                 // destination's preferred Copy), but the window keeps the keyboard while dragging.
@@ -2073,6 +2096,15 @@ impl App {
             }
             Message::CmdEnter => return self.cmd_run(self.mods.shift()),
             Message::CmdType(c) => {
+                // The drop menu's hot letters (`&` in its items' names) pick at once.
+                if matches!(self.dialog, Some(Dialog::DropMenu { .. })) {
+                    use shagoff_core::quicksearch::hotkey;
+                    let key = c.to_lowercase().next();
+                    let op = dialogs::DROP_OPS
+                        .into_iter()
+                        .find(|&op| hotkey(&dialogs::drop_label(op)).1.map(|(_, k)| k) == key);
+                    return op.map_or_else(Task::none, |op| self.handle(Message::DropAs(op)));
+                }
                 // A list dialog's letter key, as in TC's menus: the next item with that letter.
                 if let Some(Dialog::List {
                     kind,
@@ -8201,6 +8233,37 @@ mod tests {
             panic!("no drop menu")
         };
         assert_eq!(*at, cosmic::iced::Point::new(100.0, 50.0));
+        // ↑ from Copy wraps to Cancel; ↓ ↓ goes Copy → Move; Enter picks it.
+        let _ = app.update(Message::Key(Action::Up));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::DropMenu { cursor: 3, .. })
+        ));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Enter));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Move,
+                ..
+            })
+        ));
+        // A hot letter picks at once (en labels in tests: &Copy &Move &Link).
+        app.dialog = None;
+        let _ = app.update(Message::DragStart(Some(Arc::new(vec![a.clone()]))));
+        let _ = app.update(drop(vec![a.clone()]));
+        let _ = app.update(Message::CmdType('L'));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Link,
+                ..
+            })
+        ));
+        app.dialog = None;
+        let _ = app.update(Message::DragStart(Some(Arc::new(vec![a.clone()]))));
+        let _ = app.update(drop(vec![a.clone()]));
         let _ = app.update(Message::DropAs(InputOp::Link));
         let Some(Dialog::Input { op, input, .. }) = app.dialog.take() else {
             panic!("no dialog")
