@@ -136,6 +136,16 @@ pub struct Config {
 
 /// Text sizes offered in the settings.
 pub const SIZES: std::ops::RangeInclusive<u16> = 9..=24;
+
+/// One size up or down, kept in `SIZES` (the viewer's + / -).
+pub fn size_step(now: u16, up: bool) -> u16 {
+    let next = if up {
+        now.saturating_add(1)
+    } else {
+        now.saturating_sub(1)
+    };
+    next.clamp(*SIZES.start(), *SIZES.end())
+}
 pub const PANEL_SIZE: u16 = 13;
 pub const LISTER_SIZE: u16 = 14;
 
@@ -286,6 +296,14 @@ pub fn read<T: CosmicConfigEntry + Default>(h: Option<&cosmic_config::Config>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_steps_stay_in_bounds() {
+        assert_eq!(size_step(14, true), 15);
+        assert_eq!(size_step(14, false), 13);
+        assert_eq!(size_step(*SIZES.end(), true), *SIZES.end());
+        assert_eq!(size_step(*SIZES.start(), false), *SIZES.start());
+    }
 
     #[test]
     fn rows_grow_with_the_panel_text() {

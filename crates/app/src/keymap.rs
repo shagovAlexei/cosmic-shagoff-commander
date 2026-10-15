@@ -265,12 +265,27 @@ pub enum ListerKey {
     Encoding(Encoding),
     /// W: wrap long lines.
     Wrap,
+    /// Plus / minus on the main keyboard: bigger / smaller text (Num+ and Num- come from the
+    /// main table as `SelectGroup` and `UnselectGroup`).
+    Zoom(bool),
 }
 
 pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<ListerKey> {
     use cosmic::iced::keyboard::key::{Code, Named};
-    match key {
-        Key::Named(Named::F3) if mods == Modifiers::SHIFT => return Some(ListerKey::FindPrev),
+    match (key, physical) {
+        (Key::Named(Named::F3), _) if mods == Modifiers::SHIFT => {
+            return Some(ListerKey::FindPrev);
+        }
+        // + is Shift+= on most layouts, elsewhere a key of its own (German: right of Ü):
+        // by the key or by what it types.
+        (_, Physical::Code(Code::Equal)) if (mods - Modifiers::SHIFT).is_empty() => {
+            return Some(ListerKey::Zoom(true));
+        }
+        (Key::Character(c), _) if (mods - Modifiers::SHIFT).is_empty() => match c.as_str() {
+            "+" | "=" => return Some(ListerKey::Zoom(true)),
+            "-" => return Some(ListerKey::Zoom(false)),
+            _ => {}
+        },
         _ if !mods.is_empty() => return None,
         _ => {}
     }
@@ -283,6 +298,7 @@ pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<List
         Physical::Code(Code::KeyP) => ListerKey::Prev,
         Physical::Code(Code::KeyQ) => ListerKey::Close,
         Physical::Code(Code::KeyW) => ListerKey::Wrap,
+        Physical::Code(Code::Minus) => ListerKey::Zoom(false),
         Physical::Code(Code::KeyA) => ListerKey::Encoding(Encoding::Cp1251),
         Physical::Code(Code::KeyS) => ListerKey::Encoding(Encoding::Cp866),
         Physical::Code(Code::KeyK) => ListerKey::Encoding(Encoding::Koi8r),
@@ -668,5 +684,19 @@ mod tests {
             CTRL,
         );
         assert_eq!(ctrl_n, None);
+        // + / = and - on the main keyboard: bigger / smaller text (Shift for + is fine).
+        let zoom =
+            |c: &str, code, mods| lister_key(&Key::Character(c.into()), Physical::Code(code), mods);
+        assert_eq!(
+            zoom("+", Code::Equal, Modifiers::SHIFT),
+            Some(ListerKey::Zoom(true))
+        );
+        assert_eq!(zoom("=", Code::Equal, NONE), Some(ListerKey::Zoom(true)));
+        assert_eq!(zoom("-", Code::Minus, NONE), Some(ListerKey::Zoom(false)));
+        assert_eq!(zoom("-", Code::Minus, CTRL), None);
+        assert_eq!(
+            zoom("+", Code::BracketRight, NONE),
+            Some(ListerKey::Zoom(true))
+        ); // German
     }
 }

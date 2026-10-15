@@ -1528,6 +1528,7 @@ impl App {
                     ListerKey::Next => self.lister_step(true),
                     ListerKey::Prev => self.lister_step(false),
                     ListerKey::Close => self.handle(Message::ListerClose),
+                    ListerKey::Zoom(up) => self.lister_zoom(up),
                     ListerKey::FindPrev => self.lister_find(false, true),
                     ListerKey::Encoding(e) => self.handle(Message::ListerEncoding(e)),
                     ListerKey::Wrap => self.handle(Message::ListerWrap),
@@ -4516,6 +4517,9 @@ impl App {
         let l = self.lister.as_deref_mut()?;
         Some(match action {
             Action::Help | Action::About | Action::Settings | Action::Donate => return None,
+            // Num+ / Num-: bigger / smaller text, as + / - (TC zooms with them).
+            Action::SelectGroup => return Some(self.lister_zoom(true)),
+            Action::UnselectGroup => return Some(self.lister_zoom(false)),
             Action::View => self.lister_find(true, true),
             Action::Mkdir => self.lister_search(),
             Action::SelectAll => {
@@ -4535,6 +4539,12 @@ impl App {
                 None => Task::none(),
             },
         })
+    }
+
+    /// The viewer's text one size up or down: the same setting as in Settings, saved.
+    fn lister_zoom(&mut self, up: bool) -> Task<Message> {
+        let size = config::size_step(self.config.lister_size(), up);
+        self.set(crate::drawer::Setting::ListerSize(size))
     }
 
     fn lister_search(&mut self) -> Task<Message> {
@@ -8102,6 +8112,18 @@ mod tests {
             result: Ok(listing::scan(dir, false).unwrap()),
             space: None,
         });
+    }
+
+    #[test]
+    fn viewer_plus_minus_change_its_text_size_and_save_it() {
+        let (_tmp, mut app, _) = paste_setup();
+        app.lister = Some(Box::new(Lister::new(0, String::new(), 0, 14)));
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
+        let _ = app.update(Message::Key(Action::SelectGroup)); // Num+
+        assert_eq!(app.config.lister_size, 16);
+        assert_eq!(app.lister.as_ref().map(|l| l.size), Some(16));
+        let _ = app.update(Message::Key(Action::UnselectGroup)); // Num-
+        assert_eq!(app.config.lister_size, 15);
     }
 
     #[test]
