@@ -552,6 +552,8 @@ pub enum Message {
     DragEnd,
     /// Right-button drop menu: Copy / Move / Link.
     DropAs(InputOp),
+    /// The pointer is over drop menu row `i`: the menu cursor follows it, as in TC.
+    DropRow(usize),
     /// Where held files are now (window coordinates): a right-button drop's menu opens there.
     DropAt(f64, f64),
     /// Files are held over a dir row (it lights up) / no longer over any.
@@ -1773,6 +1775,11 @@ impl App {
                 }
             }
             Message::DropAs(_) => {} // the menu is gone already
+            Message::DropRow(i) => {
+                if let Some(Dialog::DropMenu { cursor, .. }) = &mut self.dialog {
+                    *cursor = i;
+                }
+            }
             Message::DropAt(x, y) => {
                 self.drop_at = Some(cosmic::iced::Point::new(x as f32, y as f32));
             }
@@ -1819,7 +1826,8 @@ impl App {
                         at,
                         cursor: 0,
                     });
-                    return Task::none();
+                    // A focused command line would take the menu's letters and Enter.
+                    return unfocus();
                 }
                 // Shift as we see it: the compositor's chosen action ignores it (COSMIC keeps the
                 // destination's preferred Copy), but the window keeps the keyboard while dragging.

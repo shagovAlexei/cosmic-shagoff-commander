@@ -660,14 +660,17 @@ fn drop_menu<'a>(
             None => (fl!("cancel"), Message::DialogCancel),
         };
         let (name, hot) = hotkey(&label);
-        menu_row_with(
+        let row = menu_row_with(
             None,
             hot.map(|(at, _)| at),
             name,
             String::new(),
             i == cursor,
             on,
-        )
+        );
+        cosmic::widget::mouse_area(row)
+            .on_enter(Message::DropRow(i))
+            .into()
     };
     let card = widget::container(
         column![
