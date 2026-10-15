@@ -136,7 +136,8 @@ pub fn drop_zone<'a>(
             )
         },
     )
-    .preferred_action(DndAction::Copy);
+    .preferred_action(DndAction::Copy)
+    .on_drop(Message::DropAt);
     // A row lights up while files are held over it; leaving clears only its own light (the next
     // row's enter may come first).
     if let Some(h) = hover {

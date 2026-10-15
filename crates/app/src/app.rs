@@ -332,6 +332,8 @@ pub struct App {
     pub tab_drag: Option<(usize, usize)>,
     /// The dir row files are being dragged over: (side, row).
     pub drop_hover: Option<(usize, usize)>,
+    /// Where the last drop landed (window coordinates), until its data comes.
+    drop_at: Option<cosmic::iced::Point>,
     /// Ctrl+D: the submenus opened, outermost first (their indices in `config.hotlist`).
     hot_sub: Vec<usize>,
     /// Volumes not mounted yet (a stick just plugged in): listed with the drives, a pick mounts.
@@ -549,6 +551,8 @@ pub enum Message {
     DragEnd,
     /// Right-button drop menu: Copy / Move / Link.
     DropAs(InputOp),
+    /// Where files were dropped (before their data comes): the drop menu opens there.
+    DropAt(f64, f64),
     /// Files are held over a dir row (it lights up) / no longer over any.
     DropHover(Option<(usize, usize)>),
     /// The pointer left that row while dragging.
@@ -802,6 +806,7 @@ impl App {
             col_drag: None,
             tab_drag: None,
             drop_hover: None,
+            drop_at: None,
             hot_sub: Vec::new(),
             volumes: Vec::new(),
             volumes_at: None,
@@ -1739,7 +1744,10 @@ impl App {
                 self.drop_hover = None;
             }
             Message::DropAs(op) if matches!(self.dialog, Some(Dialog::DropMenu { .. })) => {
-                if let Some(Dialog::DropMenu { side, dir, sources }) = self.dialog.take() {
+                if let Some(Dialog::DropMenu {
+                    side, dir, sources, ..
+                }) = self.dialog.take()
+                {
                     self.dialog = Some(Dialog::Input {
                         op,
                         side,
@@ -1750,6 +1758,9 @@ impl App {
                 }
             }
             Message::DropAs(_) => {} // the menu is gone already
+            Message::DropAt(x, y) => {
+                self.drop_at = Some(cosmic::iced::Point::new(x as f32, y as f32));
+            }
             Message::DropHover(h) => self.drop_hover = h,
             Message::DropLeave(h) => {
                 if self.drop_hover == Some(h) {
@@ -1766,6 +1777,7 @@ impl App {
                 // Any drop ends that drag, used or not: a later drop of the same files from
                 // another program must not get the menu.
                 let right_drag = self.right_drag.take();
+                let at = self.drop_at.take();
                 let t = self.panes[side].active();
                 // A job "In background" does not stop it: OK then says the job is running, as F5.
                 // Search results have no one dir; a drop on a tab or a drive button names its own.
@@ -1789,6 +1801,7 @@ impl App {
                         side,
                         dir,
                         sources: paths,
+                        at,
                     });
                     return Task::none();
                 }
@@ -8169,8 +8182,12 @@ mod tests {
             mv: false,
         };
         let _ = app.update(Message::DragStart(Some(Arc::new(vec![a.clone()]))));
+        let _ = app.update(Message::DropAt(100.0, 50.0)); // the menu opens where it landed
         let _ = app.update(drop(vec![a.clone()]));
-        assert!(matches!(app.dialog, Some(Dialog::DropMenu { .. })));
+        let Some(Dialog::DropMenu { at, .. }) = &app.dialog else {
+            panic!("no drop menu")
+        };
+        assert_eq!(*at, Some(cosmic::iced::Point::new(100.0, 50.0)));
         let _ = app.update(Message::DropAs(InputOp::Link));
         let Some(Dialog::Input { op, input, .. }) = app.dialog.take() else {
             panic!("no dialog")

@@ -111,6 +111,8 @@ pub enum Dialog {
         side: usize,
         dir: PathBuf,
         sources: Vec<PathBuf>,
+        /// Where they were dropped (window coordinates): the menu opens there.
+        at: Option<cosmic::iced::Point>,
     },
     /// Ctrl+F: network location and password.
     Connect {
@@ -623,6 +625,47 @@ fn what(paths: &[PathBuf]) -> String {
 }
 
 /// `list_h`: the most a list dialog's rows may take (the panel's rows), 0 before the first layout.
+/// TC's drop menu: a popup at the point the files were dropped, over the whole window (a press
+/// outside it cancels). The popover keeps it inside the window.
+fn drop_menu<'a>(sources: &[PathBuf], at: cosmic::iced::Point) -> Element<'a, Message> {
+    use cosmic::widget::menu::menu_button;
+    use cosmic::widget::popover::{Position, popover};
+    let item = |label: String, on: Message| -> Element<'a, Message> {
+        menu_button(vec![widget::text(label).into()])
+            .on_press(on)
+            .into()
+    };
+    let card = widget::container(
+        column![
+            widget::container(widget::text::caption(fl!(
+                "drop-menu",
+                what = what(sources)
+            )))
+            .padding([4, 16]),
+            item(fl!("drop-copy"), Message::DropAs(InputOp::Copy)),
+            item(fl!("drop-move"), Message::DropAs(InputOp::Move)),
+            item(fl!("drop-link"), Message::DropAs(InputOp::Link)),
+            widget::divider::horizontal::light(),
+            item(fl!("cancel"), Message::DialogCancel),
+        ]
+        .spacing(2)
+        .padding(4),
+    )
+    .width(Length::Fixed(240.0))
+    .class(cosmic::theme::Container::Dropdown);
+    let under = cosmic::widget::mouse_area(
+        widget::Space::new()
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(Message::DialogCancel)
+    .on_right_press(Message::DialogCancel);
+    popover(under)
+        .popup(card)
+        .position(Position::Point(at))
+        .into()
+}
+
 pub fn view<'a>(
     d: &'a Dialog,
     input_id: &widget::Id,
@@ -688,6 +731,11 @@ pub fn view<'a>(
             )
             .secondary_action(cancel)
             .into(),
+        Dialog::DropMenu {
+            sources,
+            at: Some(at),
+            ..
+        } => drop_menu(sources, *at),
         Dialog::DropMenu { dir, sources, .. } => {
             let b = |label: String, op: InputOp| {
                 widget::button::text(label).on_press(Message::DropAs(op))
