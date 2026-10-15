@@ -1428,7 +1428,7 @@ pub fn view<'a>(
                             .font(cosmic::font::mono())
                             .wrapping(Wrapping::None)
                     };
-                    // `mid`: the bytes that differ from the other side (changed lines).
+                    // `marks`: the words that differ from the other side (changed lines).
                     let half = |c: &Option<(usize, String)>, w: f32, marks: &[Range<usize>]| {
                         let content = match c {
                             Some((n, s)) => {
@@ -1437,7 +1437,9 @@ pub fn view<'a>(
                                 // Plain text between the changed words, each word tinted.
                                 let mut at = 0;
                                 for m in marks {
-                                    line = line.push(mono(expand(&s[at..m.start])));
+                                    if at < m.start {
+                                        line = line.push(mono(expand(&s[at..m.start])));
+                                    }
                                     line = line.push(
                                         widget::container(mono(expand(&s[m.clone()])))
                                             .class(diff_style(diff::Kind::Changed)),
@@ -1471,7 +1473,7 @@ pub fn view<'a>(
                     for r in &t.rows[first..last] {
                         let (ml, mr) = match (&r.left, &r.right) {
                             (Some((_, a)), Some((_, b))) if r.kind == diff::Kind::Changed => {
-                                diff::words(a, b)
+                                diff::words(a, b, d.opts)
                             }
                             _ => Default::default(),
                         };
