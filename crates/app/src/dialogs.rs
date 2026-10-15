@@ -933,7 +933,7 @@ pub fn view<'a>(
         Dialog::Colors(c) => crate::colorrules::view(c, cancel.into()),
         Dialog::Props(p) => {
             const LABEL: f32 = 150.0;
-            const CELL: f32 = 70.0;
+            const CELL: f32 = 90.0;
             let line = |k: String, v: String| {
                 row![
                     widget::text::body(k).width(Length::Fixed(LABEL)),
@@ -1001,6 +1001,25 @@ pub fn view<'a>(
                     .spacing(8),
                 );
             }
+            // setuid / setgid / sticky: a row of their own under their own heads.
+            bits = bits.push(
+                row![
+                    widget::Space::new().width(Length::Fixed(LABEL)),
+                    head(fl!("props-suid")),
+                    head(fl!("props-sgid")),
+                    head(fl!("props-sticky")),
+                ]
+                .spacing(8),
+            );
+            bits = bits.push(
+                row![
+                    widget::text::body(fl!("props-special")).width(Length::Fixed(LABEL)),
+                    bit(0o4000),
+                    bit(0o2000),
+                    bit(0o1000),
+                ]
+                .spacing(8),
+            );
             let unknown = p.mixed & !p.touched;
             let shown: String = format::perms(p.mode)
                 .chars()

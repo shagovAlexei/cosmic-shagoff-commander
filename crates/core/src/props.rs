@@ -150,6 +150,13 @@ mod tests {
         assert!(chmod(&[a.clone(), b.clone()], 0o100, 0o004, false).is_empty());
         assert_eq!((mode_of(&a), mode_of(&b)), (0o740, 0o700));
         assert_eq!(mode(&a), Some(0o740));
+        // The special bits as the rest: sticky on a dir, setuid on a file, then off.
+        assert!(chmod(&[d.path().to_path_buf(), a.clone()], 0o1000, 0, false).is_empty());
+        assert_eq!(mode_of(d.path()) & 0o1000, 0o1000);
+        assert!(chmod(std::slice::from_ref(&a), 0o4000, 0, false).is_empty());
+        assert_eq!(mode(&a), Some(0o5740));
+        assert!(chmod(std::slice::from_ref(&a), 0, 0o5000, false).is_empty());
+        assert_eq!(mode(&a), Some(0o740));
     }
 
     #[test]
