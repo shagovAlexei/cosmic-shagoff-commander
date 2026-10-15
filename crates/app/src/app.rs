@@ -11,6 +11,7 @@ use crate::keymap::{self, Action, ListerKey};
 use crate::lister::{self, Lister};
 use cosmic::app::{Core, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
+use cosmic::iced::clipboard::dnd::{DndEvent, OfferEvent};
 use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
 use cosmic::iced::{Size, Subscription, event, keyboard, mouse};
@@ -332,7 +333,7 @@ pub struct App {
     pub tab_drag: Option<(usize, usize)>,
     /// The dir row files are being dragged over: (side, row).
     pub drop_hover: Option<(usize, usize)>,
-    /// Where the last drop landed (window coordinates), until its data comes.
+    /// Where held files were last seen (window coordinates).
     drop_at: Option<cosmic::iced::Point>,
     /// Ctrl+D: the submenus opened, outermost first (their indices in `config.hotlist`).
     hot_sub: Vec<usize>,
@@ -551,7 +552,7 @@ pub enum Message {
     DragEnd,
     /// Right-button drop menu: Copy / Move / Link.
     DropAs(InputOp),
-    /// Where files were dropped (before their data comes): the drop menu opens there.
+    /// Where held files are now (window coordinates): a right-button drop's menu opens there.
     DropAt(f64, f64),
     /// Files are held over a dir row (it lights up) / no longer over any.
     DropHover(Option<(usize, usize)>),
@@ -1777,7 +1778,7 @@ impl App {
                 // Any drop ends that drag, used or not: a later drop of the same files from
                 // another program must not get the menu.
                 let right_drag = self.right_drag.take();
-                let at = self.drop_at.take();
+                let at = self.drop_at.take().unwrap_or_default();
                 let t = self.panes[side].active();
                 // A job "In background" does not stop it: OK then says the job is running, as F5.
                 // Search results have no one dir; a drop on a tab or a drive button names its own.
@@ -5578,6 +5579,12 @@ fn route_event(
         cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
             cosmic::iced::mouse::Button::Left,
         )) => Some(Message::ColDragEnd),
+        // Where files are held, in window coordinates: a zone's own `on_drop` point is shifted by
+        // the scrollable it sits in. The right-button drop menu opens at the last one.
+        cosmic::iced::Event::Dnd(DndEvent::Offer(
+            _,
+            OfferEvent::Enter { x, y, .. } | OfferEvent::Motion { x, y },
+        )) => Some(Message::DropAt(x, y)),
         // Any status: a focused text_input captures Escape to unfocus itself, and the dialog must still close.
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(keyboard::key::Named::Escape),
@@ -8182,12 +8189,18 @@ mod tests {
             mv: false,
         };
         let _ = app.update(Message::DragStart(Some(Arc::new(vec![a.clone()]))));
-        let _ = app.update(Message::DropAt(100.0, 50.0)); // the menu opens where it landed
+        // The window's own DnD motion (not a zone's, shifted by its scrollable) places the menu.
+        let motion = cosmic::iced::Event::Dnd(DndEvent::Offer(
+            None,
+            OfferEvent::Motion { x: 100.0, y: 50.0 },
+        ));
+        let at = route_event(motion, event::Status::Captured, app.window_id());
+        let _ = app.update(at.expect("motion is routed"));
         let _ = app.update(drop(vec![a.clone()]));
         let Some(Dialog::DropMenu { at, .. }) = &app.dialog else {
             panic!("no drop menu")
         };
-        assert_eq!(*at, Some(cosmic::iced::Point::new(100.0, 50.0)));
+        assert_eq!(*at, cosmic::iced::Point::new(100.0, 50.0));
         let _ = app.update(Message::DropAs(InputOp::Link));
         let Some(Dialog::Input { op, input, .. }) = app.dialog.take() else {
             panic!("no dialog")

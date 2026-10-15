@@ -14,7 +14,7 @@ use shagoff_core::ops::{self, ErrorChoice, FileInfo, Resolution};
 use shagoff_core::sync;
 use std::collections::HashSet;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::SystemTime;
@@ -112,7 +112,7 @@ pub enum Dialog {
         dir: PathBuf,
         sources: Vec<PathBuf>,
         /// Where they were dropped (window coordinates): the menu opens there.
-        at: Option<cosmic::iced::Point>,
+        at: cosmic::iced::Point,
     },
     /// Ctrl+F: network location and password.
     Connect {
@@ -624,10 +624,10 @@ fn what(paths: &[PathBuf]) -> String {
     }
 }
 
-/// `list_h`: the most a list dialog's rows may take (the panel's rows), 0 before the first layout.
 /// TC's drop menu: a popup at the point the files were dropped, over the whole window (a press
 /// outside it cancels). The popover keeps it inside the window.
-fn drop_menu<'a>(sources: &[PathBuf], at: cosmic::iced::Point) -> Element<'a, Message> {
+fn drop_menu<'a>(dir: &Path, sources: &[PathBuf], at: cosmic::iced::Point) -> Element<'a, Message> {
+    use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
     use cosmic::widget::menu::menu_button;
     use cosmic::widget::popover::{Position, popover};
     let item = |label: String, on: Message| -> Element<'a, Message> {
@@ -637,10 +637,12 @@ fn drop_menu<'a>(sources: &[PathBuf], at: cosmic::iced::Point) -> Element<'a, Me
     };
     let card = widget::container(
         column![
-            widget::container(widget::text::caption(fl!(
-                "drop-menu",
-                what = what(sources)
-            )))
+            widget::container(column![
+                widget::text::caption(fl!("drop-menu", what = what(sources))),
+                widget::text::caption(dir.display().to_string())
+                    .wrapping(Wrapping::None)
+                    .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
+            ])
             .padding([4, 16]),
             item(fl!("drop-copy"), Message::DropAs(InputOp::Copy)),
             item(fl!("drop-move"), Message::DropAs(InputOp::Move)),
@@ -666,6 +668,7 @@ fn drop_menu<'a>(sources: &[PathBuf], at: cosmic::iced::Point) -> Element<'a, Me
         .into()
 }
 
+/// `list_h`: the most a list dialog's rows may take (the panel's rows), 0 before the first layout.
 pub fn view<'a>(
     d: &'a Dialog,
     input_id: &widget::Id,
@@ -732,28 +735,8 @@ pub fn view<'a>(
             .secondary_action(cancel)
             .into(),
         Dialog::DropMenu {
-            sources,
-            at: Some(at),
-            ..
-        } => drop_menu(sources, *at),
-        Dialog::DropMenu { dir, sources, .. } => {
-            let b = |label: String, op: InputOp| {
-                widget::button::text(label).on_press(Message::DropAs(op))
-            };
-            widget::dialog()
-                .title(fl!("drop-menu", what = what(sources)))
-                .body(dir.display().to_string())
-                .control(
-                    row![
-                        b(fl!("drop-copy"), InputOp::Copy),
-                        b(fl!("drop-move"), InputOp::Move),
-                        b(fl!("drop-link"), InputOp::Link),
-                    ]
-                    .spacing(8),
-                )
-                .secondary_action(cancel)
-                .into()
-        }
+            dir, sources, at, ..
+        } => drop_menu(dir, sources, *at),
         Dialog::ConfirmExit => widget::dialog()
             .title(fl!("exit-busy-title"))
             .body(fl!("exit-busy"))
