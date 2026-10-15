@@ -45,8 +45,11 @@ pub fn mode(p: &Path) -> Option<u32> {
 }
 
 /// Turn on `set` and off `clear` (only the bits the user changed, so differing files keep the
-/// rest) on `paths`, and under dirs too when `recursive`. Symlinks are left alone (chmod would
-/// change their target). Returns what failed, unreadable dirs included.
+/// rest) on `paths`, and under dirs too when `recursive`; setuid / setgid / sticky go only to
+/// `paths` and the dirs under them, never to the files inside (setgid for a tree's dirs must not
+/// make every program in it set-group-id). Symlinks are left alone (chmod would change their
+/// target). Returns what failed, unreadable dirs included, and bits the kernel dropped silently
+/// (setgid when not in the file's group).
 pub fn chmod(
     paths: &[PathBuf],
     set: u32,
@@ -54,22 +57,32 @@ pub fn chmod(
     recursive: bool,
 ) -> Vec<(PathBuf, io::Error)> {
     enum Step {
-        Enter(PathBuf),
+        /// The path, and whether it was selected (not found inside a selected dir).
+        Enter(PathBuf, bool),
         /// A dir's final mode, after its contents: taking away r / x first would lock them out.
         Finish(PathBuf, u32),
     }
     let mut failed = Vec::new();
     let apply = |p: &Path, old: u32, new: u32, failed: &mut Vec<(PathBuf, io::Error)>| {
-        if new != old
-            && let Err(e) = fs::set_permissions(p, fs::Permissions::from_mode(new))
-        {
-            failed.push((p.to_path_buf(), e));
+        if new == old {
+            return;
+        }
+        match fs::set_permissions(p, fs::Permissions::from_mode(new)) {
+            Err(e) => failed.push((p.to_path_buf(), e)),
+            // Linux drops setgid without an error when the user is not in the file's group.
+            Ok(()) if mode(p).is_some_and(|m| m != new) => failed.push((
+                p.to_path_buf(),
+                io::Error::other(format!("mode is {:o}, not {new:o}", mode(p).unwrap_or(0))),
+            )),
+            Ok(()) => {}
         }
     };
-    let mut todo: Vec<Step> = paths.iter().rev().cloned().map(Step::Enter).collect();
+    let mut todo: Vec<Step> = (paths.iter().rev())
+        .map(|p| Step::Enter(p.clone(), true))
+        .collect();
     while let Some(step) = todo.pop() {
-        let p = match step {
-            Step::Enter(p) => p,
+        let (p, top) = match step {
+            Step::Enter(p, top) => (p, top),
             Step::Finish(p, new) => {
                 let old = mode(&p).unwrap_or(new);
                 apply(&p, old, new, &mut failed);
@@ -86,14 +99,16 @@ pub fn chmod(
         if m.file_type().is_symlink() {
             continue;
         }
+        let mask = if top || m.is_dir() { 0o7777 } else { 0o777 };
+        let (set, clear) = (set & mask, clear & mask);
         let old = m.permissions().mode() & 0o7777;
-        let new = (old & !clear) | (set & 0o7777);
+        let new = (old & !clear) | set;
         if !(recursive && m.is_dir()) {
             apply(&p, old, new, &mut failed);
             continue;
         }
         // Added bits first (a dir being opened up must be listable), the rest after its contents.
-        apply(&p, old, old | (set & 0o7777), &mut failed);
+        apply(&p, old, old | set, &mut failed);
         let kids = match fs::read_dir(&p) {
             Ok(rd) => rd.flatten().map(|e| e.path()).collect::<Vec<_>>(),
             Err(e) => {
@@ -102,7 +117,7 @@ pub fn chmod(
             }
         };
         todo.push(Step::Finish(p, new));
-        todo.extend(kids.into_iter().map(Step::Enter));
+        todo.extend(kids.into_iter().map(|k| Step::Enter(k, false)));
     }
     failed
 }
@@ -139,6 +154,20 @@ mod tests {
     }
 
     #[test]
+    fn recursive_special_bits_go_to_dirs_not_to_the_files_inside() {
+        let d = tempfile::tempdir().unwrap();
+        let top = d.path().join("top");
+        fs::create_dir_all(top.join("sub")).unwrap();
+        fs::write(top.join("prog"), "").unwrap();
+        set(&top.join("prog"), 0o755);
+        // setgid + group w through the tree: the dirs get both, the file only w.
+        assert!(chmod(std::slice::from_ref(&top), 0o2020, 0, true).is_empty());
+        assert_eq!(mode_of(&top) & 0o2020, 0o2020);
+        assert_eq!(mode_of(&top.join("sub")) & 0o2020, 0o2020);
+        assert_eq!(mode_of(&top.join("prog")), 0o775);
+    }
+
+    #[test]
     fn chmod_changes_only_toggled_bits() {
         let d = tempfile::tempdir().unwrap();
         let (a, b) = (d.path().join("a"), d.path().join("b"));
@@ -150,12 +179,10 @@ mod tests {
         assert!(chmod(&[a.clone(), b.clone()], 0o100, 0o004, false).is_empty());
         assert_eq!((mode_of(&a), mode_of(&b)), (0o740, 0o700));
         assert_eq!(mode(&a), Some(0o740));
-        // The special bits as the rest: sticky on a dir, setuid on a file, then off.
-        assert!(chmod(&[d.path().to_path_buf(), a.clone()], 0o1000, 0, false).is_empty());
-        assert_eq!(mode_of(d.path()) & 0o1000, 0o1000);
+        // The special bits as the rest: setuid on a file, then off.
         assert!(chmod(std::slice::from_ref(&a), 0o4000, 0, false).is_empty());
-        assert_eq!(mode(&a), Some(0o5740));
-        assert!(chmod(std::slice::from_ref(&a), 0, 0o5000, false).is_empty());
+        assert_eq!(mode(&a), Some(0o4740));
+        assert!(chmod(std::slice::from_ref(&a), 0, 0o4000, false).is_empty());
         assert_eq!(mode(&a), Some(0o740));
     }
 

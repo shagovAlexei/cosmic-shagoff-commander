@@ -1024,7 +1024,15 @@ pub fn view<'a>(
             let shown: String = format::perms(p.mode)
                 .chars()
                 .enumerate()
-                .map(|(i, c)| if unknown & (0o400 >> i) != 0 { '?' } else { c })
+                .map(|(i, c)| {
+                    // The x places also carry setuid / setgid / sticky.
+                    let special = if i % 3 == 2 { 0o4000 >> (i / 3) } else { 0 };
+                    if unknown & ((0o400 >> i) | special) != 0 {
+                        '?'
+                    } else {
+                        c
+                    }
+                })
                 .collect();
             bits = bits.push(widget::text::caption(match unknown {
                 0 => format!("{shown} ({:o})", p.mode & 0o7777),
