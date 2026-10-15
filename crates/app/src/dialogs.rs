@@ -113,6 +113,8 @@ pub enum Dialog {
         sources: Vec<PathBuf>,
         /// Where they were dropped (window coordinates): the menu opens there.
         at: cosmic::iced::Point,
+        /// The menu row under the cursor: an index into `DROP_OPS`, or past them = Cancel.
+        cursor: usize,
     },
     /// Ctrl+F: network location and password.
     Connect {
@@ -576,7 +578,11 @@ pub fn menu_row_with<'a>(
         }
         None => plain(name, 14),
     };
-    let line = row![cut(name, 2), cut(plain(path, 12), 3)].spacing(12);
+    // No path: the name takes the whole row (the drop menu).
+    let line = match path.is_empty() {
+        true => row![cut(name, 1)],
+        false => row![cut(name, 2), cut(plain(path, 12), 3)].spacing(12),
+    };
     let line = match icon {
         Some(icon) => row![icon, line]
             .spacing(8)
@@ -624,16 +630,44 @@ fn what(paths: &[PathBuf]) -> String {
     }
 }
 
+/// The drop menu's items in order; one more row after them is Cancel.
+pub const DROP_OPS: [InputOp; 3] = [InputOp::Copy, InputOp::Move, InputOp::Link];
+
+/// A drop menu item's name, `&` before its hot letter.
+pub fn drop_label(op: InputOp) -> String {
+    match op {
+        InputOp::Move => fl!("drop-move"),
+        InputOp::Link => fl!("drop-link"),
+        _ => fl!("drop-copy"),
+    }
+}
+
 /// TC's drop menu: a popup at the point the files were dropped, over the whole window (a press
 /// outside it cancels). The popover keeps it inside the window.
-fn drop_menu<'a>(dir: &Path, sources: &[PathBuf], at: cosmic::iced::Point) -> Element<'a, Message> {
+fn drop_menu<'a>(
+    dir: &Path,
+    sources: &[PathBuf],
+    at: cosmic::iced::Point,
+    cursor: usize,
+) -> Element<'a, Message> {
     use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
-    use cosmic::widget::menu::menu_button;
     use cosmic::widget::popover::{Position, popover};
-    let item = |label: String, on: Message| -> Element<'a, Message> {
-        menu_button(vec![widget::text(label).into()])
-            .on_press(on)
-            .into()
+    use shagoff_core::quicksearch::hotkey;
+    // TC's menu rows: the cursor (↑ / ↓), the `&` hot letter underlined.
+    let item = |i: usize| -> Element<'a, Message> {
+        let (label, on) = match DROP_OPS.get(i) {
+            Some(&op) => (drop_label(op), Message::DropAs(op)),
+            None => (fl!("cancel"), Message::DialogCancel),
+        };
+        let (name, hot) = hotkey(&label);
+        menu_row_with(
+            None,
+            hot.map(|(at, _)| at),
+            name,
+            String::new(),
+            i == cursor,
+            on,
+        )
     };
     let card = widget::container(
         column![
@@ -644,11 +678,11 @@ fn drop_menu<'a>(dir: &Path, sources: &[PathBuf], at: cosmic::iced::Point) -> El
                     .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
             ])
             .padding([4, 16]),
-            item(fl!("drop-copy"), Message::DropAs(InputOp::Copy)),
-            item(fl!("drop-move"), Message::DropAs(InputOp::Move)),
-            item(fl!("drop-link"), Message::DropAs(InputOp::Link)),
+            item(0),
+            item(1),
+            item(2),
             widget::divider::horizontal::light(),
-            item(fl!("cancel"), Message::DialogCancel),
+            item(3),
         ]
         .spacing(2)
         .padding(4),
@@ -735,8 +769,12 @@ pub fn view<'a>(
             .secondary_action(cancel)
             .into(),
         Dialog::DropMenu {
-            dir, sources, at, ..
-        } => drop_menu(dir, sources, *at),
+            dir,
+            sources,
+            at,
+            cursor,
+            ..
+        } => drop_menu(dir, sources, *at, *cursor),
         Dialog::ConfirmExit => widget::dialog()
             .title(fl!("exit-busy-title"))
             .body(fl!("exit-busy"))
