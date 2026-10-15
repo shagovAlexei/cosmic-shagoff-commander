@@ -331,7 +331,7 @@ help-colors-age = Age in days since modified: <7 = changed this week, >365 = ove
 help-colors-color = Name colour: a code or a palette name ("Names" shows names instead of codes); empty = the accent
 help-colors-palette = The button next to the swatch opens and folds the palette; clicking a swatch sets the colour
 help-colors-bg = "Background": the field and the palette edit the row's background; empty = none. Text on it is black or white by its brightness, an empty name colour too; the cursor row and marked rows get no rule background
-help-colors-attr = Attributes, all of the given must hold: h hidden (name starts with a dot), r read-only (no write for the owner), s setuid / setgid / sticky
+help-colors-attr = Attributes, all of the given must hold: h hidden (name starts with a dot), r read-only (no write for the owner), s setuid / setgid / sticky, x a program (a file with the run bit)
 help-colors-marks = "Marked": text and background of marked rows; "Cursor": the cursor's background (text black or white by it). Empty = the theme's
 help-colors-bad = A rule with an error (size without > or <, a bad colour code) is marked ⚠ and does nothing
 help-mouse = Mouse (LMB / RMB / MMB = left / right / middle button)
@@ -373,8 +373,10 @@ find-regex = Text is a regular expression
 find-min-size = Size from, KB
 find-max-size = Size up to, KB
 find-days = Not older than, days
+find-attrs = Attributes (h r s x)
 find-feed = To panel
 find-bad-number = { $field }: "{ $value }" is not a whole number
+find-bad-attrs = Attributes: "{ $value }" — only h (hidden), r (read-only), s (setuid / setgid / sticky), x (program)
 find-bad-regex = Regular expression: { $err }
 find-results = Search results: { $dir }
 find-bad-range = Size from is larger than size up to

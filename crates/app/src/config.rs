@@ -239,6 +239,8 @@ pub struct FindPrefs {
     pub min_size: String,
     pub max_size: String,
     pub days: String,
+    /// `h r s x`, as typed.
+    pub attrs: String,
 }
 
 impl Default for FindPrefs {
@@ -253,6 +255,7 @@ impl Default for FindPrefs {
             min_size: String::new(),
             max_size: String::new(),
             days: String::new(),
+            attrs: String::new(),
         }
     }
 }

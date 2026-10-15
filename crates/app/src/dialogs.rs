@@ -310,6 +310,8 @@ pub struct Find {
     pub min_size: String,
     pub max_size: String,
     pub days: String,
+    /// Attribute letters `h r s x` (as the colour rules).
+    pub attrs: String,
     /// Why the search did not start (a bad filter or regex).
     pub error: Option<String>,
     /// The dir the last search ran in ("To panel" lists it there).
@@ -375,6 +377,7 @@ pub enum FindField {
     MinSize,
     MaxSize,
     Days,
+    Attrs,
 }
 
 pub struct Pack {
@@ -1403,6 +1406,7 @@ pub fn view<'a>(
                             edit(fl!("find-min-size"), &f.min_size, FindField::MinSize),
                             edit(fl!("find-max-size"), &f.max_size, FindField::MaxSize),
                             edit(fl!("find-days"), &f.days, FindField::Days),
+                            edit(fl!("find-attrs"), &f.attrs, FindField::Attrs),
                         ]
                         .spacing(8),
                         widget::flex_row(vec![run.into(), go.into(), feed.into(), cancel.into()])

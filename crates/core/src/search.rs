@@ -26,6 +26,8 @@ pub struct Query {
     pub max_size: Option<u64>,
     /// Modified at or after this time.
     pub newer_than: Option<SystemTime>,
+    /// `h r s x` as in the colour rules, by the entry's own mode; `None` or none asked: any.
+    pub attrs: Option<crate::colors::Attrs>,
 }
 
 impl Default for Query {
@@ -41,6 +43,7 @@ impl Default for Query {
             min_size: None,
             max_size: None,
             newer_than: None,
+            attrs: None,
         }
     }
 }
@@ -52,6 +55,22 @@ impl Query {
 
     fn filtered(&self) -> bool {
         self.min_size.is_some() || self.max_size.is_some() || self.newer_than.is_some()
+    }
+
+    fn attrs_asked(&self) -> bool {
+        self.attrs.is_some_and(|a| !a.any())
+    }
+
+    /// The attribute letters on the entry's own mode (a link is not followed).
+    fn has_attrs(&self, e: &fs::DirEntry, name: &str) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(a) = self.attrs.filter(|a| !a.any()) else {
+            return true;
+        };
+        e.metadata().is_ok_and(|m| {
+            let link = m.file_type().is_symlink();
+            a.fits_mode(name, link, m.is_dir(), m.permissions().mode())
+        })
     }
 
     fn named(&self, name: &str) -> bool {
@@ -164,7 +183,7 @@ pub fn find(
         }
         let path = e.path();
         let Ok(ft) = e.file_type() else { continue };
-        let named = q.named(&name);
+        let named = q.named(&name) && q.has_attrs(&e, &name);
         if ft.is_dir() {
             if named && !q.reads_content() && q.passes(&path, true) {
                 found(path.clone());
@@ -181,9 +200,11 @@ pub fn find(
             }
         }
         // Content search reads real files only; archive members are matched by name.
+        // No modes inside archives: with attributes asked, their members are not listed.
         if !ft.is_dir()
             && q.archives
             && !q.reads_content()
+            && !q.attrs_asked()
             && crate::archive::Format::detect(&name).is_some_and(|f| f.is_tree())
         {
             q.in_archive(&path, stop, found);
@@ -298,6 +319,30 @@ mod tests {
             hidden,
             ..Query::default()
         }
+    }
+
+    #[test]
+    fn attributes_filter_by_mode_and_hidden_ones_are_looked_into() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let mode = |n: &str, m| {
+            let p = d.path().join(n);
+            fs::write(&p, "").unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(m)).unwrap();
+        };
+        mode("plain", 0o644);
+        mode("run", 0o755);
+        mode("ro", 0o444);
+        mode(".dot", 0o644);
+        let q = |a: &str| Query {
+            attrs: crate::colors::attrs(a),
+            hidden: a.contains('h'),
+            ..Query::default()
+        };
+        assert_eq!(rel(d.path(), run(d.path(), &q("x"))), ["run"]);
+        assert_eq!(rel(d.path(), run(d.path(), &q("r"))), ["ro"]);
+        assert_eq!(rel(d.path(), run(d.path(), &q("h"))), [".dot"]);
+        assert_eq!(run(d.path(), &q("")).len(), 3); // no letters: no filter (hidden skipped)
     }
 
     #[test]

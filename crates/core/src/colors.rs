@@ -54,9 +54,11 @@ pub struct Attrs {
     pub hidden: bool,
     pub readonly: bool,
     pub special: bool,
+    /// A file anyone may run (a dir's x is not that).
+    pub exec: bool,
 }
 
-/// `h r s` in any order and case (spaces and commas ignored); another letter → `None`.
+/// `h r s x` in any order and case (spaces and commas ignored); another letter → `None`.
 pub fn attrs(s: &str) -> Option<Attrs> {
     let mut a = Attrs::default();
     for c in s.chars().filter(|c| !c.is_whitespace() && *c != ',') {
@@ -64,6 +66,7 @@ pub fn attrs(s: &str) -> Option<Attrs> {
             'h' => a.hidden = true,
             'r' => a.readonly = true,
             's' => a.special = true,
+            'x' => a.exec = true,
             _ => return None,
         }
     }
@@ -71,11 +74,22 @@ pub fn attrs(s: &str) -> Option<Attrs> {
 }
 
 impl Attrs {
+    /// Nothing asked for.
+    pub fn any(self) -> bool {
+        self == Self::default()
+    }
+
     fn fits(self, e: &Entry) -> bool {
-        // A link's own mode is always 0o777: not read-only, never special.
-        (!self.hidden || e.name.starts_with('.'))
-            && (!self.readonly || (!e.is_link && e.mode & 0o200 == 0))
-            && (!self.special || (!e.is_link && e.mode & 0o7000 != 0))
+        self.fits_mode(&e.name, e.is_link, e.is_dir(), e.mode)
+    }
+
+    /// By name and the entry's own mode: a link's is always 0o777 — not read-only, never special
+    /// or a program.
+    pub fn fits_mode(self, name: &str, is_link: bool, is_dir: bool, mode: u32) -> bool {
+        (!self.hidden || name.starts_with('.'))
+            && (!self.readonly || (!is_link && mode & 0o200 == 0))
+            && (!self.special || (!is_link && mode & 0o7000 != 0))
+            && (!self.exec || (!is_link && !is_dir && mode & 0o111 != 0))
     }
 }
 
@@ -482,10 +496,11 @@ mod tests {
             Some(Attrs {
                 hidden: true,
                 readonly: true,
-                special: false
+                ..Attrs::default()
             })
         );
-        assert_eq!(attrs("hx"), None);
+        assert_eq!(attrs("hq"), None);
+        assert_eq!(attrs("x").map(|a| a.exec), Some(true));
         let rule = |attr: &str| {
             Scheme::new(&[Rule {
                 attr: attr.into(),
@@ -496,6 +511,9 @@ mod tests {
         let file = |n: &str, mode| entry(n, Kind::File, false, mode);
         let hit = |s: &Scheme, e: &Entry| fg(s, e).is_some();
         let (h, r, s, hr) = (rule("h"), rule("r"), rule("s"), rule("hr"));
+        let x = rule("x");
+        assert!(hit(&x, &file("run", 0o755)) && !hit(&x, &file("a", 0o644)));
+        assert!(!hit(&x, &entry("d", Kind::Dir, false, 0o755))); // a dir's x is not "runs"
         assert!(hit(&h, &file(".bashrc", 0o644)) && !hit(&h, &file("a", 0o644)));
         assert!(hit(&r, &file("a", 0o444)) && !hit(&r, &file("a", 0o644)));
         assert!(!hit(&r, &entry("l", Kind::File, true, 0o444))); // links: their own mode

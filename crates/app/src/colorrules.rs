@@ -561,7 +561,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             labelled(
                 fl!("colors-attr"),
                 hinted(
-                    "h r s",
+                    "h r s x",
                     rule.map_or("", |r| r.attr.as_str()),
                     ColorMsg::Attr
                 )
