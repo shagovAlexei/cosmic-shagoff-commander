@@ -4550,14 +4550,16 @@ impl App {
 
     /// The viewer's text one size up or down: the same setting as in Settings, saved.
     fn lister_zoom(&mut self, up: bool) -> Task<Message> {
-        let size = config::size_step(self.config.lister_size(), up);
         // A picture: its zoom (TC), never the text size; still reading: not known which yet.
         if let Some(l) = self.lister.as_deref_mut()
             && (l.loaded.is_none() || l.mode == shagoff_core::lister::Mode::Image)
         {
-            l.zoom_image(up);
-            return Task::none();
+            return match l.zoom_image(up) {
+                Some((x, y)) => lister_scroll(l, x, y),
+                None => Task::none(),
+            };
         }
+        let size = config::size_step(self.config.lister_size(), up);
         if size == self.config.lister_size() {
             return Task::none();
         }
