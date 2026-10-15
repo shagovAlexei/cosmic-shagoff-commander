@@ -1636,7 +1636,7 @@ impl App {
                 return self.lister_find(true, false);
             }
             Message::ListerStep(forward) => return self.lister_step(forward),
-            Message::ListerClose => self.lister = None,
+            Message::ListerClose => return self.close_lister(),
             Message::EditTick => {
                 if self.dialog.is_some() || self.job.is_some() {
                     return Task::none(); // asked on a later tick
@@ -1718,7 +1718,7 @@ impl App {
                         } else if l.sel.is_some() {
                             l.sel = None; // first Esc drops the selection, the next closes
                         } else {
-                            self.lister = None;
+                            return self.close_lister();
                         }
                     } else if let Some((_, cancel)) = &self.connecting {
                         cancel.store(true, Ordering::Relaxed);
@@ -2906,7 +2906,7 @@ impl App {
             Action::Branch | Action::BranchSel => return self.branch(side, action),
             Action::QuickView => {
                 match self.lister.as_deref() {
-                    Some(l) if l.quick.is_some() => self.lister = None,
+                    Some(l) if l.quick.is_some() => return self.close_lister(),
                     Some(_) => {} // the full viewer is up: not from there
                     None => {
                         let mut l = Lister::new(side, String::new(), 0, self.config.lister_size());
@@ -5574,6 +5574,13 @@ impl App {
         ])
     }
 
+    /// Close the viewer: the lists it replaced are new widgets scrolled to the top, while the tabs
+    /// keep their offsets (the rows drawn are those) — scroll them back.
+    fn close_lister(&mut self) -> Task<Message> {
+        self.lister = None;
+        Task::batch([self.restore_scroll(0), self.restore_scroll(1)])
+    }
+
     /// Scroll the pane's list to the active tab's stored offset.
     fn restore_scroll(&self, side: usize) -> Task<Message> {
         scrollable::scroll_to(
@@ -8092,6 +8099,19 @@ mod tests {
     }
 
     /// tmp/src/a (file) and tmp/dst/ (empty); pane 0 shows dst.
+    #[test]
+    fn regression_closing_the_viewer_scrolls_the_lists_back() {
+        // F3 replaces the panels; Esc rebuilds their lists at the top while the tabs keep
+        // their offsets: both must be scrolled back, or the cursor at the end is out of view.
+        let (_tmp, mut app, _) = paste_setup();
+        for close in [Message::ListerClose, Message::Escape(app.window_id())] {
+            app.lister = Some(Box::new(Lister::new(0, String::new(), 0, 14)));
+            let task = app.update(close);
+            assert!(app.lister.is_none());
+            assert_eq!(task.units(), 2); // one scroll per pane
+        }
+    }
+
     fn paste_setup() -> (tempfile::TempDir, App, PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));

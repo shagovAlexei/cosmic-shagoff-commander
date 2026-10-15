@@ -777,3 +777,4 @@
 | `regression_closing_the_window_asks_while_a_job_runs_or_waits` | Закрытие окна во время операции молча теряло её и очередь | 69 |
 | `regression_a_background_question_waits_for_the_open_dialog` | Вопрос фоновой операции (конфликт, ошибка) заменял открытый диалог, его ввод терялся | 69 |
 | `regression_light_is_light_without_a_cosmic_theme_config` | Вне COSMIC (Linux Lite: нет конфига темы и `/usr/share/cosmic`) тема «Светлая» оставалась тёмной: libcosmic отдаёт тёмную палитру по умолчанию | 0.13.1 |
+| `regression_closing_the_viewer_scrolls_the_lists_back` | Длинный каталог, курсор в конце, F3 → Esc: список показывался с начала, курсор вне экрана | 0.26.1 |
