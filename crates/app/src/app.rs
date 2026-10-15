@@ -685,13 +685,20 @@ impl Application for App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let shown = self.viewer_shown();
         let task = self.handle(message);
         if self.dialog.is_none() {
             self.dialog = self.held.take();
         }
         let follow = self.quick_follow();
         self.save_state();
-        Task::batch([task, follow])
+        // The viewer came, went or moved to the other pane: the lists it replaced are new
+        // widgets at the top, while the tabs keep their offsets (the rows drawn are those).
+        let back = match self.viewer_shown() == shown {
+            true => Task::none(),
+            false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
+        };
+        Task::batch([task, follow, back])
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -1688,7 +1695,7 @@ impl App {
                 self.drop_hover = None;
                 return cosmic::iced::runtime::dnd::end_dnd();
             }
-            Message::Escape(_) => return self.update(Message::DialogCancel),
+            Message::Escape(_) => return self.handle(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(Resolution::Cancel);
@@ -5574,6 +5581,12 @@ impl App {
         ])
     }
 
+    /// What the viewer covers: none, both panes (F3) or the pane opposite the active one (Ctrl+Q).
+    fn viewer_shown(&self) -> Option<Option<usize>> {
+        let l = self.lister.as_deref()?;
+        Some(l.quick.is_some().then_some(1 - self.active))
+    }
+
     /// Scroll the pane's list to the active tab's stored offset.
     fn restore_scroll(&self, side: usize) -> Task<Message> {
         scrollable::scroll_to(
@@ -8089,6 +8102,32 @@ mod tests {
             result: Ok(listing::scan(dir, false).unwrap()),
             space: None,
         });
+    }
+
+    #[test]
+    fn regression_closing_the_viewer_scrolls_the_lists_back() {
+        // F3 replaces the panels; Esc rebuilds their lists at the top while the tabs keep
+        // their offsets: both must be scrolled back (two more task units than without a
+        // viewer), or the cursor at the end is out of view.
+        let (_tmp, mut app, _) = paste_setup();
+        let viewer = |quick: bool| {
+            let mut l = Lister::new(0, String::new(), 0, 14);
+            l.quick = quick.then(|| (PathBuf::new(), 0, std::time::UNIX_EPOCH));
+            Box::new(l)
+        };
+        let id = app.window_id();
+        // (Ctrl+Q?, the message): F3 closed by its button or Esc; Ctrl+Q, Tab moving it.
+        let cases = [
+            (false, Message::ListerClose),
+            (false, Message::Escape(id)),
+            (true, Message::Key(Action::SwitchPane)),
+        ];
+        for (quick, msg) in cases {
+            let plain = app.update(msg.clone()).units();
+            app.lister = Some(viewer(quick));
+            let units = app.update(msg.clone()).units();
+            assert_eq!(units, plain + 2, "{msg:?}");
+        }
     }
 
     /// tmp/src/a (file) and tmp/dst/ (empty); pane 0 shows dst.
