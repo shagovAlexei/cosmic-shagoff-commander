@@ -321,6 +321,7 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
                     p.panel.is_marked(e),
                     skin,
                     look.and_then(|l| l.bg),
+                    (i - c * rows) % 2 == 1,
                     scheme.paint(),
                 ));
             let cell = mouse_area(cell)
@@ -485,6 +486,7 @@ fn tab_bar(
                 false,
                 Skin::Classic,
                 None,
+                false,
                 Default::default(),
             ));
         let tab = mouse_area(label)
@@ -640,6 +642,7 @@ fn file_row<'a>(
             is_marked,
             app.config.skin,
             look.and_then(|l| l.bg),
+            i % 2 == 1,
             app.scheme.paint(),
         ));
     mouse_area(row)
@@ -989,9 +992,10 @@ pub(crate) fn cursor_style(
     marked: bool,
     skin: Skin,
     bg: Option<[u8; 3]>,
+    odd: bool,
     marks: colors::PanelPaint,
 ) -> theme::Container<'static> {
-    let (fill, ink) = colors::row_paint(is_cursor, active, marked, bg, marks);
+    let (fill, ink) = colors::row_paint(is_cursor, active, marked, bg, odd, marks);
     theme::Container::custom(move |t| {
         let c = t.cosmic();
         let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);

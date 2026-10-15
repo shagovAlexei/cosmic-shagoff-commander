@@ -33,6 +33,15 @@ pub enum Special {
     Cursor,
     /// The list's text and background.
     Panel,
+    /// TC «Background 2»: every second row's background (background only).
+    Back2,
+}
+
+impl Special {
+    /// Edited as a background only: no text colour of its own.
+    fn bg_only(s: Option<Self>) -> bool {
+        matches!(s, Some(Special::Cursor | Special::Back2))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +98,7 @@ impl ColorEdit {
         let (bg, m) = (self.bg, &self.panel);
         match self.special {
             Some(Special::Cursor) => &m.cursor,
+            Some(Special::Back2) => &m.back2,
             Some(Special::Panel) => {
                 if bg {
                     &m.back
@@ -118,7 +128,7 @@ impl ColorEdit {
 
     /// Back to the rules from the marks / the cursor: the cursor's forced background goes too.
     fn leave_special(&mut self) {
-        if self.special.take() == Some(Special::Cursor) {
+        if Special::bg_only(self.special.take()) {
             self.bg = false;
         }
     }
@@ -130,6 +140,7 @@ impl ColorEdit {
         let m = &mut self.panel;
         match self.special {
             Some(Special::Cursor) => Some(&mut m.cursor),
+            Some(Special::Back2) => Some(&mut m.back2),
             Some(Special::Panel) => Some(if bg { &mut m.back } else { &mut m.text }),
             Some(Special::Marked) => Some(if bg { &mut m.bg } else { &mut m.color }),
             None => {
@@ -168,7 +179,7 @@ impl ColorEdit {
                 self.leave_special();
                 self.special = Some(s);
                 self.sel = None;
-                if s == Special::Cursor {
+                if Special::bg_only(Some(s)) {
                     self.bg = true;
                 }
             }
@@ -195,7 +206,7 @@ impl ColorEdit {
             }
             (ColorMsg::Names(on), _) => self.names = on,
             // The cursor has a background only.
-            (ColorMsg::Bg(on), _) => self.bg = on || self.special == Some(Special::Cursor),
+            (ColorMsg::Bg(on), _) => self.bg = on || Special::bg_only(self.special),
             (ColorMsg::Palette, _) => self.palette = !self.palette,
             (ColorMsg::Add, _) => {
                 let at = sel.map_or(self.list.len(), |i| i + 1);
@@ -491,6 +502,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             &[(&m.color, true), (&m.bg, true)]
         ),
         special(fl!("colors-cursor"), Special::Cursor, &[(&m.cursor, true)]),
+        special(fl!("colors-back2"), Special::Back2, &[(&m.back2, true)]),
     ]
     .spacing(6);
 
@@ -515,7 +527,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             false => widget::button::standard(label),
         };
         // The cursor has a background only.
-        b.on_press_maybe((bg || c.special != Some(Special::Cursor)).then(|| msg(ColorMsg::Bg(bg))))
+        b.on_press_maybe((bg || !Special::bg_only(c.special)).then(|| msg(ColorMsg::Bg(bg))))
             .into()
     };
     let whats: Vec<String> = What::ALL.into_iter().map(what_label).collect();
@@ -708,10 +720,14 @@ mod tests {
         c.update(ColorMsg::Bg(false));
         assert!(c.bg);
         c.update(ColorMsg::Pick("#1a5fb4"));
+        c.update(ColorMsg::Special(Special::Back2));
+        assert!(c.bg); // Background 2: a background only too
+        c.update(ColorMsg::Pick("#241f31"));
         let want = PanelColors {
             color: "#f6d32d".into(),
             bg: "#000000".into(),
             cursor: "#1a5fb4".into(),
+            back2: "#241f31".into(),
             ..Default::default()
         };
         assert_eq!(c.panel, want);
