@@ -427,8 +427,8 @@ pub enum Message {
     TabPress(usize, usize),
     /// The pointer entered a tab (moves a dragged tab there).
     TabEnter(usize, usize),
-    /// The pointer's x in the window while a tab is held.
-    TabDragAt(f32),
+    /// The pointer's x in a window while a tab is held.
+    TabDragAt(cosmic::iced::window::Id, f32),
     CloseTabAt(usize, usize),
     Modifiers(Modifiers),
     DialogInput(String),
@@ -711,9 +711,9 @@ impl Application for App {
             // Only while a tab is held: where the pointer is (the panes' own widgets take the
             // moves, so a pane's mouse area would not hear it come in).
             match self.tab_drag {
-                Some(_) => event::listen_with(|e, _, _| match e {
+                Some(_) => event::listen_with(|e, _, window| match e {
                     cosmic::iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                        Some(Message::TabDragAt(position.x))
+                        Some(Message::TabDragAt(window, position.x))
                     }
                     _ => None,
                 }),
@@ -1188,7 +1188,6 @@ impl App {
             }
             Message::TabPress(side, i) => {
                 self.tab_drag = Some((side, i));
-                self.pane_hover = None; // not where the last drag ended
                 return self.update(Message::SelectTab(side, i));
             }
             Message::TabEnter(side, i) => {
@@ -2190,28 +2189,28 @@ impl App {
                     self.cols[col] = w;
                 }
             }
-            Message::TabDragAt(x) => {
-                // The left pane's list is as wide as the pane (plus the gap between them).
-                let left = self.panes[0].active().width + 8.0;
-                self.pane_hover = Some(usize::from(x > left));
+            // The main window's only (a context menu popup has its own coordinates).
+            Message::TabDragAt(window, x) if window == self.window_id() => {
+                let split = crate::view::pane_split(self.config.skin, self.panes[0].active().width);
+                self.pane_hover = Some(usize::from(x > split));
             }
+            Message::TabDragAt(..) => {}
             Message::ColDragEnd => {
-                // A tab held over the other pane: it goes there (TC), with Ctrl a copy.
-                if let Some((from, _)) = self.tab_drag.take()
-                    && self.pane_hover == Some(1 - from)
-                {
-                    let ctrl = self.mods.control();
-                    return self.act(
-                        from,
-                        if ctrl {
-                            Action::TabCopyOther
-                        } else {
-                            Action::TabMoveOther
-                        },
-                    );
-                }
                 if self.col_drag.take().is_some() {
                     self.save_columns();
+                }
+                // A tab held over the other pane: it goes there (TC), with Ctrl a copy. Not
+                // while the Ctrl+Q viewer covers that pane.
+                let over = self.pane_hover.take();
+                if let Some((from, _)) = self.tab_drag.take()
+                    && over == Some(1 - from)
+                    && self.lister.is_none()
+                {
+                    let action = match self.mods.control() {
+                        true => Action::TabCopyOther,
+                        false => Action::TabMoveOther,
+                    };
+                    return self.act(from, action);
                 }
             }
             Message::PathPart(side, path) => {
@@ -7054,22 +7053,37 @@ mod tests {
         let count = |app: &App| (app.panes[0].items().len(), app.panes[1].items().len());
         // Released over its own pane: nothing.
         let _ = app.update(Message::TabPress(0, 1));
-        let _ = app.update(Message::TabDragAt(10.0));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 10.0));
         let _ = app.update(Message::ColDragEnd);
         assert_eq!(count(&app), (2, 1));
         // Over the other pane: moved there, that pane active.
         let _ = app.update(Message::TabPress(0, 1));
-        let _ = app.update(Message::TabDragAt(700.0));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 700.0));
         let _ = app.update(Message::ColDragEnd);
         assert_eq!((count(&app), app.active), ((1, 2), 1));
         // A pointer that only passes over the other pane without a tab held: nothing.
-        let _ = app.update(Message::TabDragAt(10.0));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 10.0));
         let _ = app.update(Message::ColDragEnd);
         assert_eq!(count(&app), (1, 2));
         // With Ctrl: copied; the last tab of a pane can be copied too.
         app.mods = Modifiers::CTRL;
         let _ = app.update(Message::TabPress(0, 0));
-        let _ = app.update(Message::TabDragAt(700.0));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 700.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!(count(&app), (1, 3));
+        // The split between the panes, for both skins: the middle of the gap.
+        assert_eq!(
+            crate::view::pane_split(crate::config::Skin::Classic, 500.0),
+            502.0
+        );
+        assert_eq!(
+            crate::view::pane_split(crate::config::Skin::Modern, 500.0),
+            524.0
+        );
+        // A popup's coordinates are not the main window's.
+        let _ = app.update(Message::TabPress(0, 0));
+        let popup = cosmic::iced::window::Id::unique();
+        let _ = app.update(Message::TabDragAt(popup, 700.0));
         let _ = app.update(Message::ColDragEnd);
         assert_eq!(count(&app), (1, 3));
     }
