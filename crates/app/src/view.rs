@@ -417,23 +417,18 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
             } else {
                 e.name.clone()
             };
-            let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
+            let on = i == cursor || hover == Some((side, i));
             let look = scheme.pick(e, std::time::SystemTime::now());
-            let paint = look.filter(|_| !lit).and_then(|l| l.fg);
+            let paint = look
+                .filter(|_| !on && !p.panel.is_marked(e))
+                .and_then(|l| l.fg);
             let pic = (app.thumbs.get(&p.panel.cwd().join(&e.os_name)))
                 .and_then(|(m, h)| h.as_ref().filter(|_| *m == e.mtime));
             let pic: Element<'_, Message> = match pic {
                 Some(h) => widget::image(h.clone()).into(),
                 None => entry_icon(e, 64).into(),
             };
-            let name = panel_cell(label, font);
-            let name: Element<'_, Message> = match paint {
-                Some(Paint::Accent) => name.class(theme::Text::Accent).into(),
-                Some(Paint::Rgb([r, g, b])) => name
-                    .class(theme::Text::Color(Color::from_rgb8(r, g, b)))
-                    .into(),
-                None => name.into(),
-            };
+            let name = painted(label, paint, font);
             let cell = column![
                 container(pic).center(Length::Fixed(size)),
                 container(name).center_x(Length::Fill).clip(true),
@@ -445,7 +440,7 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
                 .height(Length::Fixed(cell_h))
                 .clip(true)
                 .class(cursor_style(
-                    i == cursor || hover == Some((side, i)),
+                    on,
                     active,
                     p.panel.is_marked(e),
                     skin,
@@ -506,15 +501,7 @@ fn name_cell(
         } * size
             / PANEL_SIZE,
     );
-    let cell = |s| panel_cell(s, (font, size));
-    let label = match paint {
-        Some(Paint::Accent) => cell(label).class(theme::Text::Accent),
-        Some(Paint::Rgb([r, g, b])) => {
-            cell(label).class(theme::Text::Color(Color::from_rgb8(r, g, b)))
-        }
-        None => cell(label),
-    };
-    row![icon, label]
+    row![icon, painted(label, paint, (font, size))]
         .spacing(4)
         .align_y(Alignment::Center)
         .into()
@@ -875,6 +862,20 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
 }
 
 /// A cell of the file list, in its font (Configuration → Settings → Fonts).
+/// A list name in its colour by type (`None`: the row's own).
+fn painted(
+    label: String,
+    paint: Option<Paint>,
+    font: (Font, u16),
+) -> widget::Text<'static, cosmic::Theme> {
+    let cell = panel_cell(label, font);
+    match paint {
+        Some(Paint::Accent) => cell.class(theme::Text::Accent),
+        Some(Paint::Rgb([r, g, b])) => cell.class(theme::Text::Color(Color::from_rgb8(r, g, b))),
+        None => cell,
+    }
+}
+
 fn panel_cell(s: String, (font, size): (Font, u16)) -> widget::Text<'static, cosmic::Theme> {
     text(s)
         .size(size)

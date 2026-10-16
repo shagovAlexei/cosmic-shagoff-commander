@@ -10,8 +10,8 @@ pub const SIZE: u32 = 96;
 pub const CELL_W: f32 = SIZE as f32 + 16.0;
 /// Pictures made at once.
 pub const BUSY_MAX: usize = 4;
-/// Bigger files get their type's icon: decoding them would take long and a lot of memory.
-const MAX_BYTES: u64 = 64 << 20;
+/// A picture needing more to decode gets its type's icon (`BUSY_MAX` of them at once).
+const MAX_ALLOC: u64 = 256 << 20;
 /// The cache is dropped when it grows past this (~37 KB a picture).
 pub const CACHE_MAX: usize = 2000;
 
@@ -20,17 +20,14 @@ pub fn cell_h(row_h: f32) -> f32 {
     SIZE as f32 + row_h + 8.0
 }
 
-/// Whether `name` gets a picture made (svg: not decodable here, it gets its icon).
-pub fn wanted(name: &str, size: u64) -> bool {
-    size <= MAX_BYTES
-        && shagoff_core::lister::is_image(name)
-        && !name.to_ascii_lowercase().ends_with(".svg")
-}
-
 /// `path`'s picture shrunk into `SIZE`², proportions kept; `None` if unreadable.
 pub fn make(path: &Path) -> Option<Handle> {
+    // Not a FIFO or a device named `*.png`: reading one would never end.
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
-    let px = crate::lister::decode(&bytes)?
+    let px = crate::lister::decode(&bytes, MAX_ALLOC)?
         .thumbnail(SIZE, SIZE)
         .into_rgba8();
     let (w, h) = px.dimensions();
@@ -51,7 +48,6 @@ mod tests {
         };
         assert_eq!((width, height), (96, 48));
         assert!(make(&dir.path().join("none.png")).is_none());
-        assert!(wanted("a.JPG", 10) && !wanted("a.svg", 10) && !wanted("a.txt", 10));
-        assert!(!wanted("a.png", MAX_BYTES + 1));
+        assert!(make(dir.path()).is_none()); // not a file
     }
 }

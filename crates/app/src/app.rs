@@ -3250,6 +3250,8 @@ impl App {
             // Also the drive list: a stick plugged in shows up (TC rereads drives too).
             Action::Reload => {
                 let cwd = panel.cwd().to_path_buf();
+                // Pictures are known by mtime: a chmod or `cp -p` is seen only on Ctrl+R.
+                self.thumbs.clear();
                 self.refresh_mounts();
                 let volumes = self.refresh_volumes(true);
                 return Task::batch([self.reload(side, cwd, None), volumes]);
@@ -5230,9 +5232,11 @@ impl App {
     fn want_thumbs(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         let cell_h = crate::thumbs::cell_h(self.row_h());
+        let covered = self.viewer_shown();
         for side in 0..2 {
             let t = self.panes[side].active();
-            if !t.thumbs || archive::within(t.panel.cwd()) {
+            let hidden = covered.is_some_and(|q| q.is_none_or(|s| s == side));
+            if !t.thumbs || hidden || archive::within(t.panel.cwd()) {
                 continue;
             }
             let entries = t.panel.entries();
@@ -5242,7 +5246,7 @@ impl App {
                 if self.thumbs_busy >= crate::thumbs::BUSY_MAX {
                     break;
                 }
-                if e.is_dir() || !crate::thumbs::wanted(&e.name, e.size) {
+                if e.is_dir() || !shagoff_core::lister::thumb_wanted(&e.name, e.size) {
                     continue;
                 }
                 let path = t.panel.cwd().join(&e.os_name);
@@ -5516,10 +5520,12 @@ impl App {
         if old.row_h() != self.config.row_h() {
             // Offsets are in pixels of the old row height: bring each cursor back into view.
             let scale = self.config.row_h() / old.row_h();
+            let cells =
+                crate::thumbs::cell_h(self.config.row_h()) / crate::thumbs::cell_h(old.row_h());
             for side in 0..2 {
                 // Hidden tabs too: they are shown with their stored offset.
                 for t in self.panes[side].items_mut() {
-                    t.offset *= scale;
+                    t.offset *= if t.thumbs { cells } else { scale };
                 }
                 let tab = self.panes[side].active().id;
                 tasks.push(self.reveal(side, tab));
@@ -6031,8 +6037,8 @@ impl App {
     fn tab_switched(&mut self, side: usize) -> Task<Message> {
         let t = self.panes[side].active();
         let (dir, tab) = (t.target(), t.id);
-        // A hidden Brief tab missed the resizes: regroup its columns.
-        let reveal = if t.brief {
+        // A hidden Brief / Thumbnails tab missed the resizes: regroup its columns.
+        let reveal = if t.brief || t.thumbs {
             self.reveal(side, tab)
         } else {
             Task::none()

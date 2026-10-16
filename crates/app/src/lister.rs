@@ -65,7 +65,12 @@ impl Loaded {
 /// Turned by its EXIF orientation, as the renderer would. Not decodable here: the bytes, for the
 /// renderer to try, with no size known.
 fn raster(bytes: &[u8]) -> Image {
-    match decode(bytes).map(image::DynamicImage::into_rgba8) {
+    match decode(
+        bytes,
+        image::Limits::default().max_alloc.unwrap_or(u64::MAX),
+    )
+    .map(image::DynamicImage::into_rgba8)
+    {
         Some(px) => {
             let (w, h) = px.dimensions();
             Image::Raster(
@@ -77,14 +82,17 @@ fn raster(bytes: &[u8]) -> Image {
     }
 }
 
-/// The picture in `bytes`, turned by its EXIF orientation; `None` if not decodable here.
-pub(crate) fn decode(bytes: &[u8]) -> Option<image::DynamicImage> {
+/// The picture in `bytes`, turned by its EXIF orientation; `None` if not decodable here or
+/// needing more than `max_alloc` bytes.
+pub(crate) fn decode(bytes: &[u8], max_alloc: u64) -> Option<image::DynamicImage> {
     use image::ImageDecoder;
-    let mut d = image::ImageReader::new(std::io::Cursor::new(bytes))
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(max_alloc);
+    let mut r = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
-        .ok()?
-        .into_decoder()
         .ok()?;
+    r.limits(limits);
+    let mut d = r.into_decoder().ok()?;
     let turn = d.orientation().ok();
     let mut img = image::DynamicImage::from_decoder(d).ok()?;
     if let Some(o) = turn {
