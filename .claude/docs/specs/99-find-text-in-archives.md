@@ -8,4 +8,7 @@ by name only; a text (or regex) skipped archives.
   stream). Stop ends it.
 - `search`: the text / regex readers take any `Read`; in archives members pass the same name /
   hidden / size / date filters, then their contents are searched.
+- Member names pass `safe_path` (`./a` → `a`; absolute / `..` ones dropped: a result must stay
+  inside the archive). 7z: what a member's reader left unread is drained (a solid block is one
+  stream). Links (tar hard links too) are not searched.
 - The checkbox reads «(имена и текст)».

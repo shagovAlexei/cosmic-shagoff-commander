@@ -12,7 +12,7 @@ pub struct Query {
     pub mask: Mask,
     /// Name as a regular expression (case as the "case sensitive" box, like masks); replaces `mask` when set.
     pub name_regex: Option<regex::Regex>,
-    /// Also names inside zip / tar / 7z files (no content search there).
+    /// Also inside zip / tar / 7z files: names, and the text when one is asked.
     pub archives: bool,
     /// Substring to look for inside files; `None` = names only.
     pub text: Option<String>,
@@ -243,7 +243,7 @@ pub fn contains(path: &Path, q: &Query) -> bool {
 }
 
 fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
-    if q.regex.is_none() && q.text.as_deref().is_none_or(str::is_empty) {
+    if !q.reads_content() {
         return true;
     }
     match File::open(path) {
@@ -439,6 +439,29 @@ mod tests {
         );
         q.archives = false;
         assert_eq!(rel(d.path(), run(d.path(), &q)), ["src/t.rs"]);
+    }
+
+    #[test]
+    fn solid_7z_members_skipped_by_name_do_not_shift_the_next_ones() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("s.7z");
+        let mut w = sevenz_rust2::ArchiveWriter::new(fs::File::create(&a).unwrap()).unwrap();
+        let entries = vec![
+            sevenz_rust2::ArchiveEntry::new_file("./x.txt"),
+            sevenz_rust2::ArchiveEntry::new_file("./y.txt"),
+        ];
+        let data: Vec<sevenz_rust2::SourceReader<&[u8]>> = vec![
+            (&b"xxxx needle in x"[..]).into(),
+            (&b"yyyy other"[..]).into(),
+        ];
+        w.push_archive_entries(entries, data).unwrap(); // one solid block
+        w.finish().unwrap();
+        let mut q = q("y*", Some("needle"), false, false);
+        q.archives = true;
+        assert!(run(d.path(), &q).is_empty()); // x is not read: y must not get its bytes
+        q.text = Some("other".into());
+        // `./` dropped: not a hidden path.
+        assert_eq!(rel(d.path(), run(d.path(), &q)), ["s.7z/y.txt"]);
     }
 
     struct NoAsk;

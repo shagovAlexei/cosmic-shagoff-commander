@@ -654,6 +654,13 @@ pub fn for_each_file(
             Ok(())
         }
     };
+    // Names as the panel lists them (`./a` → `a`); an absolute or `..` one is passed over, else
+    // `archive.join` would point outside the archive.
+    let f = &mut |p: &Path, size, mtime, r: &mut dyn Read| {
+        if let Some(p) = safe_path(p).filter(|p| !p.as_os_str().is_empty()) {
+            f(&p, size, mtime, r);
+        }
+    };
     let file = File::open(archive)?;
     let pw = password(archive);
     let tar = |r: Box<dyn Read>, f: &mut dyn FnMut(&Path, u64, SystemTime, &mut dyn Read)| {
@@ -705,7 +712,11 @@ pub fn for_each_file(
                 if stop.load(Ordering::Relaxed) {
                     return Err(sevenz_rust2::Error::Other("stopped".into()));
                 }
-                if !e.is_directory() && !e.is_anti_item() {
+                let attrs = e.windows_attributes();
+                let link = e.has_windows_attributes
+                    && attrs & UNIX_EXTENSION != 0
+                    && (attrs >> 16) & S_IFMT == S_IFLNK;
+                if !e.is_directory() && !e.is_anti_item() && !link {
                     let mtime = if e.has_last_modified_date {
                         e.last_modified_date().into()
                     } else {
@@ -713,6 +724,9 @@ pub fn for_each_file(
                     };
                     f(Path::new(e.name()), e.size(), mtime, data);
                 }
+                // A solid block is one stream: what the callback left unread must go, or the
+                // next member would start inside this one.
+                io::copy(data, &mut io::sink())?;
                 Ok(true)
             });
             stopped()?;
