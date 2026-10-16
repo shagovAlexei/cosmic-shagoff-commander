@@ -305,6 +305,7 @@ settings-fkeys = Кнопки F-клавиш внизу
 settings-panels = Панели
 settings-hidden = Показывать скрытые файлы
 settings-last-tab = Ctrl+W на последней вкладке — домой
+settings-right-marks = Правая кнопка отмечает файлы (меню — удержанием)
 settings-home-dir = Домашний каталог для этого
 settings-programs = Программы
 settings-viewer = Просмотр (F3)

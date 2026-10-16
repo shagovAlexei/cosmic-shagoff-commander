@@ -14,7 +14,7 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Built-in viewer (F3): text with wrap and Cyrillic code pages (1251, KOI8-R, 866, guessed), hex, images; quick view in the other panel (Ctrl+Q), also inside archives
 - Find files (masks or regex, text inside, size / date, inside archives), compare and synchronize folders, compare files side by side
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs
-- Right-click menus, full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
+- Right button marks files as in Total Commander, held it opens the menu (or the menu at once — a setting), full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
 
 ## Toolbar buttons
 

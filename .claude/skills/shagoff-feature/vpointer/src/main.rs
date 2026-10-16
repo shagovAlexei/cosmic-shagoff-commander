@@ -112,7 +112,9 @@ fn main() {
         p.button(t(), button, ButtonState::Pressed);
         p.frame();
         q.roundtrip(&mut s).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        // VP_HOLD_MS: hold the button longer (a long press).
+        let hold = std::env::var("VP_HOLD_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(150);
+        std::thread::sleep(std::time::Duration::from_millis(hold));
         p.button(t(), button, ButtonState::Released);
         p.frame();
         q.roundtrip(&mut s).unwrap();

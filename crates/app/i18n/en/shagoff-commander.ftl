@@ -304,6 +304,7 @@ settings-fkeys = Function key buttons
 settings-panels = Panels
 settings-hidden = Show hidden files
 settings-last-tab = Ctrl+W on the last tab goes home
+settings-right-marks = Right button marks files (hold it for the menu)
 settings-home-dir = Home folder for that
 settings-programs = Programs
 settings-viewer = Viewer (F3)
