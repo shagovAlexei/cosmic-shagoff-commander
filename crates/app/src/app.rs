@@ -324,6 +324,8 @@ pub struct App {
     saved: State,
     /// Alt+F7 settings, kept in `State`.
     find: config::FindPrefs,
+    /// Ctrl+Shift+S options as last compared (written to the state).
+    sync: config::SyncPrefs,
     pub drives: Vec<Drive>,
     /// Column widths as shown: the config's, or the one being dragged (written on release).
     pub cols: [f32; 4],
@@ -712,6 +714,22 @@ impl Application for App {
             self.dialog = self.held.take();
         }
         let follow = self.quick_follow();
+        // Ctrl+Shift+S's options as on screen, however the dialog then closes.
+        if let Some(Dialog::Sync(s)) = &self.dialog {
+            self.sync = config::SyncPrefs {
+                recursive: s.recursive,
+                content: s.content,
+                ignore_date: s.ignore_date,
+                mask: s.mask.clone(),
+                hide: s
+                    .hide
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+            };
+        }
         self.save_state();
         // The viewer came, went or moved to the other pane: the lists it replaced are new
         // widgets at the top, while the tabs keep their offsets (the rows drawn are those).
@@ -861,6 +879,7 @@ impl App {
             state_handler: None,
             saved: State::default(),
             find: state.find.clone(),
+            sync: state.sync.clone(),
             drives: Vec::new(),
             cols,
             col_drag: None,
@@ -2606,6 +2625,7 @@ impl App {
             }),
             active: self.active,
             find: self.find.clone(),
+            sync: self.sync.clone(),
             commands: keep(&self.commands),
             masks: keep(&self.masks),
             other_cmds: keep(&self.other_cmds),
@@ -3507,14 +3527,13 @@ impl App {
                 side,
                 left: self.panes[0].active().target(),
                 right: self.panes[1].active().target(),
-                recursive: true,
-                content: false,
-                ignore_date: false,
+                recursive: self.sync.recursive,
+                content: self.sync.content,
+                ignore_date: self.sync.ignore_date,
                 hidden: panel.show_hidden(),
-                // As before: equal files hidden until asked for.
-                hide: HashSet::from([shagoff_core::sync::Kind::Same]),
+                hide: self.sync.hide.iter().copied().collect(),
                 mirror: false,
-                mask: String::new(),
+                mask: self.sync.mask.clone(),
                 confirm: false,
                 rows: Vec::new(),
                 id: 0,
@@ -9271,6 +9290,30 @@ mod tests {
             Some(Dialog::Find(f)) => f,
             _ => panic!("no find dialog"),
         }
+    }
+
+    #[test]
+    fn sync_options_are_remembered_after_a_compare() {
+        use shagoff_core::sync::Kind;
+        let (_tmp, mut app) = results_app();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let _ = app.update(Message::SyncOpt(SyncOpt::Content));
+        let _ = app.update(Message::SyncOpt(SyncOpt::Recursive)); // off
+        let _ = app.update(Message::SyncOpt(SyncOpt::Mirror)); // not kept
+        let _ = app.update(Message::SyncCompare);
+        // After the compare, not compared again: still kept.
+        let _ = app.update(Message::SyncShow(Kind::Same)); // shown now
+        let _ = app.update(Message::SyncShow(Kind::ToLeft)); // hidden
+        let _ = app.update(Message::SyncMask("*.rs".into()));
+        let _ = app.update(Message::DialogCancel);
+        assert_eq!(app.saved.sync.mask, "*.rs"); // written to the state
+        let mut app = app_with(Config::default(), app.saved.clone());
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let Some(Dialog::Sync(s)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert!(s.content && !s.recursive && !s.mirror && s.mask == "*.rs");
+        assert_eq!(s.hide, HashSet::from([Kind::ToLeft]));
     }
 
     #[test]
