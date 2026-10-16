@@ -389,17 +389,19 @@ pub struct Pack {
     pub format: Format,
     pub move_after: bool,
     pub separate: bool,
-    /// Zip / 7z: empty = not encrypted; typed twice, as in TC (a typo would lock the files away).
+    /// Zip / 7z «Шифровать» (TC): shows the password fields.
+    pub encrypt: bool,
+    /// Typed twice, as in TC (a typo would lock the files away).
     pub password: String,
     pub again: String,
 }
 
 impl Pack {
-    /// The password to pack with; `Err` while the two fields differ.
+    /// The password to pack with; `Err` while it is empty or the two fields differ.
     pub fn password(&self) -> Result<Option<String>, ()> {
-        if !self.format.can_encrypt() || self.password.is_empty() && self.again.is_empty() {
+        if !self.format.can_encrypt() || !self.encrypt {
             Ok(None)
-        } else if self.password == self.again {
+        } else if !self.password.is_empty() && self.password == self.again {
             Ok(Some(self.password.clone()))
         } else {
             Err(())
@@ -411,6 +413,7 @@ impl Pack {
 pub enum Toggle {
     MoveAfter,
     Separate,
+    Encrypt,
     OwnDir,
 }
 
@@ -1280,10 +1283,20 @@ pub fn view<'a>(
                             .on_toggle(|_| Message::Toggle(Toggle::Separate)),
                     ]
                     .push_maybe(p.format.can_encrypt().then(|| {
+                        widget::checkbox(p.encrypt)
+                            .label(fl!("pack-encrypt"))
+                            .on_toggle(|_| Message::Toggle(Toggle::Encrypt))
+                    }))
+                    .push_maybe((p.format.can_encrypt() && p.encrypt).then(|| {
                         let pw = |label: String, value: &'a str, again: bool| {
                             column![
                                 widget::text::caption(label),
                                 widget::secure_input("", value, None, true)
+                                    .id(widget::Id::new(if again {
+                                        "pack-again"
+                                    } else {
+                                        "pack-password"
+                                    }))
                                     .on_input(move |s| Message::PackPassword(again, s))
                                     .on_submit(|_| Message::DialogSubmit),
                             ]
@@ -1297,8 +1310,8 @@ pub fn view<'a>(
                         .spacing(8)
                     }))
                     .push_maybe(
-                        p.password()
-                            .is_err()
+                        // Said once both are typed: an empty one just keeps OK off.
+                        (p.password().is_err() && !p.again.is_empty())
                             .then(|| widget::text::caption(fl!("pack-password-differ"))),
                     )
                     .spacing(12),
