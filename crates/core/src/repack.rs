@@ -88,6 +88,58 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
     report
 }
 
+/// F5 / F6 / Ctrl+V from one archive into another, or into another dir of the same one: extract
+/// `names` of the dir `inner` of `from` into a staging dir next to `to`, add them to its dir
+/// `to_inner`, then with `move_after` delete from `from` what was added completely.
+/// `completed`: `from/inner/name` of the names added.
+// ponytail: up to two rewrites of a whole archive; fine until big archives get slow.
+pub fn cross(
+    from: &Path,
+    inner: &Path,
+    names: &[PathBuf],
+    to: &Path,
+    to_inner: &Path,
+    move_after: bool,
+    h: &mut dyn Handler,
+) -> Report {
+    let mut report = Report::default();
+    let dir = to.parent().unwrap_or(Path::new("."));
+    let staging = match retry(h, to, || archive::make_staging(dir)) {
+        Ok(s) => s,
+        Err(cancel) => {
+            report.cancelled = cancel;
+            return report;
+        }
+    };
+    let out = archive::extract(from, inner, names, &staging, h);
+    let sources: Vec<PathBuf> = (names.iter())
+        .map(|n| staging.join(n))
+        .filter(|p| fs::symlink_metadata(p).is_ok())
+        .collect();
+    if !out.cancelled && !sources.is_empty() {
+        let change = Change::Add {
+            sources,
+            inner: to_inner.to_path_buf(),
+        };
+        let r = modify(to, &change, h);
+        report.cancelled = r.cancelled;
+        report.completed = (names.iter())
+            .filter(|n| r.completed.contains(&staging.join(n)))
+            .map(|n| from.join(inner).join(n))
+            .collect();
+    } else {
+        report.cancelled = out.cancelled;
+    }
+    let _ = fs::remove_dir_all(&staging); // never follows symlinks
+    if move_after && !report.cancelled && !report.completed.is_empty() {
+        let entries = (report.completed.iter())
+            .filter_map(|p| p.strip_prefix(from).ok().map(Path::to_path_buf))
+            .collect();
+        report.cancelled = modify(from, &Change::Delete(entries), h).cancelled;
+    }
+    report
+}
+
 /// A zip entry with a non-ASCII name not marked UTF-8 (Windows zips in cp866 and the like).
 fn legacy_zip_names(archive: &Path) -> io::Result<bool> {
     let mut z = zip::ZipArchive::new(fs::File::open(archive)?)?;
@@ -354,6 +406,51 @@ mod tests {
         }
         v.sort();
         v
+    }
+
+    #[test]
+    fn cross_copies_between_archives_and_moves_inside_one() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let b = d.path().join("b.tar");
+        fs::rename(sample(&d.path().join("t"), Format::Tar), &b).unwrap();
+        let (n, h) = (vec![PathBuf::from("sub")], &mut Script::default());
+        // zip → tar, into a dir of it
+        let r = cross(&a, Path::new(""), &n, &b, Path::new("sub"), false, h);
+        assert!(!r.cancelled && r.completed == [a.join("sub")]);
+        assert_eq!(
+            contents(&b),
+            [
+                "a.txt=A",
+                "sub/",
+                "sub/b.txt=B",
+                "sub/sub/",
+                "sub/sub/b.txt=B"
+            ]
+        );
+        assert_eq!(contents(&a), ["a.txt=A", "sub/", "sub/b.txt=B"]);
+        // F6 inside one archive: a.txt into sub/
+        let n = vec![PathBuf::from("a.txt")];
+        let r = cross(&a, Path::new(""), &n, &a, Path::new("sub"), true, h);
+        assert!(!r.cancelled && r.completed == [a.join("a.txt")]);
+        assert_eq!(contents(&a), ["sub/", "sub/a.txt=A", "sub/b.txt=B"]);
+        assert!(no_leftovers(d.path()) && h.errors == 0);
+    }
+
+    #[test]
+    fn cross_skipped_conflict_is_not_moved() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let b = d.path().join("b.tar");
+        fs::rename(sample(&d.path().join("t"), Format::Tar), &b).unwrap();
+        let h = &mut Script {
+            conflicts: vec![Resolution::Skip],
+            ..Script::default()
+        };
+        let n = vec![PathBuf::from("a.txt")];
+        let r = cross(&a, Path::new(""), &n, &b, Path::new(""), true, h);
+        assert!(r.completed.is_empty() && h.conflicted == 1);
+        assert_eq!(contents(&a), ["a.txt=A", "sub/", "sub/b.txt=B"]);
     }
 
     fn no_leftovers(d: &Path) -> bool {

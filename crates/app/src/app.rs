@@ -1865,14 +1865,6 @@ impl App {
                 if shagoff_core::panel::drop_is_noop(&paths, &dir) {
                     return Task::none();
                 }
-                // From one archive into an archive: not done (F5 says so too) — said now, not
-                // after a dialog.
-                if paths.first().is_some_and(|p| inside_archive(p))
-                    && shagoff_core::archive::within(&dir)
-                {
-                    self.say(StatusKind::Error, fl!("archive-read-only"));
-                    return Task::none();
-                }
                 // The pane the files came from, if one shows them: its marks go when done, as F5.
                 let parent = paths.first().and_then(|p| p.parent());
                 let from = (0..2).find(|&s| Some(self.panes[s].active().panel.cwd()) == parent);
@@ -3842,9 +3834,33 @@ impl App {
             .then(|| archive::split_path(&target))
             .flatten();
         match (from_archive, to_archive) {
-            (Some(_), Some(_)) => {
-                self.say(StatusKind::Error, fl!("archive-read-only"));
-                return Task::none();
+            (Some((from, inner)), Some((to, to_inner))) => {
+                let names: Vec<PathBuf> = (sources.iter())
+                    .filter_map(|p| p.file_name().map(PathBuf::from))
+                    .collect();
+                // Inside one archive, as on disk: not onto itself, not a dir into itself.
+                if from == to {
+                    let e = if inner == to_inner {
+                        sources.first().map(|s| PlanError::SameFile(s.clone()))
+                    } else {
+                        (names.iter().map(|n| inner.join(n)))
+                            .find(|n| to_inner.starts_with(n))
+                            .map(|n| PlanError::IntoItself(from.join(n)))
+                    };
+                    if let Some(e) = e {
+                        self.say(StatusKind::Error, plan_error(&e));
+                        return Task::none();
+                    }
+                }
+                let job = Job::Cross {
+                    from,
+                    inner,
+                    names,
+                    to,
+                    to_inner,
+                    move_after: op == InputOp::Move,
+                };
+                return self.start_job(side, OpKind::Repack, job, None);
             }
             (Some((archive, inner)), None) if op == InputOp::Rename => {
                 let Some(name) = sources.first().and_then(|p| p.file_name()) else {
@@ -4701,7 +4717,6 @@ impl App {
             Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
                 inside(side) || inside(1 - side)
             }
-            Action::Copy | Action::Move => inside(side) && inside(1 - side),
             _ => false,
         }
     }
@@ -8857,10 +8872,11 @@ mod tests {
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
         app.job = None;
-        // From the archive into an archive: said at once, no dialog.
+        // From the archive into a dir of it: the F5 dialog, then a cross-archive job.
         let _ = app.update(drop(0, vec![a.join("top.txt")], Some(a.join("d")), false));
-        assert!(app.dialog.is_none());
-        assert_eq!(app.msg(), Some(fl!("archive-read-only").as_str()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+        app.job = None;
         // A right-button drop from inside it: no Link in the menu (no file on disk to link to).
         assert_eq!(
             dialogs::drop_ops(&[a.join("top.txt")]),
@@ -8905,13 +8921,16 @@ mod tests {
         let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![f]))));
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
         app.job = None;
-        // From an archive into one: not yet.
-        let _ = app.update(Message::Pasted(Some((
-            ClipKind::Copy,
-            vec![a.join("top.txt")],
-        ))));
+        // From an archive into the same dir of it: the same file, as on disk.
+        let top = a.join("top.txt");
+        let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![top.clone()]))));
         assert!(app.job.is_none());
-        assert!(app.status.is_some());
+        let same = plan_error(&PlanError::SameFile(top.clone()));
+        assert_eq!(app.msg(), Some(same.as_str()));
+        // Into another dir of it: a cross-archive job.
+        listed_at(&mut app, 0, &a.join("d"));
+        let _ = app.update(Message::Pasted(Some((ClipKind::Cut, vec![top]))));
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
     }
 
     #[test]

@@ -51,6 +51,15 @@ pub enum Job {
         names: Vec<PathBuf>,
         dest: PathBuf,
     },
+    /// F5 / F6 / Ctrl+V from an archive into another one (or another dir of the same one).
+    Cross {
+        from: PathBuf,
+        inner: PathBuf,
+        names: Vec<PathBuf>,
+        to: PathBuf,
+        to_inner: PathBuf,
+        move_after: bool,
+    },
     /// F5 / F6 / F7 / F8 / Shift+F6 / F4 inside an archive: rewrite it with the change.
     Repack {
         archive: PathBuf,
@@ -230,6 +239,14 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                     }
                 }
             }
+            Job::Cross {
+                from,
+                inner,
+                names,
+                to,
+                to_inner,
+                move_after,
+            } => repack::cross(&from, &inner, &names, &to, &to_inner, move_after, &mut h),
             Job::Repack {
                 archive,
                 change,
@@ -292,6 +309,10 @@ impl Job {
             Job::Extract { names, dest, .. } | Job::ExtractMove { names, dest, .. } => (
                 names.iter().map(PathBuf::as_path).collect(),
                 Some(dest.as_path()),
+            ),
+            Job::Cross { names, to, .. } => (
+                names.iter().map(PathBuf::as_path).collect(),
+                Some(to.as_path()),
             ),
             Job::Repack { archive, .. } => (vec![], Some(archive.as_path())),
         }
