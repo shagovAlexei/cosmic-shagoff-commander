@@ -449,7 +449,11 @@ fn picker_view<'a>(all: &'a [String], filter: &'a str) -> Element<'a, Message> {
         .into()
 }
 
-pub fn view<'a>(t: &'a ToolEdit, cancel: Element<'a, Message>) -> Element<'a, Message> {
+pub fn view<'a>(
+    t: &'a ToolEdit,
+    cancel: Element<'a, Message>,
+    font: crate::dialogs::ListFont,
+) -> Element<'a, Message> {
     let msg = Message::ToolEdit;
     if let Some((all, filter)) = &t.picker {
         return picker_view(all, filter);
@@ -462,7 +466,7 @@ pub fn view<'a>(t: &'a ToolEdit, cancel: Element<'a, Message>) -> Element<'a, Me
         } else {
             let line = row![
                 widget::icon::from_name(icon(b)).size(16),
-                crate::dialogs::menu_row(tip(b), b.cmd.clone(), t.sel == Some(i), on),
+                crate::dialogs::menu_row(tip(b), b.cmd.clone(), t.sel == Some(i), on, font),
             ]
             .spacing(6)
             .align_y(Alignment::Center);

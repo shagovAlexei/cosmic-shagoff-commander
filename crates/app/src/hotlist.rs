@@ -294,7 +294,11 @@ pub fn sep_row<'a>(selected: bool, on: Message) -> Element<'a, Message> {
     .into()
 }
 
-pub fn view<'a>(h: &'a HotEdit, cancel: Element<'a, Message>) -> Element<'a, Message> {
+pub fn view<'a>(
+    h: &'a HotEdit,
+    cancel: Element<'a, Message>,
+    font: crate::dialogs::ListFont,
+) -> Element<'a, Message> {
     let msg = |m: HotMsg| Message::Hot(m);
     let mut list = column![].spacing(1);
     for ((i, e), depth) in h.list.iter().enumerate().zip(depths(&h.list)) {
@@ -302,12 +306,15 @@ pub fn view<'a>(h: &'a HotEdit, cancel: Element<'a, Message>) -> Element<'a, Mes
         let row: Element<'a, Message> = match () {
             _ if is_sep(e) => sep_row(sel, on),
             _ if is_sub(e) => {
-                crate::dialogs::menu_row(format!("▸ {}", sub_name(e)), String::new(), sel, on)
+                crate::dialogs::menu_row(format!("▸ {}", sub_name(e)), String::new(), sel, on, font)
             }
             _ if is_end(e) => {
-                crate::dialogs::menu_row(fl!("hotlist-sub-end"), String::new(), sel, on)
+                crate::dialogs::menu_row(fl!("hotlist-sub-end"), String::new(), sel, on, font)
             }
-            _ => crate::dialogs::menu_row(e.name.clone(), e.path.display().to_string(), sel, on),
+            _ => {
+                let path = e.path.display().to_string();
+                crate::dialogs::menu_row(e.name.clone(), path, sel, on, font)
+            }
         };
         // Submenu contents indented, as the menu nests them; the row under the pointer is where
         // a held one goes.

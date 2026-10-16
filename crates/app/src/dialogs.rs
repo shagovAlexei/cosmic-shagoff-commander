@@ -588,9 +588,13 @@ pub fn menu_row<'a>(
     path: String,
     selected: bool,
     on: Message,
+    font: ListFont,
 ) -> Element<'a, Message> {
-    menu_row_with(None, None, name, path, selected, on)
+    menu_row_with(None, None, name, path, selected, on, font)
 }
+
+/// The panels' font and size (Settings → «Шрифты»), for the list dialogs' rows.
+pub type ListFont = (cosmic::iced::Font, u16);
 
 /// `menu_row` with an icon before the name and the letter at byte `hot` of it underlined.
 pub fn menu_row_with<'a>(
@@ -600,6 +604,7 @@ pub fn menu_row_with<'a>(
     path: String,
     selected: bool,
     on: Message,
+    (face, size): ListFont,
 ) -> Element<'a, Message> {
     use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
     use cosmic::iced::widget::{rich_text, span};
@@ -612,8 +617,9 @@ pub fn menu_row_with<'a>(
             .class(cosmic::theme::Container::custom(|_| Default::default()))
     };
     // Plain `text`: body / caption carry their own colour, not the cursor's.
-    let plain = |t: String, size| -> Element<'a, Message> {
+    let plain = |t: String, size: u16| -> Element<'a, Message> {
         widget::text(t)
+            .font(face)
             .size(size)
             .wrapping(Wrapping::None)
             .ellipsize(one_line)
@@ -629,17 +635,18 @@ pub fn menu_row_with<'a>(
                 span(key.to_string()).underline(true),
                 span(tail.to_string()),
             ])
-            .size(14)
+            .font(face)
+            .size(size)
             .wrapping(Wrapping::None)
             .ellipsize(one_line)
             .into()
         }
-        None => plain(name, 14),
+        None => plain(name, size),
     };
     // No path: the name takes the whole row (the drop menu).
     let line = match path.is_empty() {
         true => row![cut(name, 1)],
-        false => row![cut(name, 2), cut(plain(path, 12), 3)].spacing(12),
+        false => row![cut(name, 2), cut(plain(path, size.saturating_sub(2)), 3)].spacing(12),
     };
     let line = match icon {
         Some(icon) => row![icon, line]
@@ -651,7 +658,8 @@ pub fn menu_row_with<'a>(
         widget::container(line)
             .padding([4, 8])
             .width(Length::Fill)
-            .height(Length::Fixed(28.0))
+            // 28 as before; grows with a larger list font, never below (icons are 20 px).
+            .height(Length::Fixed((f32::from(size) * 2.0).max(28.0)))
             .align_y(cosmic::iced::Alignment::Center)
             .class(crate::view::cursor_style(
                 selected,
@@ -723,6 +731,7 @@ fn drop_menu<'a>(
     use shagoff_core::quicksearch::hotkey;
     let ops = drop_ops(sources);
     // TC's menu rows: the cursor (↑ / ↓), the `&` hot letter underlined.
+    // A menu, not a list: the interface's font (its card has a fixed width).
     let item = |i: usize| -> Element<'a, Message> {
         let (label, on) = match ops.get(i) {
             Some(&op) => (drop_label(op), Message::DropAs(op)),
@@ -736,6 +745,7 @@ fn drop_menu<'a>(
             String::new(),
             i == cursor,
             on,
+            (cosmic::font::default(), 14),
         );
         cosmic::widget::mouse_area(row)
             .on_enter(Message::DropRow(i))
@@ -778,6 +788,7 @@ pub fn view<'a>(
     input_id: &widget::Id,
     tz: &TimeZone,
     list_h: f32,
+    font: ListFont,
 ) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
@@ -994,9 +1005,9 @@ pub fn view<'a>(
                 .secondary_action(cancel)
                 .into()
         }
-        Dialog::Hotlist(h) => crate::hotlist::view(h, cancel.into()),
-        Dialog::Toolbar(t) => crate::toolbar::view(t, cancel.into()),
-        Dialog::Colors(c) => crate::colorrules::view(c, cancel.into()),
+        Dialog::Hotlist(h) => crate::hotlist::view(h, cancel.into(), font),
+        Dialog::Toolbar(t) => crate::toolbar::view(t, cancel.into(), font),
+        Dialog::Colors(c) => crate::colorrules::view(c, cancel.into(), font),
         Dialog::Props(p) => {
             const LABEL: f32 = 150.0;
             const CELL: f32 = 90.0;
@@ -1183,6 +1194,7 @@ pub fn view<'a>(
                     path,
                     i == *cursor,
                     Message::ListPick(i),
+                    font,
                 ));
             }
             let list = widget::scrollable(list)
