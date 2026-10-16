@@ -59,6 +59,7 @@ pub enum Setting {
     Skin(usize),
     ShowFkeys(bool),
     DividerLine(bool),
+    HumanSizes(bool),
     ActiveFrame(bool),
     ShowCmdline(bool),
     KeepHistory(bool),
@@ -285,6 +286,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-divider-line"),
                 widget::toggler(c.divider_line).on_toggle(move |b| set(Setting::DividerLine(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-human-sizes"),
+                widget::toggler(c.human_sizes()).on_toggle(move |b| set(Setting::HumanSizes(b))),
             ))
             .add_maybe((c.skin == Skin::Classic).then(|| {
                 settings::item(

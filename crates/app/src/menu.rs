@@ -219,6 +219,7 @@ type Item = menu::Item<MenuAct, String>;
 pub struct Checks {
     pub hidden: bool,
     pub divider_line: bool,
+    pub human_sizes: bool,
     pub active_frame: bool,
     /// The classic look: only there is «Frame around the active panel» offered (the modern
     /// look's cards have one of their own).
@@ -333,6 +334,12 @@ fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
                     None,
                     checks.divider_line,
                     MenuAct::Key(Action::ToggleDividerLine),
+                ),
+                menu::Item::CheckBox(
+                    fl!("settings-human-sizes"),
+                    None,
+                    checks.human_sizes,
+                    MenuAct::Key(Action::ToggleHumanSizes),
                 ),
             ]
             .into_iter()
@@ -652,6 +659,7 @@ mod tests {
                             | Action::TabRename
                             | Action::ResetColumns
                             | Action::ToggleDividerLine
+                            | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar
                             | Action::ConfigureColors

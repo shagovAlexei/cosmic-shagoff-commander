@@ -17,6 +17,12 @@ pub fn size(n: u64) -> String {
     out
 }
 
+/// Whether size `n` is shown in KB / MB / GB: as `chosen`, else as the skin has it — `modern`
+/// always, the classic one from 1 000 000 000 up (no longer fits its column).
+pub fn human_size(n: u64, chosen: Option<bool>, modern: bool) -> bool {
+    chosen.unwrap_or(modern || n >= 1_000_000_000)
+}
+
 /// `1536` → `1.5 K` with `units` = [bytes, K, M, G, T, P] and `sep` as decimal separator.
 /// One decimal below 100; rounds first, so 99.96 G is `100 G` and 1023.97 K is `1.0 M`.
 pub fn human(n: u64, units: &[&str; 6], sep: char) -> String {
@@ -97,7 +103,13 @@ pub fn display_name(e: &Entry) -> String {
 
 /// Status bar: `name → target   1 204 567   02.10.2026 13:49   rwxr-xr-x (755)   user:group`.
 /// Empty for `..`; no size for dirs; no owner for archive entries.
-pub fn details(e: &Entry, tz: &TimeZone, owners: &crate::owners::Owners) -> String {
+/// `size`: a file's size as shown (bytes or KB / MB).
+pub fn details(
+    e: &Entry,
+    tz: &TimeZone,
+    owners: &crate::owners::Owners,
+    size: impl Fn(u64) -> String,
+) -> String {
     if e.name == crate::panel::PARENT {
         return String::new();
     }
@@ -166,6 +178,15 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
+
+    #[test]
+    fn human_size_as_chosen_else_by_skin() {
+        assert!(!human_size(999_999_999, None, false));
+        assert!(human_size(1_000_000_000, None, false));
+        assert!(human_size(1, None, true));
+        assert!(!human_size(5 << 30, Some(false), true));
+        assert!(human_size(1, Some(true), false));
+    }
 
     #[test]
     fn human_sizes() {
@@ -318,22 +339,22 @@ mod tests {
         let tz = TimeZone::UTC;
         let o = crate::owners::Owners::default();
         assert_eq!(
-            details(&full("a.sh", Kind::File), &tz, &o),
+            details(&full("a.sh", Kind::File), &tz, &o, self::size),
             "a.sh   1 204 567   02.01.1970 00:00   rwxr-xr-x (755)   0:0"
         );
         let mut d = full("docs", Kind::Dir);
         d.owner = None; // inside an archive
         assert_eq!(
-            details(&d, &tz, &o),
+            details(&d, &tz, &o, self::size),
             "docs   02.01.1970 00:00   rwxr-xr-x (755)"
         );
         let mut l = full("lib", Kind::File);
         l.is_link = true;
         l.target = Some("/usr/lib/x".into());
-        assert!(details(&l, &tz, &o).starts_with("lib → /usr/lib/x   1 204 567"));
-        assert_eq!(details(&full("..", Kind::Dir), &tz, &o), "");
+        assert!(details(&l, &tz, &o, self::size).starts_with("lib → /usr/lib/x   1 204 567"));
+        assert_eq!(details(&full("..", Kind::Dir), &tz, &o, self::size), "");
         let mut unreadable = full("secret", Kind::File); // stat failed (dir r-- without x)
         (unreadable.mode, unreadable.owner) = (0, None);
-        assert_eq!(details(&unreadable, &tz, &o), "secret");
+        assert_eq!(details(&unreadable, &tz, &o, self::size), "secret");
     }
 }

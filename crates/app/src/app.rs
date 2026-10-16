@@ -897,6 +897,7 @@ impl Application for App {
         let checks = crate::menu::Checks {
             hidden: c.show_hidden,
             divider_line: c.divider_line,
+            human_sizes: c.human_sizes(),
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
         };
@@ -3032,6 +3033,9 @@ impl App {
                 return Task::none();
             }
             Action::F12 => return self.run_button(self.config.f12.clone()),
+            Action::ToggleHumanSizes => {
+                return self.set(Setting::HumanSizes(!self.config.human_sizes()));
+            }
             Action::ToggleDividerLine => {
                 return self.set(Setting::DividerLine(!self.config.divider_line));
             }
@@ -3301,6 +3305,7 @@ impl App {
             | Action::Settings
             | Action::F12
             | Action::ToggleDividerLine
+            | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::Donate
             | Action::OpenWith
@@ -5690,6 +5695,7 @@ impl App {
             Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
             Setting::DividerLine(b) => c.divider_line = b,
+            Setting::HumanSizes(b) => c.human_sizes = Some(b),
             Setting::ActiveFrame(b) => c.active_frame = b,
             Setting::ShowCmdline(b) => c.show_cmdline = b,
             Setting::KeepHistory(b) => c.keep_history = b,
@@ -10911,6 +10917,24 @@ mod tests {
             assert!(app.config.divider_line && app.config.active_frame);
             let _ = app.update(Message::Key(Action::ToggleDividerLine));
             assert!(!app.config.divider_line);
+        }
+
+        #[test]
+        fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
+            let mut app = app_with(Config::default(), State::default());
+            // Not chosen: as the skin has them.
+            assert_eq!(
+                app.config.human_sizes(),
+                app.config.skin == config::Skin::Modern
+            );
+            let was = app.config.human_sizes();
+            let _ = app.update(Message::Key(Action::ToggleHumanSizes));
+            assert_eq!(app.config.human_sizes, Some(!was));
+            let _ = app.update(Message::Key(Action::ToggleHumanSizes));
+            assert_eq!(app.config.human_sizes, Some(was));
+            app.config.human_sizes = None;
+            app.config.skin = config::Skin::Modern;
+            assert!(app.config.human_sizes());
         }
 
         #[test]
