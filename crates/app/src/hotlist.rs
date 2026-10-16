@@ -111,6 +111,9 @@ pub struct HotEdit {
     /// The row under the pointer, and the one held by the left button (dragged to reorder).
     pub hover: Option<usize>,
     pub grab: Option<usize>,
+    /// Where the held row just came from: rows of other heights shift after a move, and the one
+    /// sliding under the still pointer must not move it back (it would flicker).
+    vacated: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -135,8 +138,8 @@ pub enum HotMsg {
     /// The left button went down / up anywhere (rows are buttons: they keep the press).
     Grab,
     Release,
-    /// Dirs dropped from a panel: added after the selection (files left out).
-    AddDirs(Vec<std::path::PathBuf>),
+    /// The pointer left this row (ignored if it is already over another).
+    Left(usize),
 }
 
 impl HotEdit {
@@ -148,6 +151,7 @@ impl HotEdit {
             path: String::new(),
             hover: None,
             grab: None,
+            vacated: None,
         };
         if !h.list.is_empty() {
             h.select(0);
@@ -229,21 +233,25 @@ impl HotEdit {
                 if let (Some(from), Some(to)) = (self.grab, at)
                     && from != to
                     && to < self.list.len()
+                    && self.vacated != Some(to)
                 {
                     let e = self.list.remove(from);
                     self.list.insert(to, e);
                     self.grab = Some(to);
+                    self.vacated = Some(from);
                     self.select(to);
+                } else if at != self.vacated {
+                    self.vacated = None;
                 }
             }
-            (HotMsg::Grab, _) => self.grab = self.hover,
+            (HotMsg::Grab, _) => {
+                self.grab = self.hover;
+                self.vacated = None;
+            }
             (HotMsg::Release, _) => self.grab = None,
-            (HotMsg::AddDirs(dirs), _) => {
-                for d in dirs.into_iter().filter(|d| d.is_dir()) {
-                    self.insert(HotEntry {
-                        name: menu_name(&d),
-                        path: d,
-                    });
+            (HotMsg::Left(i), _) => {
+                if self.hover == Some(i) {
+                    self.hover = None;
                 }
             }
             (HotMsg::Sort, _) => {
@@ -304,15 +312,21 @@ pub fn view<'a>(h: &'a HotEdit, cancel: Element<'a, Message>) -> Element<'a, Mes
         // Submenu contents indented, as the menu nests them; the row under the pointer is where
         // a held one goes.
         let row = widget::container(row).padding([0, 0, 0, 16 * depth as u16]);
-        list = list.push(widget::mouse_area(row).on_enter(msg(HotMsg::Hover(Some(i)))));
+        list = list.push(
+            widget::mouse_area(row)
+                .on_enter(msg(HotMsg::Hover(Some(i))))
+                .on_exit(msg(HotMsg::Left(i))),
+        );
     }
     if h.list.is_empty() {
         list = list.push(widget::text::caption(fl!("hotlist-empty")));
     }
-    let list = widget::mouse_area(widget::scrollable(list).height(Length::Fixed(240.0)))
-        .on_exit(msg(HotMsg::Hover(None)));
-    // Dirs dragged from a panel are added (TC: drop onto the hotlist).
-    let list = crate::clip::drop_zone(list, |paths, _| Message::Hot(HotMsg::AddDirs(paths)), None);
+    // The scrollbar beside the rows, not over them: pressing it must not hold one.
+    let list = widget::scrollable(list)
+        .height(Length::Fixed(240.0))
+        .direction(cosmic::iced::widget::scrollable::Direction::Vertical(
+            cosmic::iced::widget::scrollable::Scrollbar::new().spacing(4),
+        ));
     let list = widget::container(list)
         .padding(4)
         .width(Length::Fill)
@@ -437,24 +451,27 @@ mod tests {
         h.update(HotMsg::Release, cwd);
         h.update(HotMsg::Hover(Some(0)), cwd); // released: hovering moves nothing
         assert_eq!(names(&h), ["b", "c", "a"]);
-        // Pressed outside the rows: nothing held.
-        h.update(HotMsg::Hover(None), cwd);
+        // Moved down onto a row of another height: the one sliding under the pointer does not
+        // move it back.
+        h.update(HotMsg::Hover(Some(0)), cwd);
+        h.update(HotMsg::Grab, cwd);
+        h.update(HotMsg::Hover(Some(1)), cwd);
+        assert_eq!(names(&h), ["c", "b", "a"]);
+        h.update(HotMsg::Hover(Some(0)), cwd); // "c" slid under the pointer
+        assert_eq!(names(&h), ["c", "b", "a"]);
+        h.update(HotMsg::Release, cwd);
+        // Pressed outside the rows (left row 2 into the empty space): nothing held.
+        h.update(HotMsg::Hover(Some(2)), cwd);
+        h.update(HotMsg::Left(2), cwd);
+        assert_eq!(h.hover, None);
+        // Moving up: row 1 entered before row 2 says it was left — the late leave keeps row 1.
+        h.update(HotMsg::Hover(Some(1)), cwd);
+        h.update(HotMsg::Left(2), cwd);
+        assert_eq!(h.hover, Some(1));
+        h.update(HotMsg::Left(1), cwd);
         h.update(HotMsg::Grab, cwd);
         h.update(HotMsg::Hover(Some(2)), cwd);
-        assert_eq!(names(&h), ["b", "c", "a"]);
-    }
-
-    #[test]
-    fn dropped_dirs_are_added_after_the_selection() {
-        let d = tempfile::tempdir().unwrap();
-        std::fs::create_dir(d.path().join("Docs")).unwrap();
-        std::fs::write(d.path().join("f.txt"), "").unwrap();
-        let mut h = HotEdit::new(0, vec![e("a"), e("b")]);
-        let dropped = vec![d.path().join("Docs"), d.path().join("f.txt")];
-        h.update(HotMsg::AddDirs(dropped), Path::new("/"));
-        assert_eq!(names(&h), ["a", "Docs", "b"]); // a file is not a dir: left out
-        assert_eq!(h.list[1].path, d.path().join("Docs"));
-        assert_eq!(h.sel, Some(1));
+        assert_eq!(names(&h), ["c", "b", "a"]);
     }
 
     #[test]

@@ -740,6 +740,10 @@ impl Application for App {
                     cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(
                         mouse::Button::Left,
                     )) => Some(Message::Hot(HotMsg::Release)),
+                    // Scrolled: another row is under the pointer than the last one entered.
+                    cosmic::iced::Event::Mouse(mouse::Event::WheelScrolled { .. }) => {
+                        Some(Message::Hot(HotMsg::Hover(None)))
+                    }
                     _ => None,
                 }),
                 _ => Subscription::none(),
