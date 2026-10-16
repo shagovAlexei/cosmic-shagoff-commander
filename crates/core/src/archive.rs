@@ -596,6 +596,20 @@ impl Format {
     }
 }
 
+/// A file name that opens as a folder, by the name alone.
+pub fn is_tree_name(name: &str) -> bool {
+    Format::detect(name).is_some_and(Format::is_tree)
+}
+
+/// `p` is an archive opened as a folder or a path inside one, by the names alone (no disk access).
+pub fn within(p: &Path) -> bool {
+    p.ancestors().any(|a| {
+        a.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(is_tree_name)
+    })
+}
+
 /// One entry of an archive's table of contents (no data).
 #[derive(Clone, Debug)]
 struct Item {

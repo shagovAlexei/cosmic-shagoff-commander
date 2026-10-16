@@ -906,13 +906,17 @@ impl App {
             }
             Message::Key(action) => {
                 // The drop menu as TC's: ↑ / ↓ over Copy, Move, Link, Cancel; Enter picks.
-                if let Some(Dialog::DropMenu { cursor, .. }) = &mut self.dialog {
-                    let last = dialogs::DROP_OPS.len();
+                if let Some(Dialog::DropMenu {
+                    cursor, sources, ..
+                }) = &mut self.dialog
+                {
+                    let ops = dialogs::drop_ops(sources);
+                    let last = ops.len();
                     match action {
                         Action::Up => *cursor = cursor.checked_sub(1).unwrap_or(last),
                         Action::Down => *cursor = (*cursor + 1) % (last + 1),
                         Action::Enter => {
-                            let op = dialogs::DROP_OPS.get(*cursor).copied();
+                            let op = ops.get(*cursor).copied();
                             return self.handle(op.map_or(Message::DialogCancel, Message::DropAs));
                         }
                         _ => {}
@@ -1859,6 +1863,14 @@ impl App {
                 if shagoff_core::panel::drop_is_noop(&paths, &dir) {
                     return Task::none();
                 }
+                // From one archive into an archive: not done (F5 says so too) — said now, not
+                // after a dialog.
+                if paths.first().is_some_and(|p| inside_archive(p))
+                    && shagoff_core::archive::within(&dir)
+                {
+                    self.say(StatusKind::Error, fl!("archive-read-only"));
+                    return Task::none();
+                }
                 // The pane the files came from, if one shows them: its marks go when done, as F5.
                 let parent = paths.first().and_then(|p| p.parent());
                 let from = (0..2).find(|&s| Some(self.panes[s].active().panel.cwd()) == parent);
@@ -2143,11 +2155,10 @@ impl App {
             Message::CmdEnter => return self.cmd_run(self.mods.shift()),
             Message::CmdType(c) => {
                 // The drop menu's hot letters (`&` in its items' names) pick at once.
-                if matches!(self.dialog, Some(Dialog::DropMenu { .. })) {
+                if let Some(Dialog::DropMenu { sources, .. }) = &self.dialog {
                     use shagoff_core::quicksearch::hotkey;
                     let key = c.to_lowercase().next();
-                    let op = dialogs::DROP_OPS
-                        .into_iter()
+                    let op = (dialogs::drop_ops(sources).iter().copied())
                         .find(|&op| hotkey(&dialogs::drop_label(op)).1.map(|(_, k)| k) == key);
                     return op.map_or_else(Task::none, |op| self.handle(Message::DropAs(op)));
                 }
@@ -5957,12 +5968,7 @@ fn open_with_items(apps: Vec<openwith::App>, all: bool) -> Vec<ListItem> {
 /// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
 /// name only — a stat per result would stall on a million of them.
 fn inside_archive(p: &Path) -> bool {
-    p.ancestors().skip(1).any(|a| {
-        a.file_name()
-            .and_then(|n| n.to_str())
-            .and_then(Format::detect)
-            .is_some_and(Format::is_tree)
-    })
+    p.parent().is_some_and(shagoff_core::archive::within)
 }
 
 /// The dialog's search fields as a query (`hidden` is the panel's).
@@ -8820,6 +8826,52 @@ mod tests {
         assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Extract));
+    }
+
+    #[test]
+    fn drops_out_of_and_into_an_archive_work_as_f5() {
+        let (tmp, mut app, a) = zip_setup();
+        let drop = |side, paths, dir: Option<PathBuf>, mv| Message::Drop {
+            side,
+            dir,
+            paths,
+            mv,
+        };
+        // From the archive (pane 0 inside it) onto pane 1's list: extracted there.
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(drop(1, vec![a.join("top.txt")], None, false));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Copy,
+                ..
+            })
+        ));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Extract));
+        app.job = None;
+        // From disk onto the archive's list: packed in.
+        let x = tmp.path().join("out/x");
+        std::fs::write(&x, "1").unwrap();
+        let _ = app.update(drop(0, vec![x.clone()], None, false));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+        app.job = None;
+        // Onto the archive's row in a list (its path as the dir): packed in too.
+        let _ = app.update(drop(1, vec![x], Some(a.clone()), false));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+        app.job = None;
+        // From the archive into an archive: said at once, no dialog.
+        let _ = app.update(drop(0, vec![a.join("top.txt")], Some(a.join("d")), false));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.msg(), Some(fl!("archive-read-only").as_str()));
+        // A right-button drop from inside it: no Link in the menu (no file on disk to link to).
+        assert_eq!(
+            dialogs::drop_ops(&[a.join("top.txt")]),
+            [InputOp::Copy, InputOp::Move]
+        );
+        assert_eq!(dialogs::drop_ops(&[tmp.path().join("out/x")]).len(), 3);
     }
 
     #[test]

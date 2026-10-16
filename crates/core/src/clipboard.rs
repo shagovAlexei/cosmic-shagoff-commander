@@ -6,6 +6,9 @@ use url::Url;
 
 pub const GNOME: &str = "x-special/gnome-copied-files";
 pub const URI_LIST: &str = "text/uri-list";
+/// Our own drag of entries inside an archive: the uri-list format under a type no other program
+/// takes (their paths are not on disk), so only our panes accept the drop.
+pub const INNER: &str = "application/x-shagoff-paths";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -61,7 +64,7 @@ pub fn decode(mime: &str, data: &[u8]) -> Option<(Kind, Vec<PathBuf>)> {
             "cut" => Kind::Cut,
             _ => return None,
         },
-        URI_LIST => Kind::Copy,
+        URI_LIST | INNER => Kind::Copy,
         _ => return None,
     };
     let paths = lines
@@ -89,6 +92,13 @@ mod tests {
 
     fn paths() -> Vec<PathBuf> {
         vec!["/tmp/a b".into(), "/tmp/Отчёт 100%#1.txt".into()]
+    }
+
+    #[test]
+    fn our_own_list_reads_back_as_a_copy() {
+        let p = vec![PathBuf::from("/x/a.zip/docs/при вет.txt")];
+        let data = encode(Kind::Copy, &p).uri_list;
+        assert_eq!(decode(INNER, data.as_bytes()), Some((Kind::Copy, p)));
     }
 
     #[test]
