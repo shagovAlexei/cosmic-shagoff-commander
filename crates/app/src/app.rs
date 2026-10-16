@@ -441,6 +441,9 @@ pub enum Message {
     Escape(cosmic::iced::window::Id),
     MrInput(MrField, String),
     MrCase(Case),
+    MrHelp,
+    /// A mask token button: appended to the name mask, which keeps the focus.
+    MrInsert(&'static str),
     /// Pack dialog: format button.
     PackFormat(Format),
     /// Pack / unpack dialog checkboxes.
@@ -1239,6 +1242,20 @@ impl App {
                         MrField::Step => &mut m.step,
                         MrField::Digits => &mut m.digits,
                     } = s;
+                }
+            }
+            Message::MrInsert(tok) => {
+                if let Some(Dialog::MultiRename(m)) = &mut self.dialog {
+                    m.rule.name.push_str(tok);
+                    return Task::batch([
+                        widget::text_input::focus(self.input_id.clone()),
+                        widget::text_input::move_cursor_to_end(self.input_id.clone()),
+                    ]);
+                }
+            }
+            Message::MrHelp => {
+                if let Some(Dialog::MultiRename(m)) = &mut self.dialog {
+                    m.help = !m.help;
                 }
             }
             Message::MrCase(c) => {
@@ -3325,6 +3342,7 @@ impl App {
                     start: "1".into(),
                     step: "1".into(),
                     digits: "1".into(),
+                    help: false,
                 })))
             }
             Action::Pack => {
@@ -8586,6 +8604,18 @@ mod tests {
         assert_eq!(new, ["x01.txt", "x02.txt"]);
         let _ = app.update(Message::MrCase(Case::Upper));
         assert_eq!(mr(&app).rows(&TimeZone::UTC)[0].new, "X01.TXT");
+    }
+
+    #[test]
+    fn mr_token_buttons_append_and_help_toggles() {
+        let (_tmp, mut app) = mr_setup();
+        let _ = app.update(Message::MrInsert("_[C]"));
+        assert_eq!(mr(&app).rows(&TimeZone::UTC)[1].new, "b_2.txt");
+        assert!(!mr(&app).help);
+        let _ = app.update(Message::MrHelp);
+        assert!(mr(&app).help);
+        let _ = app.update(Message::MrHelp);
+        assert!(!mr(&app).help);
     }
 
     #[test]
