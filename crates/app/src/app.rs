@@ -326,6 +326,10 @@ pub struct App {
     find: config::FindPrefs,
     /// Ctrl+Shift+S options as last compared (written to the state).
     sync: config::SyncPrefs,
+    /// The left pane's share of the width (`viewport::split_or_half`), and whether the divider
+    /// is being dragged.
+    pub(crate) split: f32,
+    splitting: bool,
     pub drives: Vec<Drive>,
     /// Column widths as shown: the config's, or the one being dragged (written on release).
     pub cols: [f32; 4],
@@ -592,6 +596,12 @@ pub enum Message {
     /// Drive button / drive list entry: (side, drive root). A path, not an index: the list can change.
     Drive(usize, PathBuf),
     /// Full view header: press on edge 1..=4 (TC drag), pointer x, release.
+    /// The divider between the panes: pressed, the pointer at window x while held, let go,
+    /// double-clicked (half and half).
+    SplitStart,
+    SplitAt(cosmic::iced::window::Id, f32),
+    SplitEnd,
+    SplitReset,
     ColDragStart(usize, usize),
     ColDrag(f32),
     ColDragEnd,
@@ -772,6 +782,19 @@ impl Application for App {
                 }),
                 _ => Subscription::none(),
             },
+            // While the divider is held: where the pointer is, and the release (over any widget).
+            match self.splitting {
+                true => event::listen_with(|e, _, window| match e {
+                    cosmic::iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                        Some(Message::SplitAt(window, position.x))
+                    }
+                    cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(
+                        mouse::Button::Left,
+                    )) => Some(Message::SplitEnd),
+                    _ => None,
+                }),
+                false => Subscription::none(),
+            },
             // Alt+F4 / the compositor's close: the window stays until Quit decides.
             cosmic::iced::window::close_requests().map(Message::CloseRequested),
             self.core()
@@ -881,6 +904,8 @@ impl App {
             saved: State::default(),
             find: state.find.clone(),
             sync: state.sync.clone(),
+            split: state.split,
+            splitting: false,
             drives: Vec::new(),
             cols,
             col_drag: None,
@@ -2328,6 +2353,18 @@ impl App {
                     return self.reload(side, cwd, None);
                 }
             }
+            Message::SplitStart => self.splitting = true,
+            Message::SplitAt(window, x) if self.splitting && window == self.window_id() => {
+                let (left, chrome) = crate::view::split_geometry(self.config.skin);
+                let total =
+                    self.panes[0].active().width + self.panes[1].active().width + 2.0 * chrome;
+                self.split = viewport::split_ratio(left, total, x);
+            }
+            Message::SplitAt(..) => {}
+            Message::SplitEnd => self.splitting = false,
+            Message::SplitReset => {
+                (self.split, self.splitting) = (0.5, false);
+            }
             Message::ColDragStart(side, edge) => self.col_drag = Some((side, edge, None)),
             Message::ColDrag(x) => {
                 if let Some((_, edge, start)) = &mut self.col_drag {
@@ -2627,6 +2664,7 @@ impl App {
             active: self.active,
             find: self.find.clone(),
             sync: self.sync.clone(),
+            split: self.split,
             commands: keep(&self.commands),
             masks: keep(&self.masks),
             other_cmds: keep(&self.other_cmds),
@@ -9291,6 +9329,25 @@ mod tests {
             Some(Dialog::Find(f)) => f,
             _ => panic!("no find dialog"),
         }
+    }
+
+    #[test]
+    fn divider_drag_moves_the_split_and_is_kept() {
+        let mut app = app_with(Config::default(), State::default());
+        for side in 0..2 {
+            let _ = app.update(Message::Resized(side, Size::new(500.0, 300.0)));
+        }
+        let w = app.window_id();
+        let _ = app.update(Message::SplitAt(w, 300.0)); // not held: nothing
+        assert_eq!(app.split, 0.0);
+        let _ = app.update(Message::SplitStart);
+        let _ = app.update(Message::SplitAt(w, 302.0)); // Classic: left edge + 2 px of the gap
+        let _ = app.update(Message::SplitEnd);
+        assert!((app.split - 0.3).abs() < 1e-4, "{}", app.split);
+        let _ = app.update(Message::SplitAt(w, 900.0)); // let go: no more moves
+        assert!((app.saved.split - 0.3).abs() < 1e-4); // written to the state
+        let _ = app.update(Message::SplitReset);
+        assert_eq!(app.split, 0.5);
     }
 
     #[test]

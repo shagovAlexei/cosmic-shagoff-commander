@@ -228,6 +228,8 @@ pub struct State {
     pub find: FindPrefs,
     /// Ctrl+Shift+S: the last compare's options.
     pub sync: SyncPrefs,
+    /// The left pane's share of the width (the divider); 0 = never moved: half.
+    pub split: f32,
     /// Command line history, last first.
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first.
