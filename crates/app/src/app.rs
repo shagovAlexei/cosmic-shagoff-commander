@@ -2650,7 +2650,7 @@ impl App {
     }
 
     /// The file list's font and size.
-    pub fn panel_font(&self) -> (cosmic::iced::Font, u16) {
+    pub fn panel_font(&self) -> dialogs::ListFont {
         (self.face, self.config.panel_size())
     }
 

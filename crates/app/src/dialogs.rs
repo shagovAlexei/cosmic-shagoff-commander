@@ -658,8 +658,8 @@ pub fn menu_row_with<'a>(
         widget::container(line)
             .padding([4, 8])
             .width(Length::Fill)
-            // 28 at the default 14: grows with a larger list font.
-            .height(Length::Fixed(f32::from(size) * 2.0))
+            // 28 as before; grows with a larger list font, never below (icons are 20 px).
+            .height(Length::Fixed((f32::from(size) * 2.0).max(28.0)))
             .align_y(cosmic::iced::Alignment::Center)
             .class(crate::view::cursor_style(
                 selected,
@@ -725,13 +725,13 @@ fn drop_menu<'a>(
     sources: &[PathBuf],
     at: cosmic::iced::Point,
     cursor: usize,
-    font: ListFont,
 ) -> Element<'a, Message> {
     use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
     use cosmic::widget::popover::{Position, popover};
     use shagoff_core::quicksearch::hotkey;
     let ops = drop_ops(sources);
     // TC's menu rows: the cursor (↑ / ↓), the `&` hot letter underlined.
+    // A menu, not a list: the interface's font (its card has a fixed width).
     let item = |i: usize| -> Element<'a, Message> {
         let (label, on) = match ops.get(i) {
             Some(&op) => (drop_label(op), Message::DropAs(op)),
@@ -745,7 +745,7 @@ fn drop_menu<'a>(
             String::new(),
             i == cursor,
             on,
-            font,
+            (cosmic::font::default(), 14),
         );
         cosmic::widget::mouse_area(row)
             .on_enter(Message::DropRow(i))
@@ -855,7 +855,7 @@ pub fn view<'a>(
             at,
             cursor,
             ..
-        } => drop_menu(dir, sources, *at, *cursor, font),
+        } => drop_menu(dir, sources, *at, *cursor),
         Dialog::ConfirmExit => widget::dialog()
             .title(fl!("exit-busy-title"))
             .body(fl!("exit-busy"))
