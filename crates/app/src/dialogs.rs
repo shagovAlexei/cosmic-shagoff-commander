@@ -1854,7 +1854,13 @@ pub fn view<'a>(
                         format::date(i.mtime, tz),
                     ),
                 };
-                let name = cell(name, k).width(Length::Fill);
+                // A long path is cut at its start (`…/deps/lib.rlib`): the name at the end matters,
+                // and the size / date beside it stay readable.
+                let name = cell(name, k)
+                    .width(Length::Fill)
+                    .ellipsize(cosmic::iced::core::text::Ellipsize::Start(
+                        cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1),
+                    ));
                 let size = cell(size, k)
                     .width(Length::Fixed(W_SIZE))
                     .align_x(cosmic::iced::Alignment::End);
