@@ -110,10 +110,16 @@ impl Query {
                 .components()
                 .any(|c| c.as_os_str().as_encoded_bytes().starts_with(b"."));
             let name = inner.file_name().unwrap_or_default().to_string_lossy();
+            // Inside a dir the mask leaves out (`|.git\`), as on disk; or that dir itself.
+            let excluded = (inner.parent().into_iter())
+                .flat_map(Path::components)
+                .any(|c| self.mask.skips_dir(&c.as_os_str().to_string_lossy()))
+                || (dir && self.mask.skips_dir(&name));
             let attrs = self
                 .attrs
                 .is_none_or(|a| !a.hidden || name.starts_with('.'));
-            (self.sees_hidden() || !hidden)
+            !excluded
+                && (self.sees_hidden() || !hidden)
                 && attrs
                 && self.named(&name)
                 && self.passes_meta(dir, size, mtime)
@@ -211,6 +217,9 @@ pub fn find(
         let path = e.path();
         let Ok(ft) = e.file_type() else { continue };
         let named = q.named(&name) && q.has_attrs(&e, &name);
+        if ft.is_dir() && q.mask.skips_dir(&name) {
+            continue; // `|.git\`: neither listed nor gone into
+        }
         if ft.is_dir() {
             if named && !q.reads_content() && q.passes(&path, true) {
                 found(path.clone());
@@ -536,6 +545,23 @@ mod tests {
                 .all(|p| !p.ends_with(".rs") && !p.ends_with(".toml")),
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn excluded_dir_is_not_gone_into() {
+        let d = tree();
+        let got = rel(
+            d.path(),
+            run(d.path(), &q("*.rs | deep\\", None, false, false)),
+        );
+        assert_eq!(got, ["src/main.rs"]); // not src/deep/lib.rs
+        // `*` would name "deep" itself: excluded, it is not listed either.
+        let got = rel(
+            d.path(),
+            run(d.path(), &q("* | deep\\", None, false, false)),
+        );
+        assert!(got.iter().all(|p| !p.contains("deep")), "{got:?}");
+        assert!(got.contains(&"src".to_string()), "{got:?}");
     }
 
     #[test]

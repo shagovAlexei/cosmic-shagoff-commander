@@ -1,9 +1,13 @@
 //! TC file mask: `*.rs;*.toml|*.bak` — patterns split by `;` or spaces (`"a b*"` quoted), exclusions after `|`, `*` and `?`, case-insensitive.
+//! A pattern ending in `\` or `/` names dirs (TC: `*.*|.git\ target\`): an excluded dir is not
+//! gone into (Ctrl+Shift+S, Alt+F7); file names never match it.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mask {
     include: Vec<String>,
     exclude: Vec<String>,
+    /// Dir patterns after `|` (`.git\`), without the slash.
+    exclude_dirs: Vec<String>,
     /// Alt+F7 "case sensitive": names compared as they are.
     case: bool,
 }
@@ -30,23 +34,40 @@ impl Mask {
                 .map(|p| if p == "*.*" { "*".to_string() } else { p })
                 .collect()
         };
+        let is_dir = |p: &String| p.ends_with(['\\', '/']);
         let mut include = split(inc);
         if include.is_empty() {
             include.push("*".into());
         }
+        let (dirs, exclude): (Vec<String>, Vec<String>) = split(exc).into_iter().partition(is_dir);
         Self {
             include,
-            exclude: split(exc),
+            exclude,
+            exclude_dirs: (dirs.into_iter())
+                .map(|p| p.trim_end_matches(['\\', '/']).to_string())
+                .collect(),
             case,
         }
     }
 
-    pub fn matches(&self, name: &str) -> bool {
-        let name = if self.case {
-            name.to_string()
+    /// A dir named so is left out with everything inside (`|.git\`). By the name only, as TC.
+    pub fn skips_dir(&self, name: &str) -> bool {
+        !self.exclude_dirs.is_empty() && {
+            let name = self.fold(name);
+            self.exclude_dirs.iter().any(|p| glob(p, &name))
+        }
+    }
+
+    fn fold<'a>(&self, name: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.case {
+            name.into()
         } else {
-            name.to_lowercase()
-        };
+            name.to_lowercase().into()
+        }
+    }
+
+    pub fn matches(&self, name: &str) -> bool {
+        let name = self.fold(name);
         self.include.iter().any(|p| glob(p, &name)) && !self.exclude.iter().any(|p| glob(p, &name))
     }
 }
@@ -102,6 +123,17 @@ mod tests {
         assert!(m("\"x|y\"", "x|y"));
         assert!(!m("*|\"x|y\"", "x|y"));
         assert!(m("*|\"x|y\"", "x"));
+    }
+
+    #[test]
+    fn dir_patterns_exclude_dirs_only() {
+        let k = Mask::parse("*.* | .git\\ target/ *.bak");
+        assert!(k.skips_dir(".git") && k.skips_dir("Target") && !k.skips_dir("src"));
+        assert!(k.matches(".git") && k.matches("target")); // as file names: not excluded
+        assert!(!k.matches("a.bak"));
+        // Before `|` a dir pattern stays as it was: no file is named so.
+        assert!(!m("src\\", "a.rs"));
+        assert!(!Mask::parse("*.rs").skips_dir(".git"));
     }
 
     fn m(mask: &str, name: &str) -> bool {
