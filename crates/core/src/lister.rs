@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::ops::Range;
 use std::path::Path;
 
-/// Read at most this much of a file.
+/// A window (`Doc`) holds at most this much of a file.
 pub const LIMIT: u64 = 32 << 20;
 /// Longer lines are split: one huge line (minified JS) would stall rendering.
 pub const MAX_COLS: usize = 4096;
@@ -17,19 +17,58 @@ pub enum Mode {
     Image,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+/// Byte order mark of the file: windows past the first are decoded the same way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Bom {
+    #[default]
+    None,
+    Utf8,
+    Le,
+    Be,
+}
+
+impl Bom {
+    fn of(bytes: &[u8]) -> Self {
+        match bytes {
+            [0xEF, 0xBB, 0xBF, ..] => Bom::Utf8,
+            [0xFF, 0xFE, ..] => Bom::Le,
+            [0xFE, 0xFF, ..] => Bom::Be,
+            _ => Bom::None,
+        }
+    }
+
+    /// Bytes per code unit: a line ends with a `\n` unit on a unit boundary.
+    fn unit(self) -> usize {
+        match self {
+            Bom::Le | Bom::Be => 2,
+            _ => 1,
+        }
+    }
+}
+
+/// A window of the file: at most `LIMIT` bytes from `start` (the whole of a smaller file).
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Doc {
-    /// The first `LIMIT` bytes as they are in the file (hex shows these).
+    /// The window's bytes as they are in the file (hex shows these).
     pub bytes: Vec<u8>,
     /// The same as UTF-8 when the file has a BOM (UTF-16 or UTF-8), for text mode.
     pub decoded: Option<Vec<u8>>,
     /// Size of the whole file.
     pub total: u64,
+    /// Offset of `bytes[0]` in the file.
+    pub start: u64,
+    pub bom: Bom,
 }
 
 impl Doc {
+    /// Offset just past the window.
+    pub fn end(&self) -> u64 {
+        self.start + self.bytes.len() as u64
+    }
+
+    /// Only a part of the file is held.
     pub fn truncated(&self) -> bool {
-        self.total > LIMIT
+        self.start > 0 || self.end() < self.total
     }
 
     /// Bytes for text mode and its line index.
@@ -39,48 +78,128 @@ impl Doc {
 }
 
 pub fn load(path: &Path) -> io::Result<Doc> {
+    load_at(path, 0, u64::MAX, true, Bom::None)
+}
+
+/// The window of `path` up to `to` (at most `LIMIT` bytes) from `from`: with `line`, from the
+/// first line start at or after it (or `from`, if no line ends in the window), else from `from`
+/// rounded down to a hex row. `bom`: the file's, as its first window found it.
+pub fn load_at(path: &Path, from: u64, to: u64, line: bool, bom: Bom) -> io::Result<Doc> {
+    use std::io::{Seek, SeekFrom};
     // A fifo would block `open` forever, a device never ends: regular files only.
     let meta = std::fs::metadata(path)?;
     if !meta.is_file() {
         let msg = format!("{}: not a regular file", path.display());
         return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
     }
-    let file = std::fs::File::open(path)?;
+    let unit = bom.unit() as u64;
+    let from = from - from % if line { unit } else { HEX_WIDTH as u64 };
+    // One unit before `from` too: a line end there makes `from` a line start.
+    let back = if line && from > 0 { unit } else { 0 };
+    let mut file = std::fs::File::open(path)?;
+    file.seek(SeekFrom::Start(from - back))?;
     let mut bytes = Vec::new();
-    file.take(LIMIT).read_to_end(&mut bytes)?;
+    let len = to.saturating_sub(from).min(LIMIT);
+    file.take(len + back).read_to_end(&mut bytes)?;
+    let skip = match back {
+        0 => 0,
+        b => line_ends(&bytes, bom).next().unwrap_or(b as usize),
+    };
+    // The file got shorter than the window asked for (a log rotated meanwhile).
+    if bytes.len() <= back as usize && from > 0 {
+        let msg = format!("{}: shorter than before", path.display());
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, msg));
+    }
+    bytes.drain(..skip.min(bytes.len()));
+    let start = from - back + skip as u64;
+    let (bom, decoded) = match start {
+        0 => (Bom::of(&bytes), decode(&bytes)),
+        _ => (bom, decode_from(&bytes, bom)),
+    };
     // /proc files report size 0 but have content.
-    let total = meta.len().max(bytes.len() as u64);
+    let total = meta.len().max(start + bytes.len() as u64);
     Ok(Doc {
-        decoded: decode(&bytes),
         bytes,
+        decoded,
         total,
+        start,
+        bom,
     })
+}
+
+/// Offsets just past each line end (`\n`, or its UTF-16 unit) in a window's raw bytes.
+fn line_ends(bytes: &[u8], bom: Bom) -> impl Iterator<Item = usize> + '_ {
+    let u = bom.unit();
+    (bytes.chunks_exact(u).enumerate())
+        .filter(move |(_, c)| match bom {
+            Bom::Le => *c == b"\n\0",
+            Bom::Be => *c == b"\0\n",
+            _ => c[0] == b'\n',
+        })
+        .map(move |(i, _)| (i + 1) * u)
+}
+
+/// Line ends in the window's raw bytes before `upto`: the file's lines it holds before there.
+pub fn newlines(doc: &Doc, upto: usize) -> usize {
+    line_ends(&doc.bytes[..upto.min(doc.bytes.len())], doc.bom).count()
+}
+
+/// Where the window's last line starts (the window's length if no line ends in it).
+pub fn last_line_start(doc: &Doc) -> usize {
+    match line_ends(&doc.bytes, doc.bom).last() {
+        Some(p) if p < doc.bytes.len() => p,
+        _ => doc.bytes.len(),
+    }
+}
+
+/// The first shown row of the window's `k`-th line (0-based): rows of wrapped or cut lines
+/// counted. `lines` past the text's end.
+pub fn line_row(text: &[u8], lines: &[Range<usize>], k: usize) -> usize {
+    if k == 0 {
+        return 0;
+    }
+    match (text.iter().enumerate())
+        .filter(|&(_, &b)| b == b'\n')
+        .nth(k - 1)
+    {
+        Some((p, _)) => lines.partition_point(|r| r.start <= p),
+        None => lines.len(),
+    }
+}
+
+fn utf16(units: &[u8], be: bool) -> Vec<u8> {
+    let (pairs, rest) = units.as_chunks::<2>();
+    let units = pairs.iter().map(|&pair| {
+        if be {
+            u16::from_be_bytes(pair)
+        } else {
+            u16::from_le_bytes(pair)
+        }
+    });
+    let mut s: String = char::decode_utf16(units)
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect();
+    if !rest.is_empty() {
+        s.push(char::REPLACEMENT_CHARACTER);
+    }
+    s.into_bytes()
+}
+
+/// A window past the BOM: UTF-16 decoded; UTF-8 (BOM or not) is the text as it is.
+fn decode_from(bytes: &[u8], bom: Bom) -> Option<Vec<u8>> {
+    match bom {
+        Bom::Le => Some(utf16(bytes, false)),
+        Bom::Be => Some(utf16(bytes, true)),
+        _ => None,
+    }
 }
 
 /// UTF-16 with a BOM → UTF-8; a UTF-8 BOM dropped. `None`: no BOM, the bytes are the text.
 pub fn decode(bytes: &[u8]) -> Option<Vec<u8>> {
-    let utf16 = |be: bool| {
-        let (pairs, rest) = bytes[2..].as_chunks::<2>();
-        let units = pairs.iter().map(|&pair| {
-            if be {
-                u16::from_be_bytes(pair)
-            } else {
-                u16::from_le_bytes(pair)
-            }
-        });
-        let mut s: String = char::decode_utf16(units)
-            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect();
-        if !rest.is_empty() {
-            s.push(char::REPLACEMENT_CHARACTER);
-        }
-        s.into_bytes()
-    };
-    match bytes {
-        [0xEF, 0xBB, 0xBF, rest @ ..] => Some(rest.to_vec()),
-        [0xFF, 0xFE, ..] => Some(utf16(false)),
-        [0xFE, 0xFF, ..] => Some(utf16(true)),
-        _ => None,
+    match Bom::of(bytes) {
+        Bom::Utf8 => Some(bytes[3..].to_vec()),
+        Bom::None => None,
+        b => decode_from(&bytes[2..], b),
     }
 }
 
@@ -444,11 +563,12 @@ pub fn hex_rows(len: usize) -> usize {
     len.div_ceil(HEX_WIDTH)
 }
 
-/// `00000010  48 65 6C 6C 6F 20 77 6F  72 6C 64 0A 00 00 00 00  Hello world.....`
-pub fn hex_row(bytes: &[u8], row: usize) -> String {
+/// `00000010  48 65 6C 6C 6F 20 77 6F  72 6C 64 0A 00 00 00 00  Hello world.....`;
+/// `base`: the window's offset in the file, for the address.
+pub fn hex_row(bytes: &[u8], row: usize, base: u64) -> String {
     let start = row * HEX_WIDTH;
     let chunk = &bytes[start.min(bytes.len())..(start + HEX_WIDTH).min(bytes.len())];
-    let mut s = format!("{start:08X} ");
+    let mut s = format!("{:08X} ", base + start as u64);
     for i in 0..HEX_WIDTH {
         if i == HEX_WIDTH / 2 {
             s.push(' ');
@@ -701,6 +821,7 @@ mod tests {
             bytes: b"abcdefg\n\xcf\xf0".to_vec(),
             decoded: None,
             total: 10,
+            ..Default::default()
         };
         let t = Text::new(&doc, Encoding::Auto, None);
         assert_eq!((t.lines.len(), t.cols), (2, 7));
@@ -718,6 +839,7 @@ mod tests {
             bytes: b"\ta\tb\xffcd".to_vec(),
             decoded: None,
             total: 7,
+            ..Default::default()
         };
         let t = Text::new(&tabs, Encoding::Auto, Some(5));
         let shown: Vec<String> = t.lines.iter().map(|r| line_text(&tabs.bytes, r)).collect();
@@ -840,13 +962,67 @@ mod tests {
         let b = b"Hello world\n\0\0\0\0Hi";
         assert_eq!(hex_rows(b.len()), 2);
         assert_eq!(
-            hex_row(b, 0),
+            hex_row(b, 0, 0),
             "00000000  48 65 6C 6C 6F 20 77 6F  72 6C 64 0A 00 00 00 00  Hello world....."
         );
         assert_eq!(
-            hex_row(b, 1),
+            hex_row(b, 1, 0),
             format!("00000010  48 69{}  Hi", " ".repeat(3 * 14 + 1))
         );
+        assert!(hex_row(b, 1, 0x1_0000_0000).starts_with("100000010  48 69"));
+    }
+
+    #[test]
+    fn windows_start_at_a_line_and_keep_the_bom() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("a.txt");
+        std::fs::write(&p, "one\ntwo\nthree\n").unwrap();
+        let w = load_at(&p, 2, u64::MAX, true, Bom::None).unwrap();
+        assert_eq!(
+            (w.start, w.bytes.as_slice(), w.total),
+            (4, &b"two\nthree\n"[..], 14)
+        );
+        assert!(w.truncated());
+        // `from` already a line start: kept
+        assert_eq!(load_at(&p, 4, u64::MAX, true, Bom::None).unwrap().start, 4);
+        // up to `to`
+        assert_eq!(
+            load_at(&p, 0, 8, true, Bom::None).unwrap().bytes,
+            b"one\ntwo\n"
+        );
+        // the file got shorter than the window asked for
+        assert!(load_at(&p, 100, u64::MAX, true, Bom::None).is_err());
+        // hex: from a row start, no line wanted
+        assert_eq!(load_at(&p, 5, u64::MAX, false, Bom::None).unwrap().start, 0);
+        // no line end after `from`: from there
+        assert_eq!(load_at(&p, 9, 12, true, Bom::None).unwrap().start, 9);
+        // UTF-16 LE: lines end with "\n\0" on even offsets; later windows decoded as the first
+        let le: Vec<u8> = (b"\xff\xfe".iter().copied())
+            .chain("а\nб\nв".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        std::fs::write(&p, &le).unwrap();
+        let first = load(&p).unwrap();
+        assert_eq!(first.bom, Bom::Le);
+        let w = load_at(&p, 3, u64::MAX, true, first.bom).unwrap();
+        assert_eq!((w.start, w.text()), (6, "б\nв".as_bytes()));
+        assert_eq!((newlines(&first, 6), last_line_start(&first)), (1, 10));
+    }
+
+    #[test]
+    fn line_row_counts_wrapped_rows() {
+        let doc = Doc {
+            bytes: b"abcdef\n\nxy\n".to_vec(),
+            ..Default::default()
+        };
+        let t = Text::new(&doc, Encoding::Auto, Some(3)); // abc def | (empty) | xy
+        let row = |k| line_row(t.bytes(&doc), &t.lines, k);
+        assert_eq!((row(0), row(1), row(2), row(3)), (0, 2, 3, 4));
+        assert_eq!((newlines(&doc, 8), last_line_start(&doc)), (2, 11));
+        let one = Doc {
+            bytes: b"no end".to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(last_line_start(&one), 6);
     }
 
     #[test]
