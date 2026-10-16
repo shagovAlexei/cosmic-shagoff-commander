@@ -1285,7 +1285,7 @@ impl App {
             Message::PropsRecursive => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
                     p.recursive = !p.recursive;
-                    p.mixed = if p.recursive { 0o777 } else { p.own_mixed };
+                    p.mixed = if p.recursive { 0o7777 } else { p.own_mixed };
                 }
             }
             Message::DirSize(side, tab, cwd, name, bytes) => {
@@ -8911,7 +8911,7 @@ mod tests {
             Some(Dialog::Props(p)) => (p.mode, p.mixed, p.touched),
             _ => panic!("no dialog"),
         };
-        assert_eq!(props(&app).1, 0o777);
+        assert_eq!(props(&app).1, 0o7777); // setuid, setgid, sticky too
         // group w: `?` → on even if the dir has it already (the contents may not)
         let _ = app.update(Message::PropsBit(0o020));
         let (m, _, touched) = props(&app);
