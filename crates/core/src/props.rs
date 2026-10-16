@@ -125,8 +125,9 @@ pub fn chmod(
 }
 
 /// Give `paths` (and with `recursive` everything under the dirs) the group `gid`. Links get it
-/// themselves, never their targets (`lchown`). Entries already in it are left alone. Returns what
-/// failed (not the owner, not one of the user's groups, unreadable dirs).
+/// themselves, never their targets (`lchown`). Entries already in it are left alone. The kernel
+/// drops setuid / setgid on a chown by a non-root user: put back (same owner, his own group).
+/// Returns what failed (not the owner, not one of the user's groups, unreadable dirs).
 pub fn chgrp(paths: &[PathBuf], gid: u32, recursive: bool) -> Vec<(PathBuf, io::Error)> {
     use std::os::unix::fs::MetadataExt;
     let mut failed = Vec::new();
@@ -139,10 +140,17 @@ pub fn chgrp(paths: &[PathBuf], gid: u32, recursive: bool) -> Vec<(PathBuf, io::
                 continue;
             }
         };
-        if m.gid() != gid
-            && let Err(e) = std::os::unix::fs::lchown(&p, None, Some(gid))
-        {
-            failed.push((p.clone(), e));
+        if m.gid() != gid {
+            match std::os::unix::fs::lchown(&p, None, Some(gid)) {
+                Err(e) => failed.push((p.clone(), e)),
+                Ok(()) if !m.file_type().is_symlink() && m.mode() & 0o6000 != 0 => {
+                    let back = fs::Permissions::from_mode(m.mode() & 0o7777);
+                    if let Err(e) = fs::set_permissions(&p, back) {
+                        failed.push((p.clone(), e));
+                    }
+                }
+                Ok(()) => {}
+            }
         }
         if recursive && m.is_dir() {
             match fs::read_dir(&p) {
@@ -276,8 +284,12 @@ mod tests {
         fs::write(top.join("sub/f"), "").unwrap();
         symlink("/etc/passwd", top.join("ln")).unwrap();
         let mine = crate::owners::my_groups();
-        let g = *mine.last().unwrap();
+        let now = fs::metadata(&top).unwrap().gid();
+        // Another of the user's groups, so the change really happens (one group: as it is).
+        let g = mine.iter().copied().find(|g| *g != now).unwrap_or(now);
+        set(&top.join("sub/f"), 0o6755); // kept through the change
         assert!(chgrp(std::slice::from_ref(&top), g, true).is_empty());
+        assert_eq!(mode_of(&top.join("sub/f")), 0o6755);
         for p in [top.clone(), top.join("sub/f"), top.join("ln")] {
             assert_eq!(fs::symlink_metadata(&p).unwrap().gid(), g, "{p:?}");
         }

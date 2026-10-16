@@ -1375,7 +1375,6 @@ impl App {
                     && i < p.gids.len()
                 {
                     p.group = Some(i);
-                    p.group_changed = true;
                 }
             }
             Message::PropsBit(b) => {
@@ -3532,9 +3531,7 @@ impl App {
             Dialog::Props(p) => {
                 // Only the touched bits, as shown now: entries keep the rest of their own modes.
                 let (set, clear) = (p.mode & p.touched, !p.mode & p.touched & 0o7777);
-                let gid = (p.group_changed)
-                    .then(|| p.group.and_then(|i| p.gids.get(i).copied()))
-                    .flatten();
+                let gid = p.new_group();
                 if p.touched == 0 && gid.is_none() {
                     return Task::none();
                 }
@@ -4295,7 +4292,11 @@ impl App {
             gids: groups.iter().map(|(g, _)| *g).collect(),
             group_names: groups.into_iter().map(|(_, n)| n).collect(),
             group,
-            group_changed: false,
+            group0: group,
+            can_chgrp: {
+                let me = shagoff_core::owners::euid();
+                me == 0 || metas.iter().flatten().any(|m| m.uid() == me)
+            },
             usage: None,
             id: 0, // set by `start_usage`
             stop: Arc::new(AtomicBool::new(false)),
@@ -9341,10 +9342,15 @@ mod tests {
         let other = (p.gids.iter()).position(|g| *g != now && mine.contains(g));
         let Some(i) = other else { return }; // a user with one group: nothing to pick
         let g = p.gids[i];
+        assert!(p.can_chgrp && p.new_group().is_none());
+        let back = p.group;
         let _ = app.update(Message::PropsGroup(i));
-        let failed = shagoff_core::props::chgrp(std::slice::from_ref(&f), g, false);
-        assert!(failed.is_empty());
-        assert_eq!(std::fs::metadata(&f).unwrap().gid(), g);
+        let Some(Dialog::Props(p)) = &mut app.dialog else {
+            panic!("no dialog");
+        };
+        assert_eq!(p.new_group(), Some(g)); // what OK gives chgrp
+        p.group = back; // picked the files' own again: nothing to do
+        assert_eq!(p.new_group(), None);
     }
 
     #[test]

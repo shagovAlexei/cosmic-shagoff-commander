@@ -366,12 +366,23 @@ pub struct Props {
     pub gids: Vec<u32>,
     pub group_names: Vec<String>,
     pub group: Option<usize>,
-    /// Picked by the user: applied on OK.
-    pub group_changed: bool,
+    /// `group` as opened: picking it again changes nothing.
+    pub group0: Option<usize>,
+    /// The user owns one of the files (or is root): else no group can be given, shown as text.
+    pub can_chgrp: bool,
     /// Counted in the background; `None` while counting.
     pub usage: Option<shagoff_core::props::Usage>,
     pub id: u64,
     pub stop: Arc<AtomicBool>,
+}
+
+impl Props {
+    /// The group to give on OK: picked, and not the one the files had.
+    pub fn new_group(&self) -> Option<u32> {
+        (self.group != self.group0)
+            .then(|| self.group.and_then(|i| self.gids.get(i).copied()))
+            .flatten()
+    }
 }
 
 impl Drop for Props {
@@ -1010,7 +1021,16 @@ pub fn view<'a>(
             body = body.push(
                 row![
                     widget::text::body(fl!("props-group-line")).width(Length::Fixed(LABEL)),
-                    widget::dropdown(&p.group_names, p.group, Message::PropsGroup),
+                    if p.can_chgrp {
+                        Element::from(widget::dropdown(
+                            &p.group_names,
+                            p.group,
+                            Message::PropsGroup,
+                        ))
+                    } else {
+                        let name = p.group.and_then(|i| p.group_names.get(i));
+                        widget::text::body(name.cloned().unwrap_or_else(|| "—".into())).into()
+                    },
                 ]
                 .spacing(8)
                 .align_y(cosmic::iced::Alignment::Center),

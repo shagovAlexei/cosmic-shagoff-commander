@@ -53,8 +53,10 @@ impl Owners {
 impl Owners {
     /// Names of these groups, sorted by name, numbers where unknown.
     pub fn groups(&self, gids: &[u32]) -> Vec<(u32, String)> {
-        let mut v: Vec<(u32, String)> = (gids.iter())
-            .map(|&g| {
+        // Each gid once first: a selection of many files repeats them.
+        let gids: std::collections::BTreeSet<u32> = gids.iter().copied().collect();
+        let mut v: Vec<(u32, String)> = (gids.into_iter())
+            .map(|g| {
                 (
                     g,
                     self.groups
@@ -65,9 +67,13 @@ impl Owners {
             })
             .collect();
         v.sort_by(|a, b| a.1.cmp(&b.1));
-        v.dedup();
         v
     }
+}
+
+/// The user this process runs as (0: root, may chown anything).
+pub fn euid() -> u32 {
+    rustix::process::geteuid().as_raw()
 }
 
 /// The groups this process may give a file it owns (its own and the supplementary ones):
