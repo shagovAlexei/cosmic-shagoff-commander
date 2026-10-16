@@ -104,6 +104,8 @@ pub(crate) fn decode(bytes: &[u8], max_alloc: u64) -> Option<image::DynamicImage
 pub struct Lister {
     /// Pane whose file is shown (N / P walk its list).
     pub side: usize,
+    /// F3 in a window of its own (TC Lister), not in place of the panels.
+    pub window: Option<cosmic::iced::window::Id>,
     pub name: String,
     /// Results of other loads are dropped.
     pub id: u64,
@@ -182,6 +184,7 @@ impl Lister {
     pub fn new(side: usize, name: String, id: u64, size: u16) -> Self {
         Self {
             side,
+            window: None,
             name,
             id,
             loaded: None,
@@ -213,7 +216,7 @@ impl Lister {
     pub fn reopen(&mut self, name: String, id: u64) {
         let query = std::mem::take(&mut self.query);
         let (scroll, input, height) = (self.scroll.clone(), self.input.clone(), self.height);
-        let (width, chosen, wrap) = (self.width, self.chosen, self.wrap);
+        let (width, chosen, wrap, window) = (self.width, self.chosen, self.wrap, self.window);
         let encoding = if chosen {
             self.encoding
         } else {
@@ -228,8 +231,14 @@ impl Lister {
             encoding,
             chosen,
             wrap,
+            window,
             ..Self::new(self.side, name, id, self.size)
         };
+    }
+
+    /// F3 shown in place of both panels (not Ctrl+Q, not in its own window).
+    pub fn in_place(&self) -> bool {
+        self.quick.is_none() && self.window.is_none()
     }
 
     pub fn ok(&self) -> Option<&Loaded> {

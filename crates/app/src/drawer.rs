@@ -65,6 +65,7 @@ pub enum Setting {
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),
+    ListerWindow(bool),
     /// F12: 0 — own program, else `toolbar::builtins()[i - 1]`.
     F12(usize),
     F12Cmd(String),
@@ -319,6 +320,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                 fl!("settings-internal-viewer"),
                 widget::toggler(c.internal_viewer)
                     .on_toggle(move |b| set(Setting::InternalViewer(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-lister-window"),
+                widget::toggler(c.lister_window).on_toggle(move |b| set(Setting::ListerWindow(b))),
             ))
             .add(settings::item(
                 fl!("settings-viewer"),
