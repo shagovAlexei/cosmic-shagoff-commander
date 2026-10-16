@@ -103,7 +103,9 @@ pub fn cross(
     h: &mut dyn Handler,
 ) -> Report {
     let mut report = Report::default();
-    let dir = to.parent().unwrap_or(Path::new("."));
+    // Next to the real file (as `modify` stages), not the link: one filesystem, one copy.
+    let real = fs::canonicalize(to).unwrap_or_else(|_| to.to_path_buf());
+    let dir = real.parent().unwrap_or(Path::new("."));
     let staging = match retry(h, to, || archive::make_staging(dir)) {
         Ok(s) => s,
         Err(cancel) => {
@@ -112,9 +114,10 @@ pub fn cross(
         }
     };
     let out = archive::extract(from, inner, names, &staging, h);
+    // Only what came out whole: a dir with a skipped entry must not be moved (deleted after).
     let sources: Vec<PathBuf> = (names.iter())
+        .filter(|n| out.completed.contains(&from.join(inner).join(n)))
         .map(|n| staging.join(n))
-        .filter(|p| fs::symlink_metadata(p).is_ok())
         .collect();
     if !out.cancelled && !sources.is_empty() {
         let change = Change::Add {
@@ -135,7 +138,9 @@ pub fn cross(
         let entries = (report.completed.iter())
             .filter_map(|p| p.strip_prefix(from).ok().map(Path::to_path_buf))
             .collect();
-        report.cancelled = modify(from, &Change::Delete(entries), h).cancelled;
+        let d = modify(from, &Change::Delete(entries), h);
+        report.cancelled = d.cancelled;
+        report.completed = d.completed; // moved = deleted from the source too
     }
     report
 }
@@ -451,6 +456,36 @@ mod tests {
         let r = cross(&a, Path::new(""), &n, &b, Path::new(""), true, h);
         assert!(r.completed.is_empty() && h.conflicted == 1);
         assert_eq!(contents(&a), ["a.txt=A", "sub/", "sub/b.txt=B"]);
+    }
+
+    #[test]
+    fn regression_cross_move_keeps_a_dir_not_extracted_whole() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (n, body) in [("docs/x", "XXXXXXXXXXXX"), ("docs/y", "YYYYYYYYYYYY")] {
+            z.start_file(n, stored).unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+        // docs/y's bytes no longer match its CRC: it fails to extract and is skipped.
+        let mut bytes = fs::read(&a).unwrap();
+        let at = bytes
+            .windows(12)
+            .position(|w| w == b"YYYYYYYYYYYY")
+            .unwrap();
+        bytes[at..at + 12].copy_from_slice(b"ZZZZZZZZZZZZ");
+        fs::write(&a, bytes).unwrap();
+        let b = sample(&d.path().join("t"), Format::Tar);
+        let h = &mut Script::default();
+        let n = vec![PathBuf::from("docs")];
+        let r = cross(&a, Path::new(""), &n, &b, Path::new(""), true, h);
+        assert!(h.errors > 0 && r.completed.is_empty());
+        let mut z = zip::ZipArchive::new(fs::File::open(&a).unwrap()).unwrap();
+        assert!(z.by_name("docs/y").is_ok()); // still in the source
     }
 
     fn no_leftovers(d: &Path) -> bool {

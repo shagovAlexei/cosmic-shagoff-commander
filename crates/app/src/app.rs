@@ -3838,8 +3838,10 @@ impl App {
                 let names: Vec<PathBuf> = (sources.iter())
                     .filter_map(|p| p.file_name().map(PathBuf::from))
                     .collect();
-                // Inside one archive, as on disk: not onto itself, not a dir into itself.
-                if from == to {
+                // Inside one archive, as on disk: not onto itself, not a dir into itself (by the
+                // real file: the same archive may be reached through a link).
+                let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                if real(&from) == real(&to) {
                     let e = if inner == to_inner {
                         sources.first().map(|s| PlanError::SameFile(s.clone()))
                     } else {

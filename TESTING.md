@@ -834,3 +834,4 @@
 | `regression_a_background_question_waits_for_the_open_dialog` | Вопрос фоновой операции (конфликт, ошибка) заменял открытый диалог, его ввод терялся | 69 |
 | `regression_light_is_light_without_a_cosmic_theme_config` | Вне COSMIC (Linux Lite: нет конфига темы и `/usr/share/cosmic`) тема «Светлая» оставалась тёмной: libcosmic отдаёт тёмную палитру по умолчанию | 0.13.1 |
 | `regression_closing_the_viewer_scrolls_the_lists_back` | Длинный каталог, курсор в конце, F3 → Esc (или Ctrl+Q и Tab): список показывался с начала, курсор вне экрана | 0.26.1 |
+| `regression_cross_move_keeps_a_dir_not_extracted_whole` | F6 из архива в архив: каталог с неизвлёкшимся файлом удалялся из источника целиком | 92 |
