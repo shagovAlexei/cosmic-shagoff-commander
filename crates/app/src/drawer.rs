@@ -64,6 +64,7 @@ pub enum Setting {
     ShowHidden(bool),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
+    RightMarks(bool),
     HomeDir(String),
     Viewer(String),
     Editor(String),
@@ -296,6 +297,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                 fl!("settings-last-tab"),
                 widget::toggler(c.last_tab_close == LastTab::Home)
                     .on_toggle(move |b| set(Setting::LastTabHome(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-right-marks"),
+                widget::toggler(c.right_marks).on_toggle(move |b| set(Setting::RightMarks(b))),
             ))
             .add(settings::item(
                 fl!("settings-home-dir"),

@@ -118,6 +118,9 @@ pub struct Config {
     /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
     pub terminal: Vec<String>,
     pub skin: Skin,
+    /// TC "Select with right mouse button": a right click marks, a long press opens the menu;
+    /// off: a right click opens the menu at once.
+    pub right_marks: bool,
     /// Full view widths of Ext, Size, Date, Attributes (Name takes the rest); dragged in the header.
     pub columns: [f32; 4],
     /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
@@ -207,6 +210,7 @@ impl Default for Config {
             keep_history: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
             skin: Skin::Classic,
+            right_marks: true,
             columns: [60.0, 90.0, 130.0, 80.0],
             toolbar: crate::toolbar::default_bar(),
             colors: shagoff_core::colors::defaults(),

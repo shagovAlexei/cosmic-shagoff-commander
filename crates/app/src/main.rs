@@ -1,4 +1,5 @@
 mod app;
+mod catch;
 mod clip;
 mod colorrules;
 mod config;

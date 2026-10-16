@@ -313,6 +313,11 @@ pub struct App {
     face: cosmic::iced::Font,
     /// Files of the right-button drag in flight (`Message::DragStart`).
     right_drag: Option<Arc<Vec<PathBuf>>>,
+    /// A right press while the right button marks (`Config.right_marks`): (its number, side, row
+    /// or `None` for empty space, held long enough for the menu).
+    pub right_hold: Option<(u64, usize, Option<usize>, bool)>,
+    /// Numbers the right presses: a late `RightHeld` of an earlier one is dropped.
+    right_presses: u64,
     /// One of our rows is being dragged: Esc cancels it.
     dragging: bool,
     /// Quit confirmed while a job ran: exit when it has stopped.
@@ -433,6 +438,10 @@ pub enum Message {
     RightClick(usize, usize),
     /// Right press below the rows: the menu is about the dir itself.
     RightEmpty(usize),
+    /// The right press with this number was held long enough: its release opens the menu.
+    RightHeld(u64),
+    /// The right button came up, anywhere.
+    RightUp,
     /// A button of one pane (column header, `\\`, `..`): that pane becomes active and acts.
     PaneKey(usize, Action),
     /// side, scroll offset y, viewport height (of the active tab)
@@ -912,6 +921,8 @@ impl App {
             scheme: shagoff_core::colors::Scheme::new(&config.colors).with_panel(&config.panel),
             face: font_named(&config.panel_font),
             right_drag: None,
+            right_hold: None,
+            right_presses: 0,
             dragging: false,
             quitting: false,
             input_id: widget::Id::unique(),
@@ -1227,6 +1238,46 @@ impl App {
                 }
                 let tab = t.id;
                 return self.reveal(side, tab); // a half-visible row scrolls fully in
+            }
+            Message::RightClick(side, i) if self.config.right_marks => {
+                self.search = None;
+                self.active = side;
+                self.ctx_row = true;
+                let t = self.panes[side].active_mut();
+                t.panel.set_cursor(i);
+                let tab = t.id;
+                return Task::batch([self.reveal(side, tab), self.right_press(side, Some(i))]);
+            }
+            Message::RightEmpty(side) if self.config.right_marks => {
+                self.search = None;
+                self.active = side;
+                // The same press on a row came first: that row's hold stands.
+                if !std::mem::take(&mut self.ctx_row) {
+                    return self.right_press(side, None);
+                }
+            }
+            Message::RightHeld(n) => {
+                let Some((m, side, row, armed)) = &mut self.right_hold else {
+                    return Task::none();
+                };
+                if *m != n {
+                    return Task::none();
+                }
+                *armed = true;
+                // From here as a right click with the menu at once.
+                self.ctx_entry = row.is_some();
+                if row.is_some() {
+                    let p = &mut self.panes[*side].active_mut().panel;
+                    if !p.current().is_some_and(|e| p.is_marked(e)) {
+                        p.mark_all(false);
+                    }
+                }
+            }
+            Message::RightUp => {
+                // A quick click on a row: TC marks it (the cursor is on it since the press).
+                if let Some((_, side, Some(_), false)) = self.right_hold.take() {
+                    self.panes[side].active_mut().panel.toggle_mark();
+                }
             }
             Message::RightClick(side, i) => {
                 self.search = None;
@@ -1983,6 +2034,7 @@ impl App {
             }
             Message::Pasted(_) => {}
             Message::DragStart(right) => {
+                self.right_hold = None; // a drag, not a click: no mark, no menu
                 self.right_drag = right;
                 self.dragging = true;
             }
@@ -5435,6 +5487,7 @@ impl App {
             Setting::KeepHistory(b) => c.keep_history = b,
             Setting::InternalViewer(b) => c.internal_viewer = b,
             Setting::ShowHidden(b) => c.show_hidden = b,
+            Setting::RightMarks(b) => c.right_marks = b,
             Setting::LastTabHome(b) => {
                 c.last_tab_close = if b { LastTab::Home } else { LastTab::Nothing };
             }
@@ -6052,6 +6105,17 @@ impl App {
         Some(l.quick.is_some().then_some(1 - self.active))
     }
 
+    /// A right press while the right button marks: held for `HOLD` it arms the menu.
+    fn right_press(&mut self, side: usize, row: Option<usize>) -> Task<Message> {
+        const HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+        self.right_presses += 1;
+        let n = self.right_presses;
+        self.right_hold = Some((n, side, row, false));
+        Task::perform(async { tokio::time::sleep(HOLD).await }, move |()| {
+            cosmic::Action::App(Message::RightHeld(n))
+        })
+    }
+
     /// Scroll the pane's list to the active tab's stored offset.
     fn restore_scroll(&self, side: usize) -> Task<Message> {
         scrollable::scroll_to(
@@ -6089,6 +6153,9 @@ fn route_event(
         cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
             cosmic::iced::mouse::Button::Left,
         )) => Some(Message::ColDragEnd),
+        cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
+            cosmic::iced::mouse::Button::Right,
+        )) => Some(Message::RightUp),
         // The divider's share is of the window's width.
         cosmic::iced::Event::Window(
             cosmic::iced::window::Event::Resized(size)
@@ -9680,6 +9747,7 @@ mod tests {
     #[test]
     fn right_click_moves_the_cursor_and_keeps_marks_only_on_a_marked_row() {
         let mut app = files_app(&["a", "b", "c"]);
+        app.config.right_marks = false; // the menu at once
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::MarkDown)); // "a" marked, cursor on "b"
         let _ = app.update(Message::RightClick(0, 1)); // on the marked "a"
@@ -9697,10 +9765,53 @@ mod tests {
     }
 
     #[test]
+    fn right_button_marks_and_a_long_press_opens_the_menu() {
+        let mut app = files_app(&["a", "b", "c"]);
+        let marked = |app: &App| app.panes[0].active().panel.marked_totals().files;
+        let held = |app: &App| app.right_hold.map(|h| h.0).unwrap();
+        // quick click: the cursor goes there and the row is marked; again: unmarked
+        let _ = app.update(Message::RightClick(0, 1));
+        let _ = app.update(Message::RightEmpty(0)); // the list's own handler, same press
+        let _ = app.update(Message::RightUp);
+        assert_eq!((cursor_name(&app), marked(&app)), ("a".into(), 1));
+        let _ = app.update(Message::RightClick(0, 3));
+        let _ = app.update(Message::RightEmpty(0));
+        let _ = app.update(Message::RightUp);
+        assert_eq!(marked(&app), 2);
+        // long press on the unmarked "b": the menu is about it, marks dropped, none added
+        let _ = app.update(Message::RightClick(0, 2));
+        let _ = app.update(Message::RightEmpty(0));
+        let stale = held(&app) - 1;
+        let _ = app.update(Message::RightHeld(stale)); // an earlier press's timer: ignored
+        assert!(!app.right_hold.unwrap().3);
+        let _ = app.update(Message::RightHeld(held(&app)));
+        assert!(app.ctx_entry && app.right_hold.unwrap().3);
+        let _ = app.update(Message::RightUp);
+        assert_eq!((marked(&app), app.right_hold), (0, None));
+        // a right drag: no mark
+        let _ = app.update(Message::RightClick(0, 1));
+        let _ = app.update(Message::RightEmpty(0));
+        let _ = app.update(Message::DragStart(None));
+        let _ = app.update(Message::RightUp);
+        assert_eq!(marked(&app), 0);
+        // empty space: a quick click does nothing, a long one the dir's menu
+        let _ = app.update(Message::RightEmpty(1));
+        assert_eq!(app.active, 1);
+        let _ = app.update(Message::RightHeld(held(&app)));
+        assert!(!app.ctx_entry);
+        let _ = app.update(Message::RightUp);
+        assert_eq!(marked(&app), 0);
+    }
+
+    #[test]
     fn regression_menu_open_opens_even_with_a_typed_command() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
-        let mut app = app_with(Config::default(), State::default());
+        let config = Config {
+            right_marks: false,
+            ..Config::default()
+        };
+        let mut app = app_with(config, State::default());
         listed_at(&mut app, 0, tmp.path());
         app.cmdline = "ls -l".into();
         let _ = app.update(Message::RightClick(0, 1));
