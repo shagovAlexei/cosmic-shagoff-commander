@@ -214,17 +214,18 @@ fn key_binds() -> HashMap<KeyBind, MenuAct> {
 
 type Item = menu::Item<MenuAct, String>;
 
-/// (title, items) of every menu.
 /// The menu checkboxes' states.
 #[derive(Clone, Copy, Default)]
 pub struct Checks {
     pub hidden: bool,
     pub divider_line: bool,
     pub active_frame: bool,
-    /// The classic look: the frame is the modern one's own there.
+    /// The classic look: only there is «Frame around the active panel» offered (the modern
+    /// look's cards have one of their own).
     pub classic: bool,
 }
 
+/// (title, items) of every menu.
 fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
     let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
     let sort = |label: String, k: SortKey| b(label, Action::Sort(k));
@@ -602,6 +603,28 @@ mod tests {
                 assert!(described.contains(&a), "{a:?} missing in help");
             }
         }
+    }
+
+    #[test]
+    fn the_frame_item_only_in_the_classic_look() {
+        let has_frame = |classic| {
+            menus(
+                Checks {
+                    classic,
+                    ..Checks::default()
+                },
+                false,
+            )
+            .into_iter()
+            .flat_map(|(_, items)| items)
+            .any(|i| {
+                matches!(
+                    i,
+                    menu::Item::CheckBox(_, _, _, MenuAct::Key(Action::ToggleActiveFrame))
+                )
+            })
+        };
+        assert!(has_frame(true) && !has_frame(false));
     }
 
     #[test]

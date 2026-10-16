@@ -67,23 +67,23 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let (left, right) = viewport::split_portions(app.split);
     let (_, gap) = split_geometry(app.config.skin);
     // Settings «Line between the panels»: 1 px in the middle of the gap.
-    let line = container(
-        widget::Space::new()
+    let line: Element<'_, Message> = if app.config.divider_line {
+        let rule = widget::Space::new()
             .width(Length::Fixed(1.0))
-            .height(Length::Fill),
-    )
-    .class(theme::Container::custom(|t| container::Style {
-        // The theme's divider colour is barely seen on a dark list: the text colour, faded.
-        background: Some(
-            Color::from(t.cosmic().on_bg_color())
-                .scale_alpha(0.4)
-                .into(),
-        ),
-        ..Default::default()
-    }));
-    let line: Element<'_, Message> = match app.config.divider_line {
-        true => line.into(),
-        false => widget::Space::new().into(),
+            .height(Length::Fill);
+        container(rule)
+            .class(theme::Container::custom(|t| container::Style {
+                // The theme's divider colour is barely seen on a dark list: the text colour, faded.
+                background: Some(
+                    Color::from(t.cosmic().on_bg_color())
+                        .scale_alpha(0.4)
+                        .into(),
+                ),
+                ..Default::default()
+            }))
+            .into()
+    } else {
+        widget::Space::new().into()
     };
     let divider = widget::mouse_area(
         container(line)
@@ -118,10 +118,14 @@ const MODERN_GAP: f32 = 8.0;
 const MODERN_PAD: f32 = 8.0;
 /// The Modern card's padding around its contents.
 const CARD_PAD: f32 = 6.0;
+/// The classic frame around a pane, inside it: the list is this much in from each side.
+const FRAME_INSET: f32 = 1.0;
 
-/// The window x between the panes (the middle of the gap), from the left pane's list width.
-pub fn pane_split(skin: Skin, left_list_w: f32) -> f32 {
+/// The window x between the panes (the middle of the gap), from the left pane's list width;
+/// `framed`: the classic «Frame around the active panel» is on (its 1 px inset on each side).
+pub fn pane_split(skin: Skin, left_list_w: f32, framed: bool) -> f32 {
     match skin {
+        Skin::Classic if framed => left_list_w + 2.0 * FRAME_INSET + CLASSIC_GAP / 2.0,
         Skin::Classic => left_list_w + CLASSIC_GAP / 2.0,
         Skin::Modern => MODERN_PAD + CARD_PAD + left_list_w + CARD_PAD + MODERN_GAP / 2.0,
     }
@@ -239,9 +243,10 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let pane: Element<'_, Message> = match skin {
         // Settings «Frame around the active panel»: the modern card's border, no card. The
         // inactive pane's border is there but clear, so nothing moves when the focus does.
-        Skin::Classic if app.config.active_frame => {
-            container(col).padding(1).class(frame_style(active)).into()
-        }
+        Skin::Classic if app.config.active_frame => (container(col)
+            .padding(FRAME_INSET)
+            .class(frame_style(active)))
+        .into(),
         Skin::Classic => col.into(),
         Skin::Modern => container(col.spacing(2))
             .padding(CARD_PAD)

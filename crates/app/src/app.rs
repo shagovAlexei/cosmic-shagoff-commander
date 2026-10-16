@@ -2533,7 +2533,11 @@ impl App {
             }
             // The main window's only (a context menu popup has its own coordinates).
             Message::TabDragAt(window, x) if window == self.window_id() => {
-                let split = crate::view::pane_split(self.config.skin, self.panes[0].active().width);
+                let split = crate::view::pane_split(
+                    self.config.skin,
+                    self.panes[0].active().width,
+                    self.config.active_frame,
+                );
                 self.pane_hover = Some(usize::from(x > split));
             }
             Message::TabDragAt(..) => {}
@@ -7797,11 +7801,16 @@ mod tests {
         assert_eq!(count(&app), (1, 3));
         // The split between the panes, for both skins: the middle of the gap.
         assert_eq!(
-            crate::view::pane_split(crate::config::Skin::Classic, 500.0),
+            crate::view::pane_split(crate::config::Skin::Classic, 500.0, false),
             502.0
         );
+        // the classic frame: its 1 px inset on each side of the left pane
         assert_eq!(
-            crate::view::pane_split(crate::config::Skin::Modern, 500.0),
+            crate::view::pane_split(crate::config::Skin::Classic, 500.0, true),
+            504.0
+        );
+        assert_eq!(
+            crate::view::pane_split(crate::config::Skin::Modern, 500.0, false),
             524.0
         );
         // A popup's coordinates are not the main window's.
