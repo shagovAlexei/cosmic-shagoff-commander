@@ -283,7 +283,7 @@ pub struct SyncPrefs {
     pub recursive: bool,
     pub content: bool,
     pub ignore_date: bool,
-    pub mirror: bool,
+    // Not «Зеркало»: on, it plans the right's extra files for the trash; it is turned on each time.
     pub mask: String,
     /// Kinds of rows hidden from the list.
     pub hide: Vec<shagoff_core::sync::Kind>,
@@ -295,7 +295,6 @@ impl Default for SyncPrefs {
             recursive: true,
             content: false,
             ignore_date: false,
-            mirror: false,
             mask: String::new(),
             // As before: equal files hidden until asked for.
             hide: vec![shagoff_core::sync::Kind::Same],

@@ -714,6 +714,22 @@ impl Application for App {
             self.dialog = self.held.take();
         }
         let follow = self.quick_follow();
+        // Ctrl+Shift+S's options as on screen, however the dialog then closes.
+        if let Some(Dialog::Sync(s)) = &self.dialog {
+            self.sync = config::SyncPrefs {
+                recursive: s.recursive,
+                content: s.content,
+                ignore_date: s.ignore_date,
+                mask: s.mask.clone(),
+                hide: s
+                    .hide
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+            };
+        }
         self.save_state();
         // The viewer came, went or moved to the other pane: the lists it replaced are new
         // widgets at the top, while the tabs keep their offsets (the rows drawn are those).
@@ -3516,7 +3532,7 @@ impl App {
                 ignore_date: self.sync.ignore_date,
                 hidden: panel.show_hidden(),
                 hide: self.sync.hide.iter().copied().collect(),
-                mirror: self.sync.mirror,
+                mirror: false,
                 mask: self.sync.mask.clone(),
                 confirm: false,
                 rows: Vec::new(),
@@ -4215,18 +4231,7 @@ impl App {
             old.store(true, Ordering::Relaxed);
         }
         s.id = id;
-        let mut hide: Vec<_> = s.hide.iter().copied().collect();
-        hide.sort_by_key(|k| *k as u8); // a set: the state compares equal when unchanged
-        let prefs = config::SyncPrefs {
-            recursive: s.recursive,
-            content: s.content,
-            ignore_date: s.ignore_date,
-            mirror: s.mirror,
-            mask: s.mask.clone(),
-            hide,
-        };
         let (l, r, o) = (s.left.clone(), s.right.clone(), s.options());
-        self.sync = prefs;
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || shagoff_core::sync::compare(&l, &r, &o, &stop))
@@ -9294,10 +9299,12 @@ mod tests {
         let _ = app.update(Message::Key(Action::SyncDirs));
         let _ = app.update(Message::SyncOpt(SyncOpt::Content));
         let _ = app.update(Message::SyncOpt(SyncOpt::Recursive)); // off
+        let _ = app.update(Message::SyncOpt(SyncOpt::Mirror)); // not kept
+        let _ = app.update(Message::SyncCompare);
+        // After the compare, not compared again: still kept.
         let _ = app.update(Message::SyncShow(Kind::Same)); // shown now
         let _ = app.update(Message::SyncShow(Kind::ToLeft)); // hidden
         let _ = app.update(Message::SyncMask("*.rs".into()));
-        let _ = app.update(Message::SyncCompare);
         let _ = app.update(Message::DialogCancel);
         assert_eq!(app.saved.sync.mask, "*.rs"); // written to the state
         let mut app = app_with(Config::default(), app.saved.clone());
@@ -9305,7 +9312,7 @@ mod tests {
         let Some(Dialog::Sync(s)) = &app.dialog else {
             panic!("no dialog");
         };
-        assert!(s.content && !s.recursive && s.mask == "*.rs");
+        assert!(s.content && !s.recursive && !s.mirror && s.mask == "*.rs");
         assert_eq!(s.hide, HashSet::from([Kind::ToLeft]));
     }
 
