@@ -300,8 +300,8 @@ pub fn detect(name: &str, bytes: &[u8]) -> Mode {
     }
 }
 
-/// Byte ranges of the lines (without `\n` / `\r\n`), lines wider than `max_cols` cells split.
-// ponytail: wrap cuts at the cell limit, not at word boundaries.
+/// Byte ranges of the lines (without `\n` / `\r\n`), lines wider than `max_cols` cells split
+/// after a space or tab where one fits (a word wider than that: where it fills the line).
 pub fn lines(bytes: &[u8], max_cols: usize) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -323,21 +323,47 @@ pub fn lines(bytes: &[u8], max_cols: usize) -> Vec<Range<usize>> {
     out
 }
 
-/// Cut `s..e` every `max` chars, at char starts (UTF-8 continuation bytes never start a piece).
+/// Cut `s..e` into pieces of at most `max` cells, at char starts (UTF-8 continuation bytes never
+/// start a piece): after the last space or tab that fits, else where the piece is full.
 fn split_long(bytes: &[u8], s: usize, e: usize, max: usize, out: &mut Vec<Range<usize>>) {
     // Same cells as `line_text` / `width` draw: a tab is four, wide chars two, each invalid
     // UTF-8 sequence one `�`.
-    let mut from = s;
-    let mut cells = 0;
-    let mut at = s;
-    let mut put = |i: usize, w: usize, from: &mut usize, cells: &mut usize| {
-        if *cells + w > max && *cells > 0 {
-            out.push(*from..i);
-            *from = i;
-            *cells = 0;
+    struct Piece<'a> {
+        out: &'a mut Vec<Range<usize>>,
+        from: usize,
+        cells: usize,
+        /// Just after the last space in the piece, and its cells up to there.
+        brk: Option<(usize, usize)>,
+    }
+    impl Piece<'_> {
+        /// A char of `w` cells at `i`, `len` bytes, a space or not.
+        fn put(&mut self, i: usize, len: usize, w: usize, space: bool, max: usize) {
+            if self.cells + w > max && self.cells > 0 {
+                if let Some((b, bc)) = self.brk.take() {
+                    self.out.push(self.from..b);
+                    self.from = b;
+                    self.cells -= bc;
+                }
+                // Still too wide (one long word): cut it here.
+                if self.cells + w > max && self.cells > 0 {
+                    self.out.push(self.from..i);
+                    self.from = i;
+                    self.cells = 0;
+                }
+            }
+            self.cells += w;
+            if space {
+                self.brk = Some((i + len, self.cells));
+            }
         }
-        *cells += w;
+    }
+    let mut p = Piece {
+        out,
+        from: s,
+        cells: 0,
+        brk: None,
     };
+    let mut at = s;
     for chunk in bytes[s..e].utf8_chunks() {
         for (i, c) in chunk.valid().char_indices() {
             let w = match c {
@@ -345,15 +371,15 @@ fn split_long(bytes: &[u8], s: usize, e: usize, max: usize, out: &mut Vec<Range<
                 c if wide(c) => 2,
                 _ => 1,
             };
-            put(at + i, w, &mut from, &mut cells);
+            p.put(at + i, c.len_utf8(), w, c == ' ' || c == '\t', max);
         }
         at += chunk.valid().len();
         if !chunk.invalid().is_empty() {
-            put(at, 1, &mut from, &mut cells);
+            p.put(at, chunk.invalid().len(), 1, false, max);
             at += chunk.invalid().len();
         }
     }
-    out.push(from..e);
+    p.out.push(p.from..e);
 }
 
 /// A line as shown: invalid UTF-8 as `�`, tabs as four spaces.
@@ -672,7 +698,7 @@ mod tests {
         };
         let t = Text::new(&tabs, Encoding::Auto, Some(5));
         let shown: Vec<String> = t.lines.iter().map(|r| line_text(&tabs.bytes, r)).collect();
-        assert_eq!(shown, ["    a", "    b", "\u{fffd}cd"]);
+        assert_eq!(shown, ["    ", "a    ", "b\u{fffd}cd"]); // after a tab, as after a space
         assert!(t.cols <= 5);
         // a zero-width viewport must not loop forever
         assert_eq!(Text::new(&doc, Encoding::Auto, Some(0)).lines.len(), 9);
@@ -685,6 +711,22 @@ mod tests {
         assert_eq!(detect("a.bin", b"ab\0cd"), Mode::Hex);
         assert_eq!(detect("a.txt", "привет".as_bytes()), Mode::Text);
         assert_eq!(detect("png", b""), Mode::Text); // no extension
+    }
+
+    #[test]
+    fn wrap_breaks_after_spaces_and_cuts_only_words_too_long() {
+        let shown = |b: &[u8], max| -> Vec<String> {
+            lines(b, max).iter().map(|r| line_text(b, r)).collect()
+        };
+        assert_eq!(shown(b"hello world foo", 8), ["hello ", "world ", "foo"]);
+        assert_eq!(shown(b"abcdefghij k", 4), ["abcd", "efgh", "ij k"]);
+        assert_eq!(shown(b"abcdefghij kl", 4), ["abcd", "efgh", "ij ", "kl"]);
+        assert_eq!(
+            shown("съешь же ещё".as_bytes(), 5),
+            ["съешь", " же ", "ещё"]
+        );
+        assert_eq!(shown(b"a\tb c", 5), ["a    ", "b c"]); // a tab is four cells
+        assert_eq!(shown(b"short", 8), ["short"]);
     }
 
     #[test]
