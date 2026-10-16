@@ -30,7 +30,7 @@ pub fn lister_window(app: &App, id: cosmic::iced::window::Id) -> Element<'_, Mes
         return widget::Space::new().into(); // closing: one more frame may be asked for
     };
     let focused = cosmic::Application::core(app).focused_window() == Some(id);
-    column![
+    let content = column![
         widget::header_bar()
             .title(l.name.clone())
             .on_close(Message::ListerClose)
@@ -41,8 +41,13 @@ pub fn lister_window(app: &App, id: cosmic::iced::window::Id) -> Element<'_, Mes
         crate::lister::view(l),
         // Its own messages ("not found"…) where they are looked for.
         container(window_status(app)).padding([2, 8]),
-    ]
-    .into()
+    ];
+    // A window of our own gets no background from libcosmic: without one it is see-through.
+    container(content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .class(theme::Container::WindowBackground)
+        .into()
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
