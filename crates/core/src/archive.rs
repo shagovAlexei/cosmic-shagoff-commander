@@ -594,6 +594,11 @@ impl Format {
     pub fn is_tree(self) -> bool {
         !matches!(self, Format::Gz | Format::Bz2 | Format::Xz | Format::Zst)
     }
+
+    /// Packed with a password (`pack_with`): zip and 7z only, tar has no encryption.
+    pub fn can_encrypt(self) -> bool {
+        matches!(self, Format::Zip | Format::SevenZ)
+    }
 }
 
 /// A file name that opens as a folder, by the name alone.
@@ -1163,18 +1168,32 @@ impl Enc {
 }
 
 enum Packer {
-    Zip(Box<zip::ZipWriter<File>>),
+    /// With the password files are written AES-256 encrypted (names stay readable).
+    Zip(Box<zip::ZipWriter<File>>, Option<String>),
     Tar(tar::Builder<Enc>),
     SevenZ(sevenz_rust2::ArchiveWriter<File>),
 }
 
 impl Packer {
-    fn new(f: Format, w: File) -> io::Result<Packer> {
+    /// `password`: zip and 7z encrypt the contents with it (AES-256); the names stay readable, as
+    /// 7-Zip does by default. Tar formats have no encryption: ignored (the dialog offers none).
+    fn new(f: Format, w: File, password: Option<&str>) -> io::Result<Packer> {
         let tar = |e| Packer::Tar(tar::Builder::new(e));
         Ok(match f {
-            Format::Zip => Packer::Zip(Box::new(zip::ZipWriter::new(w))),
+            Format::Zip => Packer::Zip(
+                Box::new(zip::ZipWriter::new(w)),
+                password.map(str::to_string),
+            ),
             Format::SevenZ => {
-                Packer::SevenZ(sevenz_rust2::ArchiveWriter::new(w).map_err(io::Error::other)?)
+                let mut sz = sevenz_rust2::ArchiveWriter::new(w).map_err(io::Error::other)?;
+                if let Some(pw) = password {
+                    sz.set_content_methods(vec![
+                        sevenz_rust2::encoder_options::AesEncoderOptions::new(pw.into()).into(),
+                        sevenz_rust2::EncoderMethod::LZMA2.into(),
+                    ]);
+                    sz.set_encrypt_header(false);
+                }
+                Packer::SevenZ(sz)
             }
             Format::Tar => tar(Enc::Plain(w)),
             Format::TarGz => tar(Enc::Gz(flate2::write::GzEncoder::new(
@@ -1203,7 +1222,7 @@ impl Packer {
 
     fn dir(&mut self, rel: &Path, m: &Metadata) -> io::Result<()> {
         match self {
-            Packer::Zip(z) => Ok(z.add_directory(utf8(rel)?, zip_opts(m))?),
+            Packer::Zip(z, _) => Ok(z.add_directory(utf8(rel)?, zip_opts(m))?),
             Packer::Tar(b) => {
                 let mut h = tar_header(m);
                 h.set_size(0);
@@ -1219,11 +1238,14 @@ impl Packer {
 
     fn file(&mut self, rel: &Path, m: &Metadata, r: &mut dyn Read) -> io::Result<()> {
         match self {
-            Packer::Zip(z) => {
-                z.start_file(
-                    utf8(rel)?,
-                    zip_opts(m).large_file(m.len() >= u32::MAX as u64),
-                )?;
+            Packer::Zip(z, pw) => {
+                let o = zip_opts(m).large_file(m.len() >= u32::MAX as u64);
+                match pw {
+                    Some(pw) => {
+                        z.start_file(utf8(rel)?, o.with_aes_encryption(zip::AesMode::Aes256, pw))?
+                    }
+                    None => z.start_file(utf8(rel)?, o)?,
+                }
                 io::copy(r, z)?;
                 Ok(())
             }
@@ -1242,7 +1264,7 @@ impl Packer {
     /// `Ok(false)`: this format can't hold the link (7z, or a non-UTF-8 target in zip).
     fn symlink(&mut self, rel: &Path, target: &Path, m: &Metadata) -> io::Result<bool> {
         match self {
-            Packer::Zip(z) => match target.to_str() {
+            Packer::Zip(z, _) => match target.to_str() {
                 Some(t) => {
                     z.add_symlink(utf8(rel)?, t, zip_opts(m))?;
                     Ok(true)
@@ -1261,7 +1283,7 @@ impl Packer {
 
     fn finish(self) -> io::Result<File> {
         match self {
-            Packer::Zip(z) => Ok(z.finish()?),
+            Packer::Zip(z, _) => Ok(z.finish()?),
             Packer::Tar(b) => b.into_inner()?.finish(),
             Packer::SevenZ(w) => w.finish(),
         }
@@ -1415,10 +1437,21 @@ pub fn pack(
     groups: &[(Vec<PathBuf>, PathBuf)],
     h: &mut dyn Handler,
 ) -> Report {
+    pack_with(f, base, groups, None, h)
+}
+
+/// `pack`, zip / 7z contents encrypted with `password` (see `Packer::new`).
+pub fn pack_with(
+    f: Format,
+    base: &Path,
+    groups: &[(Vec<PathBuf>, PathBuf)],
+    password: Option<&str>,
+    h: &mut dyn Handler,
+) -> Report {
     let mut report = Report::default();
     let mut policy: Option<Resolution> = None;
     for (sources, dest) in groups {
-        match pack_one(f, base, sources, dest, &mut policy, h) {
+        match pack_one(f, base, sources, dest, password, &mut policy, h) {
             // An archive inside a source dir would be deleted with it by "move to archive".
             Packed::Done { skipped: false } if !inside_any(dest, sources) => {
                 report.completed.extend(sources.iter().cloned())
@@ -1456,6 +1489,7 @@ fn pack_one(
     base: &Path,
     sources: &[PathBuf],
     dest: &Path,
+    password: Option<&str>,
     policy: &mut Option<Resolution>,
     h: &mut dyn Handler,
 ) -> Packed {
@@ -1480,7 +1514,8 @@ fn pack_one(
             Err(true) => return Packed::Cancel,
             Err(false) => return Packed::Dropped,
         };
-        let outcome = write_archive(f, base, sources, dest, &part, w, h);
+        let outcome = Packer::new(f, w, password)
+            .and_then(|p| write_archive(p, base, sources, dest, &part, h));
         match outcome {
             Ok(Some(skipped)) => {
                 return match place(&part, dest, policy, h) {
@@ -1507,12 +1542,11 @@ fn pack_one(
 
 /// Write the archive into `part`. `Ok(Some(skipped))` = written; `Ok(None)` = cancelled.
 fn write_archive(
-    f: Format,
+    mut p: Packer,
     base: &Path,
     sources: &[PathBuf],
     dest: &Path,
     part: &Path,
-    w: File,
     h: &mut dyn Handler,
 ) -> io::Result<Option<bool>> {
     let mut skip = vec![];
@@ -1535,7 +1569,6 @@ fn write_archive(
         .map(|(_, m)| m.len())
         .sum();
     let mut done = 0;
-    let mut p = Packer::new(f, w)?;
     for (path, m) in &items {
         if h.cancelled() {
             return Ok(None);
@@ -2732,6 +2765,46 @@ mod tests {
         let slashed = PathBuf::from(format!("{}/", a.display()));
         assert_eq!(split_path(&slashed), Some((a.clone(), PathBuf::new())));
         assert_eq!(crate::listing::scan(&slashed, true).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn pack_with_password_encrypts_contents_not_names() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("s.txt"), "secret").unwrap();
+        let src = vec![d.path().join("s.txt")];
+        for f in [Format::Zip, Format::SevenZ] {
+            let a = d.path().join(format!("a.{}", f.ext()));
+            let groups = [(src.clone(), a.clone())];
+            let r = pack_with(f, d.path(), &groups, Some("pw"), &mut Script::default());
+            assert!(!r.cancelled && r.completed == src, "{f:?}");
+            // Names listed without the password.
+            let names: Vec<String> = list(&a, Path::new(""), true)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+            assert_eq!(names, ["s.txt"], "{f:?}");
+            let bytes = fs::read(&a).unwrap();
+            assert!(!bytes.windows(6).any(|w| w == b"secret"), "{f:?}");
+            if f == Format::Zip {
+                let mut z = zip::ZipArchive::new(fs::File::open(&a).unwrap()).unwrap();
+                assert!(z.by_name("s.txt").is_err());
+                let mut out = String::new();
+                z.by_name_decrypt("s.txt", b"pw")
+                    .unwrap()
+                    .read_to_string(&mut out)
+                    .unwrap();
+                assert_eq!(out, "secret");
+            } else {
+                let open = |pw: &str| {
+                    sevenz_rust2::ArchiveReader::new(fs::File::open(&a).unwrap(), pw.into())
+                        .unwrap()
+                        .read_file("s.txt")
+                };
+                assert!(open("").is_err());
+                assert_eq!(open("pw").unwrap(), b"secret");
+            }
+        }
     }
 
     #[test]

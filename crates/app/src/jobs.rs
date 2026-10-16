@@ -24,6 +24,8 @@ pub enum Job {
         groups: Vec<(Vec<PathBuf>, PathBuf)>,
         /// "Move to archive": delete the sources of archives written without skips.
         move_after: bool,
+        /// Zip / 7z contents encrypted with it.
+        password: Option<String>,
     },
     Unpack {
         archives: Vec<PathBuf>,
@@ -167,8 +169,9 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                 base,
                 groups,
                 move_after,
+                password,
             } => {
-                let r = archive::pack(format, &base, &groups, &mut h);
+                let r = archive::pack_with(format, &base, &groups, password.as_deref(), &mut h);
                 if move_after && !r.cancelled && !r.completed.is_empty() {
                     let d = ops::delete(&r.completed, true, &mut h);
                     Report {

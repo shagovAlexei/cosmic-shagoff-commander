@@ -446,6 +446,8 @@ pub enum Message {
     MrInsert(&'static str),
     /// Pack dialog: format button.
     PackFormat(Format),
+    /// Alt+F5's password field (`true`: the second one).
+    PackPassword(bool, String),
     /// Pack / unpack dialog checkboxes.
     Toggle(Toggle),
     FindInput(FindField, String),
@@ -1270,9 +1272,20 @@ impl App {
                 }
                 self.save_pack_format(f);
             }
+            Message::PackPassword(again, s) => {
+                if let Some(Dialog::Pack(p)) = &mut self.dialog {
+                    *if again { &mut p.again } else { &mut p.password } = s;
+                }
+            }
             Message::Toggle(t) => match (&mut self.dialog, t) {
                 (Some(Dialog::Pack(p)), Toggle::MoveAfter) => p.move_after = !p.move_after,
                 (Some(Dialog::Pack(p)), Toggle::Separate) => p.separate = !p.separate,
+                (Some(Dialog::Pack(p)), Toggle::Encrypt) => {
+                    p.encrypt = !p.encrypt;
+                    if p.encrypt {
+                        return widget::text_input::focus(widget::Id::new("pack-password"));
+                    }
+                }
                 (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
                 _ => {}
             },
@@ -3362,6 +3375,9 @@ impl App {
                     format,
                     move_after: false,
                     separate: false,
+                    encrypt: false,
+                    password: String::new(),
+                    again: String::new(),
                 })))
             }
             Action::FindFiles => {
@@ -3578,6 +3594,10 @@ impl App {
                 self.start_job(m.side, OpKind::Move, job, focus)
             }
             Dialog::Pack(p) => {
+                let Ok(password) = p.password() else {
+                    self.dialog = Some(Dialog::Pack(p)); // Enter does nothing until they match
+                    return Task::none();
+                };
                 let cwd = self.panes[p.side].active().target();
                 let path = cwd.join(p.path.trim());
                 if into_archive(&path) {
@@ -3597,6 +3617,7 @@ impl App {
                     base: p.base,
                     groups,
                     move_after: p.move_after,
+                    password,
                 };
                 self.start_job(p.side, OpKind::Pack, job, focus)
             }
@@ -8706,6 +8727,34 @@ mod tests {
         let _ = app.update(Message::Key(Action::Pack));
         let _ = app.update(Message::DialogSubmit);
         assert!(app.dialog.is_none());
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Pack));
+    }
+
+    #[test]
+    fn pack_password_must_be_typed_twice_alike() {
+        let (_tmp, mut app) = pack_setup();
+        let _ = app.update(Message::Key(Action::Pack));
+        let _ = app.update(Message::PackFormat(Format::Zip));
+        let _ = app.update(Message::Toggle(dialogs::Toggle::Encrypt));
+        // «Шифровать» with no password: OK does nothing.
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.job.is_none() && matches!(app.dialog, Some(Dialog::Pack(_))));
+        let _ = app.update(Message::PackPassword(false, "pw".into()));
+        let _ = app.update(Message::PackPassword(true, "pq".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.job.is_none() && matches!(app.dialog, Some(Dialog::Pack(_))));
+        let _ = app.update(Message::PackPassword(true, "pw".into()));
+        let Some(Dialog::Pack(p)) = &app.dialog else {
+            panic!()
+        };
+        assert_eq!(p.password(), Ok(Some("pw".into())));
+        // tar: no encryption, the fields are not used.
+        let _ = app.update(Message::PackFormat(Format::TarGz));
+        let Some(Dialog::Pack(p)) = &app.dialog else {
+            panic!()
+        };
+        assert_eq!(p.password(), Ok(None));
+        let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Pack));
     }
 
