@@ -180,7 +180,7 @@ pub fn builtins() -> &'static [Builtin] {
 }
 
 pub fn builtin(cmd: &str) -> Option<&'static Builtin> {
-    builtins().iter().find(|b| b.cm == cmd)
+    builtins().iter().find(|b| b.cm == cmd.trim())
 }
 
 pub fn default_bar() -> Vec<ToolButton> {

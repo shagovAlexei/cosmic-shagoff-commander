@@ -21,6 +21,7 @@ settings-f12-command = Команда
 settings-f12-own = Своя программа
 settings-f12-program = Программа
 settings-f12-params = Параметры (%P %T %N %O %E %S)
+settings-f12-tip = Подпись на кнопке
 open-failed = Не удалось открыть: { $err }
 select-group = Выделить группу
 unselect-group = Снять выделение

@@ -2942,8 +2942,12 @@ impl App {
                 self.toggle_drawer(action);
                 return Task::none();
             }
+            // Nothing set: the settings (left open if they are already).
             Action::F12 if self.config.f12.cmd.trim().is_empty() => {
-                return self.act(side, Action::Settings);
+                if !matches!(self.drawer, Some(Drawer::Settings(_))) {
+                    self.toggle_drawer(Action::Settings);
+                }
+                return Task::none();
             }
             Action::F12 => return self.run_button(self.config.f12.clone()),
             Action::CopyNames | Action::CopyPaths => {
@@ -5523,6 +5527,7 @@ impl App {
                 }
             }
             Setting::F12Cmd(s) => c.f12.cmd = s,
+            Setting::F12Tip(s) => c.f12.tip = s,
             Setting::F12Params(s) => c.f12.params = s,
             Setting::LastTabHome(b) => {
                 c.last_tab_close = if b { LastTab::Home } else { LastTab::Nothing };
@@ -10646,6 +10651,8 @@ mod tests {
         fn f12_runs_what_is_set_and_opens_the_settings_when_nothing_is() {
             let mut app = app_with(Config::default(), State::default());
             let _ = app.update(Message::Key(Action::F12));
+            assert!(matches!(app.drawer, Some(Drawer::Settings(_))));
+            let _ = app.update(Message::Key(Action::F12)); // already open: stays open
             assert!(matches!(app.drawer, Some(Drawer::Settings(_))));
             let brief = (crate::toolbar::builtins().iter())
                 .position(|b| b.action == Action::ViewBrief)

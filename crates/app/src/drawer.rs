@@ -69,6 +69,7 @@ pub enum Setting {
     F12(usize),
     F12Cmd(String),
     F12Params(String),
+    F12Tip(String),
     HomeDir(String),
     Viewer(String),
     Editor(String),
@@ -375,7 +376,7 @@ fn f12_section(c: &crate::config::Config) -> Element<'_, Message> {
         .chain(crate::toolbar::builtins().iter().map(|b| (b.label)()))
         .collect();
     let at = (crate::toolbar::builtins().iter())
-        .position(|b| b.cm == c.f12.cmd)
+        .position(|b| b.cm == c.f12.cmd.trim())
         .map_or(0, |i| i + 1);
     let mut section = settings::section()
         .title(fl!("settings-f12"))
@@ -398,6 +399,10 @@ fn f12_section(c: &crate::config::Config) -> Element<'_, Message> {
             .add(settings::item(
                 fl!("settings-f12-params"),
                 field("%P%N", &c.f12.params, Setting::F12Params),
+            ))
+            .add(settings::item(
+                fl!("settings-f12-tip"),
+                field("", &c.f12.tip, Setting::F12Tip),
             ));
     }
     section.into()

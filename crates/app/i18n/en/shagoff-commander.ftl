@@ -21,6 +21,7 @@ settings-f12-command = Command
 settings-f12-own = Own program
 settings-f12-program = Program
 settings-f12-params = Parameters (%P %T %N %O %E %S)
+settings-f12-tip = Caption on the button
 open-failed = Cannot open: { $err }
 select-group = Select group
 unselect-group = Unselect group
