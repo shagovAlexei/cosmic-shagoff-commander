@@ -730,6 +730,24 @@ impl Application for App {
                 }),
                 None => Subscription::none(),
             },
+            // «Настроить…» of Ctrl+D: the left button anywhere (its rows are buttons, which keep
+            // the press) holds / lets go of the row under the pointer.
+            match self.dialog {
+                Some(Dialog::Hotlist(_)) => event::listen_with(|e, _, _| match e {
+                    cosmic::iced::Event::Mouse(mouse::Event::ButtonPressed(
+                        mouse::Button::Left,
+                    )) => Some(Message::Hot(HotMsg::Grab)),
+                    cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(
+                        mouse::Button::Left,
+                    )) => Some(Message::Hot(HotMsg::Release)),
+                    // Scrolled: another row is under the pointer than the last one entered.
+                    cosmic::iced::Event::Mouse(mouse::Event::WheelScrolled { .. }) => {
+                        Some(Message::Hot(HotMsg::Hover(None)))
+                    }
+                    _ => None,
+                }),
+                _ => Subscription::none(),
+            },
             // Alt+F4 / the compositor's close: the window stays until Quit decides.
             cosmic::iced::window::close_requests().map(Message::CloseRequested),
             self.core()
