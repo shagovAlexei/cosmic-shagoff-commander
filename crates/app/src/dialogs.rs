@@ -361,10 +361,28 @@ pub struct Props {
     /// A dir is selected: offer to change what is inside too.
     pub has_dir: bool,
     pub recursive: bool,
+    /// Groups the files may be given (the user's own and the files' current one), names for the
+    /// drop-down; `group`: the one shown (`None`: the files' groups differ).
+    pub gids: Vec<u32>,
+    pub group_names: Vec<String>,
+    pub group: Option<usize>,
+    /// `group` as opened: picking it again changes nothing.
+    pub group0: Option<usize>,
+    /// The user owns one of the files (or is root): else no group can be given, shown as text.
+    pub can_chgrp: bool,
     /// Counted in the background; `None` while counting.
     pub usage: Option<shagoff_core::props::Usage>,
     pub id: u64,
     pub stop: Arc<AtomicBool>,
+}
+
+impl Props {
+    /// The group to give on OK: picked, and not the one the files had.
+    pub fn new_group(&self) -> Option<u32> {
+        (self.group != self.group0)
+            .then(|| self.group.and_then(|i| self.gids.get(i).copied()))
+            .flatten()
+    }
 }
 
 impl Drop for Props {
@@ -999,6 +1017,24 @@ pub fn view<'a>(
                 ),
             };
             body = body.push(line(fl!("props-size"), size));
+            // As chgrp: the user's own groups (another needs root).
+            body = body.push(
+                row![
+                    widget::text::body(fl!("props-group-line")).width(Length::Fixed(LABEL)),
+                    if p.can_chgrp {
+                        Element::from(widget::dropdown(
+                            &p.group_names,
+                            p.group,
+                            Message::PropsGroup,
+                        ))
+                    } else {
+                        let name = p.group.and_then(|i| p.group_names.get(i));
+                        widget::text::body(name.cloned().unwrap_or_else(|| "—".into())).into()
+                    },
+                ]
+                .spacing(8)
+                .align_y(cosmic::iced::Alignment::Center),
+            );
             let bit = |b: u32| {
                 let unknown = p.mixed & !p.touched & b != 0;
                 let cell: Element<'a, Message> = if unknown {

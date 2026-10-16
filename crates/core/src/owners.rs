@@ -50,6 +50,44 @@ impl Owners {
     }
 }
 
+impl Owners {
+    /// Names of these groups, sorted by name, numbers where unknown.
+    pub fn groups(&self, gids: &[u32]) -> Vec<(u32, String)> {
+        // Each gid once first: a selection of many files repeats them.
+        let gids: std::collections::BTreeSet<u32> = gids.iter().copied().collect();
+        let mut v: Vec<(u32, String)> = (gids.into_iter())
+            .map(|g| {
+                (
+                    g,
+                    self.groups
+                        .get(&g)
+                        .cloned()
+                        .unwrap_or_else(|| g.to_string()),
+                )
+            })
+            .collect();
+        v.sort_by(|a, b| a.1.cmp(&b.1));
+        v
+    }
+}
+
+/// The user this process runs as (0: root, may chown anything).
+pub fn euid() -> u32 {
+    rustix::process::geteuid().as_raw()
+}
+
+/// The groups this process may give a file it owns (its own and the supplementary ones):
+/// without root, chgrp to any other fails.
+pub fn my_groups() -> Vec<u32> {
+    let mut v: Vec<u32> = (rustix::process::getgroups().unwrap_or_default().into_iter())
+        .map(|g| g.as_raw())
+        .collect();
+    v.push(rustix::process::getegid().as_raw());
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
