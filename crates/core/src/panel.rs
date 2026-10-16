@@ -2,10 +2,10 @@ use crate::listing::{Entry, Kind};
 use crate::mask::Mask;
 use crate::quicksearch;
 use crate::sort::{Sort, SortKey, sort_entries};
-use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 
 /// Name of the synthetic "go up" row.
@@ -35,11 +35,12 @@ pub struct Panel {
     filter: Option<String>,
     /// Dir sizes counted by Space, by real name; shown instead of `<DIR>`, until the dir changes.
     dir_sizes: HashMap<OsString, u64>,
-    /// (all, marked) totals: drawn every frame, a pass over a 100 000-row dir takes ~10 ms.
-    /// Dropped by `touched` on any change to rows, marks or dir sizes.
-    sums: OnceCell<(Totals, Totals)>,
+    /// Totals of all rows and of the marked ones: drawn every frame, a pass over a 100 000-row
+    /// dir takes ~10 ms. `all` is dropped when rows or dir sizes change, `marked` by `touched`.
+    all_sums: OnceLock<Totals>,
+    marked_sums: OnceLock<Totals>,
     /// Longest shown name in chars (Brief column width); dropped when the rows change.
-    longest: OnceCell<usize>,
+    longest: OnceLock<usize>,
 }
 
 impl Panel {
@@ -54,8 +55,9 @@ impl Panel {
             all: Vec::new(),
             filter: None,
             dir_sizes: HashMap::new(),
-            sums: OnceCell::new(),
-            longest: OnceCell::new(),
+            all_sums: OnceLock::new(),
+            marked_sums: OnceLock::new(),
+            longest: OnceLock::new(),
         }
     }
 
@@ -128,6 +130,7 @@ impl Panel {
         self.marked.retain(|k| visible.contains(k));
         self.entries = entries;
         self.longest.take();
+        self.all_sums.take();
         self.touched();
         self.cursor = keep.and_then(|n| self.index_of(&n)).unwrap_or(old);
         self.move_cursor(0); // clamp
@@ -166,20 +169,15 @@ impl Panel {
     }
 
     pub fn totals(&self) -> Totals {
-        self.sums().0
-    }
-
-    fn sums(&self) -> (Totals, Totals) {
-        *self.sums.get_or_init(|| {
+        *self.all_sums.get_or_init(|| {
             let start = usize::from(self.parent_row());
-            let marked = self.entries.iter().filter(|e| self.is_marked(e));
-            (self.sum(self.entries[start..].iter()), self.sum(marked))
+            self.sum(self.entries[start..].iter())
         })
     }
 
-    /// Rows, marks or dir sizes changed: the totals are counted again when next asked.
+    /// Marks (or rows, dir sizes) changed: the marked totals are counted again when next asked.
     fn touched(&mut self) {
-        self.sums.take();
+        self.marked_sums.take();
     }
 
     /// Longest shown name in chars, dirs with their brackets.
@@ -215,6 +213,7 @@ impl Panel {
     pub fn set_dir_size(&mut self, cwd: &Path, name: OsString, bytes: u64) {
         if cwd == self.cwd {
             self.dir_sizes.insert(name, bytes);
+            self.all_sums.take();
             self.touched();
             // By size, the counted dir takes its place; the cursor stays on its row.
             if self.sort.key == SortKey::Size {
@@ -294,7 +293,8 @@ impl Panel {
     }
 
     pub fn marked_totals(&self) -> Totals {
-        self.sums().1
+        *(self.marked_sums)
+            .get_or_init(|| self.sum(self.entries.iter().filter(|e| self.is_marked(e))))
     }
 
     /// What an operation acts on: marked entries (in list order), else the row under the cursor; never `..`.
@@ -785,6 +785,16 @@ mod tests {
         assert_eq!(m(&p), (5024, 1024));
         p.set_filter(Some("b".into()));
         assert_eq!((m(&p), p.longest_name()), ((24, 24), 4)); // "[..]"
+        p.set_filter(None); // the filter dropped the marks it hid
+        p.set_dir_size(Path::new("/y"), "sub".into(), 1); // another dir's count: not ours
+        assert_eq!(m(&p), (5024, 24));
+        // Rescan: "bb" grew, a longer name came; the marks stay.
+        p.set_listing(
+            "/x".into(),
+            vec![d("sub"), f("a", 1000), f("bb", 100), f("ccccccc", 1)],
+            None,
+        );
+        assert_eq!((m(&p), p.longest_name()), ((5101, 100), 7)); // sub keeps its count
     }
 
     fn marked_names(p: &Panel) -> Vec<&str> {
