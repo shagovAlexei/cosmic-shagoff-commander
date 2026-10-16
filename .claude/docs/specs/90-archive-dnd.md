@@ -12,4 +12,9 @@ disk (`/x/a.zip/docs/f`). F5 / F6 from and into archives work already.
 - Into an archive: a drop on a pane showing an archive, or on a dir row inside it, is the F5
   dialog aimed there (repack). New: an archive file's row in a list is a drop zone too — packed
   into it, as TC.
+- `Panel::drop_target(i)` (core, tested): a dir row, or an archive file row — a real file, not a
+  link, and not inside an archive itself (no archives in archives). `archive::within` /
+  `is_tree_name` are the one name-only check, also for `inside_archive` and the view.
+- From an archive into an archive is not done (F5 refuses it too): the drop says so at once,
+  no dialog. A right-button drop from inside an archive: no Link in the menu (`drop_ops`).
 - Not checked in headless (the drop never arrives there); by hand: TESTING § 90.

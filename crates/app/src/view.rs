@@ -280,6 +280,7 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
     let range = viewport::visible_range(entries.len(), row_h, p.offset, p.height);
     let mut list = column![widget::Space::new().height(range.start as f32 * row_h)];
     let marked = OnceCell::new();
+    let inner = shagoff_core::archive::within(p.panel.cwd());
     for i in range.clone() {
         let row = file_row(
             app,
@@ -293,7 +294,7 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
         // While a header edge is dragged, rows must not take the pointer's moves (a drag
         // source captures them, and the pane follows the edge through them).
         list = list.push(if app.col_drag.is_none() {
-            dnd_row(app.window_id(), side, p, i, &marked, row)
+            dnd_row(app.window_id(), side, p, i, &marked, inner, row)
         } else {
             row
         });
@@ -320,6 +321,7 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
     let (rows, cols) = p.brief_grid(row_h, app.config.text_scale());
     let mut grid = row![].spacing(2);
     let marked = OnceCell::new();
+    let inner = shagoff_core::archive::within(p.panel.cwd());
     for c in p.col..p.col + cols {
         let mut list = column![];
         for (i, e) in entries.iter().enumerate().skip(c * rows).take(rows) {
@@ -349,7 +351,7 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
                 .on_press(Message::Click(side, i))
                 .on_right_press(Message::RightClick(side, i))
                 .on_double_click(Message::DoubleClick(side, i));
-            list = list.push(dnd_row(window, side, p, i, &marked, cell.into()));
+            list = list.push(dnd_row(window, side, p, i, &marked, inner, cell.into()));
         }
         grid = grid.push(container(list).width(Length::FillPortion(1)).clip(true));
     }
@@ -675,12 +677,14 @@ fn file_row<'a>(
 
 /// A row can be dragged (the marked files if it is one of them, TC); a dir row also takes drops.
 /// `marked`: the pane's marked files, gathered once per frame and only if a marked row is shown.
+/// `inner`: the pane is inside an archive (its rows go only to our panes).
 fn dnd_row<'a>(
     window: cosmic::iced::window::Id,
     side: usize,
     p: &'a Tab,
     i: usize,
     marked: &OnceCell<Arc<Vec<PathBuf>>>,
+    inner: bool,
     row: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let e = &p.panel.entries()[i];
@@ -705,29 +709,14 @@ fn dnd_row<'a>(
                 fl!("drag-items", n = n),
             ),
         };
-        crate::clip::drag(row, paths, in_archive(p.panel.cwd()), window, icon)
+        crate::clip::drag(row, paths, inner, window, icon)
     };
-    // An archive file takes a drop too (TC): packed into it, as F5 into an archive.
-    let archive =
-        !e.is_dir() && shagoff_core::archive::Format::detect(&e.name).is_some_and(|f| f.is_tree());
-    if !(e.is_dir() || archive) || p.results.is_some() {
-        return row;
+    // A dir or an archive file (packed into it, as TC). The path itself, not the row number: a
+    // rescan before the drop may move the rows.
+    match p.panel.drop_target(i).filter(|_| p.results.is_none()) {
+        Some(dir) => drop_into(side, Some(dir), Some((side, i)), row),
+        None => row,
     }
-    // The dir itself, not the row number: a rescan before the drop may move the rows.
-    let dir = match archive {
-        true => p.panel.cwd().join(&e.os_name),
-        false => p.panel.drop_dir(Some(i)),
-    };
-    drop_into(side, Some(dir), Some((side, i)), row)
-}
-
-/// Inside an archive (`/x/a.zip/docs`), by the names alone: no disk access while drawing.
-fn in_archive(cwd: &std::path::Path) -> bool {
-    cwd.ancestors().any(|a| {
-        (a.file_name().map(|n| n.to_string_lossy()))
-            .and_then(|n| shagoff_core::archive::Format::detect(&n))
-            .is_some_and(|f| f.is_tree())
-    })
 }
 
 /// One-line table cell: long text is cut with "…" instead of wrapping.

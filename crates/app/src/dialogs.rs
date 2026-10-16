@@ -113,7 +113,7 @@ pub enum Dialog {
         sources: Vec<PathBuf>,
         /// Where they were dropped (window coordinates): the menu opens there.
         at: cosmic::iced::Point,
-        /// The menu row under the cursor: an index into `DROP_OPS`, or past them = Cancel.
+        /// The menu row under the cursor: an index into `drop_ops(sources)`, past them = Cancel.
         cursor: usize,
     },
     /// Ctrl+F: network location and password.
@@ -635,7 +635,16 @@ fn what(paths: &[PathBuf]) -> String {
 }
 
 /// The drop menu's items in order; one more row after them is Cancel.
-pub const DROP_OPS: [InputOp; 3] = [InputOp::Copy, InputOp::Move, InputOp::Link];
+const DROP_OPS: [InputOp; 3] = [InputOp::Copy, InputOp::Move, InputOp::Link];
+
+/// The drop menu's items for these files: no Link for entries inside an archive (a link to a
+/// path that is not on disk cannot be made).
+pub fn drop_ops(sources: &[PathBuf]) -> &'static [InputOp] {
+    match sources.first().and_then(|p| p.parent()) {
+        Some(dir) if shagoff_core::archive::within(dir) => &DROP_OPS[..2],
+        _ => &DROP_OPS,
+    }
+}
 
 /// A drop menu item's name, `&` before its hot letter.
 pub fn drop_label(op: InputOp) -> String {
@@ -657,9 +666,10 @@ fn drop_menu<'a>(
     use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
     use cosmic::widget::popover::{Position, popover};
     use shagoff_core::quicksearch::hotkey;
+    let ops = drop_ops(sources);
     // TC's menu rows: the cursor (↑ / ↓), the `&` hot letter underlined.
     let item = |i: usize| -> Element<'a, Message> {
-        let (label, on) = match DROP_OPS.get(i) {
+        let (label, on) = match ops.get(i) {
             Some(&op) => (drop_label(op), Message::DropAs(op)),
             None => (fl!("cancel"), Message::DialogCancel),
         };
@@ -685,12 +695,10 @@ fn drop_menu<'a>(
                     .ellipsize(Ellipsize::Middle(EllipsizeHeightLimit::Lines(1))),
             ])
             .padding([4, 16]),
-            item(0),
-            item(1),
-            item(2),
-            widget::divider::horizontal::light(),
-            item(3),
         ]
+        .extend((0..ops.len()).map(item))
+        .push(widget::divider::horizontal::light())
+        .push(item(ops.len()))
         .spacing(2)
         .padding(4),
     )

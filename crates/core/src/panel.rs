@@ -285,6 +285,22 @@ impl Panel {
         }
     }
 
+    /// Where a drop on row `i` goes, if the row takes drops: a dir (`..`: the parent), or an
+    /// archive file (packed into it, as TC) — a real file, not a link, and not inside an archive
+    /// already (no archives in archives).
+    pub fn drop_target(&self, i: usize) -> Option<PathBuf> {
+        let e = self.entries.get(i)?;
+        let archive = !e.is_dir()
+            && !e.is_link
+            && crate::archive::is_tree_name(&e.name)
+            && !crate::archive::within(&self.cwd);
+        match (e.is_dir(), archive) {
+            (true, _) => Some(self.drop_dir(Some(i))),
+            (false, true) => Some(self.cwd.join(&e.os_name)),
+            _ => None,
+        }
+    }
+
     /// Drop marks of processed entries (by file name; search results are marked by whole path).
     pub fn unmark(&mut self, paths: &[PathBuf]) {
         for p in paths {
@@ -850,6 +866,19 @@ mod tests {
         assert_eq!(p.drop_dir(Some(1)), PathBuf::from("/x/y/sub"));
         assert_eq!(p.drop_dir(Some(2)), PathBuf::from("/x/y")); // a file
         assert_eq!(p.drop_dir(None), PathBuf::from("/x/y"));
+        // Rows that take a drop: dirs and archive files (into them); not other files.
+        let mut link = f("l.zip", 1);
+        link.is_link = true;
+        let p = loaded("/x/y", vec![d("sub"), f("a", 1), f("b.zip", 1), link]);
+        assert_eq!(p.drop_target(1), Some(PathBuf::from("/x/y/sub")));
+        assert_eq!(p.drop_target(2), None);
+        assert_eq!(p.drop_target(3), Some(PathBuf::from("/x/y/b.zip")));
+        assert_eq!(p.drop_target(4), None); // a link named like an archive
+        // Inside an archive an archive row is a plain member: no drops into it.
+        let p = loaded("/x/a.zip/docs", vec![f("in.zip", 1)]);
+        assert_eq!(p.drop_target(1), None);
+        assert!(crate::archive::within(Path::new("/x/a.zip")));
+        assert!(!crate::archive::within(Path::new("/x/a.gz")));
     }
 
     #[test]

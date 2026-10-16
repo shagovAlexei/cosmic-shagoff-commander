@@ -12,11 +12,14 @@ use std::path::PathBuf;
 
 /// Files as the clipboard and other programs take them; `inner`: only as our own type (entries
 /// inside an archive — not on disk, so no other program may take them).
-struct Files(Mime, bool);
+struct Files {
+    mime: Mime,
+    inner: bool,
+}
 
 impl AsMimeTypes for Files {
     fn available(&self) -> Cow<'static, [String]> {
-        if self.1 {
+        if self.inner {
             return Cow::Owned(vec![fmt::INNER.into()]);
         }
         Cow::Owned(
@@ -34,11 +37,11 @@ impl AsMimeTypes for Files {
 
     fn as_bytes(&self, mime_type: &str) -> Option<Cow<'static, [u8]>> {
         let s = match mime_type {
-            fmt::INNER if self.1 => &self.0.uri_list,
-            _ if self.1 => return None,
-            "text/plain" | "text/plain;charset=utf-8" | "UTF8_STRING" => &self.0.plain,
-            fmt::URI_LIST => &self.0.uri_list,
-            fmt::GNOME => &self.0.gnome,
+            fmt::INNER if self.inner => &self.mime.uri_list,
+            _ if self.inner => return None,
+            "text/plain" | "text/plain;charset=utf-8" | "UTF8_STRING" => &self.mime.plain,
+            fmt::URI_LIST => &self.mime.uri_list,
+            fmt::GNOME => &self.mime.gnome,
             _ => return None,
         };
         Some(Cow::Owned(s.clone().into_bytes()))
@@ -68,7 +71,10 @@ impl TryFrom<(Vec<u8>, String)> for Paste {
 
 /// Ctrl+C / Ctrl+X.
 pub fn put<M>(kind: Kind, paths: &[PathBuf]) -> Task<M> {
-    clipboard::write_data(Files(fmt::encode(kind, paths), false))
+    clipboard::write_data(Files {
+        mime: fmt::encode(kind, paths),
+        inner: false,
+    })
 }
 
 /// After a cut is pasted, so a second Ctrl+V does not try to move files that are gone.
@@ -103,7 +109,10 @@ pub fn drag<'a>(
         child,
         window,
         DndAction::Copy,
-        move || Files(fmt::encode(Kind::Copy, &paths), inner),
+        move || Files {
+            mime: fmt::encode(Kind::Copy, &paths),
+            inner,
+        },
         icon,
         move |right| Message::DragStart(right.then(|| started.clone())),
         Message::DragEnd,
