@@ -3292,8 +3292,18 @@ impl App {
                     return None;
                 }
                 let dir = panel.cwd().to_path_buf();
-                // Hidden files count too, even when not shown; fall back to the listing.
-                let taken = multirename::other_names(&dir, &files).unwrap_or_else(|_| {
+                // Hidden files count too, even when not shown (in an archive: its own index);
+                // fall back to the listing.
+                let taken = match archive::split_path(&dir) {
+                    Some((a, inner)) => archive::list(&a, &inner, true).map(|v| {
+                        (v.into_iter())
+                            .map(|e| e.name)
+                            .filter(|n| !files.iter().any(|(f, _)| f == n))
+                            .collect()
+                    }),
+                    None => multirename::other_names(&dir, &files),
+                }
+                .unwrap_or_else(|_| {
                     panel
                         .entries()
                         .iter()
@@ -3523,7 +3533,10 @@ impl App {
                     self.dialog = Some(Dialog::MultiRename(m)); // Enter does nothing until fixed
                     return Task::none();
                 }
-                let pairs = multirename::plan(&m.dir, &rows);
+                // In an archive: paths inside it, for the repack.
+                let inner = archive::split_path(&m.dir);
+                let base = inner.as_ref().map_or(m.dir.as_path(), |(_, i)| i.as_path());
+                let pairs = multirename::plan(base, &rows);
                 if pairs.is_empty() {
                     return Task::none();
                 }
@@ -3532,6 +3545,14 @@ impl App {
                     .as_ref()
                     .and_then(|c| rows.iter().find(|r| &r.old == c))
                     .map(|r| r.new.clone());
+                if let Some((archive, _)) = inner {
+                    let job = Job::Repack {
+                        archive,
+                        change: Change::Rename(pairs),
+                        move_sources: false,
+                    };
+                    return self.start_job(m.side, OpKind::Repack, job, focus);
+                }
                 let job = Job::Transfer {
                     method: Method::Rename,
                     pairs,
@@ -3878,10 +3899,7 @@ impl App {
                 }
                 let job = Job::Repack {
                     archive,
-                    change: Change::Rename {
-                        from: inner.join(name),
-                        to: inner.join(input),
-                    },
+                    change: Change::Rename(vec![(inner.join(name), inner.join(input))]),
                     move_sources: false,
                 };
                 return self.start_job(side, OpKind::Repack, job, Some(input.to_string()));
@@ -4712,9 +4730,7 @@ impl App {
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
             // Shift+F5 inside one copies from the archive into itself.
-            Action::MultiRename | Action::CopySame | Action::NewFile | Action::Properties => {
-                inside(side)
-            }
+            Action::CopySame | Action::NewFile | Action::Properties => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
                 inside(side) || inside(1 - side)
@@ -8798,13 +8814,17 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_m_inside_archive_stays_read_only() {
+    fn ctrl_m_inside_archive_repacks() {
         let (_tmp, mut app, a) = zip_setup();
         listed_at(&mut app, 0, &a);
         let _ = app.update(Message::Key(Action::End));
         let _ = app.update(Message::Key(Action::MultiRename));
-        assert!(app.dialog.is_none());
-        assert_eq!(app.msg(), Some(fl!("archive-read-only").as_str()));
+        let Some(Dialog::MultiRename(m)) = &mut app.dialog else {
+            panic!("{:?}", app.msg())
+        };
+        m.rule.name = "x[N]".into();
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
     }
 
     #[test]

@@ -22,8 +22,8 @@ pub enum Change {
     Delete(Vec<PathBuf>),
     /// F7: a new dir (path inside).
     Mkdir(PathBuf),
-    /// Shift+F6: paths inside.
-    Rename { from: PathBuf, to: PathBuf },
+    /// Shift+F6, Ctrl+M: (from, to) paths inside, done in this order (`multirename::plan`'s).
+    Rename(Vec<(PathBuf, PathBuf)>),
     /// F4: the edited copy `file` replaces the entry `entry`.
     Replace { entry: PathBuf, file: PathBuf },
 }
@@ -293,10 +293,19 @@ fn apply(
             })?;
             Ok(vec![archive.to_path_buf()])
         }
-        Change::Rename { from, to } => {
-            retry(h, &archive.join(to), || {
-                ops::rename_noreplace(&inside(root, from, false)?, &inside(root, to, true)?)
-            })?;
+        Change::Rename(pairs) => {
+            // Skip skips that pair only (as Ctrl+M on disk); none done = the archive unchanged.
+            let mut any = false;
+            for (from, to) in pairs {
+                retry(h, &archive.join(to), || {
+                    ops::rename_noreplace(&inside(root, from, false)?, &inside(root, to, true)?)
+                })
+                .map(|()| any = true)
+                .or_else(|cancel| if cancel { Err(true) } else { Ok(()) })?;
+            }
+            if !any {
+                return Err(false);
+            }
             Ok(vec![archive.to_path_buf()])
         }
         Change::Replace { entry, file } => {
@@ -488,6 +497,44 @@ mod tests {
         assert!(z.by_name("docs/y").is_ok()); // still in the source
     }
 
+    #[test]
+    fn rename_many_in_order_swaps_names() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        modify(
+            &a,
+            &Change::Rename(vec![("sub/b.txt".into(), "b.txt".into())]),
+            &mut Script::default(),
+        );
+        // a ↔ b through a parked name, as `multirename::plan` orders it.
+        let pairs = vec![
+            ("a.txt".into(), ".p".into()),
+            ("b.txt".into(), "a.txt".into()),
+            (".p".into(), "b.txt".into()),
+        ];
+        let r = modify(&a, &Change::Rename(pairs), &mut Script::default());
+        assert_eq!(r.completed, std::slice::from_ref(&a));
+        assert_eq!(contents(&a), ["a.txt=B", "b.txt=A", "sub/"]);
+    }
+
+    #[test]
+    fn rename_skip_skips_that_pair_only() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let h = &mut Script::default(); // errors answered Skip
+        let pairs = vec![
+            ("a.txt".into(), "sub".into()), // taken
+            ("sub/b.txt".into(), "sub/c.txt".into()),
+        ];
+        let r = modify(&a, &Change::Rename(pairs), h);
+        assert_eq!((h.errors, r.completed.len()), (1, 1));
+        assert_eq!(contents(&a), ["a.txt=A", "sub/", "sub/c.txt=B"]);
+        // Every pair skipped: nothing done, the archive left as it was.
+        let before = fs::read(&a).unwrap();
+        let r = modify(&a, &Change::Rename(vec![("a.txt".into(), "sub".into())]), h);
+        assert!(r.completed.is_empty() && fs::read(&a).unwrap() == before);
+    }
+
     fn no_leftovers(d: &Path) -> bool {
         fs::read_dir(d)
             .unwrap()
@@ -595,10 +642,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let a = sample(d.path(), Format::SevenZ);
         modify(&a, &Change::Mkdir("sub/new".into()), &mut Script::default());
-        let ren = Change::Rename {
-            from: "a.txt".into(),
-            to: "sub/c.txt".into(),
-        };
+        let ren = Change::Rename(vec![("a.txt".into(), "sub/c.txt".into())]);
         modify(&a, &ren, &mut Script::default());
         let edited = d.path().join("edited");
         fs::write(&edited, "B2").unwrap();
@@ -621,10 +665,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let a = sample(d.path(), Format::Zip);
         let before = fs::read(&a).unwrap();
-        let ren = Change::Rename {
-            from: "a.txt".into(),
-            to: "sub/b.txt".into(),
-        };
+        let ren = Change::Rename(vec![("a.txt".into(), "sub/b.txt".into())]);
         let mut h = Script::default();
         assert!(modify(&a, &ren, &mut h).completed.is_empty());
         let mut h2 = Script::default();
@@ -745,10 +786,7 @@ mod tests {
                 file: edited.clone(),
             },
             Change::Mkdir("dl/new".into()),
-            Change::Rename {
-                from: "ln".into(),
-                to: "dl/x".into(),
-            },
+            Change::Rename(vec![("ln".into(), "dl/x".into())]),
             Change::Add {
                 sources: vec![edited.clone()],
                 inner: "dl".into(),
