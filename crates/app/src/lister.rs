@@ -91,6 +91,39 @@ impl Loaded {
         });
         Ok(Self { doc, text, image })
     }
+
+    /// Another window of a file too big to hold whole (`lister::load_at`).
+    pub fn window(path: &Path, w: Window, bom: lister::Bom) -> Result<Self, String> {
+        let doc = lister::load_at(path, w.from, w.to, w.line, bom).map_err(|e| e.to_string())?;
+        let text = Text::new(&doc, Encoding::Auto, None);
+        Ok(Self {
+            doc,
+            text,
+            image: None,
+        })
+    }
+}
+
+/// Why another window of the file is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slide {
+    /// Scrolled to the window's bottom / top: half a window on, the same line kept in view.
+    Next,
+    Prev,
+    /// Home / End: the file's first / last window.
+    Home,
+    End,
+    /// Search went past the window (forward or not): the one after / before it, searched.
+    Find(bool),
+}
+
+/// The part of the file a slide reads (`lister::load_at`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+    pub from: u64,
+    pub to: u64,
+    /// From a line start (text), else from a hex row.
+    pub line: bool,
 }
 
 /// A picture decoded here, off the UI thread: handed to the renderer as pixels, it would
@@ -185,6 +218,10 @@ pub struct Lister {
     /// The picture held in the renderer: the next frame draws it (without it the renderer loads
     /// it on its own and nothing redraws until the pointer moves).
     pub allocation: Option<cosmic::iced::runtime::image::Allocation>,
+    /// The file on disk, for reading other windows of a big one; `None`: only the first.
+    pub file: Option<PathBuf>,
+    /// Another window is being read for this.
+    pub slide: Option<Slide>,
 }
 
 impl Lister {
@@ -238,6 +275,8 @@ impl Lister {
             quick: None,
             zoom: None,
             allocation: None,
+            file: None,
+            slide: None,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -466,6 +505,10 @@ impl Lister {
             (true, Some(h)) => h.checked_sub(1)?,
             _ => self.top(),
         };
+        self.find_from(start, forward)
+    }
+
+    fn find_from(&mut self, start: usize, forward: bool) -> Option<f32> {
         let (doc, text) = self.text()?;
         let row = match self.mode {
             Mode::Text => {
@@ -477,6 +520,86 @@ impl Lister {
         self.hit = Some(row);
         // A couple of rows of context above the match.
         Some(row.saturating_sub(2) as f32 * self.row_h())
+    }
+
+    /// What `slide` reads: `None` if the file has no more that way (or is not on disk).
+    pub fn window_for(&self, slide: Slide) -> Option<Window> {
+        self.file.as_ref()?;
+        let doc = &self.ok()?.doc;
+        let line = self.mode == Mode::Text;
+        let (more, back) = (doc.end() < doc.total, doc.start > 0);
+        let half = doc.bytes.len() as u64 / 2;
+        let (from, to) = match slide {
+            Slide::Next if more => (doc.start + half.max(1), u64::MAX),
+            Slide::Prev if back => (
+                doc.start.saturating_sub(lister::LIMIT / 2),
+                doc.start + lister::LIMIT / 2,
+            ),
+            Slide::Home if back => (0, u64::MAX),
+            Slide::End if more => (doc.total.saturating_sub(lister::LIMIT), u64::MAX),
+            // No overlap: a match found in this window is never found again.
+            Slide::Find(true) if more => {
+                (doc.start + lister::last_line_start(doc) as u64, u64::MAX)
+            }
+            Slide::Find(false) if back => (doc.start.saturating_sub(lister::LIMIT), doc.start),
+            _ => return None,
+        };
+        Some(Window { from, to, line })
+    }
+
+    /// Scrolled to the edge of a window that is not the file's: the slide to read.
+    pub fn edge(&self) -> Option<Slide> {
+        if self.slide.is_some() || self.mode == Mode::Image {
+            return None;
+        }
+        let bottom = self.offset.1 + self.height >= (self.rows() as f32 - 1.0) * self.row_h();
+        [(bottom, Slide::Next), (self.offset.1 <= 0.0, Slide::Prev)]
+            .into_iter()
+            .find(|&(at, s)| at && self.window_for(s).is_some())
+            .map(|(_, s)| s)
+    }
+
+    /// The shown row where file offset `at` (a line start in this window) is.
+    fn row_of(&self, at: u64) -> usize {
+        let Some((doc, text)) = self.text() else {
+            return 0;
+        };
+        let off = at.saturating_sub(doc.start) as usize;
+        match self.mode {
+            Mode::Hex => off / lister::HEX_WIDTH,
+            _ => lister::line_row(text.bytes(doc), &text.lines, lister::newlines(doc, off)),
+        }
+    }
+
+    /// Another window arrived for `slide`: shown, the y to scroll to returned (`None`: a search
+    /// found nothing here; `slide` is set again if the file goes on that way).
+    pub fn set_window(&mut self, loaded: Arc<Result<Loaded, String>>) -> Option<f32> {
+        let slide = self.slide.take()?;
+        let old = self.ok().map(|l| l.doc.start)?;
+        let new = loaded.as_ref().as_ref().ok()?.doc.start;
+        let cut = self.row_of(new) as f32 * self.row_h(); // rows of this window before the new
+        self.loaded = Some(loaded);
+        self.retext();
+        let max = (self.rows() as f32 * self.row_h() - self.height).max(0.0);
+        match slide {
+            Slide::Next => Some((self.offset.1 - cut).max(0.0)),
+            Slide::Prev => Some(self.offset.1 + self.row_of(old) as f32 * self.row_h()),
+            Slide::Home => Some(0.0),
+            Slide::End => Some(max),
+            Slide::Find(forward) => {
+                let start = if forward {
+                    0
+                } else {
+                    self.rows().saturating_sub(1)
+                };
+                let y = self.find_from(start, forward);
+                if y.is_none() && self.window_for(slide).is_some() {
+                    self.slide = Some(slide);
+                }
+                y
+            }
+        }
+        .map(|y| y.min(max))
     }
 
     /// The text position under the pointer (the view's scroll offset added).
@@ -538,7 +661,7 @@ impl Lister {
 
     fn row_text(&self, doc: &Doc, text: &Text, i: usize) -> String {
         match self.mode {
-            Mode::Hex => lister::hex_row(&doc.bytes, i),
+            Mode::Hex => lister::hex_row(&doc.bytes, i, doc.start),
             _ => lister::line_text(text.bytes(doc), &text.lines[i]),
         }
     }
@@ -659,10 +782,12 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
     if let Some(x) = l.ok()
         && x.doc.truncated()
     {
+        let size = |n: u64| crate::view::human(n);
         col = col.push(widget::text::caption(fl!(
             "lister-truncated",
-            limit = (lister::LIMIT >> 20).to_string(),
-            size = shagoff_core::format::size(x.doc.total)
+            from = size(x.doc.start),
+            to = size(x.doc.end()),
+            size = size(x.doc.total)
         )));
     }
     col.push(content(l)).padding([4, 8]).into()
@@ -833,6 +958,7 @@ mod tests {
             bytes: s.as_bytes().to_vec(),
             decoded: None,
             total: s.len() as u64,
+            ..Default::default()
         };
         let text = Text::new(&doc, Encoding::Auto, None);
         l.set_loaded(Arc::new(Ok(Loaded {
@@ -930,6 +1056,7 @@ mod tests {
             bytes: b"\xcf\xf0\xe8\xe2\xe5\xf2".to_vec(), // "Привет" in 1251
             decoded: None,
             total: 6,
+            ..Default::default()
         };
         let text = Text::new(&doc, Encoding::Auto, None);
         l.set_loaded(Arc::new(Ok(Loaded {
@@ -946,6 +1073,76 @@ mod tests {
         l.set_encoding(Encoding::Koi8r);
         l.reopen("c.txt".into(), 3);
         assert_eq!(l.encoding, Encoding::Koi8r);
+    }
+
+    /// Read the window `slide` wants, as the app does off the UI thread.
+    fn slide(l: &mut Lister, s: Slide) -> Option<f32> {
+        let w = l.window_for(s)?;
+        let bom = l.ok()?.doc.bom;
+        let part = Loaded::window(l.file.as_ref()?, w, bom);
+        l.slide = Some(s);
+        let y = l.set_window(Arc::new(part));
+        if let Some(y) = y {
+            l.offset.1 = y;
+        }
+        y
+    }
+
+    fn top_line(l: &Lister) -> String {
+        let (doc, txt) = l.text().unwrap();
+        l.row_text(doc, txt, l.top())
+    }
+
+    #[test]
+    fn a_big_file_is_read_window_by_window_keeping_the_line_in_view() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("big.log");
+        let n = (lister::LIMIT as usize / 14) * 3 / 2; // 14-byte lines: 1.5 windows
+        let body: String = (0..n).map(|i| format!("line {i:08}\n")).collect();
+        std::fs::write(&path, &body).unwrap();
+        let mut l = Lister::new(0, "big.log".into(), 1, crate::config::LISTER_SIZE);
+        l.set_loaded(Arc::new(Loaded::read(&path, "big.log")));
+        l.file = Some(path);
+        l.height = 10.0 * ROW_H;
+        assert_eq!(l.edge(), None); // at the top of the file's first window
+        l.offset.1 = l.scroll_y(Action::End).unwrap();
+        assert_eq!(l.edge(), Some(Slide::Next));
+        let seen = top_line(&l);
+        slide(&mut l, Slide::Next).unwrap();
+        assert!(l.ok().unwrap().doc.start > 0);
+        assert_eq!(top_line(&l), seen);
+        l.offset.1 = 0.0;
+        assert_eq!(l.edge(), Some(Slide::Prev));
+        let seen = top_line(&l);
+        slide(&mut l, Slide::Prev).unwrap();
+        assert_eq!(top_line(&l), seen);
+        // End: the file's last line at the bottom; Home: its first at the top
+        slide(&mut l, Slide::End).unwrap();
+        let last = l.rows() - 1;
+        let (doc, txt) = l.text().unwrap();
+        assert_eq!(l.row_text(doc, txt, last), format!("line {:08}", n - 1));
+        assert_eq!(l.window_for(Slide::End), None);
+        slide(&mut l, Slide::Home).unwrap();
+        assert_eq!(top_line(&l), "line 00000000");
+        // search past the first window, then back
+        l.query = format!("line {:08}", n - 5);
+        assert_eq!(l.find(true, false), None);
+        assert!(slide(&mut l, Slide::Find(true)).is_some());
+        let (doc, txt) = l.text().unwrap();
+        assert_eq!(l.row_text(doc, txt, l.hit.unwrap()), l.query);
+        l.query = "line 00000003".into();
+        assert_eq!(l.find(false, true), None);
+        assert!(slide(&mut l, Slide::Find(false)).is_some());
+        assert_eq!(l.hit, Some(3));
+        // hex rows carry the file offset
+        l.set_mode(Mode::Hex);
+        slide(&mut l, Slide::End).unwrap();
+        let (doc, txt) = l.text().unwrap();
+        assert_eq!(doc.start % 16, 0);
+        assert!(
+            l.row_text(doc, txt, 0)
+                .starts_with(&format!("{:08X}", doc.start))
+        );
     }
 
     #[test]
