@@ -39,6 +39,8 @@ pub fn lister_window(app: &App, id: cosmic::iced::window::Id) -> Element<'_, Mes
             .on_double_click(Message::ListerWindow(crate::app::ListerWin::Maximize))
             .focused(focused),
         crate::lister::view(l),
+        // Its own messages ("not found"…) where they are looked for.
+        container(window_status(app)).padding([2, 8]),
     ]
     .into()
 }

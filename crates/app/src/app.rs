@@ -1996,6 +1996,10 @@ impl App {
                     .as_ref()
                     .is_some_and(|l| l.window == Some(window)) =>
             {
+                // A dialog or a job of the main window is answered first.
+                if self.dialog.is_some() || self.busy() {
+                    return self.handle(Message::DialogCancel);
+                }
                 return self.lister_escape();
             }
             Message::Escape(window) if window != self.window_id() => {
@@ -4817,7 +4821,6 @@ impl App {
         )
     }
 
-    /// The full-window F3 viewer is up (not the Ctrl+Q one): it takes the keys.
     /// Esc in the viewer: the search field first, then the selection, then the viewer.
     fn lister_escape(&mut self) -> Task<Message> {
         let Some(l) = self.lister.as_deref_mut() else {
@@ -4833,8 +4836,9 @@ impl App {
         Task::none()
     }
 
-    /// F3 takes the keys: in place of the panels, or its own window focused (no window known
-    /// to be focused: as focused, so it is never left without keys).
+    /// The full F3 viewer is up (not the Ctrl+Q one) and takes the keys: in place of the panels,
+    /// or its own window focused (no window known to be focused: as focused, so it is never left
+    /// without keys).
     fn viewer(&self) -> bool {
         self.lister.as_ref().is_some_and(|l| {
             l.quick.is_none()
@@ -4996,9 +5000,14 @@ impl App {
     fn open_lister(&mut self, side: usize, file: PathBuf, name: String) -> Task<Message> {
         let id = self.next_id();
         let mut window = Task::none();
+        // Ctrl+Q's viewer: the full one replaces it (in its own window, if so set).
+        if self.lister.as_ref().is_some_and(|l| l.quick.is_some()) {
+            self.lister = None;
+        }
         match &mut self.lister {
             Some(l) => {
                 l.reopen(name.clone(), id);
+                l.side = side; // N / P walk the pane F3 was pressed in
                 if let Some(w) = l.window {
                     window = Task::batch([
                         cosmic::ApplicationExt::set_window_title(self, name.clone(), w),
@@ -7208,6 +7217,18 @@ mod tests {
         ));
         let _ = app.update(Message::WindowClosed(window));
         assert!(app.lister.is_none());
+        // F3 over Ctrl+Q's viewer: its own window all the same
+        let _ = app.update(Message::Key(Action::QuickView));
+        let _ = app.update(Message::Key(Action::View));
+        assert!(app.lister.as_ref().is_some_and(|l| l.window.is_some()));
+        // F3 in the other pane with the window open (from the main window, as F3 there does):
+        // N / P walk that pane now
+        let file = app.panes[1].active().panel.cwd().join("x");
+        let _ = app.open_lister(1, file, "x".into());
+        assert_eq!(
+            app.lister.as_ref().map(|l| (l.side, l.window.is_some())),
+            Some((1, true))
+        );
         let (mut app, _tmp) = lister_app(Config {
             lister_window: false,
             ..Config::default()

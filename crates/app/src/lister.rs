@@ -554,15 +554,17 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
         },
     };
     // Name and info on their own line, buttons wrapping below: one row did not fit a narrow window.
-    let title = row::with_children(vec![
-        widget::text::heading(l.name.clone())
+    // In its own window the name is in the title bar already.
+    let name: Element<'_, Message> = match l.window {
+        None => widget::text::heading(l.name.clone())
             .wrapping(Wrapping::WordOrGlyph)
             .width(Length::Fill)
             .into(),
-        widget::text::body(info).into(),
-    ])
-    .spacing(8)
-    .align_y(cosmic::iced::Alignment::Center);
+        Some(_) => widget::Space::new().width(Length::Fill).into(),
+    };
+    let title = row::with_children(vec![name, widget::text::body(info).into()])
+        .spacing(8)
+        .align_y(cosmic::iced::Alignment::Center);
     let mut buttons = modes;
     if l.mode == Mode::Image && l.zoom.is_some() {
         buttons.push(
