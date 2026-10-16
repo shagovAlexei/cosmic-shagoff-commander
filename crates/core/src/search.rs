@@ -215,8 +215,11 @@ pub fn find(
             if named && !q.reads_content() && q.passes(&path, true) {
                 found(path.clone());
             }
-            let next = open(&path, dir).collect();
-            stack.push(next);
+            // `|.git\` in the mask: not gone into.
+            if !q.mask.skips_dir(&name) {
+                let next = open(&path, dir).collect();
+                stack.push(next);
+            }
         } else if named && q.passes(&path, false) {
             // Through symlinks to files too; anything else (fifo, socket) is never read.
             let hit = !q.reads_content()
@@ -536,6 +539,16 @@ mod tests {
                 .all(|p| !p.ends_with(".rs") && !p.ends_with(".toml")),
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn excluded_dir_is_not_gone_into() {
+        let d = tree();
+        let got = rel(
+            d.path(),
+            run(d.path(), &q("*.rs | deep\\", None, false, false)),
+        );
+        assert_eq!(got, ["src/main.rs"]); // not src/deep/lib.rs, and "deep" itself not listed
     }
 
     #[test]

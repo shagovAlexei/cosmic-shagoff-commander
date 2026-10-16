@@ -192,6 +192,14 @@ fn walk(
         }
         let path = rel.join(name);
         let (a, b) = (l.get(name).copied(), r.get(name).copied());
+        // `|.git\` in the mask: that dir is left out on both sides, with all inside.
+        if a.or(b).is_some_and(|x| x.dir)
+            && o.mask
+                .as_ref()
+                .is_some_and(|m| m.skips_dir(&name.to_string_lossy()))
+        {
+            continue;
+        }
         let one_sided_dir = matches!((a, b), (Some(x), None) | (None, Some(x)) if x.dir);
         let state = match (a, b) {
             (Some(a), Some(b)) if a.dir && b.dir => {
@@ -731,6 +739,14 @@ mod tests {
         );
         // Without a mask the one-sided dir stays one row.
         assert_eq!(arrows(&l, &r, &opts()).len(), 3);
+        // A dir left out by the mask: neither a row nor its files.
+        put(&l.join("same/.git/x.rs"), "1", 1000);
+        put(&r.join("same/.git/x.rs"), "2", 2000);
+        let o = Options {
+            mask: Some(crate::mask::Mask::parse("*.rs | .git\\ only/")),
+            ..opts()
+        };
+        assert_eq!(arrows(&l, &r, &o), [("a.rs".into(), Dir::ToRight)]);
     }
 
     #[test]
