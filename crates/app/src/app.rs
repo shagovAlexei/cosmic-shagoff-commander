@@ -138,11 +138,7 @@ impl Tab {
     /// Brief view: (rows per column, columns on screen) for rows `row_h` px high.
     /// `scale`: the panel text size over the default.
     pub fn brief_grid(&self, row_h: f32, scale: f32) -> (usize, usize) {
-        // ponytail: a pass over the names per call; cache in the panel if huge dirs lag.
-        let longest = (self.panel.entries().iter())
-            .map(|e| format::display_name(e).chars().count())
-            .max()
-            .unwrap_or(0);
+        let longest = self.panel.longest_name();
         (
             viewport::brief_rows(row_h, self.height),
             viewport::brief_cols(self.width, viewport::brief_col_w(longest, scale)),

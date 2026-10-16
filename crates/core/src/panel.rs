@@ -2,6 +2,7 @@ use crate::listing::{Entry, Kind};
 use crate::mask::Mask;
 use crate::quicksearch;
 use crate::sort::{Sort, SortKey, sort_entries};
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,7 @@ use std::time::UNIX_EPOCH;
 pub const PARENT: &str = "..";
 
 /// Status-line totals, excluding the `..` row.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Totals {
     pub bytes: u64,
     pub files: usize,
@@ -34,6 +35,11 @@ pub struct Panel {
     filter: Option<String>,
     /// Dir sizes counted by Space, by real name; shown instead of `<DIR>`, until the dir changes.
     dir_sizes: HashMap<OsString, u64>,
+    /// (all, marked) totals: drawn every frame, a pass over a 100 000-row dir takes ~10 ms.
+    /// Dropped by `touched` on any change to rows, marks or dir sizes.
+    sums: OnceCell<(Totals, Totals)>,
+    /// Longest shown name in chars (Brief column width); dropped when the rows change.
+    longest: OnceCell<usize>,
 }
 
 impl Panel {
@@ -48,6 +54,8 @@ impl Panel {
             all: Vec::new(),
             filter: None,
             dir_sizes: HashMap::new(),
+            sums: OnceCell::new(),
+            longest: OnceCell::new(),
         }
     }
 
@@ -119,6 +127,8 @@ impl Panel {
         let visible: HashSet<&OsString> = entries.iter().map(|e| &e.os_name).collect();
         self.marked.retain(|k| visible.contains(k));
         self.entries = entries;
+        self.longest.take();
+        self.touched();
         self.cursor = keep.and_then(|n| self.index_of(&n)).unwrap_or(old);
         self.move_cursor(0); // clamp
     }
@@ -156,8 +166,30 @@ impl Panel {
     }
 
     pub fn totals(&self) -> Totals {
-        let start = usize::from(self.parent_row());
-        self.sum(self.entries[start..].iter())
+        self.sums().0
+    }
+
+    fn sums(&self) -> (Totals, Totals) {
+        *self.sums.get_or_init(|| {
+            let start = usize::from(self.parent_row());
+            let marked = self.entries.iter().filter(|e| self.is_marked(e));
+            (self.sum(self.entries[start..].iter()), self.sum(marked))
+        })
+    }
+
+    /// Rows, marks or dir sizes changed: the totals are counted again when next asked.
+    fn touched(&mut self) {
+        self.sums.take();
+    }
+
+    /// Longest shown name in chars, dirs with their brackets.
+    pub fn longest_name(&self) -> usize {
+        *self.longest.get_or_init(|| {
+            (self.entries.iter())
+                .map(|e| crate::format::display_name(e).chars().count())
+                .max()
+                .unwrap_or(0)
+        })
     }
 
     /// Size counted by Space for a dir row, if any.
@@ -183,6 +215,7 @@ impl Panel {
     pub fn set_dir_size(&mut self, cwd: &Path, name: OsString, bytes: u64) {
         if cwd == self.cwd {
             self.dir_sizes.insert(name, bytes);
+            self.touched();
             // By size, the counted dir takes its place; the cursor stays on its row.
             if self.sort.key == SortKey::Size {
                 self.resort(self.current().map(|e| e.name.clone()));
@@ -204,6 +237,7 @@ impl Panel {
         if !self.marked.remove(&key) {
             self.marked.insert(key);
         }
+        self.touched();
     }
 
     /// Insert / Shift+↓ (+1), Shift+↑ (−1).
@@ -225,6 +259,7 @@ impl Panel {
                 self.marked.remove(&e.os_name);
             }
         }
+        self.touched();
     }
 
     /// Num*: files only.
@@ -234,11 +269,13 @@ impl Panel {
                 self.marked.insert(e.os_name.clone());
             }
         }
+        self.touched();
     }
 
     /// Shift+F2: exactly these names marked (never `..`).
     pub fn mark_names(&mut self, names: &[OsString]) {
         self.marked = names.iter().filter(|n| *n != PARENT).cloned().collect();
+        self.touched();
     }
 
     /// Ctrl+A / Ctrl+Num−: everything except `..`.
@@ -249,6 +286,7 @@ impl Panel {
             self.marked
                 .extend(self.entries[start..].iter().map(|e| e.os_name.clone()));
         }
+        self.touched();
     }
 
     pub fn has_marks(&self) -> bool {
@@ -256,7 +294,7 @@ impl Panel {
     }
 
     pub fn marked_totals(&self) -> Totals {
-        self.sum(self.entries.iter().filter(|e| self.is_marked(e)))
+        self.sums().1
     }
 
     /// What an operation acts on: marked entries (in list order), else the row under the cursor; never `..`.
@@ -309,6 +347,7 @@ impl Panel {
                 self.marked.remove(name);
             }
         }
+        self.touched();
     }
 
     pub fn current(&self) -> Option<&Entry> {
@@ -722,6 +761,30 @@ mod tests {
             }
         );
         assert_eq!(loaded("/", vec![]).totals(), Totals::default());
+    }
+
+    #[test]
+    fn regression_cached_totals_follow_every_change() {
+        let mut p = loaded("/x", vec![d("sub"), f("a", 1000), f("bb", 24)]);
+        let m = |p: &Panel| (p.totals().bytes, p.marked_totals().bytes);
+        assert_eq!((m(&p), p.longest_name()), ((1024, 0), 5)); // "[sub]"
+        p.set_cursor(2);
+        p.toggle_mark();
+        assert_eq!(m(&p), (1024, 1000));
+        p.invert();
+        assert_eq!(m(&p), (1024, 24));
+        p.mark_all(true);
+        assert_eq!(m(&p), (1024, 1024));
+        p.set_dir_size(Path::new("/x"), "sub".into(), 4000);
+        assert_eq!(m(&p), (5024, 5024));
+        p.unmark(&[PathBuf::from("/x/a")]);
+        assert_eq!(m(&p), (5024, 4024));
+        p.mark_names(&[]);
+        assert_eq!(m(&p), (5024, 0));
+        p.mark_by_mask(&Mask::parse("*"), true);
+        assert_eq!(m(&p), (5024, 1024));
+        p.set_filter(Some("b".into()));
+        assert_eq!((m(&p), p.longest_name()), ((24, 24), 4)); // "[..]"
     }
 
     fn marked_names(p: &Panel) -> Vec<&str> {
