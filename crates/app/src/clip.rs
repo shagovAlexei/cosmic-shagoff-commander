@@ -10,10 +10,15 @@ use shagoff_core::clipboard::{self as fmt, Kind, Mime};
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-struct Files(Mime);
+/// Files as the clipboard and other programs take them; `inner`: only as our own type (entries
+/// inside an archive — not on disk, so no other program may take them).
+struct Files(Mime, bool);
 
 impl AsMimeTypes for Files {
     fn available(&self) -> Cow<'static, [String]> {
+        if self.1 {
+            return Cow::Owned(vec![fmt::INNER.into()]);
+        }
         Cow::Owned(
             [
                 "text/plain",
@@ -29,6 +34,8 @@ impl AsMimeTypes for Files {
 
     fn as_bytes(&self, mime_type: &str) -> Option<Cow<'static, [u8]>> {
         let s = match mime_type {
+            fmt::INNER if self.1 => &self.0.uri_list,
+            _ if self.1 => return None,
             "text/plain" | "text/plain;charset=utf-8" | "UTF8_STRING" => &self.0.plain,
             fmt::URI_LIST => &self.0.uri_list,
             fmt::GNOME => &self.0.gnome,
@@ -42,7 +49,11 @@ struct Paste(Kind, Vec<PathBuf>);
 
 impl AllowedMimeTypes for Paste {
     fn allowed() -> Cow<'static, [String]> {
-        Cow::Owned(vec![fmt::GNOME.into(), fmt::URI_LIST.into()])
+        Cow::Owned(vec![
+            fmt::INNER.into(),
+            fmt::GNOME.into(),
+            fmt::URI_LIST.into(),
+        ])
     }
 }
 
@@ -57,7 +68,7 @@ impl TryFrom<(Vec<u8>, String)> for Paste {
 
 /// Ctrl+C / Ctrl+X.
 pub fn put<M>(kind: Kind, paths: &[PathBuf]) -> Task<M> {
-    clipboard::write_data(Files(fmt::encode(kind, paths)))
+    clipboard::write_data(Files(fmt::encode(kind, paths), false))
 }
 
 /// After a cut is pasted, so a second Ctrl+V does not try to move files that are gone.
@@ -77,10 +88,12 @@ pub fn take() -> Task<Message> {
 /// the files away (Shift-move between our own panes reads `App::mods`, not the action).
 /// The right button too (`crate::dnd`): `Message::DragStart` remembers that drag's files, so their
 /// drop on us asks Copy / Move / Link.
-/// `icon`: what follows the pointer (`drag_card`), built when the drag starts.
+/// `icon`: what follows the pointer (`drag_card`), built when the drag starts. `inner`: entries
+/// inside an archive, offered only as our own type (a drop on us copies them out, as F5).
 pub fn drag<'a>(
     child: impl Into<cosmic::Element<'a, Message>>,
     paths: std::sync::Arc<Vec<PathBuf>>,
+    inner: bool,
     window: cosmic::iced::window::Id,
     icon: impl Fn() -> cosmic::Element<'static, ()> + 'a,
 ) -> cosmic::Element<'a, Message> {
@@ -90,7 +103,7 @@ pub fn drag<'a>(
         child,
         window,
         DndAction::Copy,
-        move || Files(fmt::encode(Kind::Copy, &paths)),
+        move || Files(fmt::encode(Kind::Copy, &paths), inner),
         icon,
         move |right| Message::DragStart(right.then(|| started.clone())),
         Message::DragEnd,

@@ -684,9 +684,9 @@ fn dnd_row<'a>(
     row: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let e = &p.panel.entries()[i];
-    // Not `..`; not from inside an archive either: other programs would get paths that are not
-    // on disk (Ctrl+C extracts for that, a drag cannot).
-    let row = if e.name == PARENT || in_archive(p.panel.cwd()) {
+    // Not `..`. From inside an archive only to our own panes: other programs would get paths that
+    // are not on disk (Ctrl+C extracts for that, a drag cannot).
+    let row = if e.name == PARENT {
         row
     } else {
         let paths = if p.panel.is_marked(e) {
@@ -705,13 +705,20 @@ fn dnd_row<'a>(
                 fl!("drag-items", n = n),
             ),
         };
-        crate::clip::drag(row, paths, window, icon)
+        crate::clip::drag(row, paths, in_archive(p.panel.cwd()), window, icon)
     };
-    if !e.is_dir() || p.results.is_some() {
+    // An archive file takes a drop too (TC): packed into it, as F5 into an archive.
+    let archive =
+        !e.is_dir() && shagoff_core::archive::Format::detect(&e.name).is_some_and(|f| f.is_tree());
+    if !(e.is_dir() || archive) || p.results.is_some() {
         return row;
     }
     // The dir itself, not the row number: a rescan before the drop may move the rows.
-    drop_into(side, Some(p.panel.drop_dir(Some(i))), Some((side, i)), row)
+    let dir = match archive {
+        true => p.panel.cwd().join(&e.os_name),
+        false => p.panel.drop_dir(Some(i)),
+    };
+    drop_into(side, Some(dir), Some((side, i)), row)
 }
 
 /// Inside an archive (`/x/a.zip/docs`), by the names alone: no disk access while drawing.

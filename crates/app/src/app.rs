@@ -8823,6 +8823,41 @@ mod tests {
     }
 
     #[test]
+    fn drops_out_of_and_into_an_archive_work_as_f5() {
+        let (tmp, mut app, a) = zip_setup();
+        let drop = |side, paths, dir: Option<PathBuf>, mv| Message::Drop {
+            side,
+            dir,
+            paths,
+            mv,
+        };
+        // From the archive (pane 0 inside it) onto pane 1's list: extracted there.
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(drop(1, vec![a.join("top.txt")], None, false));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Copy,
+                ..
+            })
+        ));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Extract));
+        app.job = None;
+        // From disk onto the archive's list: packed in.
+        let x = tmp.path().join("out/x");
+        std::fs::write(&x, "1").unwrap();
+        let _ = app.update(drop(0, vec![x.clone()], None, false));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+        app.job = None;
+        // Onto the archive's row in a list (its path as the dir): packed in too.
+        let _ = app.update(drop(1, vec![x], Some(a.clone()), false));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+    }
+
+    #[test]
     fn f5_into_archive_panel_repacks() {
         let (tmp, mut app, a) = zip_setup();
         std::fs::write(tmp.path().join("out/x"), "1").unwrap();
