@@ -56,11 +56,16 @@ pub fn date(t: SystemTime, tz: &TimeZone) -> String {
 pub fn perms(mode: u32) -> String {
     (0..9)
         .map(|i| {
-            let bit = 0o400 >> i;
-            if mode & bit == 0 {
-                '-'
-            } else {
-                ['r', 'w', 'x'][i % 3]
+            let on = mode & (0o400 >> i) != 0;
+            // The x of owner / group / others carries setuid / setgid / sticky, as `ls`.
+            let special = i % 3 == 2 && mode & (0o4000 >> (i / 3)) != 0;
+            match (on, special) {
+                (true, false) => ['r', 'w', 'x'][i % 3],
+                (false, false) => '-',
+                (x, true) => {
+                    let c = if i == 8 { 't' } else { 's' };
+                    if x { c } else { c.to_ascii_uppercase() }
+                }
             }
         })
         .collect()
@@ -256,6 +261,11 @@ mod tests {
         assert_eq!(perms(0o755), "rwxr-xr-x");
         assert_eq!(perms(0o100640), "rw-r-----");
         assert_eq!(perms(0), "---------");
+        // As `ls`: setuid / setgid `s` over x, `S` without it; sticky `t` / `T`.
+        assert_eq!(perms(0o4755), "rwsr-xr-x");
+        assert_eq!(perms(0o2644), "rw-r-Sr--");
+        assert_eq!(perms(0o41777), "rwxrwxrwt");
+        assert_eq!(perms(0o1770), "rwxrwx--T");
         let mut e = Entry {
             name: "a".into(),
             os_name: "a".into(),
