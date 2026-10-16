@@ -385,7 +385,7 @@ archive-edit-link = A link inside an archive can't be edited
 # Find files, more
 find-name-regex = Name is a regular expression
 find-name-regex-label = Name (regular expression)
-find-archives = Search in archives (names)
+find-archives = Search in archives (names and text)
 find-feed-archives = Found inside archives ({ $n }) are not listed in the panel
 find-regex = Text is a regular expression
 find-min-size = Size from, KB

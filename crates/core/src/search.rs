@@ -105,10 +105,7 @@ impl Query {
 
     /// Matches inside `archive`, as paths through it (`/x/a.zip/docs/f.txt` — a panel opens them).
     fn in_archive(&self, archive: &Path, stop: &AtomicBool, found: &mut dyn FnMut(PathBuf)) {
-        let Ok(items) = crate::archive::members(archive, stop) else {
-            return;
-        };
-        for (inner, dir, size, mtime) in items {
+        let wanted = |inner: &Path, dir: bool, size: u64, mtime: SystemTime| {
             let hidden = inner
                 .components()
                 .any(|c| c.as_os_str().as_encoded_bytes().starts_with(b"."));
@@ -116,13 +113,35 @@ impl Query {
             let attrs = self
                 .attrs
                 .is_none_or(|a| !a.hidden || name.starts_with('.'));
-            if (self.sees_hidden() || !hidden)
+            (self.sees_hidden() || !hidden)
                 && attrs
                 && self.named(&name)
                 && self.passes_meta(dir, size, mtime)
-            {
+        };
+        if self.reads_content() {
+            // Members read in turn (a tar is one stream); errors end this archive only.
+            let _ = crate::archive::for_each_file(archive, stop, &mut |inner, size, mtime, r| {
+                if wanted(inner, false, size, mtime) && self.reader_contains(r, stop) {
+                    found(archive.join(inner));
+                }
+            });
+            return;
+        }
+        let Ok(items) = crate::archive::members(archive, stop) else {
+            return;
+        };
+        for (inner, dir, size, mtime) in items {
+            if wanted(&inner, dir, size, mtime) {
                 found(archive.join(inner));
             }
+        }
+    }
+
+    /// Does `r` hold the text (or regex)? Read errors → false.
+    fn reader_contains(&self, r: &mut dyn Read, stop: &AtomicBool) -> bool {
+        match &self.regex {
+            Some(re) => regex_in(r, re, stop),
+            None => text_in(r, self, stop),
         }
     }
 }
@@ -207,11 +226,9 @@ pub fn find(
                 found(path.clone());
             }
         }
-        // Content search reads real files only; archive members are matched by name.
         // No modes inside archives: with r / s / x asked, their members are not listed.
         if !ft.is_dir()
             && q.archives
-            && !q.reads_content()
             && !q.attrs.is_some_and(|a| a.need_mode())
             && crate::archive::Format::detect(&name).is_some_and(|f| f.is_tree())
         {
@@ -226,9 +243,16 @@ pub fn contains(path: &Path, q: &Query) -> bool {
 }
 
 fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
-    if let Some(re) = &q.regex {
-        return regex_until(path, re, stop);
+    if q.regex.is_none() && q.text.as_deref().is_none_or(str::is_empty) {
+        return true;
     }
+    match File::open(path) {
+        Ok(mut f) => q.reader_contains(&mut f, stop),
+        Err(_) => false,
+    }
+}
+
+fn text_in(f: &mut dyn Read, q: &Query, stop: &AtomicBool) -> bool {
     let Some(text) = q.text.as_deref().filter(|t| !t.is_empty()) else {
         return true;
     };
@@ -236,9 +260,6 @@ fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
         text.to_string()
     } else {
         text.to_lowercase()
-    };
-    let Ok(mut f) = File::open(path) else {
-        return false;
     };
     // Carry the tail of each chunk over, so a match across the boundary is still whole.
     // In source bytes: uppercase can be 3x longer than its lowercase (KELVIN SIGN → "k").
@@ -278,10 +299,7 @@ fn contains_until(path: &Path, q: &Query, stop: &AtomicBool) -> bool {
 // ponytail: fixed overlap; stream the regex (regex-automata) if long multi-line matches matter.
 const REGEX_OVERLAP: usize = 4096;
 
-fn regex_until(path: &Path, re: &regex::bytes::Regex, stop: &AtomicBool) -> bool {
-    let Ok(mut f) = File::open(path) else {
-        return false;
-    };
+fn regex_in(f: &mut dyn Read, re: &regex::bytes::Regex, stop: &AtomicBool) -> bool {
     let mut buf: Vec<u8> = Vec::with_capacity(2 * CHUNK);
     let mut chunk = vec![0; CHUNK];
     loop {
@@ -399,9 +417,46 @@ mod tests {
         assert_eq!(run(d.path(), &q).len(), 3);
         // Stop reaches into reading an archive's index
         assert!(crate::archive::members(&a, &AtomicBool::new(true)).is_err());
-        // content search does not open archives
-        q.text = Some("fn".into());
-        assert!(run(d.path(), &q).is_empty());
+        // The text inside members too, by the same name and meta filters.
+        q.hidden = false;
+        q.text = Some("FN X".into());
+        assert_eq!(rel(d.path(), run(d.path(), &q)), ["a.zip/docs/x.rs"]);
+        q.text = None;
+        q.regex = Some(regex(r"^a{2048}$", true).unwrap());
+        assert_eq!(rel(d.path(), run(d.path(), &q)), ["a.zip/big.rs"]);
+        // tar.gz: one stream, members read in turn.
+        let src = d.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("t.rs"), "let текст = 1;").unwrap();
+        let tgz = d.path().join("t.tar.gz");
+        let groups = [(vec![src.join("t.rs")], tgz.clone())];
+        crate::archive::pack(crate::archive::Format::TarGz, &src, &groups, &mut NoAsk);
+        q.regex = None;
+        q.text = Some("ТЕКСТ".into());
+        assert_eq!(
+            rel(d.path(), run(d.path(), &q)),
+            ["src/t.rs", "t.tar.gz/t.rs"]
+        );
+        q.archives = false;
+        assert_eq!(rel(d.path(), run(d.path(), &q)), ["src/t.rs"]);
+    }
+
+    struct NoAsk;
+    impl crate::ops::Handler for NoAsk {
+        fn progress(&mut self, _: u64, _: u64, _: &Path) {}
+        fn conflict(
+            &mut self,
+            _: &crate::ops::FileInfo,
+            _: &crate::ops::FileInfo,
+        ) -> crate::ops::Resolution {
+            crate::ops::Resolution::Cancel
+        }
+        fn error(&mut self, _: &Path, _: &std::io::Error) -> crate::ops::ErrorChoice {
+            crate::ops::ErrorChoice::Cancel
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
     }
 
     fn run(root: &Path, q: &Query) -> Vec<PathBuf> {
