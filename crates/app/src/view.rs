@@ -38,12 +38,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
     };
     // The panes share the width as `App::split` says; the gap between them is the divider,
     // dragged to change it (double click: half and half), as TC's.
-    let r = viewport::split_or_half(app.split);
-    let portion = |f: f32| (f * 1000.0).round().max(1.0) as u16;
-    let gap = match app.config.skin {
-        Skin::Classic => CLASSIC_GAP,
-        Skin::Modern => MODERN_GAP,
-    };
+    let (left, right) = viewport::split_portions(app.split);
+    let (_, gap) = split_geometry(app.config.skin);
     let divider = widget::mouse_area(
         container(widget::Space::new())
             .width(Length::Fixed(gap))
@@ -53,9 +49,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .on_press(Message::SplitStart)
     .on_double_click(Message::SplitReset);
     let panes = row![
-        container(side(0)).width(Length::FillPortion(portion(r))),
+        container(side(0)).width(Length::FillPortion(left)),
         divider,
-        container(side(1)).width(Length::FillPortion(portion(1.0 - r))),
+        container(side(1)).width(Length::FillPortion(right)),
     ]
     .height(Length::Fill);
     match app.config.skin {
@@ -64,12 +60,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
     }
 }
 
-/// For dragging the divider: the left pane's left edge plus half the gap (so a pointer x gives
-/// the left pane's width), and what a pane adds around its list (the Modern card's padding).
+/// For dragging the divider: the padding at each side of the panes row, and the gap between.
 pub fn split_geometry(skin: Skin) -> (f32, f32) {
     match skin {
-        Skin::Classic => (CLASSIC_GAP / 2.0, 0.0),
-        Skin::Modern => (MODERN_PAD + MODERN_GAP / 2.0, 2.0 * CARD_PAD),
+        Skin::Classic => (0.0, CLASSIC_GAP),
+        Skin::Modern => (MODERN_PAD, MODERN_GAP),
     }
 }
 
@@ -501,16 +496,14 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
                 .width(2)
                 .scroller_width(2),
         ))
-        .width(Length::FillPortion(3));
+        .width(Length::Fill);
     let mut bar = row![buttons].spacing(8).align_y(Alignment::Center);
     if let Some((free, total)) = app.space[side] {
         bar = bar.push(
             text(fl!("disk-free", free = human(free), total = human(total)))
                 .size(TEXT)
                 .wrapping(Wrapping::None)
-                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
-                .width(Length::FillPortion(2))
-                .align_x(Alignment::End),
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
         );
     }
     container(bar).padding([2, 6]).into()
@@ -888,12 +881,11 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         };
         // A gap at the right: the active half's details would run into the other half's totals.
         // Each half under its pane: the divider's share.
-        let r = viewport::split_or_half(app.split);
-        let share = if side == 0 { r } else { 1.0 - r };
+        let (left, right) = viewport::split_portions(app.split);
         line.spacing(12)
             .padding([0, 24, 0, 0])
             .align_y(Alignment::Center)
-            .width(Length::FillPortion((share * 1000.0).round().max(1.0) as u16))
+            .width(Length::FillPortion(if side == 0 { left } else { right }))
             .into()
     };
     let mut col = column![].push_maybe(job_line(app)).push(

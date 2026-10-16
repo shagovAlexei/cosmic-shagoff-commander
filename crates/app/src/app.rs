@@ -330,6 +330,10 @@ pub struct App {
     /// is being dragged.
     pub(crate) split: f32,
     splitting: bool,
+    /// Where the pointer was when the held divider first moved: a click without a drag (a pixel
+    /// or two of jitter) leaves the split alone.
+    split_from: Option<f32>,
+    win_w: f32,
     pub drives: Vec<Drive>,
     /// Column widths as shown: the config's, or the one being dragged (written on release).
     pub cols: [f32; 4],
@@ -600,6 +604,8 @@ pub enum Message {
     /// double-clicked (half and half).
     SplitStart,
     SplitAt(cosmic::iced::window::Id, f32),
+    /// The main window's width, for the divider (`Opened` / `Resized`).
+    WindowWidth(cosmic::iced::window::Id, f32),
     SplitEnd,
     SplitReset,
     ColDragStart(usize, usize),
@@ -788,9 +794,11 @@ impl Application for App {
                     cosmic::iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
                         Some(Message::SplitAt(window, position.x))
                     }
-                    cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(
-                        mouse::Button::Left,
-                    )) => Some(Message::SplitEnd),
+                    // Let go, or gone out of the window (the release may never reach us).
+                    cosmic::iced::Event::Mouse(
+                        mouse::Event::ButtonReleased(mouse::Button::Left)
+                        | mouse::Event::CursorLeft,
+                    ) => Some(Message::SplitEnd),
                     _ => None,
                 }),
                 false => Subscription::none(),
@@ -906,6 +914,8 @@ impl App {
             sync: state.sync.clone(),
             split: state.split,
             splitting: false,
+            split_from: None,
+            win_w: 0.0,
             drives: Vec::new(),
             cols,
             col_drag: None,
@@ -2353,12 +2363,23 @@ impl App {
                     return self.reload(side, cwd, None);
                 }
             }
-            Message::SplitStart => self.splitting = true,
+            Message::WindowWidth(window, w) if window == self.window_id() => self.win_w = w,
+            Message::WindowWidth(..) => {}
+            Message::SplitStart => (self.splitting, self.split_from) = (true, None),
             Message::SplitAt(window, x) if self.splitting && window == self.window_id() => {
-                let (left, chrome) = crate::view::split_geometry(self.config.skin);
-                let total =
-                    self.panes[0].active().width + self.panes[1].active().width + 2.0 * chrome;
-                self.split = viewport::split_ratio(left, total, x);
+                let from = *self.split_from.get_or_insert(x);
+                if (x - from).abs() >= 3.0 {
+                    self.split_from = Some(f32::NAN); // moved for real: follow from now on
+                }
+                if self.split_from.is_some_and(f32::is_nan) {
+                    let (pad, gap) = crate::view::split_geometry(self.config.skin);
+                    // Before the window's width is known: the two lists' (no Modern cards).
+                    let total = match self.win_w {
+                        w if w > 0.0 => w - 2.0 * pad - gap,
+                        _ => self.panes[0].active().width + self.panes[1].active().width,
+                    };
+                    self.split = viewport::split_ratio(pad + gap / 2.0, total, x);
+                }
             }
             Message::SplitAt(..) => {}
             Message::SplitEnd => self.splitting = false,
@@ -2630,6 +2651,10 @@ impl App {
 
     /// Write tab paths when they changed (cheap compare on every message; no write if equal).
     fn save_state(&mut self) {
+        // The divider is written once it is let go, not on every move.
+        if self.splitting {
+            return;
+        }
         // Off: the histories live for this run only, and what was saved is wiped.
         let keep = |v: &Vec<String>| {
             if self.config.keep_history {
@@ -5974,6 +5999,11 @@ fn route_event(
         cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(
             cosmic::iced::mouse::Button::Left,
         )) => Some(Message::ColDragEnd),
+        // The divider's share is of the window's width.
+        cosmic::iced::Event::Window(
+            cosmic::iced::window::Event::Resized(size)
+            | cosmic::iced::window::Event::Opened { size, .. },
+        ) => Some(Message::WindowWidth(window, size.width)),
         // Where files are held, in window coordinates: a zone's own `on_drop` point is shifted by
         // the scrollable it sits in. The right-button drop menu opens at the last one.
         cosmic::iced::Event::Dnd(DndEvent::Offer(
@@ -9340,8 +9370,13 @@ mod tests {
         let w = app.window_id();
         let _ = app.update(Message::SplitAt(w, 300.0)); // not held: nothing
         assert_eq!(app.split, 0.0);
+        let _ = app.update(Message::WindowWidth(w, 1004.0)); // 1000 + the 4 px gap
         let _ = app.update(Message::SplitStart);
+        let _ = app.update(Message::SplitAt(w, 500.0));
+        let _ = app.update(Message::SplitAt(w, 501.0)); // a click's jitter: not moved
+        assert_eq!(app.split, 0.0);
         let _ = app.update(Message::SplitAt(w, 302.0)); // Classic: left edge + 2 px of the gap
+        assert_eq!(app.saved.split, 0.0); // not written while held
         let _ = app.update(Message::SplitEnd);
         assert!((app.split - 0.3).abs() < 1e-4, "{}", app.split);
         let _ = app.update(Message::SplitAt(w, 900.0)); // let go: no more moves

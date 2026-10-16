@@ -66,6 +66,12 @@ pub fn visible_cols(list_w: f32, cols: [f32; 4]) -> usize {
         .unwrap_or(0)
 }
 
+/// `FillPortion`s of the two panes (and the footer halves under them) for the stored share.
+pub fn split_portions(r: f32) -> (u16, u16) {
+    let left = (split_or_half(r) * 1000.0).round() as u16;
+    (left, 1000 - left)
+}
+
 /// The share as stored: anything outside 15 %…85 % (0 = never set) is half.
 pub fn split_or_half(r: f32) -> f32 {
     if (0.15..=0.85).contains(&r) { r } else { 0.5 }
@@ -133,6 +139,10 @@ mod tests {
         assert_eq!(split_ratio(0.0, 1000.0, 10.0), 0.15);
         assert_eq!(split_ratio(0.0, 1000.0, 990.0), 0.85);
         assert_eq!(split_ratio(0.0, 0.0, 10.0), 0.5); // before the first layout
+        assert_eq!(
+            (split_portions(0.0), split_portions(0.3)),
+            ((500, 500), (300, 700))
+        );
         assert_eq!(
             (split_or_half(0.0), split_or_half(0.3), split_or_half(0.9)),
             (0.5, 0.3, 0.5)
