@@ -24,13 +24,39 @@ use std::sync::Arc;
 
 const TEXT: u16 = 13;
 
+/// F3 in its own window (TC Lister): a title bar of its own, then the viewer.
+pub fn lister_window(app: &App, id: cosmic::iced::window::Id) -> Element<'_, Message> {
+    let Some(l) = app.lister.as_deref().filter(|l| l.window == Some(id)) else {
+        return widget::Space::new().into(); // closing: one more frame may be asked for
+    };
+    let focused = cosmic::Application::core(app).focused_window() == Some(id);
+    let content = column![
+        widget::header_bar()
+            .title(l.name.clone())
+            .on_close(Message::ListerClose)
+            .on_drag(Message::ListerWindow(crate::app::ListerWin::Drag))
+            .on_maximize(Message::ListerWindow(crate::app::ListerWin::Maximize))
+            .on_double_click(Message::ListerWindow(crate::app::ListerWin::Maximize))
+            .focused(focused),
+        crate::lister::view(l),
+        // Its own messages ("not found"…) where they are looked for.
+        container(window_status(app)).padding([2, 8]),
+    ];
+    // A window of our own gets no background from libcosmic: without one it is see-through.
+    container(content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .class(theme::Container::WindowBackground)
+        .into()
+}
+
 pub fn view(app: &App) -> Element<'_, Message> {
-    if let Some(l) = app.lister.as_deref().filter(|l| l.quick.is_none()) {
+    if let Some(l) = app.lister.as_deref().filter(|l| l.in_place()) {
         return crate::lister::view(l);
     }
     // Ctrl+Q: the viewer in place of the other pane.
     let side = |s: usize| match app.lister.as_deref() {
-        Some(l) if s != app.active => container(crate::lister::view(l))
+        Some(l) if l.quick.is_some() && s != app.active => container(crate::lister::view(l))
             .width(Length::Fill)
             .height(Length::Fill)
             .into(),
@@ -947,7 +973,7 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
 /// half also the last message or, without one, the entry under the cursor.
 pub fn footer(app: &App) -> Element<'_, Message> {
     // The viewer has no panels to total and its own buttons.
-    if app.lister.as_ref().is_some_and(|l| l.quick.is_none()) {
+    if app.lister.as_ref().is_some_and(|l| l.in_place()) {
         let status = container(window_status(app)).padding([2, 8]);
         return match job_line(app) {
             Some(job) => column![job, status].into(),

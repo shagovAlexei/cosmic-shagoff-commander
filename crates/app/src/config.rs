@@ -121,6 +121,8 @@ pub struct Config {
     /// TC "Select with right mouse button": a right click marks, a long press opens the menu;
     /// off: a right click opens the menu at once.
     pub right_marks: bool,
+    /// F3 in a window of its own (TC Lister); off: in place of the panels.
+    pub lister_window: bool,
     /// F12: an internal command (`cm_*`) or a program with parameters, as a toolbar button;
     /// none set: F12 opens the settings.
     pub f12: ToolButton,
@@ -214,6 +216,7 @@ impl Default for Config {
             terminal: vec!["cosmic-term".into(), "-e".into()],
             skin: Skin::Classic,
             right_marks: true,
+            lister_window: true,
             f12: ToolButton::default(),
             columns: [60.0, 90.0, 130.0, 80.0],
             toolbar: crate::toolbar::default_bar(),

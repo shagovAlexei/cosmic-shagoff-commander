@@ -104,6 +104,8 @@ pub(crate) fn decode(bytes: &[u8], max_alloc: u64) -> Option<image::DynamicImage
 pub struct Lister {
     /// Pane whose file is shown (N / P walk its list).
     pub side: usize,
+    /// F3 in a window of its own (TC Lister), not in place of the panels.
+    pub window: Option<cosmic::iced::window::Id>,
     pub name: String,
     /// Results of other loads are dropped.
     pub id: u64,
@@ -182,6 +184,7 @@ impl Lister {
     pub fn new(side: usize, name: String, id: u64, size: u16) -> Self {
         Self {
             side,
+            window: None,
             name,
             id,
             loaded: None,
@@ -213,7 +216,7 @@ impl Lister {
     pub fn reopen(&mut self, name: String, id: u64) {
         let query = std::mem::take(&mut self.query);
         let (scroll, input, height) = (self.scroll.clone(), self.input.clone(), self.height);
-        let (width, chosen, wrap) = (self.width, self.chosen, self.wrap);
+        let (width, chosen, wrap, window) = (self.width, self.chosen, self.wrap, self.window);
         let encoding = if chosen {
             self.encoding
         } else {
@@ -228,8 +231,14 @@ impl Lister {
             encoding,
             chosen,
             wrap,
+            window,
             ..Self::new(self.side, name, id, self.size)
         };
+    }
+
+    /// F3 shown in place of both panels (not Ctrl+Q, not in its own window).
+    pub fn in_place(&self) -> bool {
+        self.quick.is_none() && self.window.is_none()
     }
 
     pub fn ok(&self) -> Option<&Loaded> {
@@ -545,15 +554,17 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
         },
     };
     // Name and info on their own line, buttons wrapping below: one row did not fit a narrow window.
-    let title = row::with_children(vec![
-        widget::text::heading(l.name.clone())
+    // In its own window the name is in the title bar already.
+    let name: Element<'_, Message> = match l.window {
+        None => widget::text::heading(l.name.clone())
             .wrapping(Wrapping::WordOrGlyph)
             .width(Length::Fill)
             .into(),
-        widget::text::body(info).into(),
-    ])
-    .spacing(8)
-    .align_y(cosmic::iced::Alignment::Center);
+        Some(_) => widget::Space::new().width(Length::Fill).into(),
+    };
+    let title = row::with_children(vec![name, widget::text::body(info).into()])
+        .spacing(8)
+        .align_y(cosmic::iced::Alignment::Center);
     let mut buttons = modes;
     if l.mode == Mode::Image && l.zoom.is_some() {
         buttons.push(

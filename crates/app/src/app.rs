@@ -59,6 +59,13 @@ pub struct Hold {
     pub armed: bool,
 }
 
+/// The viewer window's title bar.
+#[derive(Clone, Copy, Debug)]
+pub enum ListerWin {
+    Drag,
+    Maximize,
+}
+
 pub struct Flags {
     pub left: Option<PathBuf>,
 }
@@ -708,6 +715,10 @@ pub enum Message {
     /// Next (true) / previous file of the pane.
     ListerStep(bool),
     ListerClose,
+    /// The viewer's own window: its title bar.
+    ListerWindow(ListerWin),
+    /// A window is gone (the viewer's: the viewer closes).
+    WindowClosed(cosmic::iced::window::Id),
     /// Every 2 s while files from archives are in the editor: look for saved changes.
     EditTick,
     /// Window ×, Alt+F4, menu «Exit»: asks first while a job runs or waits.
@@ -865,7 +876,14 @@ impl Application for App {
     /// The window is gone (closed by something other than Quit): the same temp cleanup as Exit.
     /// Only for the main window: a context menu's popup closes through here too.
     fn on_close_requested(&self, id: cosmic::iced::window::Id) -> Option<Message> {
+        if self.lister.as_ref().is_some_and(|l| l.window == Some(id)) {
+            return Some(Message::ListerClose);
+        }
         (id == self.window_id()).then_some(Message::Exit)
+    }
+
+    fn view_window(&self, id: cosmic::iced::window::Id) -> Element<'_, Message> {
+        crate::view::lister_window(self, id)
     }
 
     fn context_drawer(&self) -> Option<cosmic::app::context_drawer::ContextDrawer<'_, Message>> {
@@ -1923,7 +1941,25 @@ impl App {
                 return self.lister_find(true, false);
             }
             Message::ListerStep(forward) => return self.lister_step(forward),
-            Message::ListerClose => self.lister = None,
+            Message::ListerClose => {
+                let window = self.lister.take().and_then(|l| l.window);
+                if let Some(id) = window {
+                    return cosmic::iced::window::close(id);
+                }
+            }
+            Message::ListerWindow(w) => {
+                if let Some(id) = self.lister.as_ref().and_then(|l| l.window) {
+                    return match w {
+                        ListerWin::Drag => cosmic::iced::window::drag(id),
+                        ListerWin::Maximize => cosmic::iced::window::toggle_maximize(id),
+                    };
+                }
+            }
+            Message::WindowClosed(id) => {
+                if self.lister.as_ref().is_some_and(|l| l.window == Some(id)) {
+                    self.lister = None;
+                }
+            }
             Message::EditTick => {
                 if self.dialog.is_some() || self.job.is_some() {
                     return Task::none(); // asked on a later tick
@@ -1953,6 +1989,18 @@ impl App {
                 if let Some(Dialog::Diff(d)) = &mut self.dialog {
                     d.confirm_close = true;
                 }
+            }
+            Message::Escape(window)
+                if self
+                    .lister
+                    .as_ref()
+                    .is_some_and(|l| l.window == Some(window)) =>
+            {
+                // A dialog or a job of the main window is answered first.
+                if self.dialog.is_some() || self.busy() {
+                    return self.handle(Message::DialogCancel);
+                }
+                return self.lister_escape();
             }
             Message::Escape(window) if window != self.window_id() => {
                 return self.update(Message::Surface(cosmic::surface::action::destroy_popup(
@@ -2003,15 +2051,8 @@ impl App {
                         }
                     } else if self.busy() {
                         self.cancel_job(); // not one in the background: Esc is for the panels
-                    } else if let Some(l) = self.lister.as_deref_mut().filter(|l| l.quick.is_none())
-                    {
-                        if l.searching {
-                            l.searching = false;
-                        } else if l.sel.is_some() {
-                            l.sel = None; // first Esc drops the selection, the next closes
-                        } else {
-                            self.lister = None;
-                        }
+                    } else if self.viewer() {
+                        return self.lister_escape();
                     } else if let Some((_, cancel)) = &self.connecting {
                         cancel.store(true, Ordering::Relaxed);
                     } else if (self.panes.iter())
@@ -4780,9 +4821,30 @@ impl App {
         )
     }
 
-    /// The full-window F3 viewer is up (not the Ctrl+Q one): it takes the keys.
+    /// Esc in the viewer: the search field first, then the selection, then the viewer.
+    fn lister_escape(&mut self) -> Task<Message> {
+        let Some(l) = self.lister.as_deref_mut() else {
+            return Task::none();
+        };
+        if l.searching {
+            l.searching = false;
+        } else if l.sel.is_some() {
+            l.sel = None;
+        } else {
+            return self.handle(Message::ListerClose);
+        }
+        Task::none()
+    }
+
+    /// The full F3 viewer is up (not the Ctrl+Q one) and takes the keys: in place of the panels,
+    /// or its own window focused (no window known to be focused: as focused, so it is never left
+    /// without keys).
     fn viewer(&self) -> bool {
-        self.lister.as_ref().is_some_and(|l| l.quick.is_none())
+        self.lister.as_ref().is_some_and(|l| {
+            l.quick.is_none()
+                && l.window
+                    .is_none_or(|w| self.core.focused_window().is_none_or(|f| f == w))
+        })
     }
 
     /// Ctrl+Q: show what is under the active pane's cursor, if that changed. Run after every
@@ -4937,15 +4999,40 @@ impl App {
 
     fn open_lister(&mut self, side: usize, file: PathBuf, name: String) -> Task<Message> {
         let id = self.next_id();
+        let mut window = Task::none();
+        // Ctrl+Q's viewer: the full one replaces it (in its own window, if so set).
+        if self.lister.as_ref().is_some_and(|l| l.quick.is_some()) {
+            self.lister = None;
+        }
         match &mut self.lister {
-            Some(l) => l.reopen(name.clone(), id),
+            Some(l) => {
+                l.reopen(name.clone(), id);
+                l.side = side; // N / P walk the pane F3 was pressed in
+                if let Some(w) = l.window {
+                    window = Task::batch([
+                        cosmic::ApplicationExt::set_window_title(self, name.clone(), w),
+                        cosmic::iced::window::gain_focus(w),
+                    ]);
+                }
+            }
             None => {
-                self.lister = Some(Box::new(Lister::new(
-                    side,
-                    name.clone(),
-                    id,
-                    self.config.lister_size(),
-                )));
+                let mut l = Lister::new(side, name.clone(), id, self.config.lister_size());
+                // TC: the Lister is a window of its own.
+                if self.config.lister_window {
+                    let (w, open) = cosmic::iced::window::open(cosmic::iced::window::Settings {
+                        size: cosmic::iced::Size::new(900.0, 650.0),
+                        min_size: Some(cosmic::iced::Size::new(360.0, 240.0)),
+                        decorations: false,
+                        exit_on_close_request: false,
+                        ..Default::default()
+                    });
+                    l.window = Some(w);
+                    window = Task::batch([
+                        open.discard(),
+                        cosmic::ApplicationExt::set_window_title(self, name.clone(), w),
+                    ]);
+                }
+                self.lister = Some(Box::new(l));
             }
         }
         self.search = None;
@@ -4961,7 +5048,7 @@ impl App {
             .lister
             .as_deref_mut()
             .map_or(Task::none(), |l| lister_scroll(l, 0.0, 0.0));
-        Task::batch([read, top])
+        Task::batch([read, top, window])
     }
 
     /// Keys while the viewer is open; `None`: not the viewer's (help, settings…), act as usual.
@@ -5512,6 +5599,7 @@ impl App {
             Setting::InternalViewer(b) => c.internal_viewer = b,
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::RightMarks(b) => c.right_marks = b,
+            Setting::ListerWindow(b) => c.lister_window = b,
             // 0: own program (typed below), else `builtins()[i - 1]`.
             Setting::F12(0) => {
                 if crate::toolbar::builtin(&c.f12.cmd).is_some() {
@@ -6210,6 +6298,9 @@ fn route_event(
             cosmic::iced::mouse::Button::Right,
         )) => Some(Message::RightUp),
         // The divider's share is of the window's width.
+        cosmic::iced::Event::Window(cosmic::iced::window::Event::Closed) => {
+            Some(Message::WindowClosed(window))
+        }
         cosmic::iced::Event::Window(
             cosmic::iced::window::Event::Resized(size)
             | cosmic::iced::window::Event::Opened { size, .. },
@@ -7108,6 +7199,42 @@ mod tests {
         assert!(app.dialog.is_none());
         let _ = app.update(Message::DialogCancel);
         assert!(app.lister.is_none());
+    }
+
+    #[test]
+    fn f3_opens_a_window_of_its_own_unless_set_otherwise() {
+        let (mut app, _tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        let window = app.lister.as_ref().and_then(|l| l.window).unwrap();
+        assert!(!app.lister.as_ref().unwrap().in_place());
+        // N / P and F3 again: the same window
+        let _ = app.update(Message::ListerStep(true));
+        assert_eq!(app.lister.as_ref().and_then(|l| l.window), Some(window));
+        // the window closed by the compositor / its ×: the viewer goes too
+        assert!(matches!(
+            app.on_close_requested(window),
+            Some(Message::ListerClose)
+        ));
+        let _ = app.update(Message::WindowClosed(window));
+        assert!(app.lister.is_none());
+        // F3 over Ctrl+Q's viewer: its own window all the same
+        let _ = app.update(Message::Key(Action::QuickView));
+        let _ = app.update(Message::Key(Action::View));
+        assert!(app.lister.as_ref().is_some_and(|l| l.window.is_some()));
+        // F3 in the other pane with the window open (from the main window, as F3 there does):
+        // N / P walk that pane now
+        let file = app.panes[1].active().panel.cwd().join("x");
+        let _ = app.open_lister(1, file, "x".into());
+        assert_eq!(
+            app.lister.as_ref().map(|l| (l.side, l.window.is_some())),
+            Some((1, true))
+        );
+        let (mut app, _tmp) = lister_app(Config {
+            lister_window: false,
+            ..Config::default()
+        });
+        let _ = app.update(Message::Key(Action::View));
+        assert!(app.lister.as_ref().unwrap().in_place());
     }
 
     #[test]

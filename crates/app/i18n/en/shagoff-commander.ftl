@@ -352,6 +352,7 @@ lister-close = Close (Esc)
 lister-truncated = Showing the first { $limit } MB of { $size } B
 lister-not-found = Not found: { $query }
 settings-internal-viewer = Built-in viewer (F3)
+settings-lister-window = Viewer (F3) in a window of its own
 help-colors = Colors by type (Configuration → Colors by type…)
 help-colors-mask = Mask and "Applies to" (everything, files, dirs, links, executables). Rules are tried top to bottom, the first that fits wins — reorder with ↑ / ↓
 help-colors-size = Size: more (>) or less (<), units k / M / G, none = bytes. Files only: dirs never fit such a rule
