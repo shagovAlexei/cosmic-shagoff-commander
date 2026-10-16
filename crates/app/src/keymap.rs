@@ -85,6 +85,8 @@ pub enum Action {
     Help,
     /// Ctrl+,: settings in the side drawer.
     Settings,
+    /// F12: what is set for it in the settings (`Config.f12`).
+    F12,
     /// Menu only: about the program.
     About,
     /// Menu only: support the project.
@@ -207,6 +209,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F9, false, false) => Action::CopyNames,
             (Named::F10, false, false) => Action::CopyPaths,
             (Named::F11, false, false) => Action::CompareFiles,
+            (Named::F12, false, false) => Action::F12,
             (Named::F3, false, false) => Action::View,
             (Named::F4, false, false) => Action::Edit,
             (Named::F4, false, true) => Action::NewFile,
@@ -489,7 +492,7 @@ mod tests {
     #[test]
     fn unbound_combinations() {
         assert_eq!(named(Named::ArrowDown, CTRL), None);
-        assert_eq!(named(Named::F12, NONE), None);
+        assert_eq!(named(Named::F12, NONE), Some(Action::F12));
     }
 
     const ALT: Modifiers = Modifiers::ALT;

@@ -1,5 +1,5 @@
 use crate::clip;
-use crate::config::{self, Config, HotEntry, LastTab, State};
+use crate::config::{self, Config, HotEntry, LastTab, State, ToolButton};
 use crate::dialogs::{
     self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MrField, SyncOpt, Toggle,
 };
@@ -2942,6 +2942,14 @@ impl App {
                 self.toggle_drawer(action);
                 return Task::none();
             }
+            // Nothing set: the settings (left open if they are already).
+            Action::F12 if self.config.f12.cmd.trim().is_empty() => {
+                if !matches!(self.drawer, Some(Drawer::Settings(_))) {
+                    self.toggle_drawer(Action::Settings);
+                }
+                return Task::none();
+            }
+            Action::F12 => return self.run_button(self.config.f12.clone()),
             Action::CopyNames | Action::CopyPaths => {
                 let paths = self.panes[side].active().panel.targets();
                 if paths.is_empty() {
@@ -3203,6 +3211,7 @@ impl App {
             | Action::Help
             | Action::About
             | Action::Settings
+            | Action::F12
             | Action::Donate
             | Action::OpenWith
             | Action::CopyNames
@@ -4963,7 +4972,9 @@ impl App {
         }
         let l = self.lister.as_deref_mut()?;
         Some(match action {
-            Action::Help | Action::About | Action::Settings | Action::Donate => return None,
+            Action::Help | Action::About | Action::Settings | Action::Donate | Action::F12 => {
+                return None;
+            }
             // Num+ / Num-: bigger / smaller text, as + / - (TC zooms with them).
             Action::SelectGroup => return Some(self.lister_zoom(true)),
             Action::UnselectGroup => return Some(self.lister_zoom(false)),
@@ -5501,6 +5512,23 @@ impl App {
             Setting::InternalViewer(b) => c.internal_viewer = b,
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::RightMarks(b) => c.right_marks = b,
+            // 0: own program (typed below), else `builtins()[i - 1]`.
+            Setting::F12(0) => {
+                if crate::toolbar::builtin(&c.f12.cmd).is_some() {
+                    c.f12 = ToolButton::default();
+                }
+            }
+            Setting::F12(i) => {
+                if let Some(b) = crate::toolbar::builtins().get(i - 1) {
+                    c.f12 = ToolButton {
+                        cmd: b.cm.into(),
+                        ..ToolButton::default()
+                    };
+                }
+            }
+            Setting::F12Cmd(s) => c.f12.cmd = s,
+            Setting::F12Tip(s) => c.f12.tip = s,
+            Setting::F12Params(s) => c.f12.params = s,
             Setting::LastTabHome(b) => {
                 c.last_tab_close = if b { LastTab::Home } else { LastTab::Nothing };
             }
@@ -5840,9 +5868,14 @@ impl App {
 
     /// A toolbar button: its internal command, or its program with the parameters filled in.
     fn run_tool(&mut self, i: usize) -> Task<Message> {
-        let Some(b) = self.config.toolbar.get(i) else {
-            return Task::none();
-        };
+        match self.config.toolbar.get(i) {
+            Some(b) => self.run_button(b.clone()),
+            None => Task::none(),
+        }
+    }
+
+    /// A toolbar button or F12: its internal command, or its program with the parameters expanded.
+    fn run_button(&mut self, b: ToolButton) -> Task<Message> {
         if let Some(c) = crate::toolbar::builtin(&b.cmd) {
             return self.update(Message::Key(c.action));
         }
@@ -10611,6 +10644,33 @@ mod tests {
             assert_eq!(
                 (f.viewer.as_str(), f.editor.as_str(), f.home.as_str()),
                 ("code --wait", "cosmic-edit", "/srv")
+            );
+        }
+
+        #[test]
+        fn f12_runs_what_is_set_and_opens_the_settings_when_nothing_is() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::F12));
+            assert!(matches!(app.drawer, Some(Drawer::Settings(_))));
+            let _ = app.update(Message::Key(Action::F12)); // already open: stays open
+            assert!(matches!(app.drawer, Some(Drawer::Settings(_))));
+            let brief = (crate::toolbar::builtins().iter())
+                .position(|b| b.action == Action::ViewBrief)
+                .unwrap();
+            let _ = app.update(Message::Setting(Setting::F12(brief + 1)));
+            assert_eq!(app.config.f12.cmd, "cm_SrcShort");
+            let _ = app.update(Message::CloseDrawer);
+            let _ = app.update(Message::Key(Action::F12));
+            assert!(app.panes[app.active].active().brief);
+            // "Own program": the internal command goes, the typed one stays
+            let _ = app.update(Message::Setting(Setting::F12(0)));
+            assert_eq!(app.config.f12, ToolButton::default());
+            let _ = app.update(Message::Setting(Setting::F12Cmd("echo".into())));
+            let _ = app.update(Message::Setting(Setting::F12Params("%N".into())));
+            let _ = app.update(Message::Setting(Setting::F12(0)));
+            assert_eq!(
+                (app.config.f12.cmd.as_str(), app.config.f12.params.as_str()),
+                ("echo", "%N")
             );
         }
 

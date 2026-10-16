@@ -994,7 +994,7 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         col = col.push(command_line(app));
     }
     if app.config.show_fkeys {
-        col = col.push(fkey_bar());
+        col = col.push(fkey_bar(&app.config.f12));
     }
     col.into()
 }
@@ -1111,8 +1111,12 @@ fn destructive(t: &cosmic::Theme) -> cosmic::iced::widget::text::Style {
     }
 }
 
-pub fn fkey_bar() -> Element<'static, Message> {
-    // Eleven buttons must fit a ~1000 px window: tight padding, one line, centred.
+pub fn fkey_bar(f12: &crate::config::ToolButton) -> Element<'static, Message> {
+    let f12 = match f12.cmd.trim() {
+        "" => fl!("fkey-f12-none"),
+        _ => format!("F12 {}", crate::toolbar::tip(f12)),
+    };
+    // Twelve buttons must fit a ~1000 px window: tight padding, one line, centred.
     let key = |label: String, action| {
         button::custom(
             text(label)
@@ -1137,6 +1141,17 @@ pub fn fkey_bar() -> Element<'static, Message> {
         key(fl!("fkey-name"), Action::CopyNames),
         key(fl!("fkey-path"), Action::CopyPaths),
         key(fl!("fkey-compare"), Action::CompareFiles),
+        // Its own label can be long: cut at the end, not on both sides ("F12" stays readable).
+        button::custom(
+            text(f12)
+                .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
+                .width(Length::Fill),
+        )
+        .class(theme::Button::Standard)
+        .padding([6, 4])
+        .on_press(Message::Key(Action::F12))
+        .width(Length::Fill),
     ]
     .spacing(3)
     .padding(4)
