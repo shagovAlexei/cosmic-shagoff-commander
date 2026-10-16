@@ -108,6 +108,9 @@ pub struct HotEdit {
     pub sel: Option<usize>,
     /// The selected entry's path as typed (a `PathBuf` can't back a text field).
     pub path: String,
+    /// The row under the pointer, and the one held by the left button (dragged to reorder).
+    pub hover: Option<usize>,
+    pub grab: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +130,13 @@ pub enum HotMsg {
     Sort,
     /// The selected entry gets the panel's dir.
     Here,
+    /// The pointer is over this row (`None`: left the list).
+    Hover(Option<usize>),
+    /// The left button went down / up anywhere (rows are buttons: they keep the press).
+    Grab,
+    Release,
+    /// Dirs dropped from a panel: added after the selection (files left out).
+    AddDirs(Vec<std::path::PathBuf>),
 }
 
 impl HotEdit {
@@ -136,6 +146,8 @@ impl HotEdit {
             list,
             sel: None,
             path: String::new(),
+            hover: None,
+            grab: None,
         };
         if !h.list.is_empty() {
             h.select(0);
@@ -211,6 +223,29 @@ impl HotEdit {
                 self.list.swap(i, i + 1);
                 self.select(i + 1);
             }
+            (HotMsg::Hover(at), _) => {
+                self.hover = at;
+                // Held: the entry follows the pointer, as TC's list.
+                if let (Some(from), Some(to)) = (self.grab, at)
+                    && from != to
+                    && to < self.list.len()
+                {
+                    let e = self.list.remove(from);
+                    self.list.insert(to, e);
+                    self.grab = Some(to);
+                    self.select(to);
+                }
+            }
+            (HotMsg::Grab, _) => self.grab = self.hover,
+            (HotMsg::Release, _) => self.grab = None,
+            (HotMsg::AddDirs(dirs), _) => {
+                for d in dirs.into_iter().filter(|d| d.is_dir()) {
+                    self.insert(HotEntry {
+                        name: menu_name(&d),
+                        path: d,
+                    });
+                }
+            }
             (HotMsg::Sort, _) => {
                 let kept = sel.map(|i| self.list[i].clone());
                 for block in self.list.split_mut(is_marker) {
@@ -266,13 +301,19 @@ pub fn view<'a>(h: &'a HotEdit, cancel: Element<'a, Message>) -> Element<'a, Mes
             }
             _ => crate::dialogs::menu_row(e.name.clone(), e.path.display().to_string(), sel, on),
         };
-        // Submenu contents indented, as the menu nests them.
-        list = list.push(widget::container(row).padding([0, 0, 0, 16 * depth as u16]));
+        // Submenu contents indented, as the menu nests them; the row under the pointer is where
+        // a held one goes.
+        let row = widget::container(row).padding([0, 0, 0, 16 * depth as u16]);
+        list = list.push(widget::mouse_area(row).on_enter(msg(HotMsg::Hover(Some(i)))));
     }
     if h.list.is_empty() {
         list = list.push(widget::text::caption(fl!("hotlist-empty")));
     }
-    let list = widget::container(widget::scrollable(list).height(Length::Fixed(240.0)))
+    let list = widget::mouse_area(widget::scrollable(list).height(Length::Fixed(240.0)))
+        .on_exit(msg(HotMsg::Hover(None)));
+    // Dirs dragged from a panel are added (TC: drop onto the hotlist).
+    let list = crate::clip::drop_zone(list, |paths, _| Message::Hot(HotMsg::AddDirs(paths)), None);
+    let list = widget::container(list)
         .padding(4)
         .width(Length::Fill)
         .class(theme::Container::Card);
@@ -382,6 +423,38 @@ mod tests {
         assert_eq!(h.sel, Some(0));
         h.update(HotMsg::Path("/y".into()), cwd); // a separator has no path
         assert!(h.list[0].path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn drag_moves_an_entry_where_the_pointer_goes() {
+        let cwd = Path::new("/");
+        let mut h = HotEdit::new(0, vec![e("a"), e("b"), e("c")]);
+        h.update(HotMsg::Hover(Some(0)), cwd);
+        h.update(HotMsg::Grab, cwd);
+        h.update(HotMsg::Hover(Some(2)), cwd); // over "c": "a" moves there
+        assert_eq!(names(&h), ["b", "c", "a"]);
+        assert_eq!(h.sel, Some(2));
+        h.update(HotMsg::Release, cwd);
+        h.update(HotMsg::Hover(Some(0)), cwd); // released: hovering moves nothing
+        assert_eq!(names(&h), ["b", "c", "a"]);
+        // Pressed outside the rows: nothing held.
+        h.update(HotMsg::Hover(None), cwd);
+        h.update(HotMsg::Grab, cwd);
+        h.update(HotMsg::Hover(Some(2)), cwd);
+        assert_eq!(names(&h), ["b", "c", "a"]);
+    }
+
+    #[test]
+    fn dropped_dirs_are_added_after_the_selection() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("Docs")).unwrap();
+        std::fs::write(d.path().join("f.txt"), "").unwrap();
+        let mut h = HotEdit::new(0, vec![e("a"), e("b")]);
+        let dropped = vec![d.path().join("Docs"), d.path().join("f.txt")];
+        h.update(HotMsg::AddDirs(dropped), Path::new("/"));
+        assert_eq!(names(&h), ["a", "Docs", "b"]); // a file is not a dir: left out
+        assert_eq!(h.list[1].path, d.path().join("Docs"));
+        assert_eq!(h.sel, Some(1));
     }
 
     #[test]
