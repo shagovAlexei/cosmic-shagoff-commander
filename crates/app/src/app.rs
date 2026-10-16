@@ -46,6 +46,19 @@ pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
 const FALLBACK_LIST_H: f32 = 400.0;
 const FALLBACK_LIST_W: f32 = 500.0;
 
+/// A right press while the right button marks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hold {
+    /// Its number (`App::right_presses`): a late timer of an earlier press is dropped.
+    pub n: u64,
+    pub side: usize,
+    /// The tab pressed in, and the row (`None`: empty space).
+    pub tab: u64,
+    pub row: Option<usize>,
+    /// Held long enough: the release opens the menu.
+    pub armed: bool,
+}
+
 pub struct Flags {
     pub left: Option<PathBuf>,
 }
@@ -313,9 +326,8 @@ pub struct App {
     face: cosmic::iced::Font,
     /// Files of the right-button drag in flight (`Message::DragStart`).
     right_drag: Option<Arc<Vec<PathBuf>>>,
-    /// A right press while the right button marks (`Config.right_marks`): (its number, side, row
-    /// or `None` for empty space, held long enough for the menu).
-    pub right_hold: Option<(u64, usize, Option<usize>, bool)>,
+    /// A right press while the right button marks (`Config.right_marks`).
+    pub right_hold: Option<Hold>,
     /// Numbers the right presses: a late `RightHeld` of an earlier one is dropped.
     right_presses: u64,
     /// One of our rows is being dragged: Esc cancels it.
@@ -1257,26 +1269,27 @@ impl App {
                 }
             }
             Message::RightHeld(n) => {
-                let Some((m, side, row, armed)) = &mut self.right_hold else {
-                    return Task::none();
-                };
-                if *m != n {
-                    return Task::none();
-                }
-                *armed = true;
-                // From here as a right click with the menu at once.
-                self.ctx_entry = row.is_some();
-                if row.is_some() {
-                    let p = &mut self.panes[*side].active_mut().panel;
-                    if !p.current().is_some_and(|e| p.is_marked(e)) {
-                        p.mark_all(false);
-                    }
+                if let Some(h) = &mut self.right_hold
+                    && h.n == n
+                {
+                    h.armed = true;
+                    self.ctx_entry = h.row.is_some();
                 }
             }
             Message::RightUp => {
-                // A quick click on a row: TC marks it (the cursor is on it since the press).
-                if let Some((_, side, Some(_), false)) = self.right_hold.take() {
-                    self.panes[side].active_mut().panel.toggle_mark();
+                let Some(h) = self.right_hold.take() else {
+                    return Task::none();
+                };
+                let t = self.panes[h.side].active_mut();
+                // Only where it was pressed: not after a tab switch, or with the cursor moved.
+                if t.id != h.tab || h.row.is_none_or(|r| r != t.panel.cursor()) {
+                    return Task::none();
+                }
+                if !h.armed {
+                    t.panel.toggle_mark(); // a quick click: TC marks the row
+                } else if !t.panel.current().is_some_and(|e| t.panel.is_marked(e)) {
+                    // The menu opens now, as a right click's at once: about the unmarked row only.
+                    t.panel.mark_all(false);
                 }
             }
             Message::RightClick(side, i) => {
@@ -6110,7 +6123,14 @@ impl App {
         const HOLD: std::time::Duration = std::time::Duration::from_millis(500);
         self.right_presses += 1;
         let n = self.right_presses;
-        self.right_hold = Some((n, side, row, false));
+        let tab = self.panes[side].active().id;
+        self.right_hold = Some(Hold {
+            n,
+            side,
+            tab,
+            row,
+            armed: false,
+        });
         Task::perform(async { tokio::time::sleep(HOLD).await }, move |()| {
             cosmic::Action::App(Message::RightHeld(n))
         })
@@ -9768,7 +9788,7 @@ mod tests {
     fn right_button_marks_and_a_long_press_opens_the_menu() {
         let mut app = files_app(&["a", "b", "c"]);
         let marked = |app: &App| app.panes[0].active().panel.marked_totals().files;
-        let held = |app: &App| app.right_hold.map(|h| h.0).unwrap();
+        let held = |app: &App| app.right_hold.map(|h| h.n).unwrap();
         // quick click: the cursor goes there and the row is marked; again: unmarked
         let _ = app.update(Message::RightClick(0, 1));
         let _ = app.update(Message::RightEmpty(0)); // the list's own handler, same press
@@ -9783,11 +9803,27 @@ mod tests {
         let _ = app.update(Message::RightEmpty(0));
         let stale = held(&app) - 1;
         let _ = app.update(Message::RightHeld(stale)); // an earlier press's timer: ignored
-        assert!(!app.right_hold.unwrap().3);
+        assert!(!app.right_hold.unwrap().armed);
         let _ = app.update(Message::RightHeld(held(&app)));
-        assert!(app.ctx_entry && app.right_hold.unwrap().3);
+        assert!(app.ctx_entry && app.right_hold.unwrap().armed);
+        assert_eq!(marked(&app), 2); // the marks go with the release, when the menu opens
         let _ = app.update(Message::RightUp);
         assert_eq!((marked(&app), app.right_hold), (0, None));
+        // held, then dragged: the marks stay
+        let _ = app.update(Message::Key(Action::SelectAll));
+        let _ = app.update(Message::RightClick(0, 1));
+        let _ = app.update(Message::RightEmpty(0));
+        let _ = app.update(Message::RightHeld(held(&app)));
+        let _ = app.update(Message::DragStart(None));
+        let _ = app.update(Message::RightUp);
+        assert_eq!(marked(&app), 3);
+        let _ = app.update(Message::Key(Action::UnselectAll));
+        // pressed, then the cursor moved by a key: the release marks nothing
+        let _ = app.update(Message::RightClick(0, 1));
+        let _ = app.update(Message::RightEmpty(0));
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::RightUp);
+        assert_eq!(marked(&app), 0);
         // a right drag: no mark
         let _ = app.update(Message::RightClick(0, 1));
         let _ = app.update(Message::RightEmpty(0));

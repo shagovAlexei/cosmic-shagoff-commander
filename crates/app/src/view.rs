@@ -150,7 +150,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     .on_surface_action(Message::Surface);
     // Right button marking: the menu (opened by libcosmic on the release) only for a press held
     // long enough; a quick click's release is kept from it.
-    let held = matches!(app.right_hold, Some((_, s, _, true)) if s == side);
+    let held = app.right_hold.is_some_and(|h| h.armed && h.side == side);
     let list = crate::catch::catch_right_up(list, app.config.right_marks && !held);
     let list = cosmic::iced::widget::stack![under, list];
     // The list's own text and background (TC Colors), if set, under the header and the rows;
