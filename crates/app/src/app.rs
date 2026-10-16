@@ -824,7 +824,8 @@ impl Application for App {
         if let Some(d) = &self.dialog {
             // A list no taller than the panel's rows: the dialog's buttons stay in the window.
             let list_h = self.panes[self.active].active().height;
-            return Some(dialogs::view(d, &self.input_id, &self.tz, list_h));
+            let font = self.panel_font();
+            return Some(dialogs::view(d, &self.input_id, &self.tz, list_h, font));
         }
         self.job
             .as_ref()

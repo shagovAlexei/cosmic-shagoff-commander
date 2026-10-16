@@ -386,7 +386,11 @@ fn palette<'a>(on: bool, bg: bool) -> Element<'a, Message> {
     grid.into()
 }
 
-pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, Message> {
+pub fn view<'a>(
+    c: &'a ColorEdit,
+    cancel: Element<'a, Message>,
+    font: crate::dialogs::ListFont,
+) -> Element<'a, Message> {
     let msg = Message::Colors;
     let mut list = column![].spacing(1);
     for (i, r) in c.list.iter().enumerate() {
@@ -427,6 +431,7 @@ pub fn view<'a>(c: &'a ColorEdit, cancel: Element<'a, Message>) -> Element<'a, M
             what,
             c.sel == Some(i),
             msg(ColorMsg::Select(i)),
+            font,
         ));
     }
     if c.list.is_empty() {
