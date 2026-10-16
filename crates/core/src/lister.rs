@@ -233,14 +233,17 @@ pub struct Text {
 }
 
 impl Text {
-    /// `wrap`: cut lines every this many chars (TC `W`), else at `MAX_COLS`.
+    /// `wrap`: lines wrapped at words to this many cells (TC `W`); `None`: cut at `MAX_COLS`.
     pub fn new(doc: &Doc, enc: Encoding, wrap: Option<usize>) -> Self {
         let decoded = match enc {
             Encoding::Auto => doc.decoded.clone(),
             _ => decode_as(&doc.bytes, enc),
         };
         let bytes = decoded.as_deref().unwrap_or(&doc.bytes);
-        let lines = lines(bytes, wrap.unwrap_or(MAX_COLS).clamp(1, MAX_COLS));
+        let lines = match wrap {
+            Some(w) => lines(bytes, w.clamp(1, MAX_COLS), true),
+            None => lines(bytes, MAX_COLS, false),
+        };
         let cols = lines.iter().map(|r| width(bytes, r)).max().unwrap_or(0);
         Self {
             decoded,
@@ -300,16 +303,17 @@ pub fn detect(name: &str, bytes: &[u8]) -> Mode {
     }
 }
 
-/// Byte ranges of the lines (without `\n` / `\r\n`), lines wider than `max_cols` cells split.
-// ponytail: wrap cuts at the cell limit, not at word boundaries.
-pub fn lines(bytes: &[u8], max_cols: usize) -> Vec<Range<usize>> {
+/// Byte ranges of the lines (without `\n` / `\r\n`), lines wider than `max_cols` cells split:
+/// with `words`, after the last whitespace that fits (a word wider than that: where it fills the
+/// line); without, where the line is full.
+pub fn lines(bytes: &[u8], max_cols: usize, words: bool) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut push = |s: usize, mut e: usize| {
         if e > s && bytes[e - 1] == b'\r' {
             e -= 1;
         }
-        split_long(bytes, s, e, max_cols, &mut out);
+        split_long(bytes, s..e, max_cols, words, &mut out);
     };
     for (i, &b) in bytes.iter().enumerate() {
         if b == b'\n' {
@@ -323,37 +327,82 @@ pub fn lines(bytes: &[u8], max_cols: usize) -> Vec<Range<usize>> {
     out
 }
 
-/// Cut `s..e` every `max` chars, at char starts (UTF-8 continuation bytes never start a piece).
-fn split_long(bytes: &[u8], s: usize, e: usize, max: usize, out: &mut Vec<Range<usize>>) {
+/// One line being cut into pieces of at most `max` cells.
+struct Pieces<'a> {
+    out: &'a mut Vec<Range<usize>>,
+    max: usize,
+    words: bool,
+    from: usize,
+    cells: usize,
+    /// The piece has more than whitespace (its indent is not a place to break).
+    text: bool,
+    /// Just after the last whitespace past some text, and the piece's cells up to there.
+    brk: Option<(usize, usize)>,
+}
+
+impl Pieces<'_> {
+    /// A char of `w` cells and `len` bytes at `i`.
+    fn put(&mut self, i: usize, len: usize, w: usize, space: bool) {
+        if self.cells + w > self.max && self.cells > 0 {
+            if let Some((b, bc)) = self.brk.take() {
+                self.out.push(self.from..b);
+                self.from = b;
+                self.cells -= bc;
+            }
+            // Still too wide (one long word, or no words): cut it here.
+            if self.cells + w > self.max && self.cells > 0 {
+                self.out.push(self.from..i);
+                (self.from, self.cells, self.text) = (i, 0, false);
+            }
+        }
+        self.cells += w;
+        if !space {
+            self.text = true;
+        } else if self.words && self.text {
+            self.brk = Some((i + len, self.cells));
+        }
+    }
+}
+
+/// Cut `line` into pieces of at most `max` cells, at char starts (UTF-8 continuation bytes never
+/// start a piece).
+fn split_long(
+    bytes: &[u8],
+    line: Range<usize>,
+    max: usize,
+    words: bool,
+    out: &mut Vec<Range<usize>>,
+) {
     // Same cells as `line_text` / `width` draw: a tab is four, wide chars two, each invalid
     // UTF-8 sequence one `�`.
-    let mut from = s;
-    let mut cells = 0;
-    let mut at = s;
-    let mut put = |i: usize, w: usize, from: &mut usize, cells: &mut usize| {
-        if *cells + w > max && *cells > 0 {
-            out.push(*from..i);
-            *from = i;
-            *cells = 0;
-        }
-        *cells += w;
+    let mut p = Pieces {
+        out,
+        max,
+        words,
+        from: line.start,
+        cells: 0,
+        text: false,
+        brk: None,
     };
-    for chunk in bytes[s..e].utf8_chunks() {
+    let mut at = line.start;
+    for chunk in bytes[line.clone()].utf8_chunks() {
         for (i, c) in chunk.valid().char_indices() {
             let w = match c {
                 '\t' => 4,
                 c if wide(c) => 2,
                 _ => 1,
             };
-            put(at + i, w, &mut from, &mut cells);
+            // Any whitespace but the no-break spaces (U+3000 between Japanese phrases too).
+            let space = c.is_whitespace() && !matches!(c, '\u{a0}' | '\u{2007}' | '\u{202f}');
+            p.put(at + i, c.len_utf8(), w, space);
         }
         at += chunk.valid().len();
         if !chunk.invalid().is_empty() {
-            put(at, 1, &mut from, &mut cells);
+            p.put(at, chunk.invalid().len(), 1, false);
             at += chunk.invalid().len();
         }
     }
-    out.push(from..e);
+    p.out.push(p.from..line.end);
 }
 
 /// A line as shown: invalid UTF-8 as `�`, tabs as four spaces.
@@ -672,7 +721,7 @@ mod tests {
         };
         let t = Text::new(&tabs, Encoding::Auto, Some(5));
         let shown: Vec<String> = t.lines.iter().map(|r| line_text(&tabs.bytes, r)).collect();
-        assert_eq!(shown, ["    a", "    b", "\u{fffd}cd"]);
+        assert_eq!(shown, ["    a", "    b", "\u{fffd}cd"]); // an indent is no place to break
         assert!(t.cols <= 5);
         // a zero-width viewport must not loop forever
         assert_eq!(Text::new(&doc, Encoding::Auto, Some(0)).lines.len(), 9);
@@ -688,19 +737,51 @@ mod tests {
     }
 
     #[test]
+    fn wrap_breaks_after_spaces_and_cuts_only_words_too_long() {
+        let shown = |b: &[u8], max| -> Vec<String> {
+            lines(b, max, true)
+                .iter()
+                .map(|r| line_text(b, r))
+                .collect()
+        };
+        assert_eq!(shown(b"hello world foo", 8), ["hello ", "world ", "foo"]);
+        assert_eq!(shown(b"abcdefghij k", 4), ["abcd", "efgh", "ij k"]);
+        assert_eq!(shown(b"abcdefghij kl", 4), ["abcd", "efgh", "ij ", "kl"]);
+        assert_eq!(
+            shown("съешь же ещё".as_bytes(), 5),
+            ["съешь", " же ", "ещё"]
+        );
+        assert_eq!(shown(b"a\tb c", 5), ["a    ", "b c"]); // a tab is four cells
+        assert_eq!(shown(b"short", 8), ["short"]);
+        // an indent is not a break: no row of only spaces
+        assert_eq!(shown(b"    abcdefgh", 6), ["    ab", "cdefgh"]);
+        // the ideographic space breaks Japanese phrases
+        assert_eq!(
+            shown("吾輩は\u{3000}猫である".as_bytes(), 8),
+            ["吾輩は\u{3000}", "猫である"]
+        );
+        // without `words`: cut where full, as when not wrapped
+        let hard: Vec<_> = lines(b"ab cd ef", 4, false)
+            .iter()
+            .map(|r| line_text(b"ab cd ef", r))
+            .collect();
+        assert_eq!(hard, ["ab c", "d ef"]);
+    }
+
+    #[test]
     fn lines_split_on_lf_and_crlf() {
         let b = b"one\r\ntwo\n\nlast";
-        let l = lines(b, MAX_COLS);
+        let l = lines(b, MAX_COLS, false);
         let text: Vec<String> = l.iter().map(|r| line_text(b, r)).collect();
         assert_eq!(text, ["one", "two", "", "last"]);
-        assert_eq!(lines(b"a\n", MAX_COLS).len(), 1);
-        assert!(lines(b"", MAX_COLS).is_empty());
+        assert_eq!(lines(b"a\n", MAX_COLS, false).len(), 1);
+        assert!(lines(b"", MAX_COLS, false).is_empty());
     }
 
     #[test]
     fn long_line_split_at_char_boundary() {
         let s = "я".repeat(MAX_COLS + 3);
-        let l = lines(s.as_bytes(), MAX_COLS);
+        let l = lines(s.as_bytes(), MAX_COLS, false);
         assert_eq!(l.len(), 2);
         assert_eq!(line_text(s.as_bytes(), &l[0]).chars().count(), MAX_COLS);
         assert_eq!(line_text(s.as_bytes(), &l[1]), "яяя");
@@ -771,7 +852,7 @@ mod tests {
     #[test]
     fn find_line_ignores_case_both_ways() {
         let b = "альфа\nБета\nгамма\nбета".as_bytes();
-        let l = lines(b, MAX_COLS);
+        let l = lines(b, MAX_COLS, false);
         assert_eq!(find_line(b, &l, "бЕТ", 0, true), Some(1));
         assert_eq!(find_line(b, &l, "бет", 2, true), Some(3));
         assert_eq!(find_line(b, &l, "бет", 2, false), Some(1));
