@@ -89,6 +89,8 @@ pub enum Action {
     F12,
     /// Menu «Вид»: a line between the panes / the active pane framed (classic look).
     ToggleDividerLine,
+    /// Sizes in bytes or in KB / MB / GB (Show menu).
+    ToggleHumanSizes,
     ToggleActiveFrame,
     /// Menu only: about the program.
     About,

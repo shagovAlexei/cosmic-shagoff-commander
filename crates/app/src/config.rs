@@ -125,6 +125,9 @@ pub struct Config {
     pub lister_window: bool,
     /// A thin line in the gap between the panes.
     pub divider_line: bool,
+    /// File sizes in KB / MB / GB (`true`) or in bytes; `None`: as the skin has them (Modern in
+    /// KB / MB, Classic in bytes up to 999 999 999).
+    pub human_sizes: Option<bool>,
     /// The classic look: the active pane framed in the accent colour, as the modern look's card.
     pub active_frame: bool,
     /// F12: an internal command (`cm_*`) or a program with parameters, as a toolbar button;
@@ -162,6 +165,11 @@ pub const PANEL_SIZE: u16 = 13;
 pub const LISTER_SIZE: u16 = 14;
 
 impl Config {
+    /// Sizes in KB / MB / GB: as chosen, else as the skin has them.
+    pub fn human_sizes(&self) -> bool {
+        self.human_sizes.unwrap_or(self.skin == Skin::Modern)
+    }
+
     /// The file list's text size, kept in `SIZES` (a hand edit could say anything).
     pub fn panel_size(&self) -> u16 {
         self.panel_size.clamp(*SIZES.start(), *SIZES.end())
@@ -222,6 +230,7 @@ impl Default for Config {
             right_marks: true,
             lister_window: true,
             divider_line: false,
+            human_sizes: None,
             active_frame: false,
             f12: ToolButton::default(),
             columns: [60.0, 90.0, 130.0, 80.0],
