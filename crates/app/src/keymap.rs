@@ -265,12 +265,24 @@ pub enum ListerKey {
     Encoding(Encoding),
     /// W: wrap long lines.
     Wrap,
+    /// What types plus / equals / minus: bigger / smaller text (unshifted Num+ and Num- come
+    /// from the main table as `SelectGroup` and `UnselectGroup`).
+    Zoom(bool),
 }
 
 pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<ListerKey> {
     use cosmic::iced::keyboard::key::{Code, Named};
-    match key {
-        Key::Named(Named::F3) if mods == Modifiers::SHIFT => return Some(ListerKey::FindPrev),
+    match (key, physical) {
+        (Key::Named(Named::F3), _) if mods == Modifiers::SHIFT => {
+            return Some(ListerKey::FindPrev);
+        }
+        // By what the key types, not where it is: + is Shift+= on US and Russian, a key of its own
+        // on German (where `-`'s US place types ß).
+        (Key::Character(c), _) if (mods - Modifiers::SHIFT).is_empty() => match c.as_str() {
+            "+" | "=" => return Some(ListerKey::Zoom(true)),
+            "-" => return Some(ListerKey::Zoom(false)),
+            _ => {}
+        },
         _ if !mods.is_empty() => return None,
         _ => {}
     }
@@ -668,5 +680,19 @@ mod tests {
             CTRL,
         );
         assert_eq!(ctrl_n, None);
+        // + / = and - on the main keyboard: bigger / smaller text (Shift for + is fine).
+        let zoom =
+            |c: &str, code, mods| lister_key(&Key::Character(c.into()), Physical::Code(code), mods);
+        assert_eq!(
+            zoom("+", Code::Equal, Modifiers::SHIFT),
+            Some(ListerKey::Zoom(true))
+        );
+        assert_eq!(zoom("=", Code::Equal, NONE), Some(ListerKey::Zoom(true)));
+        assert_eq!(zoom("-", Code::Minus, NONE), Some(ListerKey::Zoom(false)));
+        assert_eq!(zoom("-", Code::Minus, CTRL), None);
+        assert_eq!(
+            zoom("+", Code::BracketRight, NONE),
+            Some(ListerKey::Zoom(true))
+        ); // German
     }
 }

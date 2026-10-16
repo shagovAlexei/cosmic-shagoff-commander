@@ -933,7 +933,7 @@ pub fn view<'a>(
         Dialog::Colors(c) => crate::colorrules::view(c, cancel.into()),
         Dialog::Props(p) => {
             const LABEL: f32 = 150.0;
-            const CELL: f32 = 70.0;
+            const CELL: f32 = 90.0;
             let line = |k: String, v: String| {
                 row![
                     widget::text::body(k).width(Length::Fixed(LABEL)),
@@ -1001,11 +1001,41 @@ pub fn view<'a>(
                     .spacing(8),
                 );
             }
+            // setuid / setgid / sticky: a row of their own under their own heads.
+            bits = bits.push(
+                row![
+                    widget::Space::new().width(Length::Fixed(LABEL)),
+                    head(fl!("props-suid")),
+                    head(fl!("props-sgid")),
+                    head(fl!("props-sticky")),
+                ]
+                .spacing(8),
+            );
+            bits = bits.push(
+                row![
+                    widget::text::body(fl!("props-special")).width(Length::Fixed(LABEL)),
+                    bit(0o4000),
+                    bit(0o2000),
+                    bit(0o1000),
+                ]
+                .spacing(8),
+            );
+            if p.recursive {
+                bits = bits.push(widget::text::caption(fl!("props-special-inside")));
+            }
             let unknown = p.mixed & !p.touched;
             let shown: String = format::perms(p.mode)
                 .chars()
                 .enumerate()
-                .map(|(i, c)| if unknown & (0o400 >> i) != 0 { '?' } else { c })
+                .map(|(i, c)| {
+                    // The x places also carry setuid / setgid / sticky.
+                    let special = if i % 3 == 2 { 0o4000 >> (i / 3) } else { 0 };
+                    if unknown & ((0o400 >> i) | special) != 0 {
+                        '?'
+                    } else {
+                        c
+                    }
+                })
                 .collect();
             bits = bits.push(widget::text::caption(match unknown {
                 0 => format!("{shown} ({:o})", p.mode & 0o7777),
@@ -1428,21 +1458,27 @@ pub fn view<'a>(
                             .font(cosmic::font::mono())
                             .wrapping(Wrapping::None)
                     };
-                    // `mid`: the bytes that differ from the other side (changed lines).
-                    let half = |c: &Option<(usize, String)>, w: f32, mid: Option<Range<usize>>| {
-                        let content = match (c, mid) {
-                            (Some((n, s)), Some(m)) => row![
-                                mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W)),
-                                mono(expand(&s[..m.start])),
-                                widget::container(mono(expand(&s[m.clone()])))
-                                    .class(diff_style(diff::Kind::Changed)),
-                                mono(expand(&s[m.end..])),
-                            ],
-                            (Some((n, s)), None) => row![
-                                mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W)),
-                                mono(expand(s)),
-                            ],
-                            (None, _) => row![],
+                    // `marks`: the words that differ from the other side (changed lines).
+                    let half = |c: &Option<(usize, String)>, w: f32, marks: &[Range<usize>]| {
+                        let content = match c {
+                            Some((n, s)) => {
+                                let mut line =
+                                    row![mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W))];
+                                // Plain text between the changed words, each word tinted.
+                                let mut at = 0;
+                                for m in marks {
+                                    if at < m.start {
+                                        line = line.push(mono(expand(&s[at..m.start])));
+                                    }
+                                    line = line.push(
+                                        widget::container(mono(expand(&s[m.clone()])))
+                                            .class(diff_style(diff::Kind::Changed)),
+                                    );
+                                    at = m.end;
+                                }
+                                line.push(mono(expand(&s[at..])))
+                            }
+                            None => row![],
                         };
                         widget::container(content)
                             .width(Length::Fixed(w))
@@ -1467,12 +1503,11 @@ pub fn view<'a>(
                     for r in &t.rows[first..last] {
                         let (ml, mr) = match (&r.left, &r.right) {
                             (Some((_, a)), Some((_, b))) if r.kind == diff::Kind::Changed => {
-                                let (x, y) = diff::inline(a, b);
-                                (Some(x), Some(y))
+                                diff::words(a, b, d.opts)
                             }
-                            _ => (None, None),
+                            _ => Default::default(),
                         };
-                        for (side, c, w, m) in [(0, &r.left, wl, ml), (1, &r.right, wr, mr)] {
+                        for (side, c, w, m) in [(0, &r.left, wl, &ml), (1, &r.right, wr, &mr)] {
                             lists[side].push(
                                 widget::container(half(c, w, m))
                                     .height(Length::Fixed(DIFF_ROW_H))

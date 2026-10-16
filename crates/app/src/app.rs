@@ -615,6 +615,8 @@ pub enum Message {
     Browsed(Result<Vec<(String, String)>, mount::Error>),
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
+    /// The viewer's picture is in the renderer (redraws with it).
+    ListerAllocated(u64, Option<cosmic::iced::runtime::image::Allocation>),
     ListerKey(ListerKey),
     /// A viewer letter key typed in the panel: the viewer's when it is open, else the command line's.
     Letter(ListerKey, char),
@@ -627,6 +629,8 @@ pub enum Message {
     ListerPointerLeft,
     /// Comes instead of the second release.
     ListerDoubleClick,
+    /// The picture back to fitted in the window.
+    ListerFit,
     ListerResized(Size),
     /// Drop-down / A S K 8.
     ListerEncoding(shagoff_core::lister::Encoding),
@@ -1301,7 +1305,7 @@ impl App {
             Message::PropsRecursive => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
                     p.recursive = !p.recursive;
-                    p.mixed = if p.recursive { 0o777 } else { p.own_mixed };
+                    p.mixed = if p.recursive { 0o7777 } else { p.own_mixed };
                 }
             }
             Message::DirSize(side, tab, cwd, name, bytes) => {
@@ -1536,6 +1540,18 @@ impl App {
                     && l.id == id
                 {
                     l.set_loaded(loaded);
+                    if let Some(h) = l.raster_handle() {
+                        return cosmic::iced::runtime::image::allocate(h).map(move |a| {
+                            cosmic::Action::App(Message::ListerAllocated(id, a.ok()))
+                        });
+                    }
+                }
+            }
+            Message::ListerAllocated(id, a) => {
+                if let Some(l) = &mut self.lister
+                    && l.id == id
+                {
+                    l.allocation = a;
                 }
             }
             Message::ListerKey(k) if self.viewer() && self.dialog.is_none() && !self.busy() => {
@@ -1544,6 +1560,7 @@ impl App {
                     ListerKey::Next => self.lister_step(true),
                     ListerKey::Prev => self.lister_step(false),
                     ListerKey::Close => self.handle(Message::ListerClose),
+                    ListerKey::Zoom(up) => self.lister_zoom(up),
                     ListerKey::FindPrev => self.lister_find(false, true),
                     ListerKey::Encoding(e) => self.handle(Message::ListerEncoding(e)),
                     ListerKey::Wrap => self.handle(Message::ListerWrap),
@@ -1616,6 +1633,11 @@ impl App {
             Message::ListerScrolled(x, y, h) => {
                 if let Some(l) = &mut self.lister {
                     (l.offset, l.height) = ((x, y), h);
+                }
+            }
+            Message::ListerFit => {
+                if let Some(l) = &mut self.lister {
+                    l.zoom = None;
                 }
             }
             Message::ListerResized(size) => {
@@ -4550,6 +4572,9 @@ impl App {
         let l = self.lister.as_deref_mut()?;
         Some(match action {
             Action::Help | Action::About | Action::Settings | Action::Donate => return None,
+            // Num+ / Num-: bigger / smaller text, as + / - (TC zooms with them).
+            Action::SelectGroup => return Some(self.lister_zoom(true)),
+            Action::UnselectGroup => return Some(self.lister_zoom(false)),
             Action::View => self.lister_find(true, true),
             Action::Mkdir => self.lister_search(),
             Action::SelectAll => {
@@ -4569,6 +4594,24 @@ impl App {
                 None => Task::none(),
             },
         })
+    }
+
+    /// The viewer's text one size up or down: the same setting as in Settings, saved.
+    fn lister_zoom(&mut self, up: bool) -> Task<Message> {
+        // A picture: its zoom (TC), never the text size; still reading: not known which yet.
+        if let Some(l) = self.lister.as_deref_mut()
+            && (l.loaded.is_none() || l.mode == shagoff_core::lister::Mode::Image)
+        {
+            return match l.zoom_image(up) {
+                Some((x, y)) => lister_scroll(l, x, y),
+                None => Task::none(),
+            };
+        }
+        let size = config::size_step(self.config.lister_size(), up);
+        if size == self.config.lister_size() {
+            return Task::none();
+        }
+        self.set(crate::drawer::Setting::ListerSize(size))
     }
 
     fn lister_search(&mut self) -> Task<Message> {
@@ -8184,6 +8227,26 @@ mod tests {
     }
 
     #[test]
+    fn viewer_plus_minus_change_its_text_size_and_save_it() {
+        let (_tmp, mut app, _) = paste_setup();
+        app.lister = Some(Box::new(Lister::new(0, String::new(), 0, 14)));
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true))); // still reading: nothing
+        assert_eq!(app.config.lister_size, 14);
+        let text = crate::lister::Loaded::read(&_tmp.path().join("src/a"), "a").unwrap();
+        app.lister.as_mut().unwrap().set_loaded(Arc::new(Ok(text)));
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
+        let _ = app.update(Message::Key(Action::SelectGroup)); // Num+
+        assert_eq!(app.config.lister_size, 16);
+        assert_eq!(app.lister.as_ref().map(|l| l.size), Some(16));
+        let _ = app.update(Message::Key(Action::UnselectGroup)); // Num-
+        assert_eq!(app.config.lister_size, 15);
+        // A picture: no text to size.
+        app.lister.as_mut().unwrap().mode = shagoff_core::lister::Mode::Image;
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
+        assert_eq!(app.config.lister_size, 15);
+    }
+
+    #[test]
     fn regression_closing_the_viewer_scrolls_the_lists_back() {
         // F3 replaces the panels; Esc rebuilds their lists at the top while the tabs keep
         // their offsets: both must be scrolled back (two more task units than without a
@@ -8956,7 +9019,7 @@ mod tests {
             Some(Dialog::Props(p)) => (p.mode, p.mixed, p.touched),
             _ => panic!("no dialog"),
         };
-        assert_eq!(props(&app).1, 0o777);
+        assert_eq!(props(&app).1, 0o7777); // setuid, setgid, sticky too
         // group w: `?` → on even if the dir has it already (the contents may not)
         let _ = app.update(Message::PropsBit(0o020));
         let (m, _, touched) = props(&app);

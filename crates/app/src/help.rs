@@ -188,6 +188,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 o("↑ ↓ PgUp PgDn Home End, ← →", fl!("help-lister-scroll")),
                 o("1 / 3 / 4", fl!("help-lister-modes")),
                 o("W", fl!("help-lister-wrap")),
+                o("+ / −, Num+ / Num−", fl!("help-lister-zoom")),
                 o("A / S / K / 8", fl!("help-lister-encoding")),
                 o("N / P", fl!("help-lister-step")),
                 o("F7", fl!("help-lister-find")),

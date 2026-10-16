@@ -3,6 +3,7 @@
 use similar::{Algorithm, DiffOp, capture_diff_slices_deadline};
 use std::fs::{self, File};
 use std::io::{self, Read};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -231,24 +232,101 @@ pub fn rows_with(a: &str, b: &str, limit: usize, o: Opts) -> Text {
     t
 }
 
-/// The differing middle of a changed line pair: byte ranges after the common prefix and before
-/// the common suffix (on char boundaries; they never overlap).
-pub fn inline(a: &str, b: &str) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
-    let mut p = 0;
-    for (x, y) in a.chars().zip(b.chars()) {
-        if x != y {
-            break;
+/// A line cut into words (letters, digits, `_`), runs of spaces and single other chars.
+fn tokens(s: &str) -> Vec<Range<usize>> {
+    let class = |c: char| match c {
+        c if c.is_alphanumeric() || c == '_' => 0,
+        c if c.is_whitespace() => 1,
+        _ => 2,
+    };
+    let mut out: Vec<Range<usize>> = Vec::new();
+    let mut last = None;
+    for (i, c) in s.char_indices() {
+        let k = class(c);
+        match out.last_mut() {
+            Some(r) if last == Some(k) && k != 2 => r.end = i + c.len_utf8(),
+            _ => out.push(i..i + c.len_utf8()),
         }
-        p += x.len_utf8();
+        last = Some(k);
     }
-    let mut q = 0;
-    for (x, y) in a[p..].chars().rev().zip(b[p..].chars().rev()) {
-        if x != y {
-            break;
+    out
+}
+
+/// What differs in a changed line pair, word by word (TC marks the words): byte ranges in `a`
+/// and in `b` of the tokens outside their longest common sequence, compared as `o` compares lines.
+/// Marks with no letter or digit between are one (a rewritten `x.foo(a)` is one mark, not five);
+/// spaces at a mark's edges are left out, unless spaces are all that differs.
+pub fn words(a: &str, b: &str, o: Opts) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let (ta, tb) = (tokens(a), tokens(b));
+    let (ka, kb): (Vec<String>, Vec<String>) = (
+        ta.iter().map(|r| o.key(&a[r.clone()])).collect(),
+        tb.iter().map(|r| o.key(&b[r.clone()])).collect(),
+    );
+    // The common head and tail first: the table is only for what is between.
+    let head = ka.iter().zip(&kb).take_while(|(x, y)| x == y).count();
+    let tail = (ka[head..].iter().rev())
+        .zip(kb[head..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (n, m) = (ka.len() - head - tail, kb.len() - head - tail);
+    let (mut da, mut db) = (vec![false; ka.len()], vec![false; kb.len()]);
+    // ponytail: O(n·m) table on the differing middle; past the cap all of it is marked.
+    if n * m > 250_000 {
+        da[head..head + n].fill(true);
+        db[head..head + m].fill(true);
+    } else {
+        let eq = |i: usize, j: usize| ka[head + i] == kb[head + j];
+        // lcs[i][j]: the common length of the middles from i and j on.
+        let mut lcs = vec![vec![0u32; m + 1]; n + 1];
+        for i in (0..n).rev() {
+            for j in (0..m).rev() {
+                lcs[i][j] = if eq(i, j) {
+                    lcs[i + 1][j + 1] + 1
+                } else {
+                    lcs[i + 1][j].max(lcs[i][j + 1])
+                };
+            }
         }
-        q += x.len_utf8();
+        da[head..head + n].fill(true);
+        db[head..head + m].fill(true);
+        let (mut i, mut j) = (0, 0);
+        while i < n && j < m {
+            if eq(i, j) {
+                (da[head + i], db[head + j]) = (false, false);
+                (i, j) = (i + 1, j + 1);
+            } else if lcs[i + 1][j] >= lcs[i][j + 1] {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
     }
-    (p..a.len() - q, p..b.len() - q)
+    let marks = |s: &str, t: &[Range<usize>], d: &[bool], trim: bool| {
+        let mut out: Vec<Range<usize>> = Vec::new();
+        for (r, _) in t.iter().zip(d).filter(|(_, d)| **d) {
+            match out.last_mut() {
+                Some(l) if !s[l.end..r.start].chars().any(char::is_alphanumeric) => l.end = r.end,
+                _ => out.push(r.clone()),
+            }
+        }
+        if !trim {
+            return out;
+        }
+        out.into_iter()
+            .map(|r| {
+                let t = &s[r.clone()];
+                let start = r.start + (t.len() - t.trim_start().len());
+                start..start + t.trim().len()
+            })
+            .filter(|r| !r.is_empty())
+            .collect()
+    };
+    let (ma, mb) = (marks(a, &ta, &da, true), marks(b, &tb, &db, true));
+    match ma.is_empty() && mb.is_empty() {
+        // Only spaces differ: show where.
+        true => (marks(a, &ta, &da, false), marks(b, &tb, &db, false)),
+        false => (ma, mb),
+    }
 }
 
 /// Size and mtime of a file when it was read: saving checks nothing changed it since.
@@ -549,12 +627,40 @@ mod tests {
     }
 
     #[test]
-    fn inline_marks_the_differing_middle() {
-        assert_eq!(inline("let x = 1;", "let y = 1;"), (4..5, 4..5));
-        assert_eq!(inline("abc", "abXYc"), (2..2, 2..4));
-        assert_eq!(inline("привет", "превет"), (4..6, 4..6)); // on char boundaries
-        assert_eq!(inline("same", "same"), (4..4, 4..4));
-        assert_eq!(inline("aa", "aaa"), (2..2, 2..3)); // prefix and suffix never overlap
+    #[allow(clippy::single_range_in_vec_init)]
+    fn words_mark_only_the_differing_words() {
+        let w = |a, b| words(a, b, Opts::default());
+        assert_eq!(w("let x = 1;", "let y = 1;"), (vec![4..5], vec![4..5]));
+        assert_eq!(
+            w("a b c d", "a X c Y"),
+            (vec![2..3, 6..7], vec![2..3, 6..7])
+        ); // two places
+        assert_eq!(w("привет мир", "привет мор"), (vec![13..19], vec![13..19])); // bytes
+        assert_eq!(w("same", "same"), (vec![], vec![]));
+        // Words next to each other (a space between) are one mark.
+        assert_eq!(
+            w("one two three", "one 2 3 three"),
+            (vec![4..7], vec![4..7])
+        );
+        // Inserted only: nothing on the left.
+        assert_eq!(w("f(a, c)", "f(a, b, c)"), (vec![], vec![5..7]));
+        // A rewritten call: one mark, not a letter here and there between matching dots.
+        assert_eq!(w("x.foo(a, b)", "y.bar(c, d)"), (vec![0..10], vec![0..10]));
+        // Only spaces differ: they are the mark.
+        assert_eq!(w("a  b", "a b"), (vec![1..3], vec![1..2]));
+        // A long line with one word changed: that word, not the whole line.
+        let long_a = format!("{} x {}", "w ".repeat(400), "v ".repeat(400));
+        let long_b = format!("{} y {}", "w ".repeat(400), "v ".repeat(400));
+        assert_eq!(w(&long_a, &long_b), (vec![801..802], vec![801..802]));
+        // As the lines are compared: case ignored, case not marked.
+        let nocase = Opts {
+            ignore_case: true,
+            ..Opts::default()
+        };
+        assert_eq!(
+            words("Foo bar", "foo baz", nocase),
+            (vec![4..7], vec![4..7])
+        );
     }
 
     fn copy(a: &str, b: &str, block: usize, to_right: bool) -> Option<String> {
