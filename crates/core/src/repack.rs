@@ -88,6 +88,63 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
     report
 }
 
+/// F5 / F6 / Ctrl+V from one archive into another, or into another dir of the same one: extract
+/// `names` of the dir `inner` of `from` into a staging dir next to `to`, add them to its dir
+/// `to_inner`, then with `move_after` delete from `from` what was added completely.
+/// `completed`: `from/inner/name` of the names added.
+// ponytail: up to two rewrites of a whole archive; fine until big archives get slow.
+pub fn cross(
+    from: &Path,
+    inner: &Path,
+    names: &[PathBuf],
+    to: &Path,
+    to_inner: &Path,
+    move_after: bool,
+    h: &mut dyn Handler,
+) -> Report {
+    let mut report = Report::default();
+    // Next to the real file (as `modify` stages), not the link: one filesystem, one copy.
+    let real = fs::canonicalize(to).unwrap_or_else(|_| to.to_path_buf());
+    let dir = real.parent().unwrap_or(Path::new("."));
+    let staging = match retry(h, to, || archive::make_staging(dir)) {
+        Ok(s) => s,
+        Err(cancel) => {
+            report.cancelled = cancel;
+            return report;
+        }
+    };
+    let out = archive::extract(from, inner, names, &staging, h);
+    // Only what came out whole: a dir with a skipped entry must not be moved (deleted after).
+    let sources: Vec<PathBuf> = (names.iter())
+        .filter(|n| out.completed.contains(&from.join(inner).join(n)))
+        .map(|n| staging.join(n))
+        .collect();
+    if !out.cancelled && !sources.is_empty() {
+        let change = Change::Add {
+            sources,
+            inner: to_inner.to_path_buf(),
+        };
+        let r = modify(to, &change, h);
+        report.cancelled = r.cancelled;
+        report.completed = (names.iter())
+            .filter(|n| r.completed.contains(&staging.join(n)))
+            .map(|n| from.join(inner).join(n))
+            .collect();
+    } else {
+        report.cancelled = out.cancelled;
+    }
+    let _ = fs::remove_dir_all(&staging); // never follows symlinks
+    if move_after && !report.cancelled && !report.completed.is_empty() {
+        let entries = (report.completed.iter())
+            .filter_map(|p| p.strip_prefix(from).ok().map(Path::to_path_buf))
+            .collect();
+        let d = modify(from, &Change::Delete(entries), h);
+        report.cancelled = d.cancelled;
+        report.completed = d.completed; // moved = deleted from the source too
+    }
+    report
+}
+
 /// A zip entry with a non-ASCII name not marked UTF-8 (Windows zips in cp866 and the like).
 fn legacy_zip_names(archive: &Path) -> io::Result<bool> {
     let mut z = zip::ZipArchive::new(fs::File::open(archive)?)?;
@@ -354,6 +411,81 @@ mod tests {
         }
         v.sort();
         v
+    }
+
+    #[test]
+    fn cross_copies_between_archives_and_moves_inside_one() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let b = d.path().join("b.tar");
+        fs::rename(sample(&d.path().join("t"), Format::Tar), &b).unwrap();
+        let (n, h) = (vec![PathBuf::from("sub")], &mut Script::default());
+        // zip → tar, into a dir of it
+        let r = cross(&a, Path::new(""), &n, &b, Path::new("sub"), false, h);
+        assert!(!r.cancelled && r.completed == [a.join("sub")]);
+        assert_eq!(
+            contents(&b),
+            [
+                "a.txt=A",
+                "sub/",
+                "sub/b.txt=B",
+                "sub/sub/",
+                "sub/sub/b.txt=B"
+            ]
+        );
+        assert_eq!(contents(&a), ["a.txt=A", "sub/", "sub/b.txt=B"]);
+        // F6 inside one archive: a.txt into sub/
+        let n = vec![PathBuf::from("a.txt")];
+        let r = cross(&a, Path::new(""), &n, &a, Path::new("sub"), true, h);
+        assert!(!r.cancelled && r.completed == [a.join("a.txt")]);
+        assert_eq!(contents(&a), ["sub/", "sub/a.txt=A", "sub/b.txt=B"]);
+        assert!(no_leftovers(d.path()) && h.errors == 0);
+    }
+
+    #[test]
+    fn cross_skipped_conflict_is_not_moved() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let b = d.path().join("b.tar");
+        fs::rename(sample(&d.path().join("t"), Format::Tar), &b).unwrap();
+        let h = &mut Script {
+            conflicts: vec![Resolution::Skip],
+            ..Script::default()
+        };
+        let n = vec![PathBuf::from("a.txt")];
+        let r = cross(&a, Path::new(""), &n, &b, Path::new(""), true, h);
+        assert!(r.completed.is_empty() && h.conflicted == 1);
+        assert_eq!(contents(&a), ["a.txt=A", "sub/", "sub/b.txt=B"]);
+    }
+
+    #[test]
+    fn regression_cross_move_keeps_a_dir_not_extracted_whole() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (n, body) in [("docs/x", "XXXXXXXXXXXX"), ("docs/y", "YYYYYYYYYYYY")] {
+            z.start_file(n, stored).unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+        // docs/y's bytes no longer match its CRC: it fails to extract and is skipped.
+        let mut bytes = fs::read(&a).unwrap();
+        let at = bytes
+            .windows(12)
+            .position(|w| w == b"YYYYYYYYYYYY")
+            .unwrap();
+        bytes[at..at + 12].copy_from_slice(b"ZZZZZZZZZZZZ");
+        fs::write(&a, bytes).unwrap();
+        let b = sample(&d.path().join("t"), Format::Tar);
+        let h = &mut Script::default();
+        let n = vec![PathBuf::from("docs")];
+        let r = cross(&a, Path::new(""), &n, &b, Path::new(""), true, h);
+        assert!(h.errors > 0 && r.completed.is_empty());
+        let mut z = zip::ZipArchive::new(fs::File::open(&a).unwrap()).unwrap();
+        assert!(z.by_name("docs/y").is_ok()); // still in the source
     }
 
     fn no_leftovers(d: &Path) -> bool {
