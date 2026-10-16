@@ -389,6 +389,22 @@ pub struct Pack {
     pub format: Format,
     pub move_after: bool,
     pub separate: bool,
+    /// Zip / 7z: empty = not encrypted; typed twice, as in TC (a typo would lock the files away).
+    pub password: String,
+    pub again: String,
+}
+
+impl Pack {
+    /// The password to pack with; `Err` while the two fields differ.
+    pub fn password(&self) -> Result<Option<String>, ()> {
+        if !self.format.can_encrypt() || self.password.is_empty() && self.again.is_empty() {
+            Ok(None)
+        } else if self.password == self.again {
+            Ok(Some(self.password.clone()))
+        } else {
+            Err(())
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1263,10 +1279,33 @@ pub fn view<'a>(
                             .label(fl!("pack-separate"))
                             .on_toggle(|_| Message::Toggle(Toggle::Separate)),
                     ]
+                    .push_maybe(p.format.can_encrypt().then(|| {
+                        let pw = |label: String, value: &'a str, again: bool| {
+                            column![
+                                widget::text::caption(label),
+                                widget::secure_input("", value, None, true)
+                                    .on_input(move |s| Message::PackPassword(again, s))
+                                    .on_submit(|_| Message::DialogSubmit),
+                            ]
+                            .spacing(2)
+                            .width(Length::Fill)
+                        };
+                        row![
+                            pw(fl!("pack-password"), &p.password, false),
+                            pw(fl!("pack-password-again"), &p.again, true),
+                        ]
+                        .spacing(8)
+                    }))
+                    .push_maybe(
+                        p.password()
+                            .is_err()
+                            .then(|| widget::text::caption(fl!("pack-password-differ"))),
+                    )
                     .spacing(12),
                 )
                 .primary_action(
-                    widget::button::suggested(fl!("pack")).on_press(Message::DialogSubmit),
+                    widget::button::suggested(fl!("pack"))
+                        .on_press_maybe(p.password().is_ok().then_some(Message::DialogSubmit)),
                 )
                 .secondary_action(cancel)
                 .into()
