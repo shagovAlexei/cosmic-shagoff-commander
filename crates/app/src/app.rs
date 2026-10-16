@@ -3292,8 +3292,18 @@ impl App {
                     return None;
                 }
                 let dir = panel.cwd().to_path_buf();
-                // Hidden files count too, even when not shown; fall back to the listing.
-                let taken = multirename::other_names(&dir, &files).unwrap_or_else(|_| {
+                // Hidden files count too, even when not shown (in an archive: its own index);
+                // fall back to the listing.
+                let taken = match archive::split_path(&dir) {
+                    Some((a, inner)) => archive::list(&a, &inner, true).map(|v| {
+                        (v.into_iter())
+                            .map(|e| e.name)
+                            .filter(|n| !files.iter().any(|(f, _)| f == n))
+                            .collect()
+                    }),
+                    None => multirename::other_names(&dir, &files),
+                }
+                .unwrap_or_else(|_| {
                     panel
                         .entries()
                         .iter()
@@ -3523,7 +3533,10 @@ impl App {
                     self.dialog = Some(Dialog::MultiRename(m)); // Enter does nothing until fixed
                     return Task::none();
                 }
-                let pairs = multirename::plan(&m.dir, &rows);
+                // In an archive: paths inside it, for the repack.
+                let inner = archive::split_path(&m.dir);
+                let base = inner.as_ref().map_or(m.dir.as_path(), |(_, i)| i.as_path());
+                let pairs = multirename::plan(base, &rows);
                 if pairs.is_empty() {
                     return Task::none();
                 }
@@ -3532,11 +3545,7 @@ impl App {
                     .as_ref()
                     .and_then(|c| rows.iter().find(|r| &r.old == c))
                     .map(|r| r.new.clone());
-                if let Some((archive, _)) = archive::split_path(&m.dir) {
-                    let inside = |p: &Path| p.strip_prefix(&archive).map(Path::to_path_buf);
-                    let pairs = (pairs.iter())
-                        .filter_map(|(a, b)| Some((inside(a).ok()?, inside(b).ok()?)))
-                        .collect();
+                if let Some((archive, _)) = inner {
                     let job = Job::Repack {
                         archive,
                         change: Change::Rename(pairs),

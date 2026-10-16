@@ -294,10 +294,17 @@ fn apply(
             Ok(vec![archive.to_path_buf()])
         }
         Change::Rename(pairs) => {
+            // Skip skips that pair only (as Ctrl+M on disk); none done = the archive unchanged.
+            let mut any = false;
             for (from, to) in pairs {
                 retry(h, &archive.join(to), || {
                     ops::rename_noreplace(&inside(root, from, false)?, &inside(root, to, true)?)
-                })?;
+                })
+                .map(|()| any = true)
+                .or_else(|cancel| if cancel { Err(true) } else { Ok(()) })?;
+            }
+            if !any {
+                return Err(false);
             }
             Ok(vec![archive.to_path_buf()])
         }
@@ -508,6 +515,24 @@ mod tests {
         let r = modify(&a, &Change::Rename(pairs), &mut Script::default());
         assert_eq!(r.completed, std::slice::from_ref(&a));
         assert_eq!(contents(&a), ["a.txt=B", "b.txt=A", "sub/"]);
+    }
+
+    #[test]
+    fn rename_skip_skips_that_pair_only() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let h = &mut Script::default(); // errors answered Skip
+        let pairs = vec![
+            ("a.txt".into(), "sub".into()), // taken
+            ("sub/b.txt".into(), "sub/c.txt".into()),
+        ];
+        let r = modify(&a, &Change::Rename(pairs), h);
+        assert_eq!((h.errors, r.completed.len()), (1, 1));
+        assert_eq!(contents(&a), ["a.txt=A", "sub/", "sub/c.txt=B"]);
+        // Every pair skipped: nothing done, the archive left as it was.
+        let before = fs::read(&a).unwrap();
+        let r = modify(&a, &Change::Rename(vec![("a.txt".into(), "sub".into())]), h);
+        assert!(r.completed.is_empty() && fs::read(&a).unwrap() == before);
     }
 
     fn no_leftovers(d: &Path) -> bool {
