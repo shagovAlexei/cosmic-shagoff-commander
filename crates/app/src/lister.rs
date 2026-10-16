@@ -18,10 +18,10 @@ const ROW_H: f32 = 20.0;
 const MONO_W: f32 = 8.5;
 const HEX_COLS: usize = 77;
 /// Encodings in the order of the drop-down (code page names, not translated): ours with keys,
-/// then everything `lister::guess` can find.
-pub static ENCODINGS: std::sync::LazyLock<Vec<(Encoding, String)>> =
+/// then the others `lister::guess` can find, and a few to pick by hand.
+pub static ENCODINGS: std::sync::LazyLock<Vec<(Encoding, &'static str)>> =
     std::sync::LazyLock::new(|| {
-        use encoding_rs as e;
+        use shagoff_core::lister::encoding_rs as e;
         let ours = [
             (Encoding::Auto, "UTF-8"),
             (Encoding::Cp1251, "Windows-1251"),
@@ -52,16 +52,12 @@ pub static ENCODINGS: std::sync::LazyLock<Vec<(Encoding, String)>> =
             e::GBK,
             e::BIG5,
         ];
-        (ours.into_iter().map(|(enc, n)| (enc, n.to_string())))
-            .chain(
-                others
-                    .into_iter()
-                    .map(|c| (Encoding::Other(c), c.name().to_string())),
-            )
+        (ours.into_iter())
+            .chain(others.into_iter().map(|c| (Encoding::Other(c), c.name())))
             .collect()
     });
-static ENCODING_NAMES: std::sync::LazyLock<Vec<String>> =
-    std::sync::LazyLock::new(|| ENCODINGS.iter().map(|(_, n)| n.clone()).collect());
+static ENCODING_NAMES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| ENCODINGS.iter().map(|&(_, n)| n).collect());
 /// Arrow keys on a zoomed picture move it this many pixels.
 const PAN: f32 = 40.0;
 
@@ -285,7 +281,7 @@ impl Lister {
     pub fn set_loaded(&mut self, loaded: Arc<Result<Loaded, String>>) {
         if let Ok(l) = loaded.as_ref() {
             self.mode = lister::detect(&self.name, l.doc.text());
-            // Not UTF-8: guess the Cyrillic code page, unless one was chosen (A / S / K).
+            // Not UTF-8: guess the code page, unless one was chosen (A / S / K, the list).
             if self.mode == Mode::Text && !self.chosen {
                 self.encoding = lister::guess(&l.doc.bytes);
             }

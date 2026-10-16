@@ -4540,7 +4540,6 @@ dependencies = [
 name = "shagoff-commander"
 version = "0.52.0"
 dependencies = [
- "encoding_rs",
  "i18n-embed",
  "i18n-embed-fl",
  "image",
