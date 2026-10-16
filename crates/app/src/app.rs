@@ -448,6 +448,8 @@ pub enum Message {
     PackFormat(Format),
     /// Alt+F5's password field (`true`: the second one).
     PackPassword(bool, String),
+    /// The encrypted archive's password field.
+    ArchivePassword(String),
     /// Pack / unpack dialog checkboxes.
     Toggle(Toggle),
     FindInput(FindField, String),
@@ -1098,11 +1100,27 @@ impl App {
                         return self.reveal(side, tab);
                     }
                     Err(e) => {
+                        let ask = archive::needs_password(&e)
+                            .then(|| archive::split_path(&path))
+                            .flatten();
                         t.error = Some(fl!(
                             "list-failed",
                             path = path.display().to_string(),
                             err = e
-                        ))
+                        ));
+                        // A 7z with encrypted names: ask, then open it again.
+                        if let Some((arc, _)) = ask
+                            && self.dialog.is_none()
+                        {
+                            self.dialog = Some(Dialog::Password {
+                                wrong: archive::password(&arc).is_some(),
+                                archive: arc,
+                                password: String::new(),
+                                reply: None,
+                                open: Some((side, path)),
+                            });
+                            return widget::text_input::focus(self.input_id.clone());
+                        }
                     }
                 }
             }
@@ -1271,6 +1289,11 @@ impl App {
                     p.path = archive::with_format(&p.path, f);
                 }
                 self.save_pack_format(f);
+            }
+            Message::ArchivePassword(s) => {
+                if let Some(Dialog::Password { password, .. }) = &mut self.dialog {
+                    *password = s;
+                }
             }
             Message::PackPassword(again, s) => {
                 if let Some(Dialog::Pack(p)) = &mut self.dialog {
@@ -1775,6 +1798,11 @@ impl App {
                 }
                 Some(Dialog::Error { reply, .. }) => {
                     let _ = reply.send(ErrorChoice::Cancel);
+                }
+                Some(Dialog::Password { reply, .. }) => {
+                    if let Some(r) = reply {
+                        let _ = r.send(ErrorChoice::Cancel);
+                    }
                 }
                 Some(Dialog::Connect { .. }) => {
                     if let Some((_, cancel)) = &self.connecting {
@@ -2455,8 +2483,9 @@ impl App {
             Message::Quit if self.quitting => return self.handle(Message::Exit),
             Message::Quit if self.job.is_some() || !self.queue.is_empty() => {
                 // A job's question steps aside (its reply kept); any other dialog gives way.
-                if let Some(d @ (Dialog::Conflict { .. } | Dialog::Error { .. })) =
-                    self.dialog.take()
+                if let Some(
+                    d @ (Dialog::Conflict { .. } | Dialog::Error { .. } | Dialog::Password { .. }),
+                ) = self.dialog.take()
                 {
                     self.held = Some(d);
                 }
@@ -3750,6 +3779,22 @@ impl App {
                 }
                 Task::none()
             }
+            Dialog::Password {
+                archive,
+                password,
+                reply,
+                open,
+                ..
+            } => {
+                archive::set_password(&archive, Some(password));
+                if let Some(r) = reply {
+                    let _ = r.send(ErrorChoice::Retry);
+                }
+                match open {
+                    Some((side, dir)) => self.load(side, dir, None),
+                    None => Task::none(),
+                }
+            }
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. } | Dialog::DropMenu { .. }) => {
                 self.dialog = Some(d);
@@ -4878,6 +4923,17 @@ impl App {
                     reply,
                     name,
                 });
+            }
+            jobs::Event::Error { path, error, reply } if archive::needs_password(&error) => {
+                let wrong = archive::password(&path).is_some();
+                self.ask(Dialog::Password {
+                    archive: path,
+                    password: String::new(),
+                    wrong,
+                    reply: Some(reply),
+                    open: None,
+                });
+                return widget::text_input::focus(self.input_id.clone());
             }
             jobs::Event::Error { path, error, reply } => {
                 self.ask(Dialog::Error { path, error, reply });
@@ -7329,6 +7385,41 @@ mod tests {
         };
         assert_eq!((*op, input.as_str()), (InputOp::Copy, "*.*"));
         assert_eq!(sources.len(), 2);
+    }
+
+    #[test]
+    fn archive_password_error_asks_and_retries_with_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("e.zip");
+        let mut app = app_with(Config::default(), State::default());
+        let (reply, rx) = std::sync::mpsc::channel();
+        let _ = app.on_job_event(jobs::Event::Error {
+            path: a.clone(),
+            error: archive::PASSWORD_ERROR.into(),
+            reply,
+        });
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Password { wrong: false, .. })
+        ));
+        let _ = app.update(Message::ArchivePassword("pw".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(rx.try_recv(), Ok(ErrorChoice::Retry));
+        assert_eq!(archive::password(&a).as_deref(), Some("pw"));
+        // Asked again: the one given was wrong; Esc cancels the job.
+        let (reply, rx) = std::sync::mpsc::channel();
+        let _ = app.on_job_event(jobs::Event::Error {
+            path: a.clone(),
+            error: archive::PASSWORD_ERROR.into(),
+            reply,
+        });
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Password { wrong: true, .. })
+        ));
+        let _ = app.update(Message::DialogCancel);
+        assert_eq!(rx.try_recv(), Ok(ErrorChoice::Cancel));
+        archive::set_password(&a, None);
     }
 
     #[test]

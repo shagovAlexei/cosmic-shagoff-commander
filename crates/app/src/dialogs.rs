@@ -68,6 +68,18 @@ pub enum Dialog {
         error: String,
         reply: mpsc::Sender<ErrorChoice>,
     },
+    /// An encrypted archive read without its password (or with a wrong one): OK keeps the typed
+    /// one (`archive::set_password`) and the job retries.
+    Password {
+        archive: PathBuf,
+        password: String,
+        /// One was given already: it was wrong.
+        wrong: bool,
+        /// A job waiting for it (Retry / Cancel), or —
+        reply: Option<mpsc::Sender<ErrorChoice>>,
+        /// — a dir of the archive to open again once it is given (7z with encrypted names).
+        open: Option<(usize, PathBuf)>,
+    },
     /// Alt+F1/F2, Alt+↓, Ctrl+D: a snapshot taken when the list opened.
     List {
         kind: ListKind,
@@ -1922,6 +1934,30 @@ pub fn view<'a>(
                 )
                 .into()
         }
+        Dialog::Password {
+            archive,
+            password,
+            wrong,
+            ..
+        } => widget::dialog()
+            .title(fl!("archive-password"))
+            .body(if *wrong {
+                fl!(
+                    "archive-password-wrong",
+                    name = archive.display().to_string()
+                )
+            } else {
+                archive.display().to_string()
+            })
+            .control(
+                widget::secure_input("", password.as_str(), None, true)
+                    .id(input_id.clone())
+                    .on_input(Message::ArchivePassword)
+                    .on_submit(|_| Message::DialogSubmit),
+            )
+            .primary_action(ok)
+            .secondary_action(cancel)
+            .into(),
         Dialog::Error { path, error, .. } => widget::dialog()
             .title(fl!("op-error"))
             .body(format!("{}\n{error}", path.display()))

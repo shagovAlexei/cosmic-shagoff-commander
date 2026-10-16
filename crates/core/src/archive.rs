@@ -458,10 +458,67 @@ fn read_tar(r: impl Read, st: &mut Stage) -> Result<(), Stop> {
     Ok(())
 }
 
-fn read_zip(r: Counted, st: &mut Stage) -> Result<(), Stop> {
+/// The text of the error for an encrypted archive opened without its password, or with a wrong
+/// one: the app asks for it (`needs_password`) and retries.
+pub const PASSWORD_ERROR: &str = "the archive's password is needed (or the one given is wrong)";
+
+pub fn needs_password(error: &str) -> bool {
+    error == PASSWORD_ERROR
+}
+
+fn password_error() -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, PASSWORD_ERROR)
+}
+
+/// Passwords typed for archives, kept until the program exits (never written anywhere).
+static PASSWORDS: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, String>>> =
+    std::sync::Mutex::new(None);
+
+fn password_key(archive: &Path) -> PathBuf {
+    fs::canonicalize(archive).unwrap_or_else(|_| archive.to_path_buf())
+}
+
+/// Remember (or forget, `None`) the password for `archive`.
+pub fn set_password(archive: &Path, password: Option<String>) {
+    let mut m = PASSWORDS.lock().unwrap_or_else(|e| e.into_inner());
+    let m = m.get_or_insert_with(std::collections::HashMap::new);
+    match password {
+        Some(p) => m.insert(password_key(archive), p),
+        None => m.remove(&password_key(archive)),
+    };
+}
+
+pub fn password(archive: &Path) -> Option<String> {
+    let m = PASSWORDS.lock().unwrap_or_else(|e| e.into_inner());
+    m.as_ref()?.get(&password_key(archive)).cloned()
+}
+
+fn zip_password_error(e: zip::result::ZipError) -> io::Error {
+    use zip::result::ZipError;
+    match e {
+        ZipError::InvalidPassword => password_error(),
+        ZipError::UnsupportedArchive(m) if m == ZipError::PASSWORD_REQUIRED => password_error(),
+        e => e.into(),
+    }
+}
+
+fn sz_password_error(e: sevenz_rust2::Error) -> io::Error {
+    match e {
+        sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => {
+            password_error()
+        }
+        e => io::Error::other(e),
+    }
+}
+
+fn read_zip(r: Counted, st: &mut Stage, password: Option<&str>) -> Result<(), Stop> {
     let mut z = zip::ZipArchive::new(r)?;
     for i in 0..z.len() {
-        let mut e = z.by_index(i)?;
+        let e = match password {
+            Some(pw) => z.by_index_decrypt(i, pw.as_bytes()),
+            None => z.by_index(i),
+        };
+        let mut e = e.map_err(zip_password_error)?;
         let name = PathBuf::from(e.name());
         let (mode, mtime) = (e.unix_mode(), e.last_modified().and_then(from_zip_time));
         let kind = if e.is_dir() {
@@ -500,9 +557,9 @@ const UNIX_EXTENSION: u32 = 0x8000;
 const S_IFMT: u32 = 0o170000;
 const S_IFLNK: u32 = 0o120000;
 
-fn read_7z(r: Counted, st: &mut Stage) -> Result<(), Stop> {
-    let mut a = sevenz_rust2::ArchiveReader::new(r, sevenz_rust2::Password::empty())
-        .map_err(io::Error::other)?;
+fn read_7z(r: Counted, st: &mut Stage, password: Option<&str>) -> Result<(), Stop> {
+    let pw = password.map_or_else(sevenz_rust2::Password::empty, Into::into);
+    let mut a = sevenz_rust2::ArchiveReader::new(r, pw).map_err(sz_password_error)?;
     let mut stop = None;
     let done = a.for_each_entries(|e, data| {
         if e.is_anti_item() {
@@ -531,9 +588,14 @@ fn read_7z(r: Counted, st: &mut Stage) -> Result<(), Stop> {
             }
         }
     });
+    // A wrong 7z password decrypts to garbage: the decoder fails, not a password check.
+    // ponytail: any read error with a password given counts as a wrong one; a damaged archive
+    // then asks again (Cancel ends it). A full-disk write error too — rare with a password.
     match (stop, done) {
+        (Some(Stop::Fail(_)), _) if password.is_some() => Err(Stop::Fail(password_error())),
         (Some(s), _) => Err(s),
-        (None, Err(e)) => Err(Stop::Fail(io::Error::other(e))),
+        (None, Err(_)) if password.is_some() => Err(Stop::Fail(password_error())),
+        (None, Err(e)) => Err(Stop::Fail(sz_password_error(e))),
         (None, Ok(())) => Ok(()),
     }
 }
@@ -555,8 +617,8 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
         )
     };
     match f {
-        Format::Zip => read_zip(r, st),
-        Format::SevenZ => read_7z(r, st),
+        Format::Zip => read_zip(r, st, password(archive).as_deref()),
+        Format::SevenZ => read_7z(r, st, password(archive).as_deref()),
         Format::Tar => read_tar(r, st),
         Format::TarGz => read_tar(flate2::read::MultiGzDecoder::new(r), st),
         Format::TarBz2 => read_tar(bzip2::read::MultiBzDecoder::new(r), st),
@@ -673,11 +735,11 @@ fn read_index(f: Format, archive: &Path, stop: &AtomicBool) -> io::Result<Vec<It
             }
         }
         Format::SevenZ => {
-            let a = sevenz_rust2::Archive::read(
-                &mut io::BufReader::new(file),
-                &sevenz_rust2::Password::empty(),
-            )
-            .map_err(io::Error::other)?;
+            // Names encrypted too (7-Zip's option): listed only with the password.
+            let pw = (password(archive).as_deref())
+                .map_or_else(sevenz_rust2::Password::empty, Into::into);
+            let a = sevenz_rust2::Archive::read(&mut io::BufReader::new(file), &pw)
+                .map_err(sz_password_error)?;
             for e in &a.files {
                 if e.is_anti_item() {
                     continue;
@@ -1818,6 +1880,8 @@ mod tests {
         conflicts: Vec<Resolution>,
         errors: Vec<ErrorChoice>,
         errored: Vec<PathBuf>,
+        /// The errors' texts.
+        errors_seen: Vec<String>,
         cancel: bool,
     }
     impl Handler for Script {
@@ -1829,8 +1893,9 @@ mod tests {
                 self.conflicts.remove(0)
             }
         }
-        fn error(&mut self, p: &Path, _: &io::Error) -> ErrorChoice {
+        fn error(&mut self, p: &Path, e: &io::Error) -> ErrorChoice {
             self.errored.push(p.to_path_buf());
+            self.errors_seen.push(e.to_string());
             if self.errors.is_empty() {
                 ErrorChoice::Cancel
             } else {
@@ -2805,6 +2870,78 @@ mod tests {
                 assert_eq!(open("pw").unwrap(), b"secret");
             }
         }
+    }
+
+    #[test]
+    fn encrypted_archives_ask_then_open_and_stay_encrypted_when_changed() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("s.txt"), "secret").unwrap();
+        let src = vec![d.path().join("s.txt")];
+        for f in [Format::Zip, Format::SevenZ] {
+            let a = d.path().join(format!("e.{}", f.ext()));
+            let groups = [(src.clone(), a.clone())];
+            pack_with(f, d.path(), &groups, Some("pw"), &mut Script::default());
+            let out = d.path().join(format!("out-{}", f.ext()));
+            fs::create_dir(&out).unwrap();
+            // No password, then a wrong one: the error says so, nothing comes out.
+            for pw in [None, Some("bad")] {
+                set_password(&a, pw.map(str::to_string));
+                let mut h = Script::default();
+                unpack(std::slice::from_ref(&a), &out, false, &mut h);
+                assert!(
+                    h.errors_seen.iter().any(|e| needs_password(e)),
+                    "{f:?} {pw:?}"
+                );
+                assert!(fs::read_dir(&out).unwrap().next().is_none(), "{f:?}");
+            }
+            set_password(&a, Some("pw".into()));
+            unpack(
+                std::slice::from_ref(&a),
+                &out,
+                false,
+                &mut Script::default(),
+            );
+            assert_eq!(fs::read_to_string(out.join("s.txt")).unwrap(), "secret");
+            // Changed (F7 inside): packed again with the same password.
+            crate::repack::modify(
+                &a,
+                &crate::repack::Change::Mkdir("n".into()),
+                &mut Script::default(),
+            );
+            assert!(
+                !fs::read(&a).unwrap().windows(6).any(|w| w == b"secret"),
+                "{f:?}"
+            );
+            set_password(&a, None);
+            let mut h = Script::default();
+            unpack(std::slice::from_ref(&a), &d.path().join("x"), false, &mut h);
+            assert!(
+                h.errors_seen.iter().any(|e| needs_password(e)),
+                "{f:?} after repack"
+            );
+        }
+    }
+
+    #[test]
+    fn sevenz_with_encrypted_names_lists_only_with_the_password() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("n.7z");
+        let mut w = sevenz_rust2::ArchiveWriter::new(fs::File::create(&a).unwrap()).unwrap();
+        w.set_content_methods(vec![
+            sevenz_rust2::encoder_options::AesEncoderOptions::new("pw".into()).into(),
+            sevenz_rust2::EncoderMethod::LZMA2.into(),
+        ]); // the header is encrypted by default
+        let e = sevenz_rust2::ArchiveEntry::new_file("hidden.txt");
+        w.push_archive_entry(e, Some(&b"x"[..])).unwrap();
+        w.finish().unwrap();
+        let err = list(&a, Path::new(""), true).unwrap_err();
+        assert!(needs_password(&err.to_string()), "{err}");
+        set_password(&a, Some("pw".into()));
+        let names: Vec<String> = (list(&a, Path::new(""), true).unwrap().into_iter())
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["hidden.txt"]);
+        set_password(&a, None);
     }
 
     #[test]

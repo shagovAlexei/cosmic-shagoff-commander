@@ -193,7 +193,10 @@ fn rewrite(
     })?;
     children.sort();
     let new = staging.join(name);
-    let p = archive::pack(format, &root, &[(children.clone(), new.clone())], h);
+    // An encrypted archive stays encrypted, with the password it was opened with.
+    let pw = archive::password(archive);
+    let groups = [(children.clone(), new.clone())];
+    let p = archive::pack_with(format, &root, &groups, pw.as_deref(), h);
     if p.cancelled {
         return Err(true);
     }
