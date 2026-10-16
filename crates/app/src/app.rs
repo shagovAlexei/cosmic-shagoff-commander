@@ -1270,6 +1270,12 @@ impl App {
             Message::Toggle(t) => match (&mut self.dialog, t) {
                 (Some(Dialog::Pack(p)), Toggle::MoveAfter) => p.move_after = !p.move_after,
                 (Some(Dialog::Pack(p)), Toggle::Separate) => p.separate = !p.separate,
+                (Some(Dialog::Pack(p)), Toggle::Encrypt) => {
+                    p.encrypt = !p.encrypt;
+                    if p.encrypt {
+                        return widget::text_input::focus(widget::Id::new("pack-password"));
+                    }
+                }
                 (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
                 _ => {}
             },
@@ -3359,6 +3365,7 @@ impl App {
                     format,
                     move_after: false,
                     separate: false,
+                    encrypt: false,
                     password: String::new(),
                     again: String::new(),
                 })))
@@ -8761,6 +8768,10 @@ mod tests {
         let (_tmp, mut app) = pack_setup();
         let _ = app.update(Message::Key(Action::Pack));
         let _ = app.update(Message::PackFormat(Format::Zip));
+        let _ = app.update(Message::Toggle(dialogs::Toggle::Encrypt));
+        // «Шифровать» with no password: OK does nothing.
+        let _ = app.update(Message::DialogSubmit);
+        assert!(app.job.is_none() && matches!(app.dialog, Some(Dialog::Pack(_))));
         let _ = app.update(Message::PackPassword(false, "pw".into()));
         let _ = app.update(Message::PackPassword(true, "pq".into()));
         let _ = app.update(Message::DialogSubmit);
