@@ -601,7 +601,14 @@ pub fn find_line(
         return None;
     }
     let q = query.to_lowercase();
-    let hit = |&i: &usize| line_text(bytes, &lines[i]).to_lowercase().contains(&q);
+    // ASCII without spaces (a tab is shown as four): compared in place, nothing allocated per line.
+    let fast = query.is_ascii() && !query.contains(' ');
+    let hit = |&i: &usize| match fast {
+        true => {
+            (bytes[lines[i].clone()].windows(q.len())).any(|w| w.eq_ignore_ascii_case(q.as_bytes()))
+        }
+        false => line_text(bytes, &lines[i]).to_lowercase().contains(&q),
+    };
     if forward {
         (start..lines.len()).find(hit)
     } else {
@@ -955,6 +962,25 @@ mod tests {
     fn wide_chars_count_double() {
         let b = "a日本🙂".as_bytes();
         assert_eq!(width(b, &(0..b.len())), 7);
+    }
+
+    #[test]
+    fn find_line_in_place_or_as_shown() {
+        let b = ["abc\nxFoO\tbar\nпривет FOO\n".as_bytes(), b"\xff foo"].concat();
+        let b = b.as_slice();
+        let lines = lines(b, MAX_COLS, false);
+        let find = |q, s, f| find_line(b, &lines, q, s, f);
+        assert_eq!(
+            (find("foo", 0, true), find("foo", 2, true)),
+            (Some(1), Some(2))
+        );
+        assert_eq!(
+            (find("FOO", 3, false), find("foo", 0, false)),
+            (Some(3), None)
+        );
+        assert_eq!(find("o    b", 0, true), Some(1)); // a space: through the tab as shown
+        assert_eq!(find("ПРИВЕТ", 0, true), Some(2));
+        assert_eq!(find("abcd", 0, true), None);
     }
 
     #[test]
