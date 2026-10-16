@@ -689,7 +689,7 @@ fn dnd_row<'a>(
 ) -> Element<'a, Message> {
     let e = &p.panel.entries()[i];
     // Not `..`. From inside an archive only to our own panes: other programs would get paths that
-    // are not on disk (Ctrl+C extracts for that, a drag cannot).
+    // are not on disk.
     let row = if e.name == PARENT {
         row
     } else {

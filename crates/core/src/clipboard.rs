@@ -6,8 +6,8 @@ use url::Url;
 
 pub const GNOME: &str = "x-special/gnome-copied-files";
 pub const URI_LIST: &str = "text/uri-list";
-/// Our own drag of entries inside an archive: the uri-list format under a type no other program
-/// takes (their paths are not on disk), so only our panes accept the drop.
+/// Our own drag / copy / cut of entries inside an archive: the gnome format (copy or cut) under a
+/// type no other program takes (their paths are not on disk), so only our panes accept them.
 pub const INNER: &str = "application/x-shagoff-paths";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,12 +59,12 @@ pub fn decode(mime: &str, data: &[u8]) -> Option<(Kind, Vec<PathBuf>)> {
     let text = std::str::from_utf8(data).ok()?;
     let mut lines = text.lines().map(|l| l.trim_end_matches('\r'));
     let kind = match mime {
-        GNOME => match lines.next()? {
+        GNOME | INNER => match lines.next()? {
             "copy" => Kind::Copy,
             "cut" => Kind::Cut,
             _ => return None,
         },
-        URI_LIST | INNER => Kind::Copy,
+        URI_LIST => Kind::Copy,
         _ => return None,
     };
     let paths = lines
@@ -95,10 +95,12 @@ mod tests {
     }
 
     #[test]
-    fn our_own_list_reads_back_as_a_copy() {
+    fn our_own_type_keeps_copy_or_cut() {
         let p = vec![PathBuf::from("/x/a.zip/docs/при вет.txt")];
-        let data = encode(Kind::Copy, &p).uri_list;
-        assert_eq!(decode(INNER, data.as_bytes()), Some((Kind::Copy, p)));
+        for kind in [Kind::Copy, Kind::Cut] {
+            let data = encode(kind, &p).gnome;
+            assert_eq!(decode(INNER, data.as_bytes()), Some((kind, p.clone())));
+        }
     }
 
     #[test]
