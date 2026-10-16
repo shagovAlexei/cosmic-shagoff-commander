@@ -1265,6 +1265,7 @@ impl App {
                         FindField::MinSize => &mut f.min_size,
                         FindField::MaxSize => &mut f.max_size,
                         FindField::Days => &mut f.days,
+                        FindField::Attrs => &mut f.attrs,
                     } = s;
                 }
             }
@@ -3353,6 +3354,7 @@ impl App {
                     min_size: self.find.min_size.clone(),
                     max_size: self.find.max_size.clone(),
                     days: self.find.days.clone(),
+                    attrs: self.find.attrs.clone(),
                     error: None,
                     root: None,
                     results: Vec::new(),
@@ -4152,6 +4154,7 @@ impl App {
             min_size: f.min_size.clone(),
             max_size: f.max_size.clone(),
             days: f.days.clone(),
+            attrs: f.attrs.clone(),
         };
         let root = self.panes[side].active().target().join(f.dir.trim());
         let root_searched = root.clone();
@@ -5984,6 +5987,8 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
     {
         return Err(fl!("find-bad-range"));
     }
+    let attrs = shagoff_core::colors::attrs(&f.attrs)
+        .ok_or_else(|| fl!("find-bad-attrs", value = f.attrs.trim()))?;
     let regex = match (f.regex, text.is_empty()) {
         (true, false) => Some(
             shagoff_core::search::regex(&text, f.case_sensitive)
@@ -6014,6 +6019,7 @@ fn find_query(f: &dialogs::Find, text: String) -> Result<shagoff_core::search::Q
                 .checked_sub(std::time::Duration::from_secs(d.saturating_mul(86400)))
                 .unwrap_or(SystemTime::UNIX_EPOCH)
         }),
+        attrs: Some(attrs),
         ..Default::default()
     })
 }
@@ -9208,6 +9214,12 @@ mod tests {
         let f = find_dialog(&mut app);
         assert!(f.stop.is_none() && f.error.is_some());
         let _ = app.update(Message::FindInput(FindField::MinSize, "10".into()));
+        // An attribute letter that is none of h r s x: said, not searched.
+        let _ = app.update(Message::FindInput(FindField::Attrs, "hq".into()));
+        let _ = app.update(Message::FindStart);
+        let f = find_dialog(&mut app);
+        assert!(f.stop.is_none() && f.error.is_some());
+        let _ = app.update(Message::FindInput(FindField::Attrs, "x".into()));
         let _ = app.update(Message::FindInput(FindField::Text, "(".into()));
         let _ = app.update(Message::FindRegex);
         let _ = app.update(Message::FindStart);
