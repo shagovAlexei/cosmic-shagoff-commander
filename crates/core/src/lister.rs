@@ -196,6 +196,14 @@ impl Text {
 
 const IMAGES: [&str; 8] = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg"];
 
+/// Bigger files get their type's icon in the Thumbnails view: decoding them takes long.
+pub const THUMB_MAX_BYTES: u64 = 64 << 20;
+
+/// Whether `name` (`size` bytes) gets a thumbnail made (svg: not decodable there, it gets its icon).
+pub fn thumb_wanted(name: &str, size: u64) -> bool {
+    size <= THUMB_MAX_BYTES && is_image(name) && !name.to_ascii_lowercase().ends_with(".svg")
+}
+
 pub fn is_image(name: &str) -> bool {
     name.rsplit_once('.')
         .is_some_and(|(_, ext)| IMAGES.contains(&ext.to_ascii_lowercase().as_str()))
@@ -477,6 +485,12 @@ pub fn pos_at(x: f32, y: f32, row_h: f32, char_w: f32, rows: usize) -> Pos {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbs_for_raster_pictures_not_too_big() {
+        assert!(thumb_wanted("a.JPG", 10) && !thumb_wanted("a.svg", 10));
+        assert!(!thumb_wanted("a.txt", 10) && !thumb_wanted("a.png", THUMB_MAX_BYTES + 1));
+    }
 
     #[test]
     fn zoom_steps_from_fit_and_between_steps() {

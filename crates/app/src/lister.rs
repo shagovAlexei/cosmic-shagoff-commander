@@ -65,20 +65,12 @@ impl Loaded {
 /// Turned by its EXIF orientation, as the renderer would. Not decodable here: the bytes, for the
 /// renderer to try, with no size known.
 fn raster(bytes: &[u8]) -> Image {
-    use image::ImageDecoder;
-    let decoded = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_decoder().ok())
-        .and_then(|mut d| {
-            let turn = d.orientation().ok();
-            let mut img = image::DynamicImage::from_decoder(d).ok()?;
-            if let Some(o) = turn {
-                img.apply_orientation(o);
-            }
-            Some(img.into_rgba8())
-        });
-    match decoded {
+    match decode(
+        bytes,
+        image::Limits::default().max_alloc.unwrap_or(u64::MAX),
+    )
+    .map(image::DynamicImage::into_rgba8)
+    {
         Some(px) => {
             let (w, h) = px.dimensions();
             Image::Raster(
@@ -88,6 +80,25 @@ fn raster(bytes: &[u8]) -> Image {
         }
         None => Image::Raster(widget::image::Handle::from_bytes(bytes.to_vec()), None),
     }
+}
+
+/// The picture in `bytes`, turned by its EXIF orientation; `None` if not decodable here or
+/// needing more than `max_alloc` bytes.
+pub(crate) fn decode(bytes: &[u8], max_alloc: u64) -> Option<image::DynamicImage> {
+    use image::ImageDecoder;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(max_alloc);
+    let mut r = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    r.limits(limits);
+    let mut d = r.into_decoder().ok()?;
+    let turn = d.orientation().ok();
+    let mut img = image::DynamicImage::from_decoder(d).ok()?;
+    if let Some(o) = turn {
+        img.apply_orientation(o);
+    }
+    Some(img)
 }
 
 pub struct Lister {

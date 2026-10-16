@@ -13,6 +13,7 @@ mod jobs;
 mod keymap;
 mod lister;
 mod menu;
+mod thumbs;
 mod toolbar;
 mod view;
 mod watcher;

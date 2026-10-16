@@ -109,7 +109,9 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             .into(),
     };
 
-    let list = if p.brief {
+    let list = if p.thumbs {
+        thumb_list(app, side, p, active)
+    } else if p.brief {
         brief_list(app, side, p, active)
     } else {
         full_list(app, side, p, active)
@@ -387,6 +389,90 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
         .into()
 }
 
+/// Thumbnails view (TC Ctrl+Shift+F1): cells left to right, then down; scrolled by pixels like
+/// the Full view, only the rows on screen built.
+fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
+    let (skin, hover, scheme) = (app.config.skin, app.drop_hover, &app.scheme);
+    let font = app.panel_font();
+    let cell_h = crate::thumbs::cell_h(app.row_h());
+    let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
+    let cols = p.thumb_cols();
+    let range = viewport::thumb_range(entries.len(), cols, cell_h, p.offset, p.height);
+    let (first, last) = (range.start / cols, entries.len().div_ceil(cols));
+    let mut list = column![widget::Space::new().height(first as f32 * cell_h)];
+    let marked = OnceCell::new();
+    let inner = shagoff_core::archive::within(p.panel.cwd());
+    let size = crate::thumbs::SIZE as f32;
+    for start in range.clone().step_by(cols) {
+        let mut line = row![];
+        for (i, e) in entries
+            .iter()
+            .enumerate()
+            .take(range.end)
+            .skip(start)
+            .take(cols)
+        {
+            let label = if e.is_dir() {
+                format::display_name(e)
+            } else {
+                e.name.clone()
+            };
+            let on = i == cursor || hover == Some((side, i));
+            let look = scheme.pick(e, std::time::SystemTime::now());
+            let paint = look
+                .filter(|_| !on && !p.panel.is_marked(e))
+                .and_then(|l| l.fg);
+            let pic = (app.thumbs.get(&p.panel.cwd().join(&e.os_name)))
+                .and_then(|(m, h)| h.as_ref().filter(|_| *m == e.mtime));
+            let pic: Element<'_, Message> = match pic {
+                Some(h) => widget::image(h.clone()).into(),
+                None => entry_icon(e, 64).into(),
+            };
+            let name = painted(label, paint, font);
+            let cell = column![
+                container(pic).center(Length::Fixed(size)),
+                container(name).center_x(Length::Fill).clip(true),
+            ]
+            .align_x(Alignment::Center);
+            let cell = container(cell)
+                .padding(4)
+                .width(Length::Fixed(crate::thumbs::CELL_W))
+                .height(Length::Fixed(cell_h))
+                .clip(true)
+                .class(cursor_style(
+                    on,
+                    active,
+                    p.panel.is_marked(e),
+                    skin,
+                    look.and_then(|l| l.bg),
+                    false,
+                    scheme.paint(),
+                ));
+            let cell = mouse_area(cell)
+                .on_press(Message::Click(side, i))
+                .on_right_press(Message::RightClick(side, i))
+                .on_double_click(Message::DoubleClick(side, i));
+            line = line.push(dnd_row(
+                app.window_id(),
+                side,
+                p,
+                i,
+                &marked,
+                inner,
+                cell.into(),
+            ));
+        }
+        list = list.push(line);
+    }
+    let rows_after = last.saturating_sub(range.end.div_ceil(cols));
+    list = list.push(widget::Space::new().height(rows_after as f32 * cell_h));
+    scrollable(list)
+        .id(app.scroll_ids[side].clone())
+        .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
+        .height(Length::Fill)
+        .into()
+}
+
 /// Theme icon by type, then the name (cut with "…").
 /// `paint`: the name's colour by type (`None` on the cursor / a marked row: its own colour wins).
 /// The theme's icon for `e` (its type's, else the generic one).
@@ -415,15 +501,7 @@ fn name_cell(
         } * size
             / PANEL_SIZE,
     );
-    let cell = |s| panel_cell(s, (font, size));
-    let label = match paint {
-        Some(Paint::Accent) => cell(label).class(theme::Text::Accent),
-        Some(Paint::Rgb([r, g, b])) => {
-            cell(label).class(theme::Text::Color(Color::from_rgb8(r, g, b)))
-        }
-        None => cell(label),
-    };
-    row![icon, label]
+    row![icon, painted(label, paint, (font, size))]
         .spacing(4)
         .align_y(Alignment::Center)
         .into()
@@ -784,6 +862,20 @@ fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
 }
 
 /// A cell of the file list, in its font (Configuration → Settings → Fonts).
+/// A list name in its colour by type (`None`: the row's own).
+fn painted(
+    label: String,
+    paint: Option<Paint>,
+    font: (Font, u16),
+) -> widget::Text<'static, cosmic::Theme> {
+    let cell = panel_cell(label, font);
+    match paint {
+        Some(Paint::Accent) => cell.class(theme::Text::Accent),
+        Some(Paint::Rgb([r, g, b])) => cell.class(theme::Text::Color(Color::from_rgb8(r, g, b))),
+        None => cell,
+    }
+}
+
 fn panel_cell(s: String, (font, size): (Font, u16)) -> widget::Text<'static, cosmic::Theme> {
     text(s)
         .size(size)

@@ -129,9 +129,25 @@ pub fn brief_first_col(len: usize, cursor: usize, rows: usize, cols: usize, firs
     first.min(last_first)
 }
 
+/// Thumbnails view: the entries on screen, whole rows of `cols` cells `cell_h` px high.
+pub fn thumb_range(len: usize, cols: usize, cell_h: f32, offset: f32, height: f32) -> Range<usize> {
+    let cols = cols.max(1);
+    let rows = visible_range(len.div_ceil(cols), cell_h, offset, height);
+    rows.start * cols..(rows.end * cols).min(len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumb_range_whole_rows() {
+        // 4 per row, 100 px rows, 250 px high: rows 0..4 + 2 overscan of 25 rows
+        assert_eq!(thumb_range(100, 4, 100.0, 0.0, 250.0), 0..24);
+        assert_eq!(thumb_range(10, 4, 100.0, 0.0, 250.0), 0..10);
+        assert_eq!(thumb_range(100, 4, 100.0, 1000.0, 250.0), 32..64);
+        assert_eq!(thumb_range(0, 0, 100.0, 0.0, 250.0), 0..0);
+    }
 
     #[test]
     fn split_follows_the_pointer_within_bounds() {

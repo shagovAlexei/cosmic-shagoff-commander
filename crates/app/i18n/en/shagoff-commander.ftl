@@ -246,6 +246,7 @@ menu-sort-ext = Sort by extension
 menu-sort-date = Sort by date
 menu-sort-size = Sort by size
 menu-brief = Brief
+menu-thumbs = Thumbnails
 menu-full = Full
 menu-reset-columns = Reset column widths
 
@@ -279,6 +280,7 @@ help-search = Search and compare
 help-tabs = Tabs
 help-next-tab = Next / previous tab
 help-brief-cols = Brief view: previous / next column
+help-thumbs-cells = Thumbnails view: next cell / row
 help-drives = Drives and network
 help-show = View
 help-window = Window

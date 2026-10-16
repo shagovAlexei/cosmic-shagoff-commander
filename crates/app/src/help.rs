@@ -17,6 +17,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 o("Tab", fl!("help-tab")),
                 o("↑ ↓ PgUp PgDn Home End", fl!("help-cursor")),
                 o("← →", fl!("help-brief-cols")),
+                o("← → ↑ ↓", fl!("help-thumbs-cells")),
                 r("Enter, Ctrl+PgDn", fl!("help-enter"), Action::Enter),
                 o("Backspace, Ctrl+PgUp", fl!("help-parent")),
                 o("Ctrl+\\", fl!("help-root")),
@@ -138,6 +139,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+H", fl!("menu-hidden"), Action::ToggleHidden),
                 r("Ctrl+F1", fl!("menu-brief"), Action::ViewBrief),
                 r("Ctrl+F2", fl!("menu-full"), Action::ViewFull),
+                r("Ctrl+Shift+F1", fl!("menu-thumbs"), Action::ViewThumbs),
                 r(
                     "Ctrl+F3",
                     fl!("menu-sort-name"),
