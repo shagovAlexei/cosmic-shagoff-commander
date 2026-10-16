@@ -93,39 +93,52 @@ pub enum Encoding {
     Cp1251,
     Koi8r,
     Cp866,
+    /// Any other single- or multi-byte code page (Western, Greek, Japanese…), as found by `guess`
+    /// or picked in the list.
+    Other(&'static encoding_rs::Encoding),
 }
 
-// Bytes 0x80..=0xFF of each single-byte code page (generated from Python's codecs; 0x98 in cp1251
-// is unassigned → U+FFFD).
-const CP1251: &str = "ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ\u{a0}ЎўЈ¤Ґ¦§Ё©Є«¬\u{ad}®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя";
-const KOI8R: &str = "─│┌┐└┘├┤┬┴┼▀▄█▌▐░▒▓⌠■∙√≈≤≥\u{a0}⌡°²·÷═║╒ё╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡Ё╢╣╤╥╦╧╨╩╪╫╬©юабцдефгхийклмнопярстужвьызшэщчъЮАБЦДЕФГХИЙКЛМНОПЯРСТУЖВЬЫЗШЭЩЧЪ";
-const CP866: &str = "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмноп░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀рстуфхцчшщъыьэюяЁёЄєЇїЎў°∙·√№¤■\u{a0}";
+impl Encoding {
+    /// The `encoding_rs` codec of a code page; `None` for `Auto` (UTF-8 / BOM).
+    fn codec(self) -> Option<&'static encoding_rs::Encoding> {
+        Some(match self {
+            Encoding::Auto => return None,
+            Encoding::Cp1251 => encoding_rs::WINDOWS_1251,
+            Encoding::Koi8r => encoding_rs::KOI8_R,
+            Encoding::Cp866 => encoding_rs::IBM866,
+            Encoding::Other(e) => e,
+        })
+    }
+
+    /// Ours for the Cyrillic pages (they have keys), `Other` for the rest, `Auto` for UTF-8.
+    pub fn of(e: &'static encoding_rs::Encoding) -> Self {
+        match e {
+            e if e == encoding_rs::UTF_8 => Encoding::Auto,
+            e if e == encoding_rs::WINDOWS_1251 => Encoding::Cp1251,
+            e if e == encoding_rs::KOI8_R => Encoding::Koi8r,
+            e if e == encoding_rs::IBM866 => Encoding::Cp866,
+            e => Encoding::Other(e),
+        }
+    }
+}
 
 /// The text as UTF-8 in `enc`; `None` for `Auto` without a BOM (the bytes are the text).
 pub fn decode_as(bytes: &[u8], enc: Encoding) -> Option<Vec<u8>> {
-    let table = match enc {
-        Encoding::Auto => return decode(bytes),
-        Encoding::Cp1251 => CP1251,
-        Encoding::Koi8r => KOI8R,
-        Encoding::Cp866 => CP866,
-    };
-    let high: Vec<char> = table.chars().collect();
-    let s: String = bytes
-        .iter()
-        .map(|&b| {
-            if b < 0x80 {
-                b as char
-            } else {
-                high[b as usize - 0x80]
-            }
-        })
-        .collect();
-    Some(s.into_bytes())
+    match enc.codec() {
+        None => decode(bytes),
+        Some(c) => Some(
+            c.decode_without_bom_handling(bytes)
+                .0
+                .into_owned()
+                .into_bytes(),
+        ),
+    }
 }
 
 /// Encoding a file most likely is in: valid UTF-8 (or a BOM) → `Auto`; otherwise the Cyrillic code
 /// page in which the first 64 KiB read as the most lowercase Russian letters (running text is
-/// mostly lowercase; in the wrong page those bytes turn into capitals or box drawing).
+/// mostly lowercase; in the wrong page those bytes turn into capitals or box drawing); otherwise
+/// what `chardetng` makes of them.
 pub fn guess(bytes: &[u8]) -> Encoding {
     let sample = &bytes[..bytes.len().min(64 << 10)];
     let valid = match std::str::from_utf8(sample) {
@@ -154,12 +167,31 @@ pub fn guess(bytes: &[u8]) -> Encoding {
     };
     let high = sample.iter().filter(|&&b| b >= 0x80).count();
     // Cp1251 last: `max_by_key` keeps the last of equal scores, and it is the likeliest.
-    [Encoding::Cp866, Encoding::Koi8r, Encoding::Cp1251]
+    let russian = [Encoding::Cp866, Encoding::Koi8r, Encoding::Cp1251]
         .into_iter()
         .map(|e| (score(e), e))
         .filter(|&(n, _)| n > 0 && n * 3 >= high)
         .max_by_key(|&(n, _)| n)
-        .map_or(Encoding::Auto, |(_, e)| e)
+        .map(|(_, e)| e);
+    // Firefox's detector tells the script (Greek lowercase sits on the bytes of Russian
+    // lowercase in 1251, so ours alone took Greek for Russian); for Cyrillic ours picks the page,
+    // it knows Russian text better (`chardetng` calls KOI8-R KOI8-U, it has no DOS 866 bias).
+    let mut d = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Deny);
+    d.feed(sample, sample.len() == bytes.len());
+    let found = d.guess(None, chardetng::Utf8Detection::Allow);
+    let cyrillic = [
+        encoding_rs::WINDOWS_1251,
+        encoding_rs::KOI8_R,
+        encoding_rs::KOI8_U,
+        encoding_rs::IBM866,
+        encoding_rs::ISO_8859_5,
+        encoding_rs::X_MAC_CYRILLIC,
+    ];
+    match russian {
+        Some(e) if cyrillic.contains(&found) => e,
+        _ if found == encoding_rs::KOI8_U => Encoding::Koi8r,
+        _ => Encoding::of(found),
+    }
 }
 
 /// Text mode content: UTF-8 bytes in the chosen encoding, its line index and widest line.
@@ -517,9 +549,8 @@ mod tests {
         assert_eq!(utf(Encoding::Cp866, b"\x8f\xe0\xa8\xa2\xa5\xe2"), "Привет");
         assert_eq!(utf(Encoding::Cp1251, b"\xa8\xb8\xb9"), "Ёё№");
         assert_eq!(decode_as(b"plain", Encoding::Auto), None);
-        for t in [CP1251, KOI8R, CP866] {
-            assert_eq!(t.chars().count(), 128);
-        }
+        let latin = Encoding::Other(encoding_rs::WINDOWS_1252);
+        assert_eq!(utf(latin, b"caf\xe9 \x80"), "café €");
     }
 
     #[test]
@@ -529,26 +560,50 @@ mod tests {
         assert_eq!(enc(text.as_bytes()), Encoding::Auto);
         assert_eq!(enc(b"plain ascii"), Encoding::Auto);
         // the same sentence in each page (bytes from Python's codecs)
-        let cp1251: Vec<u8> = text.chars().map(|c| encode(CP1251, c)).collect();
-        let koi8: Vec<u8> = text.chars().map(|c| encode(KOI8R, c)).collect();
-        let cp866: Vec<u8> = text.chars().map(|c| encode(CP866, c)).collect();
+        let cp1251 = encode(encoding_rs::WINDOWS_1251, text);
+        let koi8 = encode(encoding_rs::KOI8_R, text);
+        let cp866 = encode(encoding_rs::IBM866, text);
         assert_eq!(enc(&cp1251), Encoding::Cp1251);
         assert_eq!(enc(&koi8), Encoding::Koi8r);
         assert_eq!(enc(&cp866), Encoding::Cp866);
         assert_eq!(enc(b"\xff\xfe\x00\x00"), Encoding::Auto); // UTF-16 BOM
-        // ties go to 1251; Western accents stay as they were
-        assert_eq!(enc(b"\xe4\xe0"), Encoding::Cp1251); // "да"
-        assert_eq!(enc(b"caf\xe9 na\xefve G\xf6\xdfe"), Encoding::Auto);
+        // ties go to 1251
+        assert_eq!(enc(b"\xcf\xf0\xe8\xe2\xe5\xf2"), Encoding::Cp1251); // "Привет"
         // a UTF-8 char cut at the end of the sample is still UTF-8
         assert_eq!(enc(&"я".as_bytes()[..1]), Encoding::Auto);
     }
 
-    /// Test helper: the byte of `c` in a code page table.
-    fn encode(table: &str, c: char) -> u8 {
-        if c.is_ascii() {
-            return c as u8;
-        }
-        0x80 + table.chars().position(|t| t == c).expect("char in page") as u8
+    /// Test helper: `text` in a code page.
+    fn encode(codec: &'static encoding_rs::Encoding, text: &str) -> Vec<u8> {
+        codec.encode(text).0.into_owned()
+    }
+
+    #[test]
+    fn guess_finds_other_code_pages_too() {
+        let other = |codec, text: &str| {
+            assert_eq!(
+                guess(&encode(codec, text)),
+                Encoding::Other(codec),
+                "{text}"
+            );
+        };
+        other(
+            encoding_rs::WINDOWS_1252,
+            "Le cœur a ses raisons que la raison ne connaît point. Où est la bibliothèque? \
+             Ich möchte gern ein Stück Kuchen, bitte. Größe, Straße, schön.",
+        );
+        other(
+            encoding_rs::WINDOWS_1250,
+            "Příliš žluťoučký kůň úpěl ďábelské ódy. Zażółć gęślą jaźń, pchnąć w tę łódź jeża.",
+        );
+        other(
+            encoding_rs::SHIFT_JIS,
+            "吾輩は猫である。名前はまだ無い。どこで生れたかとんと見当がつかぬ。",
+        );
+        other(
+            encoding_rs::WINDOWS_1253,
+            "Ξεσκεπάζω την ψυχοφθόρα βδελυγμία. Η γλώσσα μου έδωσαν ελληνική.",
+        );
     }
 
     #[test]

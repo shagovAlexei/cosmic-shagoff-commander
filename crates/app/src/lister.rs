@@ -17,16 +17,53 @@ const ROW_H: f32 = 20.0;
 /// Monospace advance at the default text size.
 const MONO_W: f32 = 8.5;
 const HEX_COLS: usize = 77;
-/// Encodings in the order of the drop-down (code page names, not translated).
-pub const ENCODINGS: [(Encoding, &str); 4] = [
-    (Encoding::Auto, "UTF-8"),
-    (Encoding::Cp1251, "Windows-1251"),
-    (Encoding::Koi8r, "KOI8-R"),
-    (Encoding::Cp866, "DOS 866"),
-];
+/// Encodings in the order of the drop-down (code page names, not translated): ours with keys,
+/// then everything `lister::guess` can find.
+pub static ENCODINGS: std::sync::LazyLock<Vec<(Encoding, String)>> =
+    std::sync::LazyLock::new(|| {
+        use encoding_rs as e;
+        let ours = [
+            (Encoding::Auto, "UTF-8"),
+            (Encoding::Cp1251, "Windows-1251"),
+            (Encoding::Koi8r, "KOI8-R"),
+            (Encoding::Cp866, "DOS 866"),
+        ];
+        let others = [
+            e::WINDOWS_1252,
+            e::WINDOWS_1250,
+            e::ISO_8859_2,
+            e::WINDOWS_1253,
+            e::ISO_8859_7,
+            e::WINDOWS_1254,
+            e::WINDOWS_1257,
+            e::ISO_8859_4,
+            e::ISO_8859_13,
+            e::WINDOWS_1255,
+            e::ISO_8859_8,
+            e::WINDOWS_1256,
+            e::ISO_8859_6,
+            e::WINDOWS_1258,
+            e::WINDOWS_874,
+            e::KOI8_U,
+            e::ISO_8859_5,
+            e::SHIFT_JIS,
+            e::EUC_JP,
+            e::EUC_KR,
+            e::GBK,
+            e::BIG5,
+        ];
+        (ours.into_iter().map(|(enc, n)| (enc, n.to_string())))
+            .chain(
+                others
+                    .into_iter()
+                    .map(|c| (Encoding::Other(c), c.name().to_string())),
+            )
+            .collect()
+    });
+static ENCODING_NAMES: std::sync::LazyLock<Vec<String>> =
+    std::sync::LazyLock::new(|| ENCODINGS.iter().map(|(_, n)| n.clone()).collect());
 /// Arrow keys on a zoomed picture move it this many pixels.
 const PAN: f32 = 40.0;
-const ENCODING_NAMES: [&str; 4] = ["UTF-8", "Windows-1251", "KOI8-R", "DOS 866"];
 
 #[derive(Debug)]
 pub enum Image {
@@ -575,7 +612,7 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
     }
     let enc = ENCODINGS.iter().position(|(e, _)| *e == l.encoding);
     buttons.extend([
-        widget::dropdown(&ENCODING_NAMES, enc, |i| {
+        widget::dropdown(ENCODING_NAMES.as_slice(), enc, |i| {
             Message::ListerEncoding(ENCODINGS[i].0)
         })
         .into(),

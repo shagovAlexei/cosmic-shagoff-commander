@@ -23,6 +23,7 @@ pollster = "0.4"
 
 # Codecs for the viewer (F3), on top of png/jpeg/ico that libcosmic enables.
 image = { version = "0.25", default-features = false, features = ["gif", "webp", "bmp"] }
+encoding_rs = "0.8.42"
 
 [dev-dependencies]
 tempfile = "3"
