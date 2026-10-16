@@ -441,6 +441,7 @@ pub enum Message {
     Escape(cosmic::iced::window::Id),
     MrInput(MrField, String),
     MrCase(Case),
+    MrHelp,
     /// Pack dialog: format button.
     PackFormat(Format),
     /// Pack / unpack dialog checkboxes.
@@ -1239,6 +1240,11 @@ impl App {
                         MrField::Step => &mut m.step,
                         MrField::Digits => &mut m.digits,
                     } = s;
+                }
+            }
+            Message::MrHelp => {
+                if let Some(Dialog::MultiRename(m)) = &mut self.dialog {
+                    m.help = !m.help;
                 }
             }
             Message::MrCase(c) => {
@@ -3325,6 +3331,7 @@ impl App {
                     start: "1".into(),
                     step: "1".into(),
                     digits: "1".into(),
+                    help: false,
                 })))
             }
             Action::Pack => {
