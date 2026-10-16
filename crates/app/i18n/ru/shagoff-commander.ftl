@@ -459,6 +459,7 @@ props-special = Особые
 props-suid = SUID
 props-sgid = SGID
 props-sticky = Sticky
+props-special-inside = Внутри каталогов SUID / SGID ставятся только каталогам; Sticky и снятие — и файлам
 props-recursive = И всё внутри каталогов
 props-apply = Применить
 props-changed = Права изменены

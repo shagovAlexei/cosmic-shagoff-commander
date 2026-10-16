@@ -1020,6 +1020,9 @@ pub fn view<'a>(
                 ]
                 .spacing(8),
             );
+            if p.recursive {
+                bits = bits.push(widget::text::caption(fl!("props-special-inside")));
+            }
             let unknown = p.mixed & !p.touched;
             let shown: String = format::perms(p.mode)
                 .chars()

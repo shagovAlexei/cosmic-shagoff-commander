@@ -45,9 +45,9 @@ pub fn mode(p: &Path) -> Option<u32> {
 }
 
 /// Turn on `set` and off `clear` (only the bits the user changed, so differing files keep the
-/// rest) on `paths`, and under dirs too when `recursive`; setuid / setgid / sticky go only to
-/// `paths` and the dirs under them, never to the files inside (setgid for a tree's dirs must not
-/// make every program in it set-group-id). Symlinks are left alone (chmod would change their
+/// rest) on `paths`, and under dirs too when `recursive`; setuid / setgid are put only on `paths`
+/// and the dirs under them, never on the files inside (setgid for a tree's dirs must not make
+/// every program in it set-group-id) — sticky and taking bits off reach everything. Symlinks are left alone (chmod would change their
 /// target). Returns what failed, unreadable dirs included, and bits the kernel dropped silently
 /// (setgid when not in the file's group).
 pub fn chmod(
@@ -99,8 +99,10 @@ pub fn chmod(
         if m.file_type().is_symlink() {
             continue;
         }
-        let mask = if top || m.is_dir() { 0o7777 } else { 0o777 };
-        let (set, clear) = (set & mask, clear & mask);
+        // Files found inside: no setuid / setgid put on (every program in the tree would run as
+        // its owner / group); sticky and taking any of them off are harmless.
+        let set_mask = if top || m.is_dir() { 0o7777 } else { 0o1777 };
+        let (set, clear) = (set & set_mask, clear & 0o7777);
         let old = m.permissions().mode() & 0o7777;
         let new = (old & !clear) | set;
         if !(recursive && m.is_dir()) {
@@ -154,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_special_bits_go_to_dirs_not_to_the_files_inside() {
+    fn recursive_setuid_setgid_go_to_dirs_not_to_the_files_inside() {
         let d = tempfile::tempdir().unwrap();
         let top = d.path().join("top");
         fs::create_dir_all(top.join("sub")).unwrap();
@@ -165,6 +167,13 @@ mod tests {
         assert_eq!(mode_of(&top) & 0o2020, 0o2020);
         assert_eq!(mode_of(&top.join("sub")) & 0o2020, 0o2020);
         assert_eq!(mode_of(&top.join("prog")), 0o775);
+        // regression: sticky goes to the files inside too, and taking bits off reaches them.
+        assert!(chmod(std::slice::from_ref(&top), 0o1000, 0, true).is_empty());
+        assert_eq!(mode_of(&top.join("prog")), 0o1775);
+        set(&top.join("prog"), 0o6775); // set by hand before
+        assert!(chmod(std::slice::from_ref(&top), 0, 0o7000, true).is_empty());
+        assert_eq!(mode_of(&top.join("prog")), 0o775);
+        assert_eq!(mode_of(&top) & 0o7000, 0);
     }
 
     #[test]
