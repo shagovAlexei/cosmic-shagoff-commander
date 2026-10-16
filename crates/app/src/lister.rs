@@ -24,11 +24,14 @@ pub const ENCODINGS: [(Encoding, &str); 4] = [
     (Encoding::Koi8r, "KOI8-R"),
     (Encoding::Cp866, "DOS 866"),
 ];
+/// Arrow keys on a zoomed picture move it this many pixels.
+const PAN: f32 = 40.0;
 const ENCODING_NAMES: [&str; 4] = ["UTF-8", "Windows-1251", "KOI8-R", "DOS 866"];
 
 #[derive(Debug)]
 pub enum Image {
-    Raster(widget::image::Handle),
+    /// The handle and the picture's size in pixels (from its header; `None` if unreadable).
+    Raster(widget::image::Handle, Option<(u32, u32)>),
     Svg(widget::svg::Handle),
 }
 
@@ -50,10 +53,40 @@ impl Loaded {
             if name.to_ascii_lowercase().ends_with(".svg") {
                 Image::Svg(widget::svg::Handle::from_memory(doc.bytes.clone()))
             } else {
-                Image::Raster(widget::image::Handle::from_bytes(doc.bytes.clone()))
+                raster(&doc.bytes)
             }
         });
         Ok(Self { doc, text, image })
+    }
+}
+
+/// A picture decoded here, off the UI thread: handed to the renderer as pixels, it would
+/// otherwise decode it while drawing and the window would stand still (seconds for a 4K JPEG).
+/// Turned by its EXIF orientation, as the renderer would. Not decodable here: the bytes, for the
+/// renderer to try, with no size known.
+fn raster(bytes: &[u8]) -> Image {
+    use image::ImageDecoder;
+    let decoded = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_decoder().ok())
+        .and_then(|mut d| {
+            let turn = d.orientation().ok();
+            let mut img = image::DynamicImage::from_decoder(d).ok()?;
+            if let Some(o) = turn {
+                img.apply_orientation(o);
+            }
+            Some(img.into_rgba8())
+        });
+    match decoded {
+        Some(px) => {
+            let (w, h) = px.dimensions();
+            Image::Raster(
+                widget::image::Handle::from_rgba(w, h, px.into_raw()),
+                Some((w, h)),
+            )
+        }
+        None => Image::Raster(widget::image::Handle::from_bytes(bytes.to_vec()), None),
     }
 }
 
@@ -101,6 +134,11 @@ pub struct Lister {
     /// size, mtime (a file changed on disk is shown again; a dir or `..`: a note instead of
     /// contents). `None`: the full-window F3 viewer.
     pub quick: Option<(PathBuf, u64, std::time::SystemTime)>,
+    /// Picture zoom (+ / -) as a factor of its own size; `None`: fitted to the window.
+    pub zoom: Option<f32>,
+    /// The picture held in the renderer: the next frame draws it (without it the renderer loads
+    /// it on its own and nothing redraws until the pointer moves).
+    pub allocation: Option<cosmic::iced::runtime::image::Allocation>,
 }
 
 impl Lister {
@@ -151,6 +189,8 @@ impl Lister {
             pointer: None,
             double: None,
             quick: None,
+            zoom: None,
+            allocation: None,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -194,7 +234,60 @@ impl Lister {
             }
         }
         self.loaded = Some(loaded);
+        self.zoom = None; // each picture opens fitted
+        self.allocation = None;
         self.retext();
+    }
+
+    /// The raster picture's handle, to have the renderer take it in at once.
+    pub fn raster_handle(&self) -> Option<widget::image::Handle> {
+        match self.ok()?.image.as_ref()? {
+            Image::Raster(h, _) => Some(h.clone()),
+            Image::Svg(_) => None,
+        }
+    }
+
+    /// The raster picture's own size, if it is one and it was readable.
+    pub fn image_size(&self) -> Option<(u32, u32)> {
+        match self.ok()?.image.as_ref()? {
+            Image::Raster(_, size) => *size,
+            Image::Svg(_) => None,
+        }
+    }
+
+    /// The scale the picture is shown at: its zoom, else the one that fits the window.
+    pub fn shown_scale(&self) -> Option<f32> {
+        let size = self.image_size()?;
+        Some(
+            self.zoom
+                .unwrap_or_else(|| lister::fit_scale(size, (self.width, self.height))),
+        )
+    }
+
+    /// The zoomed picture's size on screen; `None` while fitted.
+    fn zoomed(&self) -> Option<(f32, f32)> {
+        let ((w, h), z) = (self.image_size()?, self.zoom?);
+        Some((w as f32 * z, h as f32 * z))
+    }
+
+    /// Plus or minus on a picture: the next zoom step from the shown scale. The offset that keeps
+    /// the middle of the view on the same spot of the picture; `None` if nothing changed (an SVG,
+    /// an unreadable header, the last step).
+    pub fn zoom_image(&mut self, up: bool) -> Option<(f32, f32)> {
+        let now = self.shown_scale()?;
+        let z = lister::zoom_step(now, up)?;
+        let was = self.zoom.is_some();
+        self.zoom = Some(z);
+        let (w, h) = self.zoomed()?;
+        let r = z / now;
+        let mid = |o: f32, view: f32, size: f32| match was {
+            true => ((o + view / 2.0) * r - view / 2.0).clamp(0.0, (size - view).max(0.0)),
+            false => ((size - view) / 2.0).max(0.0), // from fitted: the middle
+        };
+        Some((
+            mid(self.offset.0, self.width, w),
+            mid(self.offset.1, self.height, h),
+        ))
     }
 
     /// Doc and the text mode content in the current encoding / wrapping.
@@ -272,12 +365,20 @@ impl Lister {
 
     /// Where a scroll key moves the view to (y), `None` for other keys.
     pub fn scroll_y(&self, action: Action) -> Option<f32> {
-        let max = (self.rows() as f32 * self.row_h() - self.height).max(0.0);
-        let page = viewport::page_rows(self.row_h(), self.height) as f32 * self.row_h();
+        // A zoomed picture pans by PAN px and pages by the window, the text by rows.
+        let (step, total, page) = match self.zoomed().filter(|_| self.mode == Mode::Image) {
+            Some((_, h)) => (PAN, h, self.height * 0.9),
+            None => (
+                self.row_h(),
+                self.rows() as f32 * self.row_h(),
+                viewport::page_rows(self.row_h(), self.height) as f32 * self.row_h(),
+            ),
+        };
+        let max = (total - self.height).max(0.0);
         let y = self.offset.1;
         let to = match action {
-            Action::Up => y - self.row_h(),
-            Action::Down => y + self.row_h(),
+            Action::Up => y - step,
+            Action::Down => y + step,
             Action::PageUp => y - page,
             Action::PageDown => y + page,
             Action::Home => 0.0,
@@ -288,6 +389,10 @@ impl Lister {
     }
 
     pub fn scroll_x(&self, right: bool) -> f32 {
+        if let Some((w, _)) = self.zoomed().filter(|_| self.mode == Mode::Image) {
+            let x = self.offset.0 + if right { PAN } else { -PAN };
+            return x.clamp(0.0, (w - self.width).max(0.0));
+        }
         let x = self.offset.0 + if right { self.step_x() } else { -self.step_x() };
         x.clamp(0.0, (self.width() - self.step_x()).max(0.0))
     }
@@ -412,6 +517,16 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
                 n = l.rows(),
                 size = shagoff_core::format::size(x.doc.total)
             ),
+            Mode::Image => {
+                let size = shagoff_core::format::size(x.doc.total);
+                match (l.image_size(), l.shown_scale()) {
+                    (Some((w, h)), Some(z)) => {
+                        let p = (z * 100.0).round() as u32;
+                        fl!("lister-info-image", w = w, h = h, p = p, size = size)
+                    }
+                    _ => fl!("lister-info", size = size),
+                }
+            }
             _ => fl!(
                 "lister-info",
                 size = shagoff_core::format::size(x.doc.total)
@@ -429,6 +544,13 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
     .spacing(8)
     .align_y(cosmic::iced::Alignment::Center);
     let mut buttons = modes;
+    if l.mode == Mode::Image && l.zoom.is_some() {
+        buttons.push(
+            widget::button::standard(fl!("lister-fit"))
+                .on_press(Message::ListerFit)
+                .into(),
+        );
+    }
     let enc = ENCODINGS.iter().position(|(e, _)| *e == l.encoding);
     buttons.extend([
         widget::dropdown(&ENCODING_NAMES, enc, |i| {
@@ -496,16 +618,48 @@ fn content(l: &Lister) -> Element<'_, Message> {
         return widget::Space::new().into();
     };
     if l.mode == Mode::Image {
-        let img: Element<'_, Message> = match &x.image {
-            Some(Image::Raster(h)) => widget::image(h.clone())
-                .content_fit(ContentFit::ScaleDown)
-                .into(),
-            Some(Image::Svg(h)) => widget::svg(h.clone())
-                .content_fit(ContentFit::Contain)
-                .into(),
-            None => widget::Space::new().into(),
+        let img: Element<'_, Message> = match (&x.image, l.zoomed()) {
+            // Zoomed: its own size times the zoom, scrolled (also by the keys) when bigger.
+            (Some(Image::Raster(h, _)), Some((w, ht))) => {
+                let img = widget::image(h.clone())
+                    .content_fit(ContentFit::Fill)
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(ht));
+                if w <= l.width && ht <= l.height {
+                    widget::container(img).center(Length::Fill).into()
+                } else {
+                    widget::scrollable(img)
+                        .id(l.scroll.clone())
+                        .on_scroll(|v| {
+                            let o = v.absolute_offset();
+                            Message::ListerScrolled(o.x, o.y, v.bounds().height)
+                        })
+                        .direction(cosmic::iced::widget::scrollable::Direction::Both {
+                            vertical: Default::default(),
+                            horizontal: Default::default(),
+                        })
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into()
+                }
+            }
+            (Some(Image::Raster(h, _)), None) => {
+                widget::container(widget::image(h.clone()).content_fit(ContentFit::ScaleDown))
+                    .center(Length::Fill)
+                    .into()
+            }
+            (Some(Image::Svg(h)), _) => {
+                widget::container(widget::svg(h.clone()).content_fit(ContentFit::Contain))
+                    .center(Length::Fill)
+                    .into()
+            }
+            (None, _) => widget::Space::new().into(),
         };
-        return widget::container(img).center(Length::Fill).into();
+        // The window's size: the fit scale and the zoom steps are reckoned from it.
+        return cosmic::iced::widget::sensor(img)
+            .on_show(Message::ListerResized)
+            .on_resize(Message::ListerResized)
+            .into();
     }
     // Only the rows in view are built; spacers keep the scroll height.
     let rows = l.rows();
@@ -597,6 +751,26 @@ fn hit_style(hit: bool) -> theme::Container<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plus_minus_zoom_a_picture_from_its_fit_and_fit_again_on_the_next() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("p.bmp");
+        image::RgbImage::new(2000, 1000).save(&path).unwrap();
+        let mut l = Lister::new(0, "p.bmp".into(), 0, 14);
+        l.set_loaded(Arc::new(Loaded::read(&path, "p.bmp")));
+        (l.width, l.height) = (1000.0, 800.0); // fits at 0.5
+        assert_eq!((l.mode, l.image_size()), (Mode::Image, Some((2000, 1000))));
+        // From fitted: 0.75 (1500×750, wider than the view) — the view on its middle.
+        assert_eq!(l.zoom_image(true), Some((250.0, 0.0)));
+        assert_eq!(l.zoom, Some(0.75));
+        assert!(l.zoom_image(false).is_some() && l.zoom_image(false).is_some());
+        assert_eq!(l.zoom, Some(0.25));
+        l.zoom = Some(8.0);
+        assert_eq!(l.zoom_image(true), None); // the last step
+        l.set_loaded(Arc::new(Loaded::read(&path, "p.bmp")));
+        assert_eq!(l.zoom, None); // the next picture opens fitted
+    }
 
     fn text(s: &str) -> Lister {
         let mut l = Lister::new(0, "a.txt".into(), 1, crate::config::LISTER_SIZE);

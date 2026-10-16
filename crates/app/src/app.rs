@@ -611,6 +611,8 @@ pub enum Message {
     Browsed(Result<Vec<(String, String)>, mount::Error>),
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
+    /// The viewer's picture is in the renderer (redraws with it).
+    ListerAllocated(u64, Option<cosmic::iced::runtime::image::Allocation>),
     ListerKey(ListerKey),
     /// A viewer letter key typed in the panel: the viewer's when it is open, else the command line's.
     Letter(ListerKey, char),
@@ -623,6 +625,8 @@ pub enum Message {
     ListerPointerLeft,
     /// Comes instead of the second release.
     ListerDoubleClick,
+    /// The picture back to fitted in the window.
+    ListerFit,
     ListerResized(Size),
     /// Drop-down / A S K 8.
     ListerEncoding(shagoff_core::lister::Encoding),
@@ -1520,6 +1524,18 @@ impl App {
                     && l.id == id
                 {
                     l.set_loaded(loaded);
+                    if let Some(h) = l.raster_handle() {
+                        return cosmic::iced::runtime::image::allocate(h).map(move |a| {
+                            cosmic::Action::App(Message::ListerAllocated(id, a.ok()))
+                        });
+                    }
+                }
+            }
+            Message::ListerAllocated(id, a) => {
+                if let Some(l) = &mut self.lister
+                    && l.id == id
+                {
+                    l.allocation = a;
                 }
             }
             Message::ListerKey(k) if self.viewer() && self.dialog.is_none() && !self.busy() => {
@@ -1601,6 +1617,11 @@ impl App {
             Message::ListerScrolled(x, y, h) => {
                 if let Some(l) = &mut self.lister {
                     (l.offset, l.height) = ((x, y), h);
+                }
+            }
+            Message::ListerFit => {
+                if let Some(l) = &mut self.lister {
+                    l.zoom = None;
                 }
             }
             Message::ListerResized(size) => {
@@ -4543,13 +4564,17 @@ impl App {
 
     /// The viewer's text one size up or down: the same setting as in Settings, saved.
     fn lister_zoom(&mut self, up: bool) -> Task<Message> {
+        // A picture: its zoom (TC), never the text size; still reading: not known which yet.
+        if let Some(l) = self.lister.as_deref_mut()
+            && (l.loaded.is_none() || l.mode == shagoff_core::lister::Mode::Image)
+        {
+            return match l.zoom_image(up) {
+                Some((x, y)) => lister_scroll(l, x, y),
+                None => Task::none(),
+            };
+        }
         let size = config::size_step(self.config.lister_size(), up);
-        // A picture has no text size (TC zooms it; not yet); at a bound nothing changes.
-        let image = self
-            .lister
-            .as_ref()
-            .is_some_and(|l| l.mode == shagoff_core::lister::Mode::Image);
-        if image || size == self.config.lister_size() {
+        if size == self.config.lister_size() {
             return Task::none();
         }
         self.set(crate::drawer::Setting::ListerSize(size))
@@ -8126,6 +8151,10 @@ mod tests {
     fn viewer_plus_minus_change_its_text_size_and_save_it() {
         let (_tmp, mut app, _) = paste_setup();
         app.lister = Some(Box::new(Lister::new(0, String::new(), 0, 14)));
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true))); // still reading: nothing
+        assert_eq!(app.config.lister_size, 14);
+        let text = crate::lister::Loaded::read(&_tmp.path().join("src/a"), "a").unwrap();
+        app.lister.as_mut().unwrap().set_loaded(Arc::new(Ok(text)));
         let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
         let _ = app.update(Message::Key(Action::SelectGroup)); // Num+
         assert_eq!(app.config.lister_size, 16);

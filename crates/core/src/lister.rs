@@ -201,6 +201,26 @@ pub fn is_image(name: &str) -> bool {
         .is_some_and(|(_, ext)| IMAGES.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
+/// Picture zoom steps (TC Lister: + / -), as a factor of the image's own size.
+pub const ZOOMS: [f32; 11] = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0];
+
+/// The scale a picture of `size` pixels is shown at to fit `view`: never above its own size.
+pub fn fit_scale((w, h): (u32, u32), (vw, vh): (f32, f32)) -> f32 {
+    if w == 0 || h == 0 {
+        return 1.0;
+    }
+    (vw / w as f32).min(vh / h as f32).clamp(0.01, 1.0)
+}
+
+/// The next zoom step above (`up`) or below `now`; `None` past the last one.
+pub fn zoom_step(now: f32, up: bool) -> Option<f32> {
+    // A little slack: `now` may be a step itself, or a fit scale a hair off one.
+    match up {
+        true => ZOOMS.into_iter().find(|&z| z > now * 1.001),
+        false => ZOOMS.into_iter().rev().find(|&z| z < now * 0.999),
+    }
+}
+
 /// Mode a file opens in: images by extension, a NUL in the first 8 KiB → hex, else text.
 pub fn detect(name: &str, bytes: &[u8]) -> Mode {
     if is_image(name) {
@@ -457,6 +477,19 @@ pub fn pos_at(x: f32, y: f32, row_h: f32, char_w: f32, rows: usize) -> Pos {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zoom_steps_from_fit_and_between_steps() {
+        assert_eq!(fit_scale((2000, 1000), (1000.0, 1000.0)), 0.5);
+        assert_eq!(fit_scale((100, 100), (1000.0, 800.0)), 1.0); // small: its own size
+        assert_eq!(fit_scale((0, 10), (100.0, 100.0)), 1.0);
+        assert_eq!(zoom_step(0.5, true), Some(0.75));
+        assert_eq!(zoom_step(0.5, false), Some(0.25));
+        assert_eq!(zoom_step(0.6, true), Some(0.75)); // from a fit scale
+        assert_eq!(zoom_step(0.6, false), Some(0.5));
+        assert_eq!(zoom_step(8.0, true), None);
+        assert_eq!(zoom_step(0.1, false), None);
+    }
 
     #[test]
     fn single_byte_code_pages() {
