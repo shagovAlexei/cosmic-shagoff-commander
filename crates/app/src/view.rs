@@ -66,9 +66,28 @@ pub fn view(app: &App) -> Element<'_, Message> {
     // dragged to change it (double click: half and half), as TC's.
     let (left, right) = viewport::split_portions(app.split);
     let (_, gap) = split_geometry(app.config.skin);
+    // Settings «Line between the panels»: 1 px in the middle of the gap.
+    let line = container(
+        widget::Space::new()
+            .width(Length::Fixed(1.0))
+            .height(Length::Fill),
+    )
+    .class(theme::Container::custom(|t| container::Style {
+        // The theme's divider colour is barely seen on a dark list: the text colour, faded.
+        background: Some(
+            Color::from(t.cosmic().on_bg_color())
+                .scale_alpha(0.4)
+                .into(),
+        ),
+        ..Default::default()
+    }));
+    let line: Element<'_, Message> = match app.config.divider_line {
+        true => line.into(),
+        false => widget::Space::new().into(),
+    };
     let divider = widget::mouse_area(
-        container(widget::Space::new())
-            .width(Length::Fixed(gap))
+        container(line)
+            .center_x(Length::Fixed(gap))
             .height(Length::Fill),
     )
     .interaction(cosmic::iced::mouse::Interaction::ResizingHorizontally)
@@ -218,6 +237,11 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .push(list)
         .width(Length::Fill);
     let pane: Element<'_, Message> = match skin {
+        // Settings «Frame around the active panel»: the modern card's border, no card. The
+        // inactive pane's border is there but clear, so nothing moves when the focus does.
+        Skin::Classic if app.config.active_frame => {
+            container(col).padding(1).class(frame_style(active)).into()
+        }
         Skin::Classic => col.into(),
         Skin::Modern => container(col.spacing(2))
             .padding(CARD_PAD)
@@ -309,6 +333,21 @@ fn path_parts(side: usize, cwd: &std::path::Path) -> Element<'static, Message> {
         .anchor_right()
         .width(Length::Fill)
         .into()
+}
+
+/// Classic skin with «Frame around the active panel»: the accent border on the active pane only.
+fn frame_style(active: bool) -> theme::Container<'static> {
+    theme::Container::custom(move |t| container::Style {
+        border: cosmic::iced::Border {
+            color: match active {
+                true => t.cosmic().accent_color().into(),
+                false => Color::TRANSPARENT,
+            },
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
 }
 
 /// Modern skin: each pane is a rounded card; the active one has an accent border.

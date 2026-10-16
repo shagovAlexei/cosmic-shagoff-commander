@@ -123,6 +123,10 @@ pub struct Config {
     pub right_marks: bool,
     /// F3 in a window of its own (TC Lister); off: in place of the panels.
     pub lister_window: bool,
+    /// A thin line in the gap between the panes.
+    pub divider_line: bool,
+    /// The classic look: the active pane framed in the accent colour, as the modern look's card.
+    pub active_frame: bool,
     /// F12: an internal command (`cm_*`) or a program with parameters, as a toolbar button;
     /// none set: F12 opens the settings.
     pub f12: ToolButton,
@@ -217,6 +221,8 @@ impl Default for Config {
             skin: Skin::Classic,
             right_marks: true,
             lister_window: true,
+            divider_line: false,
+            active_frame: false,
             f12: ToolButton::default(),
             columns: [60.0, 90.0, 130.0, 80.0],
             toolbar: crate::toolbar::default_bar(),

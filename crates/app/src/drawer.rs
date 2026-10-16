@@ -58,6 +58,8 @@ pub enum Setting {
     /// Index into `Skin::ALL`.
     Skin(usize),
     ShowFkeys(bool),
+    DividerLine(bool),
+    ActiveFrame(bool),
     ShowCmdline(bool),
     KeepHistory(bool),
     InternalViewer(bool),
@@ -280,6 +282,17 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                 fl!("settings-skin"),
                 widget::dropdown(skins, skin, |i| Message::Setting(Setting::Skin(i))),
             ))
+            .add(settings::item(
+                fl!("settings-divider-line"),
+                widget::toggler(c.divider_line).on_toggle(move |b| set(Setting::DividerLine(b))),
+            ))
+            .add_maybe((c.skin == Skin::Classic).then(|| {
+                settings::item(
+                    fl!("settings-active-frame"),
+                    widget::toggler(c.active_frame)
+                        .on_toggle(move |b| set(Setting::ActiveFrame(b))),
+                )
+            }))
             .add(settings::item(
                 fl!("settings-fkeys"),
                 widget::toggler(c.show_fkeys).on_toggle(move |b| set(Setting::ShowFkeys(b))),

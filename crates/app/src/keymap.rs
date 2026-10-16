@@ -87,6 +87,9 @@ pub enum Action {
     Settings,
     /// F12: what is set for it in the settings (`Config.f12`).
     F12,
+    /// Menu «Вид»: a line between the panes / the active pane framed (classic look).
+    ToggleDividerLine,
+    ToggleActiveFrame,
     /// Menu only: about the program.
     About,
     /// Menu only: support the project.
