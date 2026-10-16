@@ -167,7 +167,7 @@ pub const LISTER_SIZE: u16 = 14;
 impl Config {
     /// Sizes in KB / MB / GB: as chosen, else as the skin has them.
     pub fn human_sizes(&self) -> bool {
-        self.human_sizes.unwrap_or(self.skin == Skin::Modern)
+        shagoff_core::format::human_size(0, self.human_sizes, self.skin == Skin::Modern)
     }
 
     /// The file list's text size, kept in `SIZES` (a hand edit could say anything).

@@ -825,15 +825,11 @@ fn file_row<'a>(
     } else {
         Some(e.size)
     };
-    let size = match (bytes, app.config.human_sizes, app.config.skin) {
-        (None, ..) => "<DIR>".to_string(),
-        // Chosen: all in bytes (a wider column shows them whole), or all as "12,3 KB".
-        (Some(b), Some(false), _) => format::size(b),
-        (Some(b), Some(true), _) => human(b),
-        // The classic column fits "999 999 999"; above that "45,1 GB" (exact bytes in the status line).
-        (Some(b), None, Skin::Classic) if b < 1_000_000_000 => format::size(b),
-        // Modern: "12,3 KB" — the exact bytes are in the status line.
-        (Some(b), None, _) => human(b),
+    let modern = app.config.skin == Skin::Modern;
+    let size = match bytes {
+        None => "<DIR>".to_string(),
+        Some(b) if format::human_size(b, app.config.human_sizes, modern) => human(b),
+        Some(b) => format::size(b),
     };
     let (date, attrs) = if is_parent {
         (String::new(), String::new())
@@ -994,10 +990,9 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
             .into(),
         (_, None) => {
             let (t, m) = (p.panel.totals(), p.panel.marked_totals());
-            // Exact bytes, unless KB / MB / GB were chosen.
-            let size = |n| match app.config.human_sizes {
-                Some(true) => human(n),
-                _ => fl!("size-bytes", n = format::size(n)),
+            let size = |n| match app.config.human_sizes() {
+                true => human(n),
+                false => format!("{} {}", format::size(n), fl!("byte-unit")),
             };
             let totals = fl!(
                 "status",
@@ -1169,7 +1164,13 @@ fn window_status(app: &App) -> Element<'_, Message> {
     let p = &app.panes[app.active].active().panel;
     let details = p
         .current()
-        .map(|e| format::details(e, &app.tz, &app.owners))
+        .map(|e| {
+            let size = |n| match app.config.human_sizes() {
+                true => human(n),
+                false => format::size(n),
+            };
+            format::details(e, &app.tz, &app.owners, size)
+        })
         .unwrap_or_default();
     container(
         text(details)
