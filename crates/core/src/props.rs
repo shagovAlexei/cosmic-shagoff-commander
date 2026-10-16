@@ -124,6 +124,36 @@ pub fn chmod(
     failed
 }
 
+/// Give `paths` (and with `recursive` everything under the dirs) the group `gid`. Links get it
+/// themselves, never their targets (`lchown`). Entries already in it are left alone. Returns what
+/// failed (not the owner, not one of the user's groups, unreadable dirs).
+pub fn chgrp(paths: &[PathBuf], gid: u32, recursive: bool) -> Vec<(PathBuf, io::Error)> {
+    use std::os::unix::fs::MetadataExt;
+    let mut failed = Vec::new();
+    let mut todo: Vec<PathBuf> = paths.iter().rev().cloned().collect();
+    while let Some(p) = todo.pop() {
+        let m = match fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(e) => {
+                failed.push((p, e));
+                continue;
+            }
+        };
+        if m.gid() != gid
+            && let Err(e) = std::os::unix::fs::lchown(&p, None, Some(gid))
+        {
+            failed.push((p.clone(), e));
+        }
+        if recursive && m.is_dir() {
+            match fs::read_dir(&p) {
+                Ok(rd) => todo.extend(rd.flatten().map(|e| e.path())),
+                Err(e) => failed.push((p, e)),
+            }
+        }
+    }
+    failed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +265,30 @@ mod tests {
         assert!(chmod(std::slice::from_ref(&d), 0, 0o500, true).is_empty());
         assert!(chmod(std::slice::from_ref(&d), 0o500, 0, true).is_empty());
         all(0o755, 0o744); // files get x too: only touched bits, the same on every entry
+    }
+
+    #[test]
+    fn chgrp_to_own_group_and_refused_otherwise() {
+        use std::os::unix::fs::MetadataExt;
+        let d = tempfile::tempdir().unwrap();
+        let top = d.path().join("top");
+        fs::create_dir_all(top.join("sub")).unwrap();
+        fs::write(top.join("sub/f"), "").unwrap();
+        symlink("/etc/passwd", top.join("ln")).unwrap();
+        let mine = crate::owners::my_groups();
+        let g = *mine.last().unwrap();
+        assert!(chgrp(std::slice::from_ref(&top), g, true).is_empty());
+        for p in [top.clone(), top.join("sub/f"), top.join("ln")] {
+            assert_eq!(fs::symlink_metadata(&p).unwrap().gid(), g, "{p:?}");
+        }
+        assert_ne!(fs::metadata("/etc/passwd").unwrap().gid(), g); // the link's target untouched
+        // A group the user is not in: refused (unless root, who may do anything).
+        if rustix::process::geteuid().as_raw() != 0
+            && let Some(other) = (0..65534).find(|g| !mine.contains(g))
+        {
+            let failed = chgrp(std::slice::from_ref(&top), other, false);
+            assert_eq!(failed.len(), 1);
+        }
     }
 
     #[test]

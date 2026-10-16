@@ -465,6 +465,7 @@ props-type = Type
 props-link = Link to
 props-modified = Modified
 props-owner-line = Owner
+props-group-line = Group
 props-size = Size
 props-counting = counting…
 props-usage = { $size } — files: { $files }, folders: { $dirs }

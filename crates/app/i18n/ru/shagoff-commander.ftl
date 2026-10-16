@@ -466,6 +466,7 @@ props-type = Тип
 props-link = Ссылка на
 props-modified = Изменён
 props-owner-line = Владелец
+props-group-line = Группа
 props-size = Размер
 props-counting = считается…
 props-usage = { $size } — файлов: { $files }, каталогов: { $dirs }

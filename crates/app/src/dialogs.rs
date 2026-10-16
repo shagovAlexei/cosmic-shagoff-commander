@@ -361,6 +361,13 @@ pub struct Props {
     /// A dir is selected: offer to change what is inside too.
     pub has_dir: bool,
     pub recursive: bool,
+    /// Groups the files may be given (the user's own and the files' current one), names for the
+    /// drop-down; `group`: the one shown (`None`: the files' groups differ).
+    pub gids: Vec<u32>,
+    pub group_names: Vec<String>,
+    pub group: Option<usize>,
+    /// Picked by the user: applied on OK.
+    pub group_changed: bool,
     /// Counted in the background; `None` while counting.
     pub usage: Option<shagoff_core::props::Usage>,
     pub id: u64,
@@ -999,6 +1006,15 @@ pub fn view<'a>(
                 ),
             };
             body = body.push(line(fl!("props-size"), size));
+            // As chgrp: the user's own groups (another needs root).
+            body = body.push(
+                row![
+                    widget::text::body(fl!("props-group-line")).width(Length::Fixed(LABEL)),
+                    widget::dropdown(&p.group_names, p.group, Message::PropsGroup),
+                ]
+                .spacing(8)
+                .align_y(cosmic::iced::Alignment::Center),
+            );
             let bit = |b: u32| {
                 let unknown = p.mixed & !p.touched & b != 0;
                 let cell: Element<'a, Message> = if unknown {

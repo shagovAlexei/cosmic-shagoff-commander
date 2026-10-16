@@ -491,6 +491,8 @@ pub enum Message {
     FindArchives,
     /// Alt+Enter: toggle a permission bit / "also inside folders".
     PropsBit(u32),
+    /// Alt+Enter's group drop-down: index into `Props::gids`.
+    PropsGroup(usize),
     PropsRecursive,
     /// id, usage counted in the background (`None` = stopped).
     PropsUsage(u64, Option<shagoff_core::props::Usage>),
@@ -1366,6 +1368,14 @@ impl App {
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
                     f.archives = !f.archives;
                     f.in_list = false;
+                }
+            }
+            Message::PropsGroup(i) => {
+                if let Some(Dialog::Props(p)) = &mut self.dialog
+                    && i < p.gids.len()
+                {
+                    p.group = Some(i);
+                    p.group_changed = true;
                 }
             }
             Message::PropsBit(b) => {
@@ -3522,14 +3532,27 @@ impl App {
             Dialog::Props(p) => {
                 // Only the touched bits, as shown now: entries keep the rest of their own modes.
                 let (set, clear) = (p.mode & p.touched, !p.mode & p.touched & 0o7777);
-                if p.touched == 0 {
+                let gid = (p.group_changed)
+                    .then(|| p.group.and_then(|i| p.gids.get(i).copied()))
+                    .flatten();
+                if p.touched == 0 && gid.is_none() {
                     return Task::none();
                 }
                 let (side, paths, recursive) = (p.side, p.paths.clone(), p.recursive);
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            shagoff_core::props::chmod(&paths, set, clear, recursive)
+                            // The group first: a new group drops setuid / setgid, the bits after
+                            // put back what was asked.
+                            let mut failed = (gid
+                                .map(|g| shagoff_core::props::chgrp(&paths, g, recursive)))
+                            .unwrap_or_default();
+                            if set | clear != 0 {
+                                failed.extend(shagoff_core::props::chmod(
+                                    &paths, set, clear, recursive,
+                                ));
+                            }
+                            failed
                                 .into_iter()
                                 .map(|(p, e)| format!("{}: {e}", p.display()))
                                 .collect()
@@ -4250,6 +4273,15 @@ impl App {
         let all = modes.iter().fold(0o7777, |a, m| a & m);
         let any = modes.iter().fold(0, |a, m| a | m);
         let has_dir = metas.iter().flatten().any(|m| m.is_dir());
+        // The drop-down: the user's groups and the files' own (shown even if not the user's).
+        let file_gids: Vec<u32> = metas.iter().flatten().map(|m| m.gid()).collect();
+        let mut gids = shagoff_core::owners::my_groups();
+        gids.extend(&file_gids);
+        let groups = self.owners.groups(&gids);
+        let common = file_gids
+            .first()
+            .filter(|g| file_gids.iter().all(|x| x == *g));
+        let group = common.and_then(|g| groups.iter().position(|(id, _)| id == g));
         Dialog::Props(Box::new(dialogs::Props {
             side,
             paths,
@@ -4260,6 +4292,10 @@ impl App {
             touched: 0,
             has_dir,
             recursive: false,
+            gids: groups.iter().map(|(g, _)| *g).collect(),
+            group_names: groups.into_iter().map(|(_, n)| n).collect(),
+            group,
+            group_changed: false,
             usage: None,
             id: 0, // set by `start_usage`
             stop: Arc::new(AtomicBool::new(false)),
@@ -9284,6 +9320,31 @@ mod tests {
         let _ = app.update(Message::Key(Action::Home));
         let _ = app.update(Message::Key(Action::Properties));
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn alt_enter_changes_the_group_to_one_of_the_users() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("a");
+        std::fs::write(&f, "x").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Properties));
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        let now = std::fs::metadata(&f).unwrap().gid();
+        assert_eq!(p.group.map(|i| p.gids[i]), Some(now)); // the file's own shown
+        let mine = shagoff_core::owners::my_groups();
+        let other = (p.gids.iter()).position(|g| *g != now && mine.contains(g));
+        let Some(i) = other else { return }; // a user with one group: nothing to pick
+        let g = p.gids[i];
+        let _ = app.update(Message::PropsGroup(i));
+        let failed = shagoff_core::props::chgrp(std::slice::from_ref(&f), g, false);
+        assert!(failed.is_empty());
+        assert_eq!(std::fs::metadata(&f).unwrap().gid(), g);
     }
 
     #[test]
