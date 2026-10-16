@@ -1205,12 +1205,9 @@ pub fn view<'a>(
             let ok = rows.iter().all(|r| r.problem.is_none());
             // As TC's buttons next to the mask: put a token at the end of the name mask.
             let insert = |tok: &'static str, label: String| {
-                widget::button::standard(format!("{tok}  {label}")).on_press(Message::MrInput(
-                    MrField::Name,
-                    format!("{}{tok}", m.rule.name),
-                ))
+                widget::button::standard(format!("{tok}  {label}")).on_press(Message::MrInsert(tok))
             };
-            let tokens = cosmic::widget::flex_row(vec![
+            let tokens = widget::flex_row(vec![
                 insert("[N]", fl!("mr-ins-name")).into(),
                 insert("[N1-3]", fl!("mr-ins-part")).into(),
                 insert("[E]", fl!("mr-ins-ext")).into(),
@@ -1220,7 +1217,7 @@ pub fn view<'a>(
                 if m.help {
                     widget::button::suggested(fl!("mr-help-button"))
                 } else {
-                    widget::button::text(fl!("mr-help-button"))
+                    widget::button::standard(fl!("mr-help-button"))
                 }
                 .on_press(Message::MrHelp)
                 .into(),
@@ -1255,21 +1252,26 @@ pub fn view<'a>(
                         ]
                         .spacing(8),
                     ]
-                    // Shrinks to what is left, so the buttons stay on a small window; the help
-                    // scrolls with the preview.
+                    // The preview, then the help, in one scroll: as tall as they are, but at most
+                    // what the panel's rows leave after the fields (`Fill` would stretch the
+                    // dialog to the window).
+                    // ponytail: 200 = the fields' height at the default size, guessed, not measured.
                     .push(
                         widget::container(
                             widget::scrollable(
-                                column![]
+                                column![table]
                                     .push_maybe(
                                         m.help.then(|| widget::text::caption(fl!("mr-help"))),
                                     )
-                                    .push(table)
                                     .spacing(12),
                             )
-                            .height(Length::Fill),
+                            .height(Length::Shrink),
                         )
-                        .max_height(300.0),
+                        .max_height(if list_h > 0.0 {
+                            (list_h - 200.0).clamp(48.0, 300.0)
+                        } else {
+                            300.0
+                        }),
                     )
                     .spacing(12),
                 )
