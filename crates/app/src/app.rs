@@ -487,6 +487,10 @@ pub enum Message {
     DiffSave,
     /// Alt+F7: the "regular expression" checkbox.
     FindRegex,
+    /// «Искать текст» on / off.
+    FindTextOn,
+    /// «? Регулярные выражения»: the hints shown / hidden.
+    FindHelp,
     FindNameRegex,
     FindArchives,
     /// Alt+Enter: toggle a permission bit / "also inside folders".
@@ -1350,6 +1354,17 @@ impl App {
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
                     f.case_sensitive = !f.case_sensitive;
                     f.in_list = false;
+                }
+            }
+            Message::FindTextOn => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.find_text = !f.find_text;
+                    f.in_list = false;
+                }
+            }
+            Message::FindHelp => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    f.help = !f.help;
                 }
             }
             Message::FindRegex => {
@@ -3447,6 +3462,8 @@ impl App {
                     side,
                     mask: self.find.mask.clone(),
                     dir: dir.display().to_string(),
+                    find_text: self.find.find_text,
+                    help: false,
                     text: self.find.text.clone(),
                     case_sensitive: self.find.case_sensitive,
                     regex: self.find.regex,
@@ -4330,6 +4347,7 @@ impl App {
         let side = f.side;
         self.find = config::FindPrefs {
             mask: f.mask.clone(),
+            find_text: f.find_text,
             text: f.text.clone(),
             case_sensitive: f.case_sensitive,
             regex: f.regex,
@@ -4342,7 +4360,12 @@ impl App {
         };
         let root = self.panes[side].active().target().join(f.dir.trim());
         let root_searched = root.clone();
-        let text = f.text.trim().to_string();
+        // «Искать текст» off: names only, whatever the field holds.
+        let text = if f.find_text {
+            f.text.trim().to_string()
+        } else {
+            String::new()
+        };
         let q = match find_query(f, text) {
             Ok(q) => shagoff_core::search::Query {
                 hidden: self.panes[side].active().panel.show_hidden(),
@@ -9588,9 +9611,14 @@ mod tests {
         let _ = app.update(Message::FindInput(FindField::Attrs, "x".into()));
         let _ = app.update(Message::FindInput(FindField::Text, "(".into()));
         let _ = app.update(Message::FindRegex);
+        // «Искать текст» off: the field is not used, names only — no error.
         let _ = app.update(Message::FindStart);
         let f = find_dialog(&mut app);
-        assert!(f.stop.is_none() && f.error.is_some());
+        assert!(f.error.is_none());
+        let _ = app.update(Message::FindTextOn);
+        let _ = app.update(Message::FindStart);
+        let f = find_dialog(&mut app);
+        assert!(f.error.is_some());
         let _ = app.update(Message::FindInput(FindField::Text, "a+".into()));
         let _ = app.update(Message::FindStart);
         let f = find_dialog(&mut app);

@@ -310,6 +310,10 @@ pub struct Find {
     pub side: usize,
     pub mask: String,
     pub dir: String,
+    /// «Искать текст»: off — no text field, the text is not searched.
+    pub find_text: bool,
+    /// The regular expressions explained, under the options.
+    pub help: bool,
     pub text: String,
     pub case_sensitive: bool,
     /// The text is a regular expression.
@@ -1563,17 +1567,31 @@ pub fn view<'a>(
                             edit(fl!("find-in"), &f.dir, FindField::Dir),
                         ]
                         .spacing(8),
-                        edit(fl!("find-text"), &f.text, FindField::Text),
-                        // One row of four: every line here is taken from the result list.
+                        // As TC: the text and its options only behind «Искать текст».
+                        widget::checkbox(f.find_text)
+                            .label(fl!("find-text-on"))
+                            .on_toggle(|_| Message::FindTextOn),
+                    ]
+                    .push_maybe(f.find_text.then(|| {
+                        column![
+                            edit(fl!("find-text"), &f.text, FindField::Text),
+                            widget::flex_row(vec![
+                                widget::checkbox(f.case_sensitive)
+                                    .label(fl!("find-case"))
+                                    .on_toggle(|_| Message::FindCase)
+                                    .into(),
+                                widget::checkbox(f.regex)
+                                    .label(fl!("find-regex"))
+                                    .on_toggle(|_| Message::FindRegex)
+                                    .into(),
+                            ])
+                            .spacing(16),
+                        ]
+                        .spacing(8)
+                    }))
+                    .push(
+                        // One row: every line here is taken from the result list.
                         widget::flex_row(vec![
-                            widget::checkbox(f.case_sensitive)
-                                .label(fl!("find-case"))
-                                .on_toggle(|_| Message::FindCase)
-                                .into(),
-                            widget::checkbox(f.regex)
-                                .label(fl!("find-regex"))
-                                .on_toggle(|_| Message::FindRegex)
-                                .into(),
                             widget::checkbox(f.name_regex)
                                 .label(fl!("find-name-regex"))
                                 .on_toggle(|_| Message::FindNameRegex)
@@ -1582,20 +1600,42 @@ pub fn view<'a>(
                                 .label(fl!("find-archives"))
                                 .on_toggle(|_| Message::FindArchives)
                                 .into(),
+                            if f.help {
+                                widget::button::suggested(fl!("find-regex-help-button"))
+                            } else {
+                                widget::button::standard(fl!("find-regex-help-button"))
+                            }
+                            .on_press(Message::FindHelp)
+                            .into(),
                         ])
-                        .spacing(16),
-                        row![
-                            edit(fl!("find-min-size"), &f.min_size, FindField::MinSize),
-                            edit(fl!("find-max-size"), &f.max_size, FindField::MaxSize),
-                            edit(fl!("find-days"), &f.days, FindField::Days),
-                            edit(fl!("find-attrs"), &f.attrs, FindField::Attrs),
-                        ]
-                        .spacing(8),
-                        widget::flex_row(vec![run.into(), go.into(), feed.into(), cancel.into()])
+                        .spacing(16)
+                        .align_items(cosmic::iced::Alignment::Center),
+                    )
+                    .push_maybe(
+                        f.help
+                            .then(|| widget::text::caption(fl!("find-regex-help"))),
+                    )
+                    .push(
+                        column![
+                            row![
+                                edit(fl!("find-min-size"), &f.min_size, FindField::MinSize),
+                                edit(fl!("find-max-size"), &f.max_size, FindField::MaxSize),
+                                edit(fl!("find-days"), &f.days, FindField::Days),
+                                edit(fl!("find-attrs"), &f.attrs, FindField::Attrs),
+                            ]
                             .spacing(8),
-                        widget::text(status).wrapping(Wrapping::WordOrGlyph),
-                        widget::scrollable(list).height(list_height(f.results.len())),
-                    ]
+                            widget::flex_row(vec![
+                                run.into(),
+                                go.into(),
+                                feed.into(),
+                                cancel.into()
+                            ])
+                            .spacing(8),
+                            widget::text(status).wrapping(Wrapping::WordOrGlyph),
+                            widget::scrollable(list).height(list_height(f.results.len())),
+                        ]
+                        .spacing(12),
+                    )
                     .spacing(12),
                 )
                 .into()

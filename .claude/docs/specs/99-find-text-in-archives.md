@@ -12,3 +12,6 @@ by name only; a text (or regex) skipped archives.
   inside the archive). 7z: what a member's reader left unread is drained (a solid block is one
   stream). Links (tar hard links too) are not searched.
 - The checkbox reads «(имена и текст)».
+- As TC: the text field, «С учётом регистра» and «Текст — регулярное выражение» show only after
+  «Искать текст» (kept in `FindPrefs.find_text`); off, the text is not searched.
+- «? Регулярные выражения»: a button that shows the syntax with examples for the name and the text.

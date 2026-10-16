@@ -240,6 +240,8 @@ pub struct State {
 #[serde(default)]
 pub struct FindPrefs {
     pub mask: String,
+    /// «Искать текст» (TC's «Find text»): the text field and its options shown and used.
+    pub find_text: bool,
     pub text: String,
     pub case_sensitive: bool,
     pub regex: bool,
@@ -257,6 +259,7 @@ impl Default for FindPrefs {
     fn default() -> Self {
         Self {
             mask: "*".into(),
+            find_text: false,
             text: String::new(),
             case_sensitive: false,
             regex: false,
