@@ -65,6 +65,10 @@ pub enum Setting {
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),
+    /// F12: 0 — own program, else `toolbar::builtins()[i - 1]`.
+    F12(usize),
+    F12Cmd(String),
+    F12Params(String),
     HomeDir(String),
     Viewer(String),
     Editor(String),
@@ -307,6 +311,7 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                 input(&form.home, "~", Setting::HomeDir),
             ))
             .into(),
+        f12_section(c),
         settings::section()
             .title(fl!("settings-programs"))
             .add(settings::item(
@@ -361,4 +366,39 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
     ])
     .spacing(16)
     .into()
+}
+
+/// F12: an internal command from the list, or an own program with parameters.
+fn f12_section(c: &crate::config::Config) -> Element<'_, Message> {
+    let set = |s| Message::Setting(s);
+    let cmds: Vec<String> = std::iter::once(fl!("settings-f12-own"))
+        .chain(crate::toolbar::builtins().iter().map(|b| (b.label)()))
+        .collect();
+    let at = (crate::toolbar::builtins().iter())
+        .position(|b| b.cm == c.f12.cmd)
+        .map_or(0, |i| i + 1);
+    let mut section = settings::section()
+        .title(fl!("settings-f12"))
+        .add(settings::item(
+            fl!("settings-f12-command"),
+            widget::dropdown(cmds, Some(at), move |i| set(Setting::F12(i))),
+        ));
+    if at == 0 {
+        let field = |value: &'static str, v: &str, f: fn(String) -> Setting| {
+            widget::text_input(value, v.to_string())
+                .on_input(move |s| set(f(s)))
+                .on_tab(Message::FocusNext)
+                .width(Length::Fixed(200.0))
+        };
+        section = section
+            .add(settings::item(
+                fl!("settings-f12-program"),
+                field("cosmic-term", &c.f12.cmd, Setting::F12Cmd),
+            ))
+            .add(settings::item(
+                fl!("settings-f12-params"),
+                field("%P%N", &c.f12.params, Setting::F12Params),
+            ));
+    }
+    section.into()
 }

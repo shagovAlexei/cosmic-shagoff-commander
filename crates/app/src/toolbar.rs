@@ -210,7 +210,7 @@ fn icon(b: &ToolButton) -> &str {
 }
 
 /// Tooltip: the button's own, else its command's name.
-fn tip(b: &ToolButton) -> String {
+pub fn tip(b: &ToolButton) -> String {
     match (b.tip.as_str(), builtin(&b.cmd)) {
         ("", Some(c)) => (c.label)(),
         ("", None) => b.cmd.clone(),

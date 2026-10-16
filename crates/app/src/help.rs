@@ -75,6 +75,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+C", fl!("menu-clip-copy"), Action::ClipCopy),
                 r("Ctrl+X", fl!("menu-clip-cut"), Action::ClipCut),
                 r("Ctrl+V", fl!("menu-clip-paste"), Action::ClipPaste),
+                r("F12", fl!("help-f12"), Action::F12),
                 r(
                     "F11, Ctrl+Shift+D",
                     fl!("menu-compare-files"),
