@@ -36,17 +36,35 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .into(),
         _ => pane(app, s),
     };
-    let panes = row![side(0), side(1)].height(Length::Fill);
+    // The panes share the width as `App::split` says; the gap between them is the divider,
+    // dragged to change it (double click: half and half), as TC's.
+    let (left, right) = viewport::split_portions(app.split);
+    let (_, gap) = split_geometry(app.config.skin);
+    let divider = widget::mouse_area(
+        container(widget::Space::new())
+            .width(Length::Fixed(gap))
+            .height(Length::Fill),
+    )
+    .interaction(cosmic::iced::mouse::Interaction::ResizingHorizontally)
+    .on_press(Message::SplitStart)
+    .on_double_click(Message::SplitReset);
+    let panes = row![
+        container(side(0)).width(Length::FillPortion(left)),
+        divider,
+        container(side(1)).width(Length::FillPortion(right)),
+    ]
+    .height(Length::Fill);
     match app.config.skin {
-        Skin::Classic => column![
-            crate::toolbar::bar(&app.config.toolbar),
-            panes.spacing(CLASSIC_GAP)
-        ]
-        .into(),
-        Skin::Modern => panes
-            .spacing(MODERN_GAP)
-            .padding([4.0, MODERN_PAD, 0.0, MODERN_PAD])
-            .into(),
+        Skin::Classic => column![crate::toolbar::bar(&app.config.toolbar), panes].into(),
+        Skin::Modern => panes.padding([4.0, MODERN_PAD, 0.0, MODERN_PAD]).into(),
+    }
+}
+
+/// For dragging the divider: the padding at each side of the panes row, and the gap between.
+pub fn split_geometry(skin: Skin) -> (f32, f32) {
+    match skin {
+        Skin::Classic => (0.0, CLASSIC_GAP),
+        Skin::Modern => (MODERN_PAD, MODERN_GAP),
     }
 }
 
@@ -155,7 +173,16 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     }
     let col = col
         .push(path)
-        .push(container(header(side, p.panel.sort(), skin, app.cols)).class(panel_style()))
+        .push(
+            container(header(
+                side,
+                p.panel.sort(),
+                skin,
+                app.cols,
+                viewport::visible_cols(p.width, app.cols),
+            ))
+            .class(panel_style()),
+        )
         .push(list)
         .width(Length::Fill);
     let pane: Element<'_, Message> = match skin {
@@ -427,7 +454,15 @@ fn drive_list(app: &App, side: usize) -> Element<'_, Message> {
     .spacing(4)
     .align_y(Alignment::Center);
     if let Some((free, total)) = app.space[side] {
-        bar = bar.push(text(fl!("disk-free", free = human(free), total = human(total))).size(TEXT));
+        // One line, cut on a narrow pane: wrapped, it would push this pane's list down.
+        bar = bar.push(
+            text(fl!("disk-free", free = human(free), total = human(total)))
+                .size(TEXT)
+                .wrapping(Wrapping::None)
+                .ellipsize(cosmic::iced::core::text::Ellipsize::End(
+                    cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1),
+                )),
+        );
     }
     container(bar).padding([2, 6]).into()
 }
@@ -437,8 +472,8 @@ fn unmounted_label(v: &shagoff_core::mount::Volume) -> String {
     format!("{} ({})", v.name, fl!("not-mounted"))
 }
 
-/// Drive buttons (the one holding cwd highlighted) and free space on the current disk.
-// ponytail: many drives overflow the row; wrap in a horizontal scrollable when they stop fitting.
+/// Drive buttons (the one holding cwd highlighted) and free space on the current disk. One line
+/// however narrow the pane (the divider): the buttons scroll sideways, the free space is cut.
 fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
     let current = drives::containing(&app.drives, app.panes[side].active().panel.cwd());
     let mut bar = row![].spacing(2).align_y(Alignment::Center);
@@ -455,9 +490,21 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
         let b = button::text(unmounted_label(v));
         bar = bar.push(b.on_press(Message::MountVolume(side, v.device.clone())));
     }
-    bar = bar.push(widget::Space::new().width(Length::Fill));
+    let buttons = widget::scrollable(bar)
+        .direction(cosmic::iced::widget::scrollable::Direction::Horizontal(
+            cosmic::iced::widget::scrollable::Scrollbar::new()
+                .width(2)
+                .scroller_width(2),
+        ))
+        .width(Length::Fill);
+    let mut bar = row![buttons].spacing(8).align_y(Alignment::Center);
     if let Some((free, total)) = app.space[side] {
-        bar = bar.push(text(fl!("disk-free", free = human(free), total = human(total))).size(TEXT));
+        bar = bar.push(
+            text(fl!("disk-free", free = human(free), total = human(total)))
+                .size(TEXT)
+                .wrapping(Wrapping::None)
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
+        );
     }
     container(bar).padding([2, 6]).into()
 }
@@ -536,7 +583,13 @@ fn tab_bar(
 
 /// Column headers on the same grid as `file_row` (padding 6, spacing 6), so labels sit over their columns.
 /// Classic: on a bar with a rule in each gap, like TC's header buttons.
-fn header(side: usize, sort: Sort, skin: Skin, w: [f32; 4]) -> Element<'static, Message> {
+fn header(
+    side: usize,
+    sort: Sort,
+    skin: Skin,
+    w: [f32; 4],
+    shown: usize,
+) -> Element<'static, Message> {
     let cell = |label: String, key: SortKey, width: Length, align: Alignment| {
         let arrow = match (sort.key == key, sort.asc) {
             (true, true) => " ▲",
@@ -562,6 +615,8 @@ fn header(side: usize, sort: Sort, skin: Skin, w: [f32; 4]) -> Element<'static, 
             .width(Length::Fixed(w[3]))
             .into(),
     ];
+    // A narrow pane: the columns on the right that don't fit are left out, as in the rows.
+    let cells: Vec<_> = cells.into_iter().take(1 + shown).collect();
     // The 6 px gaps are the grabbable edges (TC: drag to resize the column on their right);
     // Classic draws a rule in them, Modern leaves them blank.
     let mut out = Vec::with_capacity(cells.len() * 2);
@@ -633,6 +688,8 @@ fn file_row<'a>(
     let look = app.scheme.pick(e, std::time::SystemTime::now());
     let font = app.panel_font();
     let cell = |s| panel_cell(s, font);
+    // A narrow pane keeps Name readable: fixed columns that don't fit go, rightmost first.
+    let shown = viewport::visible_cols(app.panes[side].active().width, app.cols);
     let cells = row![
         // Empty style: the default (Transparent) sets its own text colour over the cursor's.
         container(name_cell(
@@ -645,13 +702,15 @@ fn file_row<'a>(
         ))
         .width(Length::Fill)
         .class(theme::Container::custom(|_| container::Style::default())),
-        cell(e.ext.clone()).width(Length::Fixed(app.cols[0])),
+    ]
+    .push_maybe((shown > 0).then(|| cell(e.ext.clone()).width(Length::Fixed(app.cols[0]))))
+    .push_maybe((shown > 1).then(|| {
         cell(size)
             .width(Length::Fixed(app.cols[1]))
-            .align_x(Alignment::End),
-        cell(date).width(Length::Fixed(app.cols[2])),
-        cell(attrs).width(Length::Fixed(app.cols[3])),
-    ]
+            .align_x(Alignment::End)
+    }))
+    .push_maybe((shown > 2).then(|| cell(date).width(Length::Fixed(app.cols[2]))))
+    .push_maybe((shown > 3).then(|| cell(attrs).width(Length::Fixed(app.cols[3]))))
     .spacing(6)
     .align_y(Alignment::Center);
     let row = container(cells)
@@ -821,10 +880,12 @@ pub fn footer(app: &App) -> Element<'_, Message> {
             row![totals]
         };
         // A gap at the right: the active half's details would run into the other half's totals.
+        // Each half under its pane: the divider's share.
+        let (left, right) = viewport::split_portions(app.split);
         line.spacing(12)
             .padding([0, 24, 0, 0])
             .align_y(Alignment::Center)
-            .width(Length::Fill)
+            .width(Length::FillPortion(if side == 0 { left } else { right }))
             .into()
     };
     let mut col = column![].push_maybe(job_line(app)).push(

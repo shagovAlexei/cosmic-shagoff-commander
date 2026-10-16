@@ -40,6 +40,43 @@ pub fn page_rows(row_h: f32, height: f32) -> usize {
 pub const COL_MIN_W: f32 = 30.0;
 pub const COL_MAX_W: f32 = 600.0;
 
+/// The panes' divider dragged to window x `x`: the left pane's share of `total` (both panes'
+/// widths, the gap left out), its left edge at `left`. Kept within 15 %…85 %, as TC keeps both
+/// panels usable. A share outside (an old or hand-edited state) means half.
+pub fn split_ratio(left: f32, total: f32, x: f32) -> f32 {
+    if total <= 0.0 {
+        return 0.5;
+    }
+    ((x - left) / total).clamp(0.15, 0.85)
+}
+
+/// The narrowest Name column: past it the fixed columns on the right are left out, last first.
+pub const NAME_MIN: f32 = 100.0;
+
+/// How many of the fixed columns (Ext, Size, Date, Attributes) fit beside a Name of at least
+/// `NAME_MIN` in a list `list_w` wide (rows: 6 px padding each side, 6 px between cells).
+/// 0 before the first layout shows them all.
+pub fn visible_cols(list_w: f32, cols: [f32; 4]) -> usize {
+    if list_w <= 0.0 {
+        return 4;
+    }
+    (0..=4)
+        .rev()
+        .find(|&n| list_w - 12.0 - cols[..n].iter().map(|w| w + 6.0).sum::<f32>() >= NAME_MIN)
+        .unwrap_or(0)
+}
+
+/// `FillPortion`s of the two panes (and the footer halves under them) for the stored share.
+pub fn split_portions(r: f32) -> (u16, u16) {
+    let left = (split_or_half(r) * 1000.0).round() as u16;
+    (left, 1000 - left)
+}
+
+/// The share as stored: anything outside 15 %…85 % (0 = never set) is half.
+pub fn split_or_half(r: f32) -> f32 {
+    if (0.15..=0.85).contains(&r) { r } else { 0.5 }
+}
+
 /// Header edge `edge` (1 = right of Name … 4 = left of Attributes) dragged from `start_x` to
 /// `x`: which of the four fixed columns changes, and its new width from `start_w`. As in TC an
 /// edge sizes the column on its left; Name takes the rest, so its own edge sizes Ext inversely.
@@ -95,6 +132,32 @@ pub fn brief_first_col(len: usize, cursor: usize, rows: usize, cols: usize, firs
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_follows_the_pointer_within_bounds() {
+        assert_eq!(split_ratio(8.0, 1000.0, 308.0), 0.3);
+        assert_eq!(split_ratio(0.0, 1000.0, 10.0), 0.15);
+        assert_eq!(split_ratio(0.0, 1000.0, 990.0), 0.85);
+        assert_eq!(split_ratio(0.0, 0.0, 10.0), 0.5); // before the first layout
+        assert_eq!(
+            (split_portions(0.0), split_portions(0.3)),
+            ((500, 500), (300, 700))
+        );
+        assert_eq!(
+            (split_or_half(0.0), split_or_half(0.3), split_or_half(0.9)),
+            (0.5, 0.3, 0.5)
+        );
+    }
+
+    #[test]
+    fn narrow_lists_drop_columns_from_the_right() {
+        let cols = [50.0, 80.0, 120.0, 80.0]; // all four + gaps: 354
+        assert_eq!(visible_cols(0.0, cols), 4);
+        assert_eq!(visible_cols(12.0 + 354.0 + 100.0, cols), 4);
+        assert_eq!(visible_cols(12.0 + 354.0 + 99.0, cols), 3); // attributes go first
+        assert_eq!(visible_cols(300.0, cols), 2);
+        assert_eq!(visible_cols(50.0, cols), 0);
+    }
 
     #[test]
     fn brief_rows_and_cols_at_least_one() {
