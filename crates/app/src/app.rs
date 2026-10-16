@@ -3532,6 +3532,18 @@ impl App {
                     .as_ref()
                     .and_then(|c| rows.iter().find(|r| &r.old == c))
                     .map(|r| r.new.clone());
+                if let Some((archive, _)) = archive::split_path(&m.dir) {
+                    let inside = |p: &Path| p.strip_prefix(&archive).map(Path::to_path_buf);
+                    let pairs = (pairs.iter())
+                        .filter_map(|(a, b)| Some((inside(a).ok()?, inside(b).ok()?)))
+                        .collect();
+                    let job = Job::Repack {
+                        archive,
+                        change: Change::Rename(pairs),
+                        move_sources: false,
+                    };
+                    return self.start_job(m.side, OpKind::Repack, job, focus);
+                }
                 let job = Job::Transfer {
                     method: Method::Rename,
                     pairs,
@@ -3878,10 +3890,7 @@ impl App {
                 }
                 let job = Job::Repack {
                     archive,
-                    change: Change::Rename {
-                        from: inner.join(name),
-                        to: inner.join(input),
-                    },
+                    change: Change::Rename(vec![(inner.join(name), inner.join(input))]),
                     move_sources: false,
                 };
                 return self.start_job(side, OpKind::Repack, job, Some(input.to_string()));
@@ -4712,9 +4721,7 @@ impl App {
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
             // Shift+F5 inside one copies from the archive into itself.
-            Action::MultiRename | Action::CopySame | Action::NewFile | Action::Properties => {
-                inside(side)
-            }
+            Action::CopySame | Action::NewFile | Action::Properties => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
                 inside(side) || inside(1 - side)
@@ -8798,13 +8805,17 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_m_inside_archive_stays_read_only() {
+    fn ctrl_m_inside_archive_repacks() {
         let (_tmp, mut app, a) = zip_setup();
         listed_at(&mut app, 0, &a);
         let _ = app.update(Message::Key(Action::End));
         let _ = app.update(Message::Key(Action::MultiRename));
-        assert!(app.dialog.is_none());
-        assert_eq!(app.msg(), Some(fl!("archive-read-only").as_str()));
+        let Some(Dialog::MultiRename(m)) = &mut app.dialog else {
+            panic!("{:?}", app.msg())
+        };
+        m.rule.name = "x[N]".into();
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
     }
 
     #[test]
