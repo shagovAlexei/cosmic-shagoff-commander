@@ -35,8 +35,7 @@ impl Mask {
                 .collect()
         };
         let is_dir = |p: &String| p.ends_with(['\\', '/']);
-        // Dir patterns before `|` are left out: files are what is listed.
-        let mut include: Vec<String> = split(inc).into_iter().filter(|p| !is_dir(p)).collect();
+        let mut include = split(inc);
         if include.is_empty() {
             include.push("*".into());
         }
@@ -51,22 +50,24 @@ impl Mask {
         }
     }
 
-    /// A dir named so is left out with everything inside (`|.git\`).
+    /// A dir named so is left out with everything inside (`|.git\`). By the name only, as TC.
     pub fn skips_dir(&self, name: &str) -> bool {
-        let name = if self.case {
-            name.to_string()
+        !self.exclude_dirs.is_empty() && {
+            let name = self.fold(name);
+            self.exclude_dirs.iter().any(|p| glob(p, &name))
+        }
+    }
+
+    fn fold<'a>(&self, name: &'a str) -> std::borrow::Cow<'a, str> {
+        if self.case {
+            name.into()
         } else {
-            name.to_lowercase()
-        };
-        self.exclude_dirs.iter().any(|p| glob(p, &name))
+            name.to_lowercase().into()
+        }
     }
 
     pub fn matches(&self, name: &str) -> bool {
-        let name = if self.case {
-            name.to_string()
-        } else {
-            name.to_lowercase()
-        };
+        let name = self.fold(name);
         self.include.iter().any(|p| glob(p, &name)) && !self.exclude.iter().any(|p| glob(p, &name))
     }
 }
@@ -130,8 +131,8 @@ mod tests {
         assert!(k.skips_dir(".git") && k.skips_dir("Target") && !k.skips_dir("src"));
         assert!(k.matches(".git") && k.matches("target")); // as file names: not excluded
         assert!(!k.matches("a.bak"));
-        // A dir pattern before `|` does not narrow the files.
-        assert!(m("src\\", "a.rs"));
+        // Before `|` a dir pattern stays as it was: no file is named so.
+        assert!(!m("src\\", "a.rs"));
         assert!(!Mask::parse("*.rs").skips_dir(".git"));
     }
 

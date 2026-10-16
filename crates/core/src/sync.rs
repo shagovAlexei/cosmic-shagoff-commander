@@ -193,7 +193,7 @@ fn walk(
         let path = rel.join(name);
         let (a, b) = (l.get(name).copied(), r.get(name).copied());
         // `|.git\` in the mask: that dir is left out on both sides, with all inside.
-        if a.or(b).is_some_and(|x| x.dir)
+        if (a.is_some_and(|x| x.dir) || b.is_some_and(|x| x.dir))
             && o.mask
                 .as_ref()
                 .is_some_and(|m| m.skips_dir(&name.to_string_lossy()))
