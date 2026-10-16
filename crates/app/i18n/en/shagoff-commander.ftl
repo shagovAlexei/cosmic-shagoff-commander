@@ -385,7 +385,16 @@ archive-edit-link = A link inside an archive can't be edited
 # Find files, more
 find-name-regex = Name is a regular expression
 find-name-regex-label = Name (regular expression)
-find-archives = Search in archives (names)
+find-text-on = Find text
+find-regex-help-button = ? Regular expressions
+find-regex-help = Regular expressions: in "Text" with "Regular expression" ticked, in the name with "Name is a regular expression".
+    • .  any character;  .*  anything;  \d  digit;  \w  letter or digit;  \s  space;  \.  a dot itself
+    • ^  line (name) start,  $  end;  [abc]  one of;  [^0-9]  not a digit;  a|b  either
+    • x?  0 or 1;  x+  1 or more;  x*  0 or more;  x{"{"}3{"}"}  exactly 3;  ( )  group
+    • Name:  ^IMG_\d{"{"}4{"}"}\.jpg$  — IMG_0001.jpg;  \.(rs|toml)$  — .rs and .toml files;  ^[^.]+$  — no extension
+    • Text:  TODO|FIXME  — either;  ^\s*fn   — lines starting with fn;  \d{"{"}3{"}"}-\d{"{"}2{"}"}-\d{"{"}2{"}"}  — 123-45-67
+    • Without "Case sensitive" upper and lower case are the same (Cyrillic too).
+find-archives = Search in archives (names and text)
 find-feed-archives = Found inside archives ({ $n }) are not listed in the panel
 find-regex = Text is a regular expression
 find-min-size = Size from, KB

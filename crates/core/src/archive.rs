@@ -631,6 +631,119 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
     }
 }
 
+/// Alt+F7 with a text: every file of a tree archive as (inner path, size, mtime, its contents),
+/// streamed (tar is one stream: no member is skipped without reading through it). Links, dirs and
+/// members that can't be read (a zip entry with a wrong / no password) are passed over.
+/// `stop` ends it with `Interrupted`.
+pub fn for_each_file(
+    archive: &Path,
+    stop: &AtomicBool,
+    f: &mut dyn FnMut(&Path, u64, SystemTime, &mut dyn Read),
+) -> io::Result<()> {
+    let name = archive
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let fmt = Format::detect(&name)
+        .filter(|f| f.is_tree())
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let stopped = || {
+        if stop.load(Ordering::Relaxed) {
+            Err(io::Error::from(io::ErrorKind::Interrupted))
+        } else {
+            Ok(())
+        }
+    };
+    // Names as the panel lists them (`./a` → `a`); an absolute or `..` one is passed over, else
+    // `archive.join` would point outside the archive.
+    let f = &mut |p: &Path, size, mtime, r: &mut dyn Read| {
+        if let Some(p) = safe_path(p).filter(|p| !p.as_os_str().is_empty()) {
+            f(&p, size, mtime, r);
+        }
+    };
+    let file = File::open(archive)?;
+    let pw = password(archive);
+    let tar = |r: Box<dyn Read>, f: &mut dyn FnMut(&Path, u64, SystemTime, &mut dyn Read)| {
+        let mut a = tar::Archive::new(r);
+        for e in a.entries()? {
+            stopped()?;
+            let mut e = e?;
+            let t = e.header().entry_type();
+            if !(t.is_file() || t.is_gnu_sparse() || t.is_contiguous()) {
+                continue;
+            }
+            let path = e.path()?.into_owned();
+            let mtime = e
+                .header()
+                .mtime()
+                .map_or(UNIX_EPOCH, |s| UNIX_EPOCH + Duration::from_secs(s));
+            f(&path, e.size(), mtime, &mut e);
+        }
+        Ok(())
+    };
+    match fmt {
+        Format::Zip => {
+            let mut z = zip::ZipArchive::new(file)?;
+            for i in 0..z.len() {
+                stopped()?;
+                let e = match &pw {
+                    Some(p) => z.by_index_decrypt(i, p.as_bytes()),
+                    None => z.by_index(i),
+                };
+                let Ok(mut e) = e else { continue };
+                if e.is_dir() || e.is_symlink() {
+                    continue;
+                }
+                let path = PathBuf::from(e.name());
+                let mtime = e
+                    .last_modified()
+                    .and_then(from_zip_time)
+                    .unwrap_or(UNIX_EPOCH);
+                f(&path, e.size(), mtime, &mut e);
+            }
+            Ok(())
+        }
+        Format::SevenZ => {
+            let pw = pw
+                .as_deref()
+                .map_or_else(sevenz_rust2::Password::empty, Into::into);
+            let mut a = sevenz_rust2::ArchiveReader::new(file, pw).map_err(sz_password_error)?;
+            let r = a.for_each_entries(|e, data| {
+                if stop.load(Ordering::Relaxed) {
+                    return Err(sevenz_rust2::Error::Other("stopped".into()));
+                }
+                let attrs = e.windows_attributes();
+                let link = e.has_windows_attributes
+                    && attrs & UNIX_EXTENSION != 0
+                    && (attrs >> 16) & S_IFMT == S_IFLNK;
+                if !e.is_directory() && !e.is_anti_item() && !link {
+                    let mtime = if e.has_last_modified_date {
+                        e.last_modified_date().into()
+                    } else {
+                        UNIX_EPOCH
+                    };
+                    f(Path::new(e.name()), e.size(), mtime, data);
+                }
+                // A solid block is one stream: what the callback left unread must go, or the
+                // next member would start inside this one.
+                io::copy(data, &mut io::sink())?;
+                Ok(true)
+            });
+            stopped()?;
+            r.map_err(sz_password_error)
+        }
+        Format::Tar => tar(Box::new(file), f),
+        Format::TarGz => tar(Box::new(flate2::read::MultiGzDecoder::new(file)), f),
+        Format::TarBz2 => tar(Box::new(bzip2::read::MultiBzDecoder::new(file)), f),
+        Format::TarXz => tar(
+            Box::new(liblzma::read::XzDecoder::new_multi_decoder(file)),
+            f,
+        ),
+        Format::TarZst => tar(Box::new(zstd::stream::read::Decoder::new(file)?), f),
+        Format::Gz | Format::Bz2 | Format::Xz | Format::Zst => unreachable!("not a tree"),
+    }
+}
+
 /// Every entry of a tree archive as (inner path, is dir, size, mtime), for Alt+F7. Read afresh, not
 /// through the one-archive cache: a search would evict the archive the panel is showing.
 // ponytail: dirs that exist only as parents of entries are not listed.
