@@ -42,6 +42,12 @@ pub fn builtins() -> &'static [Builtin] {
         b!("cm_SrcLong", ViewFull, "view-list-symbolic", "menu-full"),
         b!("cm_SrcShort", ViewBrief, "view-grid-symbolic", "menu-brief"),
         b!(
+            "cm_SrcThumbs",
+            ViewThumbs,
+            "image-x-generic-symbolic",
+            "menu-thumbs"
+        ),
+        b!(
             "cm_SwitchHidSys",
             ToggleHidden,
             "view-reveal-symbolic",

@@ -109,7 +109,9 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             .into(),
     };
 
-    let list = if p.brief {
+    let list = if p.thumbs {
+        thumb_list(app, side, p, active)
+    } else if p.brief {
         brief_list(app, side, p, active)
     } else {
         full_list(app, side, p, active)
@@ -384,6 +386,95 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
     }
     mouse_area(container(grid).width(Length::Fill).height(Length::Fill))
         .on_scroll(move |d| Message::BriefWheel(side, d))
+        .into()
+}
+
+/// Thumbnails view (TC Ctrl+Shift+F1): cells left to right, then down; scrolled by pixels like
+/// the Full view, only the rows on screen built.
+fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
+    let (skin, hover, scheme) = (app.config.skin, app.drop_hover, &app.scheme);
+    let font = app.panel_font();
+    let cell_h = crate::thumbs::cell_h(app.row_h());
+    let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
+    let cols = p.thumb_cols();
+    let range = viewport::thumb_range(entries.len(), cols, cell_h, p.offset, p.height);
+    let (first, last) = (range.start / cols, entries.len().div_ceil(cols));
+    let mut list = column![widget::Space::new().height(first as f32 * cell_h)];
+    let marked = OnceCell::new();
+    let inner = shagoff_core::archive::within(p.panel.cwd());
+    let size = crate::thumbs::SIZE as f32;
+    for start in range.clone().step_by(cols) {
+        let mut line = row![];
+        for (i, e) in entries
+            .iter()
+            .enumerate()
+            .take(range.end)
+            .skip(start)
+            .take(cols)
+        {
+            let label = if e.is_dir() {
+                format::display_name(e)
+            } else {
+                e.name.clone()
+            };
+            let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
+            let look = scheme.pick(e, std::time::SystemTime::now());
+            let paint = look.filter(|_| !lit).and_then(|l| l.fg);
+            let pic = (app.thumbs.get(&p.panel.cwd().join(&e.os_name)))
+                .and_then(|(m, h)| h.as_ref().filter(|_| *m == e.mtime));
+            let pic: Element<'_, Message> = match pic {
+                Some(h) => widget::image(h.clone()).into(),
+                None => entry_icon(e, 64).into(),
+            };
+            let name = panel_cell(label, font);
+            let name: Element<'_, Message> = match paint {
+                Some(Paint::Accent) => name.class(theme::Text::Accent).into(),
+                Some(Paint::Rgb([r, g, b])) => name
+                    .class(theme::Text::Color(Color::from_rgb8(r, g, b)))
+                    .into(),
+                None => name.into(),
+            };
+            let cell = column![
+                container(pic).center(Length::Fixed(size)),
+                container(name).center_x(Length::Fill).clip(true),
+            ]
+            .align_x(Alignment::Center);
+            let cell = container(cell)
+                .padding(4)
+                .width(Length::Fixed(crate::thumbs::CELL_W))
+                .height(Length::Fixed(cell_h))
+                .clip(true)
+                .class(cursor_style(
+                    i == cursor || hover == Some((side, i)),
+                    active,
+                    p.panel.is_marked(e),
+                    skin,
+                    look.and_then(|l| l.bg),
+                    false,
+                    scheme.paint(),
+                ));
+            let cell = mouse_area(cell)
+                .on_press(Message::Click(side, i))
+                .on_right_press(Message::RightClick(side, i))
+                .on_double_click(Message::DoubleClick(side, i));
+            line = line.push(dnd_row(
+                app.window_id(),
+                side,
+                p,
+                i,
+                &marked,
+                inner,
+                cell.into(),
+            ));
+        }
+        list = list.push(line);
+    }
+    let rows_after = last.saturating_sub(range.end.div_ceil(cols));
+    list = list.push(widget::Space::new().height(rows_after as f32 * cell_h));
+    scrollable(list)
+        .id(app.scroll_ids[side].clone())
+        .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
+        .height(Length::Fill)
         .into()
 }
 

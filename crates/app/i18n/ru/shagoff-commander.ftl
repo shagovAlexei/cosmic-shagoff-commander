@@ -247,6 +247,7 @@ menu-sort-ext = Сортировать по типу
 menu-sort-date = Сортировать по дате
 menu-sort-size = Сортировать по размеру
 menu-brief = Кратко (Brief)
+menu-thumbs = Эскизы
 menu-full = Подробно
 menu-reset-columns = Сбросить ширину колонок
 
@@ -280,6 +281,7 @@ help-search = Поиск и сравнение
 help-tabs = Вкладки
 help-next-tab = Следующая / предыдущая вкладка
 help-brief-cols = Вид Brief: предыдущая / следующая колонка
+help-thumbs-cells = Вид «Эскизы»: соседняя плитка / ряд
 help-drives = Диски и сеть
 help-show = Вид
 help-window = Окно

@@ -120,12 +120,14 @@ pub enum Action {
     Properties,
     /// Alt+Shift+Enter: count the size of every dir in the panel.
     CountDirs,
-    /// ←/→: the next column in Brief view; nothing in Full.
+    /// ←/→: the next column in Brief view, the next cell in Thumbnails; nothing in Full.
     Left,
     Right,
     /// Ctrl+F1 / Ctrl+F2: Brief / Full view of the active tab.
     ViewBrief,
     ViewFull,
+    /// Ctrl+Shift+F1: Thumbnails view of the active tab.
+    ViewThumbs,
     /// Column widths back to the defaults (menu, double click on a header edge).
     ResetColumns,
     /// Shift+F4: create a file (if missing) and edit it.
@@ -180,6 +182,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::ArrowLeft, false, false) => Action::Left,
             (Named::ArrowRight, false, false) => Action::Right,
             (Named::F1, true, false) => Action::ViewBrief,
+            (Named::F1, true, true) => Action::ViewThumbs,
             (Named::F2, true, false) => Action::ViewFull,
             (Named::PageUp, false, false) => Action::PageUp,
             (Named::PageDown, false, false) => Action::PageDown,
@@ -338,6 +341,10 @@ mod tests {
         assert_eq!(named(Named::ArrowLeft, NONE), Some(Action::Left));
         assert_eq!(named(Named::ArrowRight, NONE), Some(Action::Right));
         assert_eq!(named(Named::F1, CTRL), Some(Action::ViewBrief));
+        assert_eq!(
+            named(Named::F1, CTRL | Modifiers::SHIFT),
+            Some(Action::ViewThumbs)
+        );
         assert_eq!(named(Named::F2, CTRL), Some(Action::ViewFull));
         assert_eq!(named(Named::Enter, NONE), Some(Action::Enter));
         assert_eq!(named(Named::Backspace, NONE), Some(Action::Parent));

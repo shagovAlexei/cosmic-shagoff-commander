@@ -59,6 +59,8 @@ pub struct Tab {
     pub width: f32,
     /// Ctrl+F1 Brief view (names in columns) instead of Full.
     pub brief: bool,
+    /// Ctrl+Shift+F1 Thumbnails view (cells with pictures); never together with `brief`.
+    pub thumbs: bool,
     /// Brief view: first column on screen.
     pub col: usize,
     /// Brief view: touchpad scroll not yet worth a column, px.
@@ -107,6 +109,7 @@ impl Tab {
             height: FALLBACK_LIST_H,
             width: FALLBACK_LIST_W,
             brief: false,
+            thumbs: false,
             col: 0,
             wheel: 0.0,
             pending: None,
@@ -146,6 +149,11 @@ impl Tab {
         )
     }
 
+    /// Thumbnails view: cells per row.
+    pub fn thumb_cols(&self) -> usize {
+        viewport::brief_cols(self.width, crate::thumbs::CELL_W)
+    }
+
     /// Where the tab is going: the dir being scanned, else the shown one. Rescans use this so they
     /// never cancel a navigation still in flight.
     pub(crate) fn target(&self) -> PathBuf {
@@ -169,6 +177,7 @@ impl Tab {
             height: self.height,
             width: self.width,
             brief: self.brief,
+            thumbs: self.thumbs,
             col: self.col,
             wheel: 0.0,
             pending: None,
@@ -345,6 +354,10 @@ pub struct App {
     pane_hover: Option<usize>,
     /// The dir row files are being dragged over: (side, row).
     pub drop_hover: Option<(usize, usize)>,
+    /// Thumbnails view: path → (its mtime then, the picture; `None` while made or unreadable).
+    pub thumbs: HashMap<PathBuf, (SystemTime, Option<widget::image::Handle>)>,
+    /// Pictures being made now.
+    thumbs_busy: usize,
     /// Where held files were last seen (window coordinates).
     drop_at: Option<cosmic::iced::Point>,
     /// Ctrl+D: the submenus opened, outermost first (their indices in `config.hotlist`).
@@ -432,6 +445,8 @@ pub enum Message {
     Resized(usize, Size),
     /// side, mouse wheel over a Brief list: one column per notch
     BriefWheel(usize, mouse::ScrollDelta),
+    /// A picture made for the Thumbnails view: path, its mtime when asked, the picture.
+    Thumb(PathBuf, SystemTime, Option<widget::image::Handle>),
     SelectTab(usize, usize),
     /// Left press on a tab: select it and start dragging it.
     TabPress(usize, usize),
@@ -753,7 +768,7 @@ impl Application for App {
             true => Task::none(),
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
-        Task::batch([task, follow, back])
+        Task::batch([task, follow, back, self.want_thumbs()])
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -922,6 +937,8 @@ impl App {
             tab_drag: None,
             pane_hover: None,
             drop_hover: None,
+            thumbs: HashMap::new(),
+            thumbs_busy: 0,
             drop_at: None,
             hot_sub: Vec::new(),
             volumes: Vec::new(),
@@ -968,7 +985,8 @@ impl App {
             tabs.select(active);
             for (i, t) in tabs.items_mut().iter_mut().enumerate() {
                 t.locked = locked(i);
-                t.brief = saved.brief.get(i).copied().unwrap_or(false);
+                t.thumbs = saved.thumbs.get(i).copied().unwrap_or(false);
+                t.brief = !t.thumbs && saved.brief.get(i).copied().unwrap_or(false);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
                 t.history = saved.history.get(i).cloned().unwrap_or_default();
             }
@@ -1264,13 +1282,22 @@ impl App {
                 // One list widget per pane: every tab shares its viewport size.
                 let t = self.panes[side].active();
                 // Brief: any size change regroups the columns, the cursor may leave the screen.
-                let shrunk = size.height < t.height || t.brief;
+                let shrunk = size.height < t.height || t.brief || t.thumbs;
                 for t in self.panes[side].items_mut() {
                     (t.width, t.height) = (size.width, size.height);
                 }
                 if shrunk {
                     let tab = self.panes[side].active().id;
                     return self.reveal(side, tab); // keep the cursor on screen
+                }
+            }
+            Message::Thumb(path, mtime, pic) => {
+                self.thumbs_busy -= 1;
+                // Changed since it was asked: the next `want_thumbs` asks again.
+                if let Some(slot) = self.thumbs.get_mut(&path)
+                    && slot.0 == mtime
+                {
+                    slot.1 = pic;
                 }
             }
             Message::BriefWheel(side, delta) => {
@@ -2673,6 +2700,7 @@ impl App {
                 active: self.panes[s].active_index(),
                 locked: self.panes[s].items().iter().map(|t| t.locked).collect(),
                 brief: self.panes[s].items().iter().map(|t| t.brief).collect(),
+                thumbs: self.panes[s].items().iter().map(|t| t.thumbs).collect(),
                 names: (self.panes[s].items().iter())
                     .map(|t| t.name.clone().unwrap_or_default())
                     .collect(),
@@ -2920,8 +2948,11 @@ impl App {
         let t = self.panes[side].active_mut();
         let (rows, cols) = t.brief_grid(row_h, self.config.text_scale());
         let (brief, rows) = (t.brief, rows as isize);
+        let (thumbs, across) = (t.thumbs, t.thumb_cols() as isize);
         let page = if brief {
             rows * cols as isize
+        } else if thumbs {
+            viewport::page_rows(crate::thumbs::cell_h(row_h), t.height) as isize * across
         } else {
             viewport::page_rows(row_h, t.height) as isize
         };
@@ -2934,6 +2965,10 @@ impl App {
                 self.active = 1 - self.active;
                 return Task::none();
             }
+            Action::Up if thumbs => panel.move_cursor(-across),
+            Action::Down if thumbs => panel.move_cursor(across),
+            Action::Left if thumbs => panel.move_cursor(-1),
+            Action::Right if thumbs => panel.move_cursor(1),
             Action::Up => panel.move_cursor(-1),
             Action::Down => panel.move_cursor(1),
             Action::Left if brief => panel.move_cursor(-rows),
@@ -2957,9 +2992,10 @@ impl App {
                 self.save_columns();
                 return Task::none();
             }
-            Action::ViewBrief | Action::ViewFull => {
+            Action::ViewBrief | Action::ViewFull | Action::ViewThumbs => {
                 let t = self.panes[side].active_mut();
                 t.brief = action == Action::ViewBrief;
+                t.thumbs = action == Action::ViewThumbs;
                 return Task::batch([self.reveal(side, tab), self.restore_scroll(side)]);
             }
             Action::PageUp => panel.move_cursor(-page),
@@ -5189,6 +5225,51 @@ impl App {
         reload
     }
 
+    /// Thumbnails view: start making the pictures on screen that are not made yet, a few at a
+    /// time (each one done asks for the next through `update`).
+    fn want_thumbs(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        let cell_h = crate::thumbs::cell_h(self.row_h());
+        for side in 0..2 {
+            let t = self.panes[side].active();
+            if !t.thumbs || archive::within(t.panel.cwd()) {
+                continue;
+            }
+            let entries = t.panel.entries();
+            let range =
+                viewport::thumb_range(entries.len(), t.thumb_cols(), cell_h, t.offset, t.height);
+            for e in &entries[range] {
+                if self.thumbs_busy >= crate::thumbs::BUSY_MAX {
+                    break;
+                }
+                if e.is_dir() || !crate::thumbs::wanted(&e.name, e.size) {
+                    continue;
+                }
+                let path = t.panel.cwd().join(&e.os_name);
+                if self.thumbs.get(&path).is_some_and(|(m, _)| *m == e.mtime) {
+                    continue;
+                }
+                // ponytail: the whole cache goes at once; an LRU if big picture dirs thrash it.
+                if self.thumbs.len() >= crate::thumbs::CACHE_MAX {
+                    self.thumbs.clear();
+                }
+                self.thumbs.insert(path.clone(), (e.mtime, None));
+                self.thumbs_busy += 1;
+                let mtime = e.mtime;
+                let p = path.clone();
+                tasks.push(Task::perform(
+                    async move {
+                        (tokio::task::spawn_blocking(move || crate::thumbs::make(&p)).await)
+                            .ok()
+                            .flatten()
+                    },
+                    move |pic| cosmic::Action::App(Message::Thumb(path, mtime, pic)),
+                ));
+            }
+        }
+        Task::batch(tasks)
+    }
+
     /// Keep tab `tab`'s cursor row fully visible. An inactive tab only gets its offset updated;
     /// `restore_scroll` applies it when that tab is shown.
     fn reveal(&mut self, side: usize, tab: u64) -> Task<Message> {
@@ -5207,7 +5288,14 @@ impl App {
             t.col = viewport::brief_first_col(len, t.panel.cursor(), rows, cols, t.col);
             return Task::none();
         }
-        match viewport::scroll_to_cursor(t.panel.cursor(), row_h, t.offset, t.height) {
+        let (row, row_h) = match t.thumbs {
+            true => (
+                t.panel.cursor() / t.thumb_cols(),
+                crate::thumbs::cell_h(row_h),
+            ),
+            false => (t.panel.cursor(), row_h),
+        };
+        match viewport::scroll_to_cursor(row, row_h, t.offset, t.height) {
             Some(y) => {
                 t.offset = y;
                 if is_active {
@@ -7279,6 +7367,32 @@ mod tests {
             "offset {}",
             t.offset
         );
+    }
+
+    #[test]
+    fn thumbs_view_moves_by_cells_and_rows() {
+        // ".." + 20 files; 500 px = 4 cells a row
+        let mut app = tall_list(4.5 * ROW);
+        let cur = |app: &App| app.panes[0].active().panel.cursor();
+        let _ = app.update(Message::Key(Action::ViewBrief));
+        let _ = app.update(Message::Key(Action::ViewThumbs));
+        let t = app.panes[0].active();
+        assert!(t.thumbs && !t.brief);
+        let _ = app.update(Message::Key(Action::Right));
+        assert_eq!(cur(&app), 1);
+        let _ = app.update(Message::Key(Action::Down));
+        assert_eq!(cur(&app), 5);
+        let _ = app.update(Message::Key(Action::PageDown)); // one row on screen
+        assert_eq!(cur(&app), 9);
+        let _ = app.update(Message::Key(Action::Up));
+        let _ = app.update(Message::Key(Action::Left));
+        assert_eq!(cur(&app), 4);
+        let _ = app.update(Message::Key(Action::End));
+        let t = app.panes[0].active();
+        let cell_h = crate::thumbs::cell_h(app.row_h());
+        assert!(t.offset + t.height >= 6.0 * cell_h); // the last row (6th) on screen
+        let _ = app.update(Message::Key(Action::ViewFull));
+        assert!(!app.panes[0].active().thumbs);
     }
 
     #[test]
