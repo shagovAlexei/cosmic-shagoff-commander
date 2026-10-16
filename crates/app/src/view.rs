@@ -38,8 +38,29 @@ pub fn view(app: &App) -> Element<'_, Message> {
     };
     let panes = row![side(0), side(1)].height(Length::Fill);
     match app.config.skin {
-        Skin::Classic => column![crate::toolbar::bar(&app.config.toolbar), panes.spacing(4)].into(),
-        Skin::Modern => panes.spacing(8).padding([4, 8, 0, 8]).into(),
+        Skin::Classic => column![
+            crate::toolbar::bar(&app.config.toolbar),
+            panes.spacing(CLASSIC_GAP)
+        ]
+        .into(),
+        Skin::Modern => panes
+            .spacing(MODERN_GAP)
+            .padding([4.0, MODERN_PAD, 0.0, MODERN_PAD])
+            .into(),
+    }
+}
+
+const CLASSIC_GAP: f32 = 4.0;
+const MODERN_GAP: f32 = 8.0;
+const MODERN_PAD: f32 = 8.0;
+/// The Modern card's padding around its contents.
+const CARD_PAD: f32 = 6.0;
+
+/// The window x between the panes (the middle of the gap), from the left pane's list width.
+pub fn pane_split(skin: Skin, left_list_w: f32) -> f32 {
+    match skin {
+        Skin::Classic => left_list_w + CLASSIC_GAP / 2.0,
+        Skin::Modern => MODERN_PAD + CARD_PAD + left_list_w + CARD_PAD + MODERN_GAP / 2.0,
     }
 }
 
@@ -140,7 +161,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let pane: Element<'_, Message> = match skin {
         Skin::Classic => col.into(),
         Skin::Modern => container(col.spacing(2))
-            .padding(6)
+            .padding(CARD_PAD)
             .class(card_style(active))
             .into(),
     };
