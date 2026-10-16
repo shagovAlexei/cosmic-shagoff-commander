@@ -353,7 +353,7 @@ pub fn compare_lists(left: &[Entry], right: &[Entry]) -> (Vec<OsString>, Vec<OsS
 }
 
 /// What a row stands for in the list: TC's show buttons (→ ← ≠ =) and the totals line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     ToRight,
     ToLeft,

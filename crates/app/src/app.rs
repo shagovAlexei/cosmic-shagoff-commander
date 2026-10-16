@@ -324,6 +324,8 @@ pub struct App {
     saved: State,
     /// Alt+F7 settings, kept in `State`.
     find: config::FindPrefs,
+    /// Ctrl+Shift+S options as last compared (written to the state).
+    sync: config::SyncPrefs,
     pub drives: Vec<Drive>,
     /// Column widths as shown: the config's, or the one being dragged (written on release).
     pub cols: [f32; 4],
@@ -861,6 +863,7 @@ impl App {
             state_handler: None,
             saved: State::default(),
             find: state.find.clone(),
+            sync: state.sync.clone(),
             drives: Vec::new(),
             cols,
             col_drag: None,
@@ -2606,6 +2609,7 @@ impl App {
             }),
             active: self.active,
             find: self.find.clone(),
+            sync: self.sync.clone(),
             commands: keep(&self.commands),
             masks: keep(&self.masks),
             other_cmds: keep(&self.other_cmds),
@@ -3507,14 +3511,13 @@ impl App {
                 side,
                 left: self.panes[0].active().target(),
                 right: self.panes[1].active().target(),
-                recursive: true,
-                content: false,
-                ignore_date: false,
+                recursive: self.sync.recursive,
+                content: self.sync.content,
+                ignore_date: self.sync.ignore_date,
                 hidden: panel.show_hidden(),
-                // As before: equal files hidden until asked for.
-                hide: HashSet::from([shagoff_core::sync::Kind::Same]),
-                mirror: false,
-                mask: String::new(),
+                hide: self.sync.hide.iter().copied().collect(),
+                mirror: self.sync.mirror,
+                mask: self.sync.mask.clone(),
                 confirm: false,
                 rows: Vec::new(),
                 id: 0,
@@ -4212,7 +4215,18 @@ impl App {
             old.store(true, Ordering::Relaxed);
         }
         s.id = id;
+        let mut hide: Vec<_> = s.hide.iter().copied().collect();
+        hide.sort_by_key(|k| *k as u8); // a set: the state compares equal when unchanged
+        let prefs = config::SyncPrefs {
+            recursive: s.recursive,
+            content: s.content,
+            ignore_date: s.ignore_date,
+            mirror: s.mirror,
+            mask: s.mask.clone(),
+            hide,
+        };
         let (l, r, o) = (s.left.clone(), s.right.clone(), s.options());
+        self.sync = prefs;
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || shagoff_core::sync::compare(&l, &r, &o, &stop))
@@ -9271,6 +9285,28 @@ mod tests {
             Some(Dialog::Find(f)) => f,
             _ => panic!("no find dialog"),
         }
+    }
+
+    #[test]
+    fn sync_options_are_remembered_after_a_compare() {
+        use shagoff_core::sync::Kind;
+        let (_tmp, mut app) = results_app();
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let _ = app.update(Message::SyncOpt(SyncOpt::Content));
+        let _ = app.update(Message::SyncOpt(SyncOpt::Recursive)); // off
+        let _ = app.update(Message::SyncShow(Kind::Same)); // shown now
+        let _ = app.update(Message::SyncShow(Kind::ToLeft)); // hidden
+        let _ = app.update(Message::SyncMask("*.rs".into()));
+        let _ = app.update(Message::SyncCompare);
+        let _ = app.update(Message::DialogCancel);
+        assert_eq!(app.saved.sync.mask, "*.rs"); // written to the state
+        let mut app = app_with(Config::default(), app.saved.clone());
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        let Some(Dialog::Sync(s)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert!(s.content && !s.recursive && s.mask == "*.rs");
+        assert_eq!(s.hide, HashSet::from([Kind::ToLeft]));
     }
 
     #[test]

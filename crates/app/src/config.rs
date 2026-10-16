@@ -226,6 +226,8 @@ pub struct State {
     pub active: usize,
     /// Alt+F7: last search settings.
     pub find: FindPrefs,
+    /// Ctrl+Shift+S: the last compare's options.
+    pub sync: SyncPrefs,
     /// Command line history, last first.
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first.
@@ -269,6 +271,34 @@ impl Default for FindPrefs {
             max_size: String::new(),
             days: String::new(),
             attrs: String::new(),
+        }
+    }
+}
+
+/// What the sync dialog opens with (the dirs come from the panels, hidden files from the panel's
+/// view). Fields missing in an older state file take their defaults.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SyncPrefs {
+    pub recursive: bool,
+    pub content: bool,
+    pub ignore_date: bool,
+    pub mirror: bool,
+    pub mask: String,
+    /// Kinds of rows hidden from the list.
+    pub hide: Vec<shagoff_core::sync::Kind>,
+}
+
+impl Default for SyncPrefs {
+    fn default() -> Self {
+        Self {
+            recursive: true,
+            content: false,
+            ignore_date: false,
+            mirror: false,
+            mask: String::new(),
+            // As before: equal files hidden until asked for.
+            hide: vec![shagoff_core::sync::Kind::Same],
         }
     }
 }
