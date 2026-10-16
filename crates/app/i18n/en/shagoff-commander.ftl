@@ -95,6 +95,15 @@ mr-case-keep = As is
 mr-case-upper = UPPER
 mr-case-lower = lower
 mr-case-title = First upper
+mr-ins-name = name
+mr-ins-part = part of name
+mr-ins-ext = extension
+mr-ins-counter = counter
+mr-ins-date = date
+mr-ins-time = time
+mr-help = [N] — name without extension; [N2-5] — characters 2 to 5, [N3-] — from the 3rd to the end, [N2] — the 2nd only; [E] — extension ([E1-2] as well); [C] — counter: start, step and digits in the fields below; [Y] [M] [D] [h] [m] [s] — the file's modification date and time; [[ and ]] — the brackets themselves. Other text in a mask stays as is; an empty extension mask gives a name without extension.
+    "Find" is plain text, not a mask: replaced everywhere in the new name, case-sensitive. Example: mask "Photo_[C]", 3 digits → Photo_001.jpg, Photo_002.jpg…
+mr-help-button = ? Mask help
 mr-old = Old name
 mr-new = New name
 mr-bad-name = invalid name
