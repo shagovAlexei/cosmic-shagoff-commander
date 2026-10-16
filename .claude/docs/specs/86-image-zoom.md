@@ -18,3 +18,8 @@ ROADMAP «Lister, дальше: масштаб картинок». Builds on 85 
   picture (N / P) opens fitted.
 - SVG has no pixel size: stays fitted, the keys do nothing. While the file is still being read the
   keys do nothing (its mode is not known yet).
+- Opening was slow (checked by hand; on main too: 17 s to the first frame in headless): the
+  renderer decoded the 4K JPEG while drawing, on the UI thread. Now `lister::raster` decodes it
+  on the load worker (EXIF orientation applied, `Handle::from_rgba`), and `ListerLoaded` asks
+  `iced::runtime::image::allocate` for it — the frame after `ListerAllocated` draws it (without
+  that nothing redraws until the pointer moves). Headless: ~0.4 s.

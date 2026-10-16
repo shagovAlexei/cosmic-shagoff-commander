@@ -53,26 +53,40 @@ impl Loaded {
             if name.to_ascii_lowercase().ends_with(".svg") {
                 Image::Svg(widget::svg::Handle::from_memory(doc.bytes.clone()))
             } else {
-                // The header only: the full decode is the renderer's.
-                let size = image::ImageReader::new(std::io::Cursor::new(&doc.bytes))
-                    .with_guessed_format()
-                    .ok()
-                    .and_then(|r| r.into_decoder().ok())
-                    .map(|mut d| {
-                        use image::{ImageDecoder, metadata::Orientation as O};
-                        // The renderer turns a JPEG by its EXIF orientation: so does the size.
-                        let (w, h) = d.dimensions();
-                        match d.orientation() {
-                            Ok(
-                                O::Rotate90 | O::Rotate270 | O::Rotate90FlipH | O::Rotate270FlipH,
-                            ) => (h, w),
-                            _ => (w, h),
-                        }
-                    });
-                Image::Raster(widget::image::Handle::from_bytes(doc.bytes.clone()), size)
+                raster(&doc.bytes)
             }
         });
         Ok(Self { doc, text, image })
+    }
+}
+
+/// A picture decoded here, off the UI thread: handed to the renderer as pixels, it would
+/// otherwise decode it while drawing and the window would stand still (seconds for a 4K JPEG).
+/// Turned by its EXIF orientation, as the renderer would. Not decodable here: the bytes, for the
+/// renderer to try, with no size known.
+fn raster(bytes: &[u8]) -> Image {
+    use image::ImageDecoder;
+    let decoded = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_decoder().ok())
+        .and_then(|mut d| {
+            let turn = d.orientation().ok();
+            let mut img = image::DynamicImage::from_decoder(d).ok()?;
+            if let Some(o) = turn {
+                img.apply_orientation(o);
+            }
+            Some(img.into_rgba8())
+        });
+    match decoded {
+        Some(px) => {
+            let (w, h) = px.dimensions();
+            Image::Raster(
+                widget::image::Handle::from_rgba(w, h, px.into_raw()),
+                Some((w, h)),
+            )
+        }
+        None => Image::Raster(widget::image::Handle::from_bytes(bytes.to_vec()), None),
     }
 }
 
@@ -122,6 +136,9 @@ pub struct Lister {
     pub quick: Option<(PathBuf, u64, std::time::SystemTime)>,
     /// Picture zoom (+ / -) as a factor of its own size; `None`: fitted to the window.
     pub zoom: Option<f32>,
+    /// The picture held in the renderer: the next frame draws it (without it the renderer loads
+    /// it on its own and nothing redraws until the pointer moves).
+    pub allocation: Option<cosmic::iced::runtime::image::Allocation>,
 }
 
 impl Lister {
@@ -173,6 +190,7 @@ impl Lister {
             double: None,
             quick: None,
             zoom: None,
+            allocation: None,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -217,7 +235,16 @@ impl Lister {
         }
         self.loaded = Some(loaded);
         self.zoom = None; // each picture opens fitted
+        self.allocation = None;
         self.retext();
+    }
+
+    /// The raster picture's handle, to have the renderer take it in at once.
+    pub fn raster_handle(&self) -> Option<widget::image::Handle> {
+        match self.ok()?.image.as_ref()? {
+            Image::Raster(h, _) => Some(h.clone()),
+            Image::Svg(_) => None,
+        }
     }
 
     /// The raster picture's own size, if it is one and it was readable.

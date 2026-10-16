@@ -611,6 +611,8 @@ pub enum Message {
     Browsed(Result<Vec<(String, String)>, mount::Error>),
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
+    /// The viewer's picture is in the renderer (redraws with it).
+    ListerAllocated(u64, Option<cosmic::iced::runtime::image::Allocation>),
     ListerKey(ListerKey),
     /// A viewer letter key typed in the panel: the viewer's when it is open, else the command line's.
     Letter(ListerKey, char),
@@ -1522,6 +1524,18 @@ impl App {
                     && l.id == id
                 {
                     l.set_loaded(loaded);
+                    if let Some(h) = l.raster_handle() {
+                        return cosmic::iced::runtime::image::allocate(h).map(move |a| {
+                            cosmic::Action::App(Message::ListerAllocated(id, a.ok()))
+                        });
+                    }
+                }
+            }
+            Message::ListerAllocated(id, a) => {
+                if let Some(l) = &mut self.lister
+                    && l.id == id
+                {
+                    l.allocation = a;
                 }
             }
             Message::ListerKey(k) if self.viewer() && self.dialog.is_none() && !self.busy() => {
