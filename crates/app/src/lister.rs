@@ -72,11 +72,17 @@ pub enum Image {
 #[derive(Debug)]
 pub struct Loaded {
     pub doc: Doc,
-    /// Text mode as opened: UTF-8 / BOM, not wrapped.
+    /// Text mode in `shape`: as opened (UTF-8 / BOM, not wrapped), or as the viewer had it when
+    /// another window was read.
     pub text: Text,
+    /// Encoding and wrap width `text` was built with.
+    pub shape: Shape,
     /// Handles are made once: a new handle per frame would decode the image every frame.
     pub image: Option<Image>,
 }
+
+/// Text mode's encoding and wrap width (`None`: not wrapped).
+pub type Shape = (Encoding, Option<usize>);
 
 impl Loaded {
     pub fn read(path: &Path, name: &str) -> Result<Self, String> {
@@ -89,16 +95,23 @@ impl Loaded {
                 raster(&doc.bytes)
             }
         });
-        Ok(Self { doc, text, image })
-    }
-
-    /// Another window of a file too big to hold whole (`lister::load_at`).
-    pub fn window(path: &Path, w: Window, bom: lister::Bom) -> Result<Self, String> {
-        let doc = lister::load_at(path, w.from, w.to, w.line, bom).map_err(|e| e.to_string())?;
-        let text = Text::new(&doc, Encoding::Auto, None);
         Ok(Self {
             doc,
             text,
+            shape: (Encoding::Auto, None),
+            image,
+        })
+    }
+
+    /// Another window of a file too big to hold whole (`lister::load_at`), its text built here
+    /// as the viewer shows it: not on the UI thread.
+    pub fn window(path: &Path, w: Window) -> Result<Self, String> {
+        let doc = lister::load_at(path, w.from, w.to, w.line, w.bom).map_err(|e| e.to_string())?;
+        let text = Text::new(&doc, w.shape.0, w.shape.1);
+        Ok(Self {
+            doc,
+            text,
+            shape: w.shape,
             image: None,
         })
     }
@@ -115,6 +128,18 @@ pub enum Slide {
     End,
     /// Search went past the window (forward or not): the one after / before it, searched.
     Find(bool),
+    /// The search found nothing: back to the window it started in (from this offset).
+    Return(u64),
+}
+
+/// What the viewer does with another window it got (`Lister::set_window`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Part {
+    pub scroll: Option<f32>,
+    /// Read another window: the search goes on, or returns to where it started.
+    pub read: Option<Slide>,
+    /// A search ended: found or not.
+    pub found: Option<bool>,
 }
 
 /// The part of the file a slide reads (`lister::load_at`).
@@ -124,6 +149,8 @@ pub struct Window {
     pub to: u64,
     /// From a line start (text), else from a hex row.
     pub line: bool,
+    pub bom: lister::Bom,
+    pub shape: Shape,
 }
 
 /// A picture decoded here, off the UI thread: handed to the renderer as pixels, it would
@@ -222,6 +249,8 @@ pub struct Lister {
     pub file: Option<PathBuf>,
     /// Another window is being read for this.
     pub slide: Option<Slide>,
+    /// Where a search through other windows started: window start, scroll y, the match shown.
+    origin: Option<(u64, f32, Option<usize>)>,
 }
 
 impl Lister {
@@ -277,6 +306,7 @@ impl Lister {
             allocation: None,
             file: None,
             slide: None,
+            origin: None,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -393,13 +423,14 @@ impl Lister {
         ((self.width - 32.0).max(0.0) / self.mono_w()) as usize
     }
 
+    fn shape(&self) -> Shape {
+        (self.encoding, self.wrap.then(|| self.wrap_cols()))
+    }
+
     fn retext(&mut self) {
+        let shape = self.shape();
         self.text = match self.ok() {
-            Some(l) if self.encoding != Encoding::Auto || self.wrap => Some(Text::new(
-                &l.doc,
-                self.encoding,
-                self.wrap.then(|| self.wrap_cols()),
-            )),
+            Some(l) if l.shape != shape => Some(Text::new(&l.doc, shape.0, shape.1)),
             _ => None,
         };
         self.hit = None;
@@ -522,13 +553,25 @@ impl Lister {
         Some(row.saturating_sub(2) as f32 * self.row_h())
     }
 
-    /// What `slide` reads: `None` if the file has no more that way (or is not on disk).
+    /// What `slide` reads: `None` if the file has no more that way (or is not on disk, or is a
+    /// picture).
+    // ponytail: a window read in text mode stays when 3 shows hex (addresses not on a 16-byte
+    // row) and back (a hex window's first line may start mid-line); the next slide aligns it.
     pub fn window_for(&self, slide: Slide) -> Option<Window> {
         self.file.as_ref()?;
+        if self.mode == Mode::Image {
+            return None;
+        }
         let doc = &self.ok()?.doc;
         let line = self.mode == Mode::Text;
         let (more, back) = (doc.end() < doc.total, doc.start > 0);
         let half = doc.bytes.len() as u64 / 2;
+        // Hex search: a match across the edge is in both windows.
+        let over = if line {
+            0
+        } else {
+            self.query.len().saturating_sub(1) as u64
+        };
         let (from, to) = match slide {
             Slide::Next if more => (doc.start + half.max(1), u64::MAX),
             Slide::Prev if back => (
@@ -537,19 +580,30 @@ impl Lister {
             ),
             Slide::Home if back => (0, u64::MAX),
             Slide::End if more => (doc.total.saturating_sub(lister::LIMIT), u64::MAX),
-            // No overlap: a match found in this window is never found again.
-            Slide::Find(true) if more => {
+            // From the last line, cut by the window's end (the rows already searched are skipped).
+            Slide::Find(true) if more && line => {
                 (doc.start + lister::last_line_start(doc) as u64, u64::MAX)
             }
-            Slide::Find(false) if back => (doc.start.saturating_sub(lister::LIMIT), doc.start),
+            Slide::Find(true) if more => (doc.end() - over.min(half), u64::MAX),
+            Slide::Find(false) if back => (
+                doc.start.saturating_sub(lister::LIMIT),
+                doc.start + over.min(half),
+            ),
+            Slide::Return(from) => (from, u64::MAX),
             _ => return None,
         };
-        Some(Window { from, to, line })
+        Some(Window {
+            from,
+            to,
+            line,
+            bom: doc.bom,
+            shape: self.shape(),
+        })
     }
 
     /// Scrolled to the edge of a window that is not the file's: the slide to read.
     pub fn edge(&self) -> Option<Slide> {
-        if self.slide.is_some() || self.mode == Mode::Image {
+        if self.slide.is_some() {
             return None;
         }
         let bottom = self.offset.1 + self.height >= (self.rows() as f32 - 1.0) * self.row_h();
@@ -560,6 +614,7 @@ impl Lister {
     }
 
     /// The shown row where file offset `at` (a line start in this window) is.
+    // ponytail: scans the window on the UI thread (a few ms per slide in release).
     fn row_of(&self, at: u64) -> usize {
         let Some((doc, text)) = self.text() else {
             return 0;
@@ -571,35 +626,85 @@ impl Lister {
         }
     }
 
-    /// Another window arrived for `slide`: shown, the y to scroll to returned (`None`: a search
-    /// found nothing here; `slide` is set again if the file goes on that way).
-    pub fn set_window(&mut self, loaded: Arc<Result<Loaded, String>>) -> Option<f32> {
-        let slide = self.slide.take()?;
-        let old = self.ok().map(|l| l.doc.start)?;
-        let new = loaded.as_ref().as_ref().ok()?.doc.start;
-        let cut = self.row_of(new) as f32 * self.row_h(); // rows of this window before the new
+    /// F7 / F3 found nothing in this window: the slide that searches on, the place it started
+    /// kept to come back to.
+    pub fn search_on(&mut self, forward: bool) -> Option<Slide> {
+        let slide = Slide::Find(forward);
+        if self.slide.is_some() {
+            return None;
+        }
+        self.window_for(slide)?;
+        self.origin = Some((self.ok()?.doc.start, self.offset.1, self.hit));
+        Some(slide)
+    }
+
+    /// Another window arrived for `slide` (a reply for an older one is dropped).
+    pub fn set_window(&mut self, slide: Slide, loaded: Arc<Result<Loaded, String>>) -> Part {
+        let none = Part::default();
+        if self.slide != Some(slide) {
+            return none;
+        }
+        self.slide = None;
+        let (Some(old), Some(new)) = (
+            self.ok().map(|l| l.doc.start),
+            loaded.as_ref().as_ref().ok().map(|l| l.doc.start),
+        ) else {
+            return none;
+        };
+        // New row = old row + shift (on: this window's rows before the new one; back: the new
+        // one's before this one).
+        let cut = if new >= old { self.row_of(new) } else { 0 };
+        let hit = self.hit;
         self.loaded = Some(loaded);
         self.retext();
-        let max = (self.rows() as f32 * self.row_h() - self.height).max(0.0);
+        let shift = match new >= old {
+            true => -(cut as isize),
+            false => self.row_of(old) as isize,
+        };
+        let rows = self.rows();
+        let hit = hit
+            .and_then(|h| h.checked_add_signed(shift))
+            .filter(|&h| h < rows);
+        let max = (rows as f32 * self.row_h() - self.height).max(0.0);
+        let at = |y: f32| Some(y.clamp(0.0, max));
+        let mut part = Part::default();
         match slide {
-            Slide::Next => Some((self.offset.1 - cut).max(0.0)),
-            Slide::Prev => Some(self.offset.1 + self.row_of(old) as f32 * self.row_h()),
-            Slide::Home => Some(0.0),
-            Slide::End => Some(max),
+            Slide::Next | Slide::Prev => {
+                self.hit = hit;
+                part.scroll = at(self.offset.1 + shift as f32 * self.row_h());
+            }
+            Slide::Home => part.scroll = at(0.0),
+            Slide::End => part.scroll = at(max),
+            Slide::Return(_) => {
+                let (_, y, hit) = self.origin.take().unwrap_or_default();
+                (self.hit, part.scroll) = (hit, at(y));
+            }
             Slide::Find(forward) => {
-                let start = if forward {
-                    0
-                } else {
-                    self.rows().saturating_sub(1)
+                // Past the last match, if it is in this window too.
+                let start = match (hit, forward) {
+                    (Some(h), true) => Some(h + 1),
+                    (Some(h), false) => h.checked_sub(1),
+                    (None, true) => Some(0),
+                    (None, false) => rows.checked_sub(1),
                 };
-                let y = self.find_from(start, forward);
-                if y.is_none() && self.window_for(slide).is_some() {
-                    self.slide = Some(slide);
+                part.scroll = start.and_then(|s| self.find_from(s, forward));
+                if part.scroll.is_some() {
+                    self.origin = None;
+                    part.found = Some(true);
+                } else if self.window_for(slide).is_some() {
+                    part.read = Some(slide);
+                } else {
+                    part.found = Some(false);
+                    // Back where the search started.
+                    match self.origin {
+                        Some((from, ..)) if from != new => part.read = Some(Slide::Return(from)),
+                        Some((_, y, h)) => (self.hit, part.scroll) = (h, at(y)),
+                        None => {}
+                    }
                 }
-                y
             }
         }
-        .map(|y| y.min(max))
+        part
     }
 
     /// The text position under the pointer (the view's scroll offset added).
@@ -964,6 +1069,7 @@ mod tests {
         l.set_loaded(Arc::new(Ok(Loaded {
             doc,
             text,
+            shape: (Encoding::Auto, None),
             image: None,
         })));
         l
@@ -1062,6 +1168,7 @@ mod tests {
         l.set_loaded(Arc::new(Ok(Loaded {
             doc,
             text,
+            shape: (Encoding::Auto, None),
             image: None,
         })));
         assert_eq!(l.encoding, Encoding::Cp1251);
@@ -1078,14 +1185,16 @@ mod tests {
     /// Read the window `slide` wants, as the app does off the UI thread.
     fn slide(l: &mut Lister, s: Slide) -> Option<f32> {
         let w = l.window_for(s)?;
-        let bom = l.ok()?.doc.bom;
-        let part = Loaded::window(l.file.as_ref()?, w, bom);
+        let loaded = Loaded::window(l.file.as_ref()?, w);
         l.slide = Some(s);
-        let y = l.set_window(Arc::new(part));
-        if let Some(y) = y {
+        let part = l.set_window(s, Arc::new(loaded));
+        if let Some(y) = part.scroll {
             l.offset.1 = y;
         }
-        y
+        match part.read {
+            Some(next) => slide(l, next),
+            None => part.scroll,
+        }
     }
 
     fn top_line(l: &Lister) -> String {
@@ -1134,15 +1243,52 @@ mod tests {
         assert_eq!(l.find(false, true), None);
         assert!(slide(&mut l, Slide::Find(false)).is_some());
         assert_eq!(l.hit, Some(3));
+        // a match in the window's last, cut line is not found again past it
+        let first = Loaded::read(l.file.as_ref().unwrap(), "big.log");
+        l.set_loaded(Arc::new(first)); // a whole first window (the search read a shorter one)
+        let cut = (lister::LIMIT / 14) as usize; // the row of "li", cut at 32 MB
+        l.query = "li".into();
+        l.hit = Some(cut - 1);
+        l.find(true, true).unwrap();
+        assert_eq!(l.hit, Some(cut));
+        assert_eq!(l.find(true, true), None);
+        let s = l.search_on(true).unwrap();
+        slide(&mut l, s).unwrap();
+        let (doc, txt) = l.text().unwrap();
+        assert_eq!(
+            l.row_text(doc, txt, l.hit.unwrap()),
+            format!("line {:08}", cut + 1)
+        );
+        // not found anywhere: back to the window and place the search started from
+        let (start, y) = (l.ok().unwrap().doc.start, l.offset.1);
+        l.query = "nowhere".into();
+        let s = l.search_on(false).unwrap();
+        let hit = l.hit;
+        assert_eq!(slide(&mut l, s), Some(y));
+        assert_eq!(l.hit, hit); // the match shown again
+        assert_eq!(l.ok().unwrap().doc.start, start);
+        // a reply for a slide given up (another asked for meanwhile) is dropped
+        let w = l.window_for(Slide::Home).unwrap();
+        let late = Arc::new(Loaded::window(l.file.as_ref().unwrap(), w));
+        l.slide = Some(Slide::Next);
+        assert_eq!(l.set_window(Slide::Home, late), Part::default());
+        assert_eq!(
+            (l.slide, l.ok().unwrap().doc.start),
+            (Some(Slide::Next), start)
+        );
+        l.slide = None;
         // hex rows carry the file offset
         l.set_mode(Mode::Hex);
-        slide(&mut l, Slide::End).unwrap();
+        slide(&mut l, Slide::Prev).unwrap();
         let (doc, txt) = l.text().unwrap();
         assert_eq!(doc.start % 16, 0);
         assert!(
             l.row_text(doc, txt, 0)
                 .starts_with(&format!("{:08X}", doc.start))
         );
+        // a picture has no windows
+        l.mode = Mode::Image;
+        assert_eq!(l.window_for(Slide::Home), None);
     }
 
     #[test]

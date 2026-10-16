@@ -105,6 +105,11 @@ pub fn load_at(path: &Path, from: u64, to: u64, line: bool, bom: Bom) -> io::Res
         0 => 0,
         b => line_ends(&bytes, bom).next().unwrap_or(b as usize),
     };
+    // The file got shorter than the window asked for (a log rotated meanwhile).
+    if bytes.len() <= back as usize && from > 0 {
+        let msg = format!("{}: shorter than before", path.display());
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, msg));
+    }
     bytes.drain(..skip.min(bytes.len()));
     let start = from - back + skip as u64;
     let (bom, decoded) = match start {
@@ -985,6 +990,8 @@ mod tests {
             load_at(&p, 0, 8, true, Bom::None).unwrap().bytes,
             b"one\ntwo\n"
         );
+        // the file got shorter than the window asked for
+        assert!(load_at(&p, 100, u64::MAX, true, Bom::None).is_err());
         // hex: from a row start, no line wanted
         assert_eq!(load_at(&p, 5, u64::MAX, false, Bom::None).unwrap().start, 0);
         // no line end after `from`: from there

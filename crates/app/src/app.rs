@@ -686,7 +686,7 @@ pub enum Message {
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
     /// Another window of a big file for the viewer with this id (`Lister::slide`).
-    ListerPart(u64, Arc<Result<lister::Loaded, String>>),
+    ListerPart(u64, Slide, Arc<Result<lister::Loaded, String>>),
     /// The viewer's picture is in the renderer (redraws with it).
     ListerAllocated(u64, Option<cosmic::iced::runtime::image::Allocation>),
     ListerKey(ListerKey),
@@ -1816,40 +1816,30 @@ impl App {
                     }
                 }
             }
-            Message::ListerPart(id, loaded) => {
+            Message::ListerPart(id, slide, loaded) => {
                 let Some(l) = self.lister.as_deref_mut().filter(|l| l.id == id) else {
                     return Task::none();
                 };
                 if let Err(e) = loaded.as_ref() {
-                    l.slide = None;
-                    let e = e.clone();
-                    self.say(StatusKind::Error, e);
+                    if l.slide == Some(slide) {
+                        l.slide = None;
+                        let e = e.clone();
+                        self.say(StatusKind::Error, e);
+                    }
                     return Task::none();
                 }
-                let find = match l.slide {
-                    Some(Slide::Find(forward)) => Some(forward),
-                    _ => None,
-                };
-                let y = l.set_window(loaded);
-                if let Some(s) = l.slide {
-                    return self.lister_slide(s); // a search going on
-                }
-                let (x, q) = (l.offset.0, l.query.clone());
-                // Searched to the file's end (start): shown there.
-                let y = match (y, find) {
-                    (Some(y), _) => y,
-                    (None, Some(true)) => l.scroll_y(Action::End).unwrap_or(0.0),
-                    (None, _) => 0.0,
-                };
-                let scroll = lister_scroll(l, x, y);
-                match find {
-                    Some(_) if l.hit.is_none() => {
-                        self.say(StatusKind::Info, fl!("lister-not-found", query = q));
-                    }
-                    Some(_) => self.clear_busy(),
+                let part = l.set_window(slide, loaded);
+                let q = l.query.clone();
+                let scroll = part
+                    .scroll
+                    .map_or(Task::none(), |y| lister_scroll(l, l.offset.0, y));
+                match part.found {
+                    Some(true) => self.clear_busy(),
+                    Some(false) => self.say(StatusKind::Info, fl!("lister-not-found", query = q)),
                     None => {}
                 }
-                return scroll;
+                let read = part.read.map_or(Task::none(), |s| self.lister_slide(s));
+                return Task::batch([scroll, read]);
             }
             Message::ListerAllocated(id, a) => {
                 if let Some(l) = &mut self.lister
@@ -5165,22 +5155,23 @@ impl App {
         let Some(l) = self.lister.as_deref_mut() else {
             return Task::none();
         };
-        let (Some(w), Some(file), Some(bom)) = (
-            l.window_for(slide),
-            l.file.clone(),
-            l.ok().map(|x| x.doc.bom),
-        ) else {
+        let (Some(w), Some(file)) = (l.window_for(slide), l.file.clone()) else {
             return Task::none();
         };
+        // Home / End may come while another is read: its reply is dropped (a search's too).
+        let searching = matches!(l.slide, Some(Slide::Find(_)));
         l.slide = Some(slide);
         let id = l.id;
+        if searching {
+            self.clear_busy();
+        }
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || lister::Loaded::window(&file, w, bom))
+                tokio::task::spawn_blocking(move || lister::Loaded::window(&file, w))
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()))
             },
-            move |r| cosmic::Action::App(Message::ListerPart(id, Arc::new(r))),
+            move |r| cosmic::Action::App(Message::ListerPart(id, slide, Arc::new(r))),
         )
     }
 
@@ -5221,10 +5212,10 @@ impl App {
         match l.find(forward, again) {
             Some(y) => lister_scroll(l, 0.0, y),
             // Not in this window of a big file: on through the next ones.
-            None if l.slide.is_none() && l.window_for(Slide::Find(forward)).is_some() => {
+            None if let Some(s) = l.search_on(forward) => {
                 let q = l.query.clone();
                 self.say(StatusKind::Busy, fl!("lister-searching", query = q));
-                self.lister_slide(Slide::Find(forward))
+                self.lister_slide(s)
             }
             None => {
                 let q = l.query.clone();
