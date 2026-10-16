@@ -37,7 +37,7 @@ impl AsMimeTypes for Files {
 
     fn as_bytes(&self, mime_type: &str) -> Option<Cow<'static, [u8]>> {
         let s = match mime_type {
-            fmt::INNER if self.inner => &self.mime.uri_list,
+            fmt::INNER if self.inner => &self.mime.gnome,
             _ if self.inner => return None,
             "text/plain" | "text/plain;charset=utf-8" | "UTF8_STRING" => &self.mime.plain,
             fmt::URI_LIST => &self.mime.uri_list,
@@ -69,11 +69,12 @@ impl TryFrom<(Vec<u8>, String)> for Paste {
     }
 }
 
-/// Ctrl+C / Ctrl+X.
-pub fn put<M>(kind: Kind, paths: &[PathBuf]) -> Task<M> {
+/// Ctrl+C / Ctrl+X; `inner`: entries inside an archive, put only as our own type (pasted in our
+/// panes they are extracted, as F5 / F6).
+pub fn put<M>(kind: Kind, paths: &[PathBuf], inner: bool) -> Task<M> {
     clipboard::write_data(Files {
         mime: fmt::encode(kind, paths),
-        inner: false,
+        inner,
     })
 }
 
@@ -167,4 +168,26 @@ pub fn drop_zone<'a>(
             .on_leave(move || Message::DropLeave(h));
     }
     d.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archive_entries_go_only_as_our_own_type_and_keep_cut() {
+        let p = vec![PathBuf::from("/x/a.zip/f")];
+        let f = Files {
+            mime: fmt::encode(Kind::Cut, &p),
+            inner: true,
+        };
+        assert_eq!(f.available().as_ref(), [fmt::INNER]);
+        assert!(f.as_bytes(fmt::URI_LIST).is_none() && f.as_bytes("text/plain").is_none());
+        let data = f.as_bytes(fmt::INNER).unwrap();
+        let Ok(Paste(kind, got)) = Paste::try_from((data.into_owned(), fmt::INNER.to_string()))
+        else {
+            panic!()
+        };
+        assert_eq!((kind, got), (Kind::Cut, p));
+    }
 }

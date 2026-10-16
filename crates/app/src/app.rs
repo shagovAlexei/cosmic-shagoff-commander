@@ -1795,8 +1795,10 @@ impl App {
                     ClipKind::Cut => InputOp::Move,
                 };
                 // "": `cwd.join("")` ends with `/`, so `plan` always puts the files inside cwd.
+                let before = (self.job.is_some(), self.queue.len());
                 let task = self.start_transfer(op, self.active, paths, "");
-                if kind == ClipKind::Cut && self.job.is_some() {
+                // Only when this paste started or queued a job: a refused one keeps the cut.
+                if kind == ClipKind::Cut && (self.job.is_some(), self.queue.len()) != before {
                     return Task::batch([clip::clear(), task]);
                 }
                 return task;
@@ -3000,13 +3002,6 @@ impl App {
             }
             // Opened by `dialog_for` above.
             Action::HistoryList | Action::Hotlist => {}
-            Action::ClipCopy if archive::split_path(panel.cwd()).is_some() => {
-                // No real paths to put on the clipboard: extract into the other panel right away.
-                let paths = panel.targets();
-                let cwd = panel.cwd().to_path_buf();
-                let dest = self.panes[1 - side].active().target();
-                return self.start_extract(side, &cwd, &paths, dest, false);
-            }
             Action::ClipCopy | Action::ClipCut => {
                 let paths = panel.targets();
                 if !paths.is_empty() {
@@ -3015,7 +3010,10 @@ impl App {
                     } else {
                         ClipKind::Copy
                     };
-                    return clip::put(kind, &paths);
+                    // Through an archive (a stat, not the name: `backup.zip/` may be a real dir).
+                    let inner =
+                        (paths.iter()).any(|p| p.parent().and_then(archive::split_path).is_some());
+                    return clip::put(kind, &paths, inner);
                 }
             }
             Action::ClipPaste => return clip::take(),
@@ -4696,17 +4694,14 @@ impl App {
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
             // Shift+F5 inside one copies from the archive into itself.
-            Action::MultiRename
-            | Action::ClipCut
-            | Action::ClipPaste
-            | Action::CopySame
-            | Action::NewFile
-            | Action::Properties => inside(side),
+            Action::MultiRename | Action::CopySame | Action::NewFile | Action::Properties => {
+                inside(side)
+            }
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
                 inside(side) || inside(1 - side)
             }
-            Action::Copy | Action::Move | Action::ClipCopy => inside(side) && inside(1 - side),
+            Action::Copy | Action::Move => inside(side) && inside(1 - side),
             _ => false,
         }
     }
@@ -8888,12 +8883,35 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_inside_archive_extracts() {
-        let (_tmp, mut app, a) = zip_setup();
+    fn clipboard_out_of_and_into_an_archive_works_as_f5() {
+        let (tmp, mut app, a) = zip_setup();
         listed_at(&mut app, 0, &a);
         let _ = app.update(Message::Key(Action::Down));
-        let _ = app.update(Message::Key(Action::ClipCopy));
-        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Extract));
+        // Ctrl+C / Ctrl+X inside only put the paths; no job, not read-only.
+        let _ = app.update(Message::Key(Action::ClipCut));
+        assert!(app.job.is_none() && app.status.is_none());
+        // Pasted outside: a cut moves out of the archive (extract, then delete there).
+        app.active = 1;
+        let _ = app.update(Message::Pasted(Some((
+            ClipKind::Cut,
+            vec![a.join("top.txt")],
+        ))));
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Move));
+        app.job = None;
+        // Pasted inside: packed into it.
+        app.active = 0;
+        let f = tmp.path().join("out/n.txt");
+        std::fs::write(&f, "1").unwrap();
+        let _ = app.update(Message::Pasted(Some((ClipKind::Copy, vec![f]))));
+        assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+        app.job = None;
+        // From an archive into one: not yet.
+        let _ = app.update(Message::Pasted(Some((
+            ClipKind::Copy,
+            vec![a.join("top.txt")],
+        ))));
+        assert!(app.job.is_none());
+        assert!(app.status.is_some());
     }
 
     #[test]
