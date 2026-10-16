@@ -1097,11 +1097,27 @@ impl App {
                         return self.reveal(side, tab);
                     }
                     Err(e) => {
+                        let ask = archive::needs_password(&e)
+                            .then(|| archive::split_path(&path))
+                            .flatten();
                         t.error = Some(fl!(
                             "list-failed",
                             path = path.display().to_string(),
                             err = e
-                        ))
+                        ));
+                        // A 7z with encrypted names: ask, then open it again.
+                        if let Some((arc, _)) = ask
+                            && self.dialog.is_none()
+                        {
+                            self.dialog = Some(Dialog::Password {
+                                wrong: archive::password(&arc).is_some(),
+                                archive: arc,
+                                password: String::new(),
+                                reply: None,
+                                open: Some((side, path)),
+                            });
+                            return widget::text_input::focus(self.input_id.clone());
+                        }
                     }
                 }
             }
@@ -1763,8 +1779,13 @@ impl App {
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(Resolution::Cancel);
                 }
-                Some(Dialog::Error { reply, .. } | Dialog::Password { reply, .. }) => {
+                Some(Dialog::Error { reply, .. }) => {
                     let _ = reply.send(ErrorChoice::Cancel);
+                }
+                Some(Dialog::Password { reply, .. }) => {
+                    if let Some(r) = reply {
+                        let _ = r.send(ErrorChoice::Cancel);
+                    }
                 }
                 Some(Dialog::Connect { .. }) => {
                     if let Some((_, cancel)) = &self.connecting {
@@ -3744,11 +3765,17 @@ impl App {
                 archive,
                 password,
                 reply,
+                open,
                 ..
             } => {
                 archive::set_password(&archive, Some(password));
-                let _ = reply.send(ErrorChoice::Retry);
-                Task::none()
+                if let Some(r) = reply {
+                    let _ = r.send(ErrorChoice::Retry);
+                }
+                match open {
+                    Some((side, dir)) => self.load(side, dir, None),
+                    None => Task::none(),
+                }
             }
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. } | Dialog::Error { .. } | Dialog::DropMenu { .. }) => {
@@ -4885,7 +4912,8 @@ impl App {
                     archive: path,
                     password: String::new(),
                     wrong,
-                    reply,
+                    reply: Some(reply),
+                    open: None,
                 });
                 return widget::text_input::focus(self.input_id.clone());
             }

@@ -75,7 +75,10 @@ pub enum Dialog {
         password: String,
         /// One was given already: it was wrong.
         wrong: bool,
-        reply: mpsc::Sender<ErrorChoice>,
+        /// A job waiting for it (Retry / Cancel), or —
+        reply: Option<mpsc::Sender<ErrorChoice>>,
+        /// — a dir of the archive to open again once it is given (7z with encrypted names).
+        open: Option<(usize, PathBuf)>,
     },
     /// Alt+F1/F2, Alt+↓, Ctrl+D: a snapshot taken when the list opened.
     List {

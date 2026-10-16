@@ -2923,6 +2923,28 @@ mod tests {
     }
 
     #[test]
+    fn sevenz_with_encrypted_names_lists_only_with_the_password() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("n.7z");
+        let mut w = sevenz_rust2::ArchiveWriter::new(fs::File::create(&a).unwrap()).unwrap();
+        w.set_content_methods(vec![
+            sevenz_rust2::encoder_options::AesEncoderOptions::new("pw".into()).into(),
+            sevenz_rust2::EncoderMethod::LZMA2.into(),
+        ]); // the header is encrypted by default
+        let e = sevenz_rust2::ArchiveEntry::new_file("hidden.txt");
+        w.push_archive_entry(e, Some(&b"x"[..])).unwrap();
+        w.finish().unwrap();
+        let err = list(&a, Path::new(""), true).unwrap_err();
+        assert!(needs_password(&err.to_string()), "{err}");
+        set_password(&a, Some("pw".into()));
+        let names: Vec<String> = (list(&a, Path::new(""), true).unwrap().into_iter())
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["hidden.txt"]);
+        set_password(&a, None);
+    }
+
+    #[test]
     fn temp_root_is_on_disk_not_in_the_runtime_tmpfs() {
         let home = Path::new("/home/u");
         assert_eq!(

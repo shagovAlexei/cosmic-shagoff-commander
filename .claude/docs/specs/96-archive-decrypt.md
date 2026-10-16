@@ -11,5 +11,5 @@ Part 2 of the archive encryption (95: packing). Extracting from an encrypted zip
   same password.
 - App: that error from a job opens «Пароль архива» (masked field; «Неверный пароль» when one was
   given); OK keeps it and retries, Cancel / Esc cancels the job.
-- Not yet: Ctrl+Q quick view shows nothing for an encrypted file; a 7z with encrypted names shows
-  the error text in the panel instead of asking.
+- A 7z with encrypted names (7-Zip's option): entering it asks the same way, then opens it again.
+- Ctrl+Q quick view uses a password already given; before that it shows nothing (not asked).
