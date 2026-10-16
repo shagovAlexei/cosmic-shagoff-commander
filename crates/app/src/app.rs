@@ -331,6 +331,8 @@ pub struct App {
     pub col_drag: Option<ColDrag>,
     /// A tab held by the mouse: (side, its index now). Moved over the tab the pointer enters.
     pub tab_drag: Option<(usize, usize)>,
+    /// The pane the pointer is over while a tab is held (released there, it goes to it).
+    pane_hover: Option<usize>,
     /// The dir row files are being dragged over: (side, row).
     pub drop_hover: Option<(usize, usize)>,
     /// Where held files were last seen (window coordinates).
@@ -425,6 +427,8 @@ pub enum Message {
     TabPress(usize, usize),
     /// The pointer entered a tab (moves a dragged tab there).
     TabEnter(usize, usize),
+    /// The pointer's x in a window while a tab is held.
+    TabDragAt(cosmic::iced::window::Id, f32),
     CloseTabAt(usize, usize),
     Modifiers(Modifiers),
     DialogInput(String),
@@ -611,6 +615,8 @@ pub enum Message {
     Browsed(Result<Vec<(String, String)>, mount::Error>),
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
+    /// The viewer's picture is in the renderer (redraws with it).
+    ListerAllocated(u64, Option<cosmic::iced::runtime::image::Allocation>),
     ListerKey(ListerKey),
     /// A viewer letter key typed in the panel: the viewer's when it is open, else the command line's.
     Letter(ListerKey, char),
@@ -623,6 +629,8 @@ pub enum Message {
     ListerPointerLeft,
     /// Comes instead of the second release.
     ListerDoubleClick,
+    /// The picture back to fitted in the window.
+    ListerFit,
     ListerResized(Size),
     /// Drop-down / A S K 8.
     ListerEncoding(shagoff_core::lister::Encoding),
@@ -704,6 +712,17 @@ impl Application for App {
     fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![
             event::listen_with(route_event),
+            // Only while a tab is held: where the pointer is (the panes' own widgets take the
+            // moves, so a pane's mouse area would not hear it come in).
+            match self.tab_drag {
+                Some(_) => event::listen_with(|e, _, window| match e {
+                    cosmic::iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                        Some(Message::TabDragAt(window, position.x))
+                    }
+                    _ => None,
+                }),
+                None => Subscription::none(),
+            },
             // Alt+F4 / the compositor's close: the window stays until Quit decides.
             cosmic::iced::window::close_requests().map(Message::CloseRequested),
             self.core()
@@ -815,6 +834,7 @@ impl App {
             cols,
             col_drag: None,
             tab_drag: None,
+            pane_hover: None,
             drop_hover: None,
             drop_at: None,
             hot_sub: Vec::new(),
@@ -1286,7 +1306,7 @@ impl App {
             Message::PropsRecursive => {
                 if let Some(Dialog::Props(p)) = &mut self.dialog {
                     p.recursive = !p.recursive;
-                    p.mixed = if p.recursive { 0o777 } else { p.own_mixed };
+                    p.mixed = if p.recursive { 0o7777 } else { p.own_mixed };
                 }
             }
             Message::DirSize(side, tab, cwd, name, bytes) => {
@@ -1521,6 +1541,18 @@ impl App {
                     && l.id == id
                 {
                     l.set_loaded(loaded);
+                    if let Some(h) = l.raster_handle() {
+                        return cosmic::iced::runtime::image::allocate(h).map(move |a| {
+                            cosmic::Action::App(Message::ListerAllocated(id, a.ok()))
+                        });
+                    }
+                }
+            }
+            Message::ListerAllocated(id, a) => {
+                if let Some(l) = &mut self.lister
+                    && l.id == id
+                {
+                    l.allocation = a;
                 }
             }
             Message::ListerKey(k) if self.viewer() && self.dialog.is_none() && !self.busy() => {
@@ -1529,6 +1561,7 @@ impl App {
                     ListerKey::Next => self.lister_step(true),
                     ListerKey::Prev => self.lister_step(false),
                     ListerKey::Close => self.handle(Message::ListerClose),
+                    ListerKey::Zoom(up) => self.lister_zoom(up),
                     ListerKey::FindPrev => self.lister_find(false, true),
                     ListerKey::Encoding(e) => self.handle(Message::ListerEncoding(e)),
                     ListerKey::Wrap => self.handle(Message::ListerWrap),
@@ -1601,6 +1634,11 @@ impl App {
             Message::ListerScrolled(x, y, h) => {
                 if let Some(l) = &mut self.lister {
                     (l.offset, l.height) = ((x, y), h);
+                }
+            }
+            Message::ListerFit => {
+                if let Some(l) = &mut self.lister {
+                    l.zoom = None;
                 }
             }
             Message::ListerResized(size) => {
@@ -2174,10 +2212,28 @@ impl App {
                     self.cols[col] = w;
                 }
             }
+            // The main window's only (a context menu popup has its own coordinates).
+            Message::TabDragAt(window, x) if window == self.window_id() => {
+                let split = crate::view::pane_split(self.config.skin, self.panes[0].active().width);
+                self.pane_hover = Some(usize::from(x > split));
+            }
+            Message::TabDragAt(..) => {}
             Message::ColDragEnd => {
-                self.tab_drag = None;
                 if self.col_drag.take().is_some() {
                     self.save_columns();
+                }
+                // A tab held over the other pane: it goes there (TC), with Ctrl a copy. Not
+                // while the Ctrl+Q viewer covers that pane.
+                let over = self.pane_hover.take();
+                if let Some((from, _)) = self.tab_drag.take()
+                    && over == Some(1 - from)
+                    && self.lister.is_none()
+                {
+                    let action = match self.mods.control() {
+                        true => Action::TabCopyOther,
+                        false => Action::TabMoveOther,
+                    };
+                    return self.act(from, action);
                 }
             }
             Message::PathPart(side, path) => {
@@ -4519,6 +4575,9 @@ impl App {
         let l = self.lister.as_deref_mut()?;
         Some(match action {
             Action::Help | Action::About | Action::Settings | Action::Donate => return None,
+            // Num+ / Num-: bigger / smaller text, as + / - (TC zooms with them).
+            Action::SelectGroup => return Some(self.lister_zoom(true)),
+            Action::UnselectGroup => return Some(self.lister_zoom(false)),
             Action::View => self.lister_find(true, true),
             Action::Mkdir => self.lister_search(),
             Action::SelectAll => {
@@ -4538,6 +4597,24 @@ impl App {
                 None => Task::none(),
             },
         })
+    }
+
+    /// The viewer's text one size up or down: the same setting as in Settings, saved.
+    fn lister_zoom(&mut self, up: bool) -> Task<Message> {
+        // A picture: its zoom (TC), never the text size; still reading: not known which yet.
+        if let Some(l) = self.lister.as_deref_mut()
+            && (l.loaded.is_none() || l.mode == shagoff_core::lister::Mode::Image)
+        {
+            return match l.zoom_image(up) {
+                Some((x, y)) => lister_scroll(l, x, y),
+                None => Task::none(),
+            };
+        }
+        let size = config::size_step(self.config.lister_size(), up);
+        if size == self.config.lister_size() {
+            return Task::none();
+        }
+        self.set(crate::drawer::Setting::ListerSize(size))
     }
 
     fn lister_search(&mut self) -> Task<Message> {
@@ -7016,6 +7093,51 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_dropped_on_the_other_pane_moves_there_or_is_copied_with_ctrl() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::NewTab)); // pane 0: two tabs
+        for t in app.panes[0].items_mut() {
+            t.width = 500.0; // the right pane starts past 508
+        }
+        let count = |app: &App| (app.panes[0].items().len(), app.panes[1].items().len());
+        // Released over its own pane: nothing.
+        let _ = app.update(Message::TabPress(0, 1));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 10.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!(count(&app), (2, 1));
+        // Over the other pane: moved there, that pane active.
+        let _ = app.update(Message::TabPress(0, 1));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 700.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!((count(&app), app.active), ((1, 2), 1));
+        // A pointer that only passes over the other pane without a tab held: nothing.
+        let _ = app.update(Message::TabDragAt(app.window_id(), 10.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!(count(&app), (1, 2));
+        // With Ctrl: copied; the last tab of a pane can be copied too.
+        app.mods = Modifiers::CTRL;
+        let _ = app.update(Message::TabPress(0, 0));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 700.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!(count(&app), (1, 3));
+        // The split between the panes, for both skins: the middle of the gap.
+        assert_eq!(
+            crate::view::pane_split(crate::config::Skin::Classic, 500.0),
+            502.0
+        );
+        assert_eq!(
+            crate::view::pane_split(crate::config::Skin::Modern, 500.0),
+            524.0
+        );
+        // A popup's coordinates are not the main window's.
+        let _ = app.update(Message::TabPress(0, 0));
+        let popup = cosmic::iced::window::Id::unique();
+        let _ = app.update(Message::TabDragAt(popup, 700.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!(count(&app), (1, 3));
+    }
+
+    #[test]
     fn tabs_move_by_drag_and_keys() {
         let mut app = app_with(Config::default(), State::default());
         for _ in 0..2 {
@@ -8111,6 +8233,26 @@ mod tests {
     }
 
     #[test]
+    fn viewer_plus_minus_change_its_text_size_and_save_it() {
+        let (_tmp, mut app, _) = paste_setup();
+        app.lister = Some(Box::new(Lister::new(0, String::new(), 0, 14)));
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true))); // still reading: nothing
+        assert_eq!(app.config.lister_size, 14);
+        let text = crate::lister::Loaded::read(&_tmp.path().join("src/a"), "a").unwrap();
+        app.lister.as_mut().unwrap().set_loaded(Arc::new(Ok(text)));
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
+        let _ = app.update(Message::Key(Action::SelectGroup)); // Num+
+        assert_eq!(app.config.lister_size, 16);
+        assert_eq!(app.lister.as_ref().map(|l| l.size), Some(16));
+        let _ = app.update(Message::Key(Action::UnselectGroup)); // Num-
+        assert_eq!(app.config.lister_size, 15);
+        // A picture: no text to size.
+        app.lister.as_mut().unwrap().mode = shagoff_core::lister::Mode::Image;
+        let _ = app.update(Message::ListerKey(ListerKey::Zoom(true)));
+        assert_eq!(app.config.lister_size, 15);
+    }
+
+    #[test]
     fn regression_closing_the_viewer_scrolls_the_lists_back() {
         // F3 replaces the panels; Esc rebuilds their lists at the top while the tabs keep
         // their offsets: both must be scrolled back (two more task units than without a
@@ -8883,7 +9025,7 @@ mod tests {
             Some(Dialog::Props(p)) => (p.mode, p.mixed, p.touched),
             _ => panic!("no dialog"),
         };
-        assert_eq!(props(&app).1, 0o777);
+        assert_eq!(props(&app).1, 0o7777); // setuid, setgid, sticky too
         // group w: `?` → on even if the dir has it already (the contents may not)
         let _ = app.update(Message::PropsBit(0o020));
         let (m, _, touched) = props(&app);
