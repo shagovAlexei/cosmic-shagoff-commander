@@ -891,8 +891,15 @@ impl Application for App {
     }
 
     fn header_start(&self) -> Vec<Element<'_, Message>> {
+        let c = &self.config;
+        let checks = crate::menu::Checks {
+            hidden: c.show_hidden,
+            divider_line: c.divider_line,
+            active_frame: c.active_frame,
+            classic: c.skin == config::Skin::Classic,
+        };
         vec![crate::menu::bar(
-            self.config.show_hidden,
+            checks,
             self.panes[self.active].active().locked,
         )]
     }
@@ -2526,7 +2533,11 @@ impl App {
             }
             // The main window's only (a context menu popup has its own coordinates).
             Message::TabDragAt(window, x) if window == self.window_id() => {
-                let split = crate::view::pane_split(self.config.skin, self.panes[0].active().width);
+                let split = crate::view::pane_split(
+                    self.config.skin,
+                    self.panes[0].active().width,
+                    self.config.active_frame,
+                );
                 self.pane_hover = Some(usize::from(x > split));
             }
             Message::TabDragAt(..) => {}
@@ -2991,6 +3002,12 @@ impl App {
                 return Task::none();
             }
             Action::F12 => return self.run_button(self.config.f12.clone()),
+            Action::ToggleDividerLine => {
+                return self.set(Setting::DividerLine(!self.config.divider_line));
+            }
+            Action::ToggleActiveFrame => {
+                return self.set(Setting::ActiveFrame(!self.config.active_frame));
+            }
             Action::CopyNames | Action::CopyPaths => {
                 let paths = self.panes[side].active().panel.targets();
                 if paths.is_empty() {
@@ -3253,6 +3270,8 @@ impl App {
             | Action::About
             | Action::Settings
             | Action::F12
+            | Action::ToggleDividerLine
+            | Action::ToggleActiveFrame
             | Action::Donate
             | Action::OpenWith
             | Action::CopyNames
@@ -5594,6 +5613,8 @@ impl App {
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
             Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
+            Setting::DividerLine(b) => c.divider_line = b,
+            Setting::ActiveFrame(b) => c.active_frame = b,
             Setting::ShowCmdline(b) => c.show_cmdline = b,
             Setting::KeepHistory(b) => c.keep_history = b,
             Setting::InternalViewer(b) => c.internal_viewer = b,
@@ -7780,11 +7801,16 @@ mod tests {
         assert_eq!(count(&app), (1, 3));
         // The split between the panes, for both skins: the middle of the gap.
         assert_eq!(
-            crate::view::pane_split(crate::config::Skin::Classic, 500.0),
+            crate::view::pane_split(crate::config::Skin::Classic, 500.0, false),
             502.0
         );
+        // the classic frame: its 1 px inset on each side of the left pane
         assert_eq!(
-            crate::view::pane_split(crate::config::Skin::Modern, 500.0),
+            crate::view::pane_split(crate::config::Skin::Classic, 500.0, true),
+            504.0
+        );
+        assert_eq!(
+            crate::view::pane_split(crate::config::Skin::Modern, 500.0, false),
             524.0
         );
         // A popup's coordinates are not the main window's.
@@ -10799,6 +10825,16 @@ mod tests {
                 (app.config.f12.cmd.as_str(), app.config.f12.params.as_str()),
                 ("echo", "%N")
             );
+        }
+
+        #[test]
+        fn view_menu_toggles_the_divider_line_and_the_frame() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::ToggleDividerLine));
+            let _ = app.update(Message::Key(Action::ToggleActiveFrame));
+            assert!(app.config.divider_line && app.config.active_frame);
+            let _ = app.update(Message::Key(Action::ToggleDividerLine));
+            assert!(!app.config.divider_line);
         }
 
         #[test]

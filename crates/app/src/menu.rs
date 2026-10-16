@@ -214,8 +214,19 @@ fn key_binds() -> HashMap<KeyBind, MenuAct> {
 
 type Item = menu::Item<MenuAct, String>;
 
+/// The menu checkboxes' states.
+#[derive(Clone, Copy, Default)]
+pub struct Checks {
+    pub hidden: bool,
+    pub divider_line: bool,
+    pub active_frame: bool,
+    /// The classic look: only there is «Frame around the active panel» offered (the modern
+    /// look's cards have one of their own).
+    pub classic: bool,
+}
+
 /// (title, items) of every menu.
-fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
+fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
     let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
     let sort = |label: String, k: SortKey| b(label, Action::Sort(k));
     vec![
@@ -314,9 +325,26 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
                 menu::Item::CheckBox(
                     fl!("menu-hidden"),
                     None,
-                    show_hidden,
+                    checks.hidden,
                     MenuAct::Key(Action::ToggleHidden),
                 ),
+                menu::Item::CheckBox(
+                    fl!("settings-divider-line"),
+                    None,
+                    checks.divider_line,
+                    MenuAct::Key(Action::ToggleDividerLine),
+                ),
+            ]
+            .into_iter()
+            .chain(checks.classic.then(|| {
+                menu::Item::CheckBox(
+                    fl!("settings-active-frame"),
+                    None,
+                    checks.active_frame,
+                    MenuAct::Key(Action::ToggleActiveFrame),
+                )
+            }))
+            .chain([
                 menu::Item::Divider,
                 b(fl!("menu-quick-view"), Action::QuickView),
                 b(fl!("menu-branch"), Action::Branch),
@@ -330,7 +358,8 @@ fn menus(show_hidden: bool, locked: bool) -> Vec<(String, Vec<Item>)> {
                 sort(fl!("menu-sort-ext"), SortKey::Ext),
                 sort(fl!("menu-sort-date"), SortKey::Date),
                 sort(fl!("menu-sort-size"), SortKey::Size),
-            ],
+            ])
+            .collect(),
         ),
         (
             fl!("menu-config"),
@@ -444,9 +473,9 @@ pub fn context(ctx: Ctx) -> Vec<menu::Tree<Message>> {
     menu::items(&key_binds(), context_items(ctx))
 }
 
-pub fn bar(show_hidden: bool, locked: bool) -> Element<'static, Message> {
+pub fn bar(checks: Checks, locked: bool) -> Element<'static, Message> {
     let binds = key_binds();
-    let roots = menus(show_hidden, locked)
+    let roots = menus(checks, locked)
         .into_iter()
         .map(|(title, items)| {
             menu::Tree::with_children(Element::from(menu::root(title)), menu::items(&binds, items))
@@ -577,9 +606,35 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_item_only_in_the_classic_look() {
+        let has_frame = |classic| {
+            menus(
+                Checks {
+                    classic,
+                    ..Checks::default()
+                },
+                false,
+            )
+            .into_iter()
+            .flat_map(|(_, items)| items)
+            .any(|i| {
+                matches!(
+                    i,
+                    menu::Item::CheckBox(_, _, _, MenuAct::Key(Action::ToggleActiveFrame))
+                )
+            })
+        };
+        assert!(has_frame(true) && !has_frame(false));
+    }
+
+    #[test]
     fn every_item_shows_a_key() {
         let binds = key_binds();
-        for (title, items) in menus(false, false) {
+        let all = Checks {
+            classic: true,
+            ..Checks::default()
+        };
+        for (title, items) in menus(all, false) {
             for item in items {
                 let act = match item {
                     menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => a,
@@ -596,6 +651,8 @@ mod tests {
                             | Action::TabLock
                             | Action::TabRename
                             | Action::ResetColumns
+                            | Action::ToggleDividerLine
+                            | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar
                             | Action::ConfigureColors
                     )
