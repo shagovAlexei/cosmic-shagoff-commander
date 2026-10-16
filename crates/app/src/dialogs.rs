@@ -442,6 +442,8 @@ pub struct MultiRename {
     pub start: String,
     pub step: String,
     pub digits: String,
+    /// The masks explained, under the token buttons (hidden: the dialog must fit 530 px).
+    pub help: bool,
 }
 
 impl MultiRename {
@@ -1232,6 +1234,27 @@ pub fn view<'a>(
                 );
             }
             let ok = rows.iter().all(|r| r.problem.is_none());
+            // As TC's buttons next to the mask: put a token at the end of the name mask.
+            let insert = |tok: &'static str, label: String| {
+                widget::button::standard(format!("{tok}  {label}")).on_press(Message::MrInsert(tok))
+            };
+            let tokens = widget::flex_row(vec![
+                insert("[N]", fl!("mr-ins-name")).into(),
+                insert("[N1-3]", fl!("mr-ins-part")).into(),
+                insert("[E]", fl!("mr-ins-ext")).into(),
+                insert("[C]", fl!("mr-ins-counter")).into(),
+                insert("[Y]-[M]-[D]", fl!("mr-ins-date")).into(),
+                insert("[h]-[m]-[s]", fl!("mr-ins-time")).into(),
+                if m.help {
+                    widget::button::suggested(fl!("mr-help-button"))
+                } else {
+                    widget::button::standard(fl!("mr-help-button"))
+                }
+                .on_press(Message::MrHelp)
+                .into(),
+            ])
+            .row_spacing(6)
+            .column_spacing(6);
             widget::dialog()
                 .title(fl!("multi-rename"))
                 // Wider than the default 570 px: two columns of file names.
@@ -1240,6 +1263,7 @@ pub fn view<'a>(
                 .control(
                     column![
                         row![name, edit(fl!("mr-ext"), &m.rule.ext, MrField::Ext)].spacing(8),
+                        tokens,
                         row![
                             edit(fl!("mr-find"), &m.rule.find, MrField::Find),
                             edit(fl!("mr-replace"), &m.rule.replace, MrField::Replace),
@@ -1258,8 +1282,28 @@ pub fn view<'a>(
                             case(fl!("mr-case-title"), Case::Title),
                         ]
                         .spacing(8),
-                        widget::scrollable(table).height(Length::Fixed(300.0)),
                     ]
+                    // The preview, then the help, in one scroll: as tall as they are, but at most
+                    // what the panel's rows leave after the fields (`Fill` would stretch the
+                    // dialog to the window).
+                    // ponytail: 200 = the fields' height at the default size, guessed, not measured.
+                    .push(
+                        widget::container(
+                            widget::scrollable(
+                                column![table]
+                                    .push_maybe(
+                                        m.help.then(|| widget::text::caption(fl!("mr-help"))),
+                                    )
+                                    .spacing(12),
+                            )
+                            .height(Length::Shrink),
+                        )
+                        .max_height(if list_h > 0.0 {
+                            (list_h - 200.0).clamp(48.0, 300.0)
+                        } else {
+                            300.0
+                        }),
+                    )
                     .spacing(12),
                 )
                 .primary_action(
