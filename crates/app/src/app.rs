@@ -4835,13 +4835,18 @@ impl App {
             return self.load(side, root, None);
         }
         let cwd = t.panel.cwd().to_path_buf();
-        if inside_archive(&cwd.join("x")) || t.results.is_some() {
+        if t.results.is_some() {
             self.say(StatusKind::Error, fl!("results-unsupported"));
             return Task::none();
         }
         let dirs: Vec<PathBuf> = if action == Action::BranchSel {
+            // From the listing: inside an archive nothing is on disk.
+            let dirs: std::collections::HashSet<&std::ffi::OsStr> = (t.panel.entries().iter())
+                .filter(|e| e.is_dir())
+                .map(|e| e.os_name.as_os_str())
+                .collect();
             (t.panel.targets().into_iter())
-                .filter(|p| p.is_dir())
+                .filter(|p| p.file_name().is_some_and(|n| dirs.contains(n)))
                 .collect()
         } else {
             vec![cwd.clone()]
@@ -4859,9 +4864,20 @@ impl App {
         self.say(StatusKind::Busy, fl!("branch-reading"));
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || listing::branch(&dirs, hidden, &stop))
-                    .await
-                    .unwrap_or(Some(Vec::new())) // the walker died: an empty branch, as before
+                tokio::task::spawn_blocking(move || match archive::split_path(&dirs[0]) {
+                    // ponytail: the index is read whole, Esc does not stop it (as entering one).
+                    Some((a, _)) => Some(
+                        (dirs.iter())
+                            .filter_map(|d| {
+                                archive::branch(&a, d.strip_prefix(&a).ok()?, hidden).ok()
+                            })
+                            .flatten()
+                            .collect(),
+                    ),
+                    None => listing::branch(&dirs, hidden, &stop),
+                })
+                .await
+                .unwrap_or(Some(Vec::new())) // the walker died: an empty branch, as before
             },
             move |paths| {
                 cosmic::Action::App(Message::BranchListed {
@@ -6576,6 +6592,8 @@ fn read_listing(
     results: Option<&Vec<PathBuf>>,
 ) -> Result<Vec<Entry>, String> {
     match results {
+        // A branch read inside an archive: from its index.
+        Some(r) if archive::split_path(path).is_some() => Ok(archive::entries(r, path)),
         Some(r) => Ok(listing::entries(r, path)),
         None => listing::scan(path, show_hidden).map_err(|e| e.to_string()),
     }
@@ -9531,6 +9549,34 @@ mod tests {
         listed_at(&mut app, 1, &tmp.path().join("out"));
         let _ = app.update(Message::Key(Action::End)); // "..", out/, a.zip
         (tmp, app, a)
+    }
+
+    #[test]
+    fn ctrl_b_inside_an_archive_lists_from_its_index() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let tab = app.panes[0].active().id;
+        let _ = app.update(Message::Key(Action::Branch));
+        let id = app.panes[0]
+            .active()
+            .branching
+            .expect("not refused inside an archive");
+        let paths = shagoff_core::archive::branch(&a, Path::new(""), false).ok();
+        let _ = app.update(Message::BranchListed {
+            side: 0,
+            tab,
+            id,
+            root: a.clone(),
+            paths,
+        });
+        let (root, paths) = app.panes[0].active().results.clone().unwrap();
+        let mut names: Vec<String> = read_listing(&root, false, Some(&paths))
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, ["d/f.txt", "top.txt"]);
     }
 
     #[test]
