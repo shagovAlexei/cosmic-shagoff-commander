@@ -555,6 +555,9 @@ pub enum Message {
     PropsDone(usize, Vec<String>),
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
     FindFeed,
+    /// Alt+L, by the physical key (any layout): "To panel" in the search window, otherwise the
+    /// action it would have been (quick search; `None` from a text field).
+    FeedKey(Option<Action>),
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -1613,6 +1616,18 @@ impl App {
                 return Task::batch(tasks);
             }
             Message::FindFeed => return self.find_feed(),
+            Message::FeedKey(other) => {
+                // As the button: nothing to feed, nothing done.
+                if let Some(Dialog::Find(f)) = &self.dialog {
+                    return match f.results.is_empty() {
+                        true => Task::none(),
+                        false => self.find_feed(),
+                    };
+                }
+                if let Some(a) = other {
+                    return self.update(Message::Key(a));
+                }
+            }
             Message::FindStart => return self.start_find(),
             Message::FindSubmit => {
                 if let Some(Dialog::Find(f)) = &self.dialog
@@ -6420,6 +6435,17 @@ fn route_event(
             modifiers,
             ..
         }) if modifiers.is_empty() => Some(Message::Escape(window)),
+        // Any status: the search window's fields have focus, and they capture it.
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key: physical_key @ keyboard::key::Physical::Code(keyboard::key::Code::KeyL),
+            modifiers,
+            ..
+        }) if modifiers == Modifiers::ALT => Some(Message::FeedKey(
+            (status == event::Status::Ignored)
+                .then(|| keymap::action(&key, physical_key, modifiers))
+                .flatten(),
+        )),
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -10142,6 +10168,53 @@ mod tests {
         assert!(!inside_archive(Path::new("/x/a.zip"))); // the archive itself is a file
         assert!(!inside_archive(Path::new("/x/notes.gz/f"))); // .gz is no folder
         assert!(!inside_archive(Path::new("/x/docs/f.txt")));
+    }
+
+    #[test]
+    fn alt_l_feeds_find_results_in_any_layout() {
+        let alt_l = |c: &str, status| {
+            route_event(
+                cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(c.into()),
+                    modified_key: Key::Character(c.into()),
+                    physical_key: Physical::Code(Code::KeyL),
+                    location: Location::Standard,
+                    modifiers: Modifiers::ALT,
+                    text: None,
+                    repeat: false,
+                }),
+                status,
+                cosmic::iced::window::Id::unique(),
+            )
+        };
+        // Russian layout too; in a field nothing else would go, in the panel quick search would.
+        let m = alt_l("д", event::Status::Captured);
+        assert!(matches!(m, Some(Message::FeedKey(None))), "{m:?}");
+        let m = alt_l("l", event::Status::Ignored);
+        assert!(
+            matches!(m, Some(Message::FeedKey(Some(Action::QuickSearch('l'))))),
+            "{m:?}"
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.rs");
+        std::fs::write(&a, "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindStart);
+        let _ = app.update(Message::FeedKey(None)); // nothing found yet
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, vec![a])));
+        let mask = app.find.mask.clone();
+        // The focused field types the letter too: harmless, the fields were kept at the start.
+        let _ = app.update(Message::FindInput(
+            dialogs::FindField::Mask,
+            format!("{mask}l"),
+        ));
+        let _ = app.update(Message::FeedKey(None));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.find.mask, mask);
+        assert!(app.panes[0].active().results.is_some());
     }
 
     #[test]

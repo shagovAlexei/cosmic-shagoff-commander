@@ -285,6 +285,7 @@ help-files = Files
 help-delete = Delete to the trash
 help-archives = Archives
 help-archive-enter = An archive opens like a folder (read-only)
+help-find-feed = In the search window: results to the panel
 help-search = Search and compare
 help-tabs = Tabs
 help-next-tab = Next / previous tab
