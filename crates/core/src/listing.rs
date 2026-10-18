@@ -126,10 +126,16 @@ fn from_meta(path: &Path, os_name: OsString, name: String, lmeta: &fs::Metadata)
 
 /// Alt+F7 "To panel": the found paths as entries of a panel whose cwd is `root`. The name shown
 /// is the path below `root`; `os_name` is the whole path, so `cwd.join(os_name)` is the file
-/// itself. Paths that are gone are left out.
-pub fn entries(paths: &[std::path::PathBuf], root: &Path) -> Vec<Entry> {
+/// itself. Paths that are gone are left out. `stop` set (Esc, Ctrl+B's second step): what was
+/// read so far, checked at each path (one `lstat` each, millions for a big branch).
+pub fn entries(
+    paths: &[std::path::PathBuf],
+    root: &Path,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Vec<Entry> {
     paths
         .iter()
+        .take_while(|_| !stop.load(std::sync::atomic::Ordering::Relaxed))
         .filter_map(|p| {
             let lmeta = fs::symlink_metadata(p).ok()?;
             let name = p
@@ -357,7 +363,8 @@ mod tests {
         let f = d.path().join("sub/a.rs");
         fs::write(&f, "12345").unwrap();
         let gone = d.path().join("gone.rs");
-        let e = entries(&[f.clone(), gone, d.path().join("sub")], d.path());
+        let go = std::sync::atomic::AtomicBool::new(false);
+        let e = entries(&[f.clone(), gone, d.path().join("sub")], d.path(), &go);
         assert_eq!(e.len(), 2);
         assert_eq!(
             (e[0].name.as_str(), e[0].size, e[0].ext.as_str()),
@@ -369,6 +376,9 @@ mod tests {
         fs::create_dir(d.path().join("conf.d")).unwrap();
         let mk = d.path().join("conf.d/Makefile");
         fs::write(&mk, "").unwrap();
-        assert_eq!(entries(&[mk], d.path())[0].ext, "");
+        assert_eq!(entries(std::slice::from_ref(&mk), d.path(), &go)[0].ext, "");
+        // Stopped (Esc on a branch of millions): nothing more is read.
+        let stop = std::sync::atomic::AtomicBool::new(true);
+        assert!(entries(&[mk], d.path(), &stop).is_empty());
     }
 }
