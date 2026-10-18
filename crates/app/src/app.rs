@@ -1232,6 +1232,18 @@ impl App {
                     return Task::none(); // stale: the user has moved on
                 }
                 t.pending = None;
+                // Ctrl+B's rows are in: the branch is read.
+                if t.branching
+                    .take_if(|_| t.branch && t.results.is_some())
+                    .is_some()
+                    && (self.status.as_ref()).is_some_and(|s| s.kind == StatusKind::Busy)
+                {
+                    self.status = None;
+                }
+                let Some(t) = (self.panes[side].items_mut().iter_mut()).find(|t| t.id == tab)
+                else {
+                    return Task::none();
+                };
                 match result {
                     Ok(entries) => {
                         t.error = None;
@@ -2131,10 +2143,22 @@ impl App {
                         .any(|t| t.branching.is_some())
                     {
                         // Every one under way: the hint does not say whose.
-                        for t in self.panes.iter_mut().flat_map(|p| p.items_mut()) {
-                            t.stop_branch();
+                        let mut back = Vec::new();
+                        for side in 0..2 {
+                            for (i, t) in self.panes[side].items_mut().iter_mut().enumerate() {
+                                // Found, its rows being read: the dir as usual again.
+                                if t.branching.is_some() && t.branch && t.results.is_some() {
+                                    t.results = None;
+                                    back.push((side, i, t.panel.cwd().to_path_buf()));
+                                }
+                                t.stop_branch();
+                            }
                         }
                         self.say(StatusKind::Info, fl!("branch-stopped"));
+                        let tasks: Vec<_> = (back.into_iter())
+                            .map(|(side, i, cwd)| self.load_tab(side, i, cwd, None))
+                            .collect();
+                        return Task::batch(tasks);
                     } else if self.config.show_cmdline && !self.cmdline.is_empty() {
                         self.cmdline.clear();
                     } else {
@@ -2368,18 +2392,18 @@ impl App {
                 if t.branching != Some(id) {
                     return Task::none();
                 }
+                let t = &mut self.panes[side].items_mut()[i];
+                if let Some(paths) = paths {
+                    t.results = Some((root.clone(), Arc::new(paths)));
+                    t.branch = true;
+                    // The rows are read next, still under way (`Listed` ends it).
+                    if self.panes[side].active().id == tab {
+                        return self.reload(side, root, None);
+                    }
+                }
+                self.panes[side].items_mut()[i].branching = None; // stopped, or read when shown
                 if (self.status.as_ref()).is_some_and(|s| s.kind == StatusKind::Busy) {
                     self.status = None;
-                }
-                let t = &mut self.panes[side].items_mut()[i];
-                t.branching = None;
-                let Some(paths) = paths else {
-                    return Task::none(); // stopped
-                };
-                t.results = Some((root.clone(), Arc::new(paths)));
-                t.branch = true;
-                if self.panes[side].active().id == tab {
-                    return self.reload(side, root, None);
                 }
             }
             Message::OpenWithDefault => {
@@ -2990,13 +3014,18 @@ impl App {
             t.results = None;
         }
         let results = t.results.as_ref().map(|(_, r)| r.clone());
+        // Ctrl+B's second step: Esc stops it as it stops the first.
+        let stop = match t.branching {
+            Some(_) => t.branch_stop.clone(),
+            None => Arc::default(),
+        };
         let tab = t.id;
         let (show_hidden, sort) = (t.panel.show_hidden(), t.panel.sort());
         Task::perform(
             async move {
                 let p = path.clone();
                 let (result, space) = tokio::task::spawn_blocking(move || {
-                    let mut result = read_listing(&p, show_hidden, results.as_deref());
+                    let mut result = read_listing(&p, show_hidden, results.as_deref(), &stop);
                     // Sorted here, not on the UI thread; the panel only checks the order.
                     // ponytail: counted dir sizes are not known here; a Size sort with them is
                     // redone by the panel.
@@ -6704,15 +6733,17 @@ fn mount_error(e: &mount::Error) -> String {
 }
 
 /// A dir's entries, or the search results fed to the panel (re-read: deleted ones drop out).
+/// `stop`: Esc during Ctrl+B's second step (the rows of millions of found files).
 fn read_listing(
     path: &Path,
     show_hidden: bool,
     results: Option<&Vec<PathBuf>>,
+    stop: &AtomicBool,
 ) -> Result<Vec<Entry>, String> {
     match results {
         // A branch read inside an archive: from its index.
         Some(r) if archive::split_path(path).is_some() => Ok(archive::entries(r, path)),
-        Some(r) => Ok(listing::entries(r, path)),
+        Some(r) => Ok(listing::entries(r, path, stop)),
         None => listing::scan(path, show_hidden).map_err(|e| e.to_string()),
     }
 }
@@ -7642,6 +7673,56 @@ mod tests {
         let stop = app.panes[0].active().branch_stop.clone();
         let _ = app.load(0, root.join("sub"), None);
         assert!(stop.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn esc_stops_the_second_step_of_a_branch_too() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let root = tmp.path().to_path_buf();
+        let tab = app.panes[0].active().id;
+        let branch = |app: &mut App| {
+            let _ = app.update(Message::Key(Action::Branch));
+            let t = app.panes[0].active();
+            let id = t.branching.unwrap();
+            let paths =
+                listing::branch(std::slice::from_ref(&root), false, &AtomicBool::new(false));
+            let _ = app.update(Message::BranchListed {
+                side: 0,
+                tab,
+                id,
+                root: root.clone(),
+                paths,
+            });
+        };
+        branch(&mut app);
+        // Found; the rows (one lstat each) are being read: still under way, Esc can stop it.
+        let t = app.panes[0].active();
+        assert!(t.branching.is_some() && t.results.is_some());
+        let stop = t.branch_stop.clone();
+        let _ = app.update(Message::DialogCancel); // Esc
+        assert!(stop.load(Ordering::Relaxed));
+        let t = app.panes[0].active();
+        assert_eq!(t.branching, None);
+        assert!(t.results.is_none()); // back to the dir as usual
+        assert_eq!(t.pending.as_ref().map(|p| p.1.clone()), Some(root.clone()));
+        // Read to the end: no longer under way, the status cleared.
+        branch(&mut app);
+        let t = app.panes[0].active();
+        let generation = t.pending.as_ref().unwrap().0;
+        let (_, paths) = t.results.clone().unwrap();
+        let rows = read_listing(&root, false, Some(&paths), &AtomicBool::new(false));
+        let _ = app.update(Message::Listed {
+            tab,
+            generation,
+            path: root.clone(),
+            focus: None,
+            result: rows,
+            space: None,
+        });
+        let t = app.panes[0].active();
+        assert_eq!(t.branching, None);
+        assert!(t.results.is_some());
+        assert!(app.status.is_none());
     }
 
     #[test]
@@ -9710,11 +9791,12 @@ mod tests {
             paths,
         });
         let (root, paths) = app.panes[0].active().results.clone().unwrap();
-        let mut names: Vec<String> = read_listing(&root, false, Some(&paths))
-            .unwrap()
-            .into_iter()
-            .map(|e| e.name)
-            .collect();
+        let mut names: Vec<String> =
+            read_listing(&root, false, Some(&paths), &AtomicBool::new(false))
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
         names.sort();
         assert_eq!(names, ["d/f.txt", "top.txt"]);
     }
@@ -10403,7 +10485,7 @@ mod tests {
         assert_eq!(root, tmp.path());
         assert_eq!(paths.len(), dialogs::FIND_SHOWN + 6);
         assert_eq!(t.pending.as_ref().map(|p| p.1.clone()), Some(root.clone()));
-        let e = read_listing(&root, false, Some(&paths)).unwrap();
+        let e = read_listing(&root, false, Some(&paths), &AtomicBool::new(false)).unwrap();
         assert!(e.iter().any(|e| e.name == "sub/a.rs"));
         // Backspace leaves the results for the dir that was searched.
         let _ = app.update(Message::Key(Action::Parent));
@@ -10430,7 +10512,7 @@ mod tests {
             generation,
             path: root.clone(),
             focus: None,
-            result: Ok(listing::entries(&[a], &root)),
+            result: Ok(listing::entries(&[a], &root, &AtomicBool::new(false))),
             space: None,
         });
         (tmp, app)
@@ -11728,7 +11810,8 @@ mod tests {
             let f = tmp.path().join("f");
             let t = app.panes[0].active_mut();
             t.results = Some((tmp.path().to_path_buf(), Arc::new(vec![f.clone()])));
-            let rows = read_listing(tmp.path(), false, Some(&vec![f])).unwrap();
+            let rows =
+                read_listing(tmp.path(), false, Some(&vec![f]), &AtomicBool::new(false)).unwrap();
             t.panel.set_listing(tmp.path().to_path_buf(), rows, None);
             key(&mut app, Action::Home); // ".."
             key(&mut app, Action::TabOpen);
