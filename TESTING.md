@@ -890,6 +890,14 @@
 - [x] То же в русской раскладке (Alt+Д)
 - [x] Без результатов Alt+L не закрывает окно (в поле добавится «l»); в панели Alt+L — быстрый поиск с «l», как раньше
 
+### «Ветвь» внутри архива (115)
+
+Файл: `mkdir -p src/docs/img src/.git; echo aa > src/docs/a.txt; echo p > src/docs/img/p.png; echo t > src/top.txt; echo h > src/.git/x; (cd src && zip -qr ../a.zip .)`.
+
+- [x] Enter на `a.zip`, Ctrl+B — `docs/a.txt`, `docs/img/p.png`, `top.txt` (без `.git/x`; со скрытыми Ctrl+H — и он); Ctrl+B ещё раз — обычный вид
+- [x] В ветви: F3 на `docs/a.txt` — `aa`; F5 `docs/img/p.png` в другую панель — скопирован `p.png`; F8 `docs/a.txt` — удалён из архива, список обновился
+- [x] Отметить `docs` (Insert), Ctrl+Shift+B — только файлы `docs`
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
