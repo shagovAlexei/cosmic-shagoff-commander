@@ -920,7 +920,26 @@ impl Application for App {
             // A list no taller than the panel's rows: the dialog's buttons stay in the window.
             let list_h = self.panes[self.active].active().height;
             let font = self.panel_font();
-            return Some(dialogs::view(d, &self.input_id, &self.tz, list_h, font));
+            // The single file's icon from the panel row it came from (no disk access here).
+            let icon = match d.sources() {
+                Some([one]) => self.panes.iter().find_map(|p| {
+                    let panel = &p.active().panel;
+                    panel
+                        .entries()
+                        .iter()
+                        .find(|e| panel.cwd().join(&e.os_name) == *one)
+                }),
+                _ => None,
+            }
+            .map(|e| crate::view::entry_icon(e, 32));
+            return Some(dialogs::view(
+                d,
+                &self.input_id,
+                &self.tz,
+                list_h,
+                font,
+                icon,
+            ));
         }
         self.job
             .as_ref()
