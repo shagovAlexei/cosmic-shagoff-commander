@@ -2149,7 +2149,10 @@ impl App {
                         let _ = r.send(ErrorChoice::Cancel);
                     }
                 }
-                Some(Dialog::Connect { .. }) => {
+                Some(Dialog::Connect { browsing, .. }) => {
+                    if let Some(stop) = browsing {
+                        stop.store(true, Ordering::Relaxed);
+                    }
                     if let Some((_, cancel)) = &self.connecting {
                         cancel.store(true, Ordering::Relaxed);
                     }
@@ -2763,7 +2766,10 @@ impl App {
                 if result.is_ok() {
                     let list = mount::remember(&self.config.connections, &url);
                     self.save_connections(list);
-                    if matches!(self.dialog, Some(Dialog::Connect { .. })) {
+                    if let Some(Dialog::Connect { browsing, .. }) = &self.dialog {
+                        if let Some(stop) = browsing {
+                            stop.store(true, Ordering::Relaxed); // a browse no one will see
+                        }
                         self.dialog = None;
                     }
                 } else if let Some(Dialog::Connect { note, .. }) = &mut self.dialog
@@ -2793,8 +2799,14 @@ impl App {
             }
             Message::ConnectBrowse => {
                 if let Some(Dialog::Connect { browsing, .. }) = &mut self.dialog {
-                    *browsing = true;
-                    return blocking(mount::browse, Message::Browsed);
+                    // Pressed again while looking: stop.
+                    if let Some(stop) = browsing.take() {
+                        stop.store(true, Ordering::Relaxed);
+                        return Task::none();
+                    }
+                    let stop = Arc::new(AtomicBool::new(false));
+                    *browsing = Some(stop.clone());
+                    return blocking(move || mount::browse(&stop), Message::Browsed);
                 }
             }
             Message::Browsed(r) => {
@@ -2805,7 +2817,10 @@ impl App {
                     ..
                 }) = &mut self.dialog
                 {
-                    *browsing = false;
+                    // Stopped: that one's result is not wanted (another may be under way).
+                    if r == Err(mount::Error::Cancelled) || browsing.take().is_none() {
+                        return Task::none();
+                    }
                     *note = match r {
                         Ok(list) if list.is_empty() => Some((false, fl!("connect-none-found"))),
                         Ok(list) => {
@@ -3756,7 +3771,7 @@ impl App {
                 password: String::new(),
                 saved: self.config.connections.clone(),
                 found: Vec::new(),
-                browsing: false,
+                browsing: None,
                 note: None,
             }),
             Action::MultiRename => {
@@ -11542,6 +11557,7 @@ mod tests {
             let _ = app.update(Message::ConnectForget("smb://a/".into()));
             assert_eq!(app.config.connections, ["smb://b/"]);
             let found = vec![("nas".to_string(), "sftp://nas.local/".to_string())];
+            let _ = app.update(Message::ConnectBrowse);
             let _ = app.update(Message::Browsed(Ok(found.clone())));
             let Some(Dialog::Connect {
                 saved, found: f, ..
@@ -11553,6 +11569,30 @@ mod tests {
                 (saved.as_slice(), f),
                 (&["smb://b/".to_string()][..], &found)
             );
+        }
+
+        #[test]
+        fn browse_stops_by_its_button_or_by_closing_the_dialog() {
+            let mut app = app_with(Config::default(), State::default());
+            let stop = |app: &App| match &app.dialog {
+                Some(Dialog::Connect { browsing, .. }) => browsing.clone(),
+                _ => panic!("no dialog"),
+            };
+            let _ = app.update(Message::Key(Action::Connect));
+            let _ = app.update(Message::ConnectBrowse);
+            let first = stop(&app).expect("browsing");
+            let _ = app.update(Message::ConnectBrowse); // pressed again: stop
+            assert!(first.load(Ordering::Relaxed) && stop(&app).is_none());
+            // Its "cancelled" lands later: no error shown.
+            let _ = app.update(Message::Browsed(Err(MountError::Cancelled)));
+            assert!(matches!(
+                &app.dialog,
+                Some(Dialog::Connect { note: None, .. })
+            ));
+            let _ = app.update(Message::ConnectBrowse);
+            let second = stop(&app).expect("browsing");
+            let _ = app.update(Message::DialogCancel);
+            assert!(second.load(Ordering::Relaxed));
         }
 
         #[test]

@@ -137,7 +137,8 @@ pub enum Dialog {
         saved: Vec<String>,
         /// "Browse network": (name, address).
         found: Vec<(String, String)>,
-        browsing: bool,
+        /// A browse under way: setting it stops `gio` (the button again, or the dialog closed).
+        browsing: Option<Arc<AtomicBool>>,
         /// Shown in the dialog (as in TC, not in the status line): "Connecting…", or the
         /// last error (`true`) / browse result. The dialog stays open until connected.
         note: Option<(bool, String)>,
@@ -1541,12 +1542,12 @@ pub fn view<'a>(
                     );
                 }
             }
-            let browse = widget::button::standard(if *browsing {
+            let browse = widget::button::standard(if browsing.is_some() {
                 fl!("connect-browsing")
             } else {
                 fl!("connect-browse")
             })
-            .on_press_maybe((!browsing).then_some(Message::ConnectBrowse));
+            .on_press(Message::ConnectBrowse);
             col = col.push(browse);
             for (name, u) in found {
                 col = col.push(pick(format!("{name}   {u}"), u));
