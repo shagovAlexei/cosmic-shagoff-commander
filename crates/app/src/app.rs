@@ -2618,7 +2618,9 @@ impl App {
             Message::Changed(side) => {
                 let t = self.panes[side].active();
                 // A change in the dir we are leaving must not cancel the scan of the one we enter.
-                if self.job.is_none() && t.target() == t.panel.cwd() {
+                // Search results / a branch: not read again on every event (all of them stat'ed,
+                // a million for a big tree; TC neither) — Ctrl+R does it.
+                if self.job.is_none() && t.target() == t.panel.cwd() && t.results.is_none() {
                     let cwd = t.target();
                     return self.reload(side, cwd, None);
                 }
@@ -7276,6 +7278,16 @@ mod tests {
         let _ = app.update(Message::Changed(0)); // old dir changed while the new one loads
         let _ = app.update(listed_ok(id, generation, tmp.path()));
         assert_eq!(app.panes[0].active().panel.cwd(), tmp.path());
+    }
+
+    #[test]
+    fn regression_watcher_leaves_search_results_alone() {
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active_mut();
+        t.pending = None;
+        t.results = Some((t.panel.cwd().to_path_buf(), Arc::new(Vec::new())));
+        let _ = app.update(Message::Changed(0));
+        assert_eq!(pending_path(&app), None); // not read again
     }
 
     #[test]
