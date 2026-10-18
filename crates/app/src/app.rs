@@ -1771,6 +1771,17 @@ impl App {
                         return Task::none();
                     }
                     (d.x, d.offset) = (x, y);
+                    // Scrolled away from the current block: the first one in view takes over.
+                    let (top, bottom) = d.view_rows();
+                    if let Some(t) = d.text() {
+                        d.block = shagoff_core::diff::block_in_view(
+                            &t.rows,
+                            d.blocks(),
+                            d.block,
+                            top,
+                            bottom,
+                        );
+                    }
                     let to = AbsoluteOffset {
                         x: Some(x),
                         y: Some(y),
@@ -4562,11 +4573,13 @@ impl App {
         let Some(Dialog::Diff(d)) = &mut self.dialog else {
             return Task::none();
         };
-        let n = d.blocks().len();
-        if n == 0 {
+        let (Some(t), (top, bottom)) = (d.text(), d.view_rows()) else {
+            return Task::none();
+        };
+        if d.blocks().is_empty() {
             return Task::none();
         }
-        d.block = d.block.saturating_add_signed(delta).min(n - 1);
+        d.block = shagoff_core::diff::step(&t.rows, d.blocks(), d.block, delta > 0, top, bottom);
         self.diff_scroll()
     }
 

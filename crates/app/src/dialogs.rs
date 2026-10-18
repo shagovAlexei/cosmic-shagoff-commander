@@ -189,7 +189,7 @@ pub const DIFF_ROW_H: f32 = 22.0;
 pub const DIFF_LIST_H: f32 = 260.0;
 /// Monospace advance at the default text size, plus the line-number column.
 const MONO_W: f32 = 8.5;
-const NUM_W: f32 = 56.0;
+const NUM_W: f32 = 64.0;
 /// Narrowest content of a side, so the row tint reaches across its pane.
 const PANE_W: f32 = 700.0;
 
@@ -207,6 +207,15 @@ impl DiffDlg {
             let n = t.blocks.partition_point(|&b| b < t.rows.len());
             &t.blocks[..n]
         })
+    }
+
+    /// Rows in view (`top..bottom`), from the scroll offset.
+    pub fn view_rows(&self) -> (usize, usize) {
+        let top = (self.offset / DIFF_ROW_H) as usize;
+        (
+            top,
+            ((self.offset + DIFF_LIST_H) / DIFF_ROW_H).ceil() as usize,
+        )
     }
 
     /// Side widths from the longest line on each side (at least a readable minimum).
@@ -284,7 +293,8 @@ pub enum SyncOpt {
 }
 
 /// Deleted (left only), inserted (right only), changed: tinted, readable in light and dark themes.
-fn diff_style(kind: diff::Kind) -> cosmic::theme::Container<'static> {
+/// `current`: a row of the current block, tinted deeper.
+fn diff_style(kind: diff::Kind, current: bool) -> cosmic::theme::Container<'static> {
     cosmic::theme::Container::custom(move |t| {
         let c = t.cosmic();
         let tint = match kind {
@@ -294,7 +304,7 @@ fn diff_style(kind: diff::Kind) -> cosmic::theme::Container<'static> {
             diff::Kind::Changed => c.accent_color(),
         };
         let mut bg = cosmic::iced::Color::from(tint);
-        bg.a = 0.25;
+        bg.a = if current { 0.5 } else { 0.25 };
         cosmic::iced::widget::container::Style {
             background: Some(bg.into()),
             ..Default::default()
@@ -1731,31 +1741,35 @@ pub fn view<'a>(
                             .wrapping(Wrapping::None)
                     };
                     // `marks`: the words that differ from the other side (changed lines).
-                    let half = |c: &Option<(usize, String)>, w: f32, marks: &[Range<usize>]| {
-                        let content = match c {
-                            Some((n, s)) => {
-                                let mut line =
-                                    row![mono(format!("{n:>5} ")).width(Length::Fixed(NUM_W))];
-                                // Plain text between the changed words, each word tinted.
-                                let mut at = 0;
-                                for m in marks {
-                                    if at < m.start {
-                                        line = line.push(mono(expand(&s[at..m.start])));
+                    // `cur`: a row of the current block, marked «▸» by the line number.
+                    let half =
+                        |c: &Option<(usize, String)>, w: f32, marks: &[Range<usize>], cur: bool| {
+                            let content = match c {
+                                Some((n, s)) => {
+                                    let at = if cur { '▸' } else { ' ' };
+                                    let mut line = row![
+                                        mono(format!("{at}{n:>5} ")).width(Length::Fixed(NUM_W))
+                                    ];
+                                    // Plain text between the changed words, each word tinted.
+                                    let mut at = 0;
+                                    for m in marks {
+                                        if at < m.start {
+                                            line = line.push(mono(expand(&s[at..m.start])));
+                                        }
+                                        line = line.push(
+                                            widget::container(mono(expand(&s[m.clone()])))
+                                                .class(diff_style(diff::Kind::Changed, false)),
+                                        );
+                                        at = m.end;
                                     }
-                                    line = line.push(
-                                        widget::container(mono(expand(&s[m.clone()])))
-                                            .class(diff_style(diff::Kind::Changed)),
-                                    );
-                                    at = m.end;
+                                    line.push(mono(expand(&s[at..])))
                                 }
-                                line.push(mono(expand(&s[at..])))
-                            }
-                            None => row![],
+                                None => row![],
+                            };
+                            widget::container(content)
+                                .width(Length::Fixed(w))
+                                .clip(true)
                         };
-                        widget::container(content)
-                            .width(Length::Fixed(w))
-                            .clip(true)
-                    };
                     // Only the rows in view (plus a margin) are built; spacers keep the height.
                     let first = ((d.offset / DIFF_ROW_H) as usize).min(t.rows.len());
                     let last = (first + (DIFF_LIST_H / DIFF_ROW_H) as usize + 2).min(t.rows.len());
@@ -1772,7 +1786,12 @@ pub fn view<'a>(
                                 .into(),
                         );
                     }
-                    for r in &t.rows[first..last] {
+                    let cur = d
+                        .blocks()
+                        .get(d.block)
+                        .map_or(0..0, |&b| b..diff::block_end(&t.rows, b));
+                    for (i, r) in (first..last).zip(&t.rows[first..last]) {
+                        let cur = cur.contains(&i);
                         let (ml, mr) = match (&r.left, &r.right) {
                             (Some((_, a)), Some((_, b))) if r.kind == diff::Kind::Changed => {
                                 diff::words(a, b, d.opts)
@@ -1781,9 +1800,9 @@ pub fn view<'a>(
                         };
                         for (side, c, w, m) in [(0, &r.left, wl, &ml), (1, &r.right, wr, &mr)] {
                             lists[side].push(
-                                widget::container(half(c, w, m))
+                                widget::container(half(c, w, m, cur))
                                     .height(Length::Fixed(DIFF_ROW_H))
-                                    .class(diff_style(r.kind))
+                                    .class(diff_style(r.kind, cur))
                                     .into(),
                             );
                         }
