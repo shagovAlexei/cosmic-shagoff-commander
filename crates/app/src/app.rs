@@ -4064,7 +4064,6 @@ impl App {
                     let job = Job::Repack {
                         archive,
                         change: Change::Rename(pairs),
-                        move_sources: false,
                     };
                     return self.start_job(m.side, OpKind::Repack, job, focus);
                 }
@@ -4218,7 +4217,6 @@ impl App {
                 let job = Job::Repack {
                     archive,
                     change: Change::Replace { entry, file },
-                    move_sources: false,
                 };
                 self.start_job(self.active, OpKind::Repack, job, None)
             }
@@ -4300,7 +4298,6 @@ impl App {
             let job = Job::Repack {
                 archive,
                 change: Change::Mkdir(inner.join(name)),
-                move_sources: false,
             };
             return self.start_job(side, OpKind::Repack, job, first());
         }
@@ -4445,7 +4442,6 @@ impl App {
                 let job = Job::Repack {
                     archive,
                     change: Change::Rename(vec![(inner.join(name), inner.join(input))]),
-                    move_sources: false,
                 };
                 return self.start_job(side, OpKind::Repack, job, Some(input.to_string()));
             }
@@ -4464,8 +4460,11 @@ impl App {
                 }
                 let job = Job::Repack {
                     archive,
-                    change: Change::Add { sources, inner },
-                    move_sources: op == InputOp::Move,
+                    change: Change::Add {
+                        sources,
+                        inner,
+                        move_sources: op == InputOp::Move,
+                    },
                 };
                 return self.start_job(side, OpKind::Repack, job, None);
             }
@@ -5497,7 +5496,6 @@ impl App {
             let job = Job::Repack {
                 archive,
                 change: Change::Delete(entries),
-                move_sources: false,
             };
             return self.start_job(side, OpKind::Repack, job, None);
         }

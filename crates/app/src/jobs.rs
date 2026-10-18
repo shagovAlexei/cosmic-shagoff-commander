@@ -63,12 +63,7 @@ pub enum Job {
         move_after: bool,
     },
     /// F5 / F6 / F7 / F8 / Shift+F6 / F4 inside an archive: rewrite it with the change.
-    Repack {
-        archive: PathBuf,
-        change: Change,
-        /// F6 into the archive: delete the sources that were added completely.
-        move_sources: bool,
-    },
+    Repack { archive: PathBuf, change: Change },
 }
 
 #[derive(Debug, Clone)]
@@ -171,16 +166,31 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                 move_after,
                 password,
             } => {
-                let r = archive::pack_with(format, &base, &groups, password.as_deref(), &mut h);
-                if move_after && !r.cancelled && !r.completed.is_empty() {
-                    let d = ops::delete(&r.completed, true, &mut h);
-                    Report {
-                        cancelled: d.cancelled,
-                        completed: r.completed,
+                let mut r = archive::pack_with(format, &base, &groups, password.as_deref(), &mut h);
+                if move_after && !r.cancelled {
+                    // Only what each archive really holds (not what appeared meanwhile).
+                    for (sources, dest) in &groups {
+                        let done: Vec<PathBuf> = (sources.iter())
+                            .filter(|s| r.completed.contains(s))
+                            .cloned()
+                            .collect();
+                        // Unreadable (a password on its names): delete nothing.
+                        let Ok(packed) = archive::packed(dest) else {
+                            continue;
+                        };
+                        let mut kept = |p: &Path, m: &std::fs::Metadata| {
+                            let rel = p.strip_prefix(&base).unwrap_or(p);
+                            packed.get(rel).is_some_and(|&(link, len)| {
+                                link == m.is_symlink() && (link || len == m.len())
+                            })
+                        };
+                        if ops::delete_kept(&done, &mut kept, &mut h).cancelled {
+                            r.cancelled = true;
+                            break;
+                        }
                     }
-                } else {
-                    r
                 }
+                r
             }
             Job::Unpack {
                 archives,
@@ -250,29 +260,8 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                 to_inner,
                 move_after,
             } => repack::cross(&from, &inner, &names, &to, &to_inner, move_after, &mut h),
-            Job::Repack {
-                archive,
-                change,
-                move_sources,
-            } => {
-                let r = repack::modify(&archive, &change, &mut h);
-                // Never the archive itself (the app refuses that F6 too).
-                let sources: Vec<PathBuf> = r
-                    .completed
-                    .iter()
-                    .filter(|s| !archive.starts_with(s))
-                    .cloned()
-                    .collect();
-                if move_sources && !r.cancelled && !sources.is_empty() {
-                    let d = ops::delete(&sources, true, &mut h);
-                    Report {
-                        cancelled: d.cancelled,
-                        completed: r.completed,
-                    }
-                } else {
-                    r
-                }
-            }
+            // F6 into it deletes what went in (`Change::Add::move_sources`), not whole sources.
+            Job::Repack { archive, change } => repack::modify(&archive, &change, &mut h),
         };
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });
@@ -436,6 +425,32 @@ mod sync_tests {
     }
 
     #[test]
+    fn pack_moving_deletes_what_went_in() {
+        for (format, pw) in [
+            (Format::Zip, None),
+            (Format::TarGz, None),
+            (Format::Zip, Some("pw")),
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            let src = d.path().join("dir");
+            std::fs::create_dir_all(src.join("sub")).unwrap();
+            std::fs::write(src.join("a.txt"), "A").unwrap();
+            std::fs::write(src.join("sub/b.txt"), "B").unwrap();
+            std::os::unix::fs::symlink("a.txt", src.join("ln")).unwrap();
+            let a = d.path().join(format!("out.{}", format.ext()));
+            let r = run(Job::Pack {
+                format,
+                base: d.path().to_path_buf(),
+                groups: vec![(vec![src.clone()], a.clone())],
+                move_after: true,
+                password: pw.map(String::from),
+            });
+            assert!(!r.cancelled && a.exists(), "{format:?}");
+            assert!(!src.exists(), "{format:?} {pw:?}");
+        }
+    }
+
+    #[test]
     fn move_into_and_out_of_an_archive() {
         let d = tempfile::tempdir().unwrap();
         let src = d.path().join("f.txt");
@@ -455,8 +470,8 @@ mod sync_tests {
             change: Change::Add {
                 sources: vec![d.path().join("g.txt")],
                 inner: "".into(),
+                move_sources: true,
             },
-            move_sources: true,
         });
         assert!(!d.path().join("g.txt").exists());
         // F6 out of it: f.txt comes out and leaves the archive.

@@ -18,6 +18,9 @@ pub enum Change {
     Add {
         sources: Vec<PathBuf>,
         inner: PathBuf,
+        /// F6: once the archive is rewritten, delete from the sources what went in (not what
+        /// appeared or changed meanwhile; dirs only once empty).
+        move_sources: bool,
     },
     /// F8, or F6 out of the archive: entries (paths inside the archive).
     Delete(Vec<PathBuf>),
@@ -124,6 +127,7 @@ pub fn cross(
         let change = Change::Add {
             sources,
             inner: to_inner.to_path_buf(),
+            move_sources: false,
         };
         let r = modify(to, &change, h);
         report.cancelled = r.cancelled;
@@ -183,7 +187,8 @@ fn rewrite(
             "some entries can't be unpacked; the archive is left as it was",
         )?;
     }
-    let done = apply(archive, &root, change, h)?;
+    let mut copies = Vec::new();
+    let done = apply(archive, &root, change, &mut copies, h)?;
     if done.is_empty() {
         return Err(false);
     }
@@ -213,6 +218,31 @@ fn rewrite(
         fs::set_permissions(&new, perms)?;
         fs::rename(&new, archive)
     })?;
+    if let Change::Add {
+        move_sources: true, ..
+    } = change
+    {
+        // Each file checked against its copy that was packed: same type, same size.
+        let mut kept = |p: &Path, m: &fs::Metadata| {
+            let copy = copies.iter().find_map(|(s, c)| {
+                // Not `join("")`: that adds a `/`, and a file is no dir.
+                let rest = p.strip_prefix(s).ok()?;
+                Some(if rest.as_os_str().is_empty() {
+                    c.clone()
+                } else {
+                    c.join(rest)
+                })
+            });
+            copy.and_then(|c| fs::symlink_metadata(c).ok())
+                .is_some_and(|c| c.file_type() == m.file_type() && c.len() == m.len())
+        };
+        // Never the archive itself (the app refuses that F6 too).
+        let sources: Vec<PathBuf> = (done.iter())
+            .filter(|s| !archive.starts_with(s))
+            .cloned()
+            .collect();
+        ops::delete_kept(&sources, &mut kept, h);
+    }
     Ok(done)
 }
 
@@ -242,14 +272,16 @@ fn inside(root: &Path, rel: &Path, last: bool) -> io::Result<PathBuf> {
 }
 
 /// The change on the unpacked tree in `root`.
+/// `copies`: Add — (source, its copy in `root`).
 fn apply(
     archive: &Path,
     root: &Path,
     change: &Change,
+    copies: &mut Vec<(PathBuf, PathBuf)>,
     h: &mut dyn Handler,
 ) -> Result<Vec<PathBuf>, bool> {
     match change {
-        Change::Add { sources, inner } => {
+        Change::Add { sources, inner, .. } => {
             // TC, as `ops::plan`: one source and no such dir (nor a trailing `/`) → that name.
             let slash = inner.as_os_str().as_encoded_bytes().ends_with(b"/");
             let named = !slash
@@ -274,6 +306,7 @@ fn apply(
                 .filter_map(|s| Some((s.clone(), dir.join(name.or(s.file_name())?))))
                 .collect();
             let t = ops::transfer(Method::Copy, &pairs, h);
+            copies.clone_from(&pairs);
             if t.cancelled {
                 return Err(true);
             }
@@ -566,6 +599,7 @@ mod tests {
             let add = |inner: &str| Change::Add {
                 sources: vec![new.clone()],
                 inner: inner.into(),
+                move_sources: false,
             };
             let r = modify(&a, &add(""), &mut Script::default());
             assert_eq!(r.completed, std::slice::from_ref(&new), "{f:?}");
@@ -595,6 +629,7 @@ mod tests {
         let add = |inner: &str| Change::Add {
             sources: vec![new.clone()],
             inner: inner.into(),
+            move_sources: false,
         };
         // TC, as `ops::plan`: one source, no such dir → that name; a trailing `/` → into a dir.
         let r = modify(&a, &add("sub/renamed.txt"), &mut Script::default());
@@ -613,6 +648,61 @@ mod tests {
         );
     }
 
+    /// Writes a new file into `dir` on every progress call (files appearing while it works).
+    struct Busy {
+        dir: PathBuf,
+        n: usize,
+    }
+    impl Handler for Busy {
+        fn progress(&mut self, _: u64, _: u64, _: &Path) {
+            self.n += 1;
+            let _ = fs::write(self.dir.join(format!("late{}", self.n)), "L");
+        }
+        fn conflict(&mut self, _: &FileInfo, _: &FileInfo) -> Resolution {
+            Resolution::Cancel
+        }
+        fn error(&mut self, _: &Path, _: &io::Error) -> ErrorChoice {
+            ErrorChoice::Skip
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn regression_move_into_archive_keeps_files_that_appeared_meanwhile() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let src = d.path().join("dir");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("x.txt"), "X").unwrap();
+        let add = Change::Add {
+            sources: vec![src.clone()],
+            inner: "".into(),
+            move_sources: true,
+        };
+        let mut h = Busy {
+            dir: src.clone(),
+            n: 0,
+        };
+        let r = modify(&a, &add, &mut h);
+        assert_eq!(r.completed, std::slice::from_ref(&src));
+        let packed: Vec<String> = contents(&a);
+        let left: Vec<String> = fs::read_dir(&src)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        // Whatever went in is gone from the dir; whatever is still there never went in.
+        assert!(!src.join("x.txt").exists() && packed.contains(&"dir/x.txt=X".to_string()));
+        assert!(!left.is_empty(), "files written while packing were deleted");
+        for f in &left {
+            assert!(
+                !packed.iter().any(|p| p.starts_with(&format!("dir/{f}="))),
+                "{f}"
+            );
+        }
+    }
+
     #[test]
     fn add_existing_name_asks() {
         let d = tempfile::tempdir().unwrap();
@@ -622,6 +712,7 @@ mod tests {
         let add = Change::Add {
             sources: vec![src],
             inner: "".into(),
+            move_sources: false,
         };
         let mut h = Script {
             conflicts: vec![Resolution::Replace],
@@ -729,6 +820,7 @@ mod tests {
         let add = Change::Add {
             sources: vec![new],
             inner: "".into(),
+            move_sources: false,
         };
         let old = contents(&a);
         let saved = d.path().join("saved");
@@ -831,6 +923,7 @@ mod tests {
             Change::Add {
                 sources: vec![edited.clone()],
                 inner: "dl".into(),
+                move_sources: false,
             },
             Change::Delete(vec!["dl/anything".into()]),
         ];
