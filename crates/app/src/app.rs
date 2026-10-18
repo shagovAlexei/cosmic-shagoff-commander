@@ -3581,7 +3581,8 @@ impl App {
             }
             Action::NewTab => {
                 let id = self.next_id();
-                let copy = self.panes[side].active().duplicate(id);
+                let mut copy = self.panes[side].active().duplicate(id);
+                copy.panel.set_filter(None); // TC: the new tab shows the whole dir
                 self.panes[side].open_after(copy);
                 return self.restore_scroll(side);
             }
@@ -7320,6 +7321,19 @@ mod tests {
         let t = app.panes[0].active();
         assert!(t.results.is_some());
         assert_eq!(pending_path(&app).as_deref(), Some(root.path()));
+    }
+
+    #[test]
+    fn regression_ctrl_t_does_not_copy_the_filter() {
+        let mut app = app_with(Config::default(), State::default());
+        app.panes[0]
+            .active_mut()
+            .panel
+            .set_filter(Some("*.rs".into()));
+        let _ = app.update(Message::Key(Action::NewTab));
+        assert_eq!(app.panes[0].active().panel.filter(), None);
+        let _ = app.update(Message::Key(Action::PrevTab));
+        assert_eq!(app.panes[0].active().panel.filter(), Some("*.rs")); // the old tab keeps it
     }
 
     #[test]
