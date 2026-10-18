@@ -97,6 +97,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             fl!("help-search"),
             vec![
                 r("Alt+F7", fl!("menu-find"), Action::FindFiles),
+                o("Alt+L", fl!("help-find-feed")),
                 r("Ctrl+Shift+S", fl!("menu-sync"), Action::SyncDirs),
             ],
         ),

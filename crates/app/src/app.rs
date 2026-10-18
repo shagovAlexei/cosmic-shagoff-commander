@@ -533,6 +533,7 @@ pub enum Message {
     DiffReread,
     /// Copy the current block of differences left → right (true) or right → left.
     DiffCopy(bool),
+    DiffUndo,
     DiffSave,
     /// Alt+F7: the "regular expression" checkbox.
     FindRegex,
@@ -555,6 +556,9 @@ pub enum Message {
     PropsDone(usize, Vec<String>),
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
     FindFeed,
+    /// Alt+L, by the physical key (any layout): "To panel" in the search window, otherwise the
+    /// action it would have been (quick search; `None` from a text field).
+    FeedKey(Option<Action>),
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -1613,6 +1617,18 @@ impl App {
                 return Task::batch(tasks);
             }
             Message::FindFeed => return self.find_feed(),
+            Message::FeedKey(other) => {
+                // As the button: nothing to feed, nothing done.
+                if let Some(Dialog::Find(f)) = &self.dialog {
+                    return match f.results.is_empty() {
+                        true => Task::none(),
+                        false => self.find_feed(),
+                    };
+                }
+                if let Some(a) = other {
+                    return self.update(Message::Key(a));
+                }
+            }
             Message::FindStart => return self.start_find(),
             Message::FindSubmit => {
                 if let Some(Dialog::Find(f)) = &self.dialog
@@ -1700,6 +1716,7 @@ impl App {
                         if let Some((to_right, before)) = d.copying.take()
                             && t.src != before
                         {
+                            d.undo.push((before, d.dirty));
                             if to_right {
                                 d.dirty.1 = true;
                             } else {
@@ -1745,7 +1762,7 @@ impl App {
                         dialogs::DiffOpt::Space => d.opts.ignore_space ^= true,
                         dialogs::DiffOpt::Case => d.opts.ignore_case ^= true,
                     }
-                    return self.start_diff_with(Some(shown), None);
+                    return self.start_diff_with(Some(shown), None, None);
                 }
             }
             Message::DiffCopy(to_right) => {
@@ -1756,7 +1773,18 @@ impl App {
                     d.copying = Some((to_right, src));
                     d.confirm_close = false;
                     let block = d.block;
-                    return self.start_diff_with(Some(shown), Some((block, to_right)));
+                    return self.start_diff_with(Some(shown), Some((block, to_right)), None);
+                }
+            }
+            Message::DiffUndo => {
+                // Not while a compare runs: it may hold a copy that would land after the undo.
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && d.text().is_some()
+                    && let Some((src, dirty)) = d.undo.pop()
+                {
+                    d.dirty = dirty;
+                    d.confirm_close = false;
+                    return self.start_diff_with(None, None, Some(src));
                 }
             }
             Message::DiffSave => {
@@ -1788,6 +1816,8 @@ impl App {
                     }
                     d.stamps = new;
                     d.confirm_close = false;
+                    // The disk now holds what undoing would have changed.
+                    d.undo.clear();
                     match failed {
                         Some(e) => self.say(StatusKind::Error, e),
                         None => self.say(StatusKind::Info, fl!("diff-saved")),
@@ -3788,6 +3818,7 @@ impl App {
                     confirm_close: false,
                     stamps: None,
                     copying: None,
+                    undo: Vec::new(),
                 })))
             }
             Action::SyncDirs => Some(Dialog::Sync(Box::new(dialogs::SyncDlg {
@@ -4405,15 +4436,16 @@ impl App {
     }
 
     fn start_diff(&mut self) -> Task<Message> {
-        self.start_diff_with(None, None)
+        self.start_diff_with(None, None, None)
     }
 
     /// Compare the dialog's files: read them (`src` None), or the texts in hand with new options
-    /// or after copying block `copy.0` (`copy.1`: left → right).
+    /// or after copying block `copy.0` (`copy.1`: left → right), or the texts `undo` (a copy undone).
     fn start_diff_with(
         &mut self,
         shown: Option<Arc<Result<shagoff_core::diff::Outcome, String>>>,
         copy: Option<(usize, bool)>,
+        undo: Option<Arc<(String, String)>>,
     ) -> Task<Message> {
         use shagoff_core::diff;
         let id = self.next_id();
@@ -4427,6 +4459,14 @@ impl App {
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
+                    if let Some(src) = undo {
+                        return Ok(diff::Outcome::Text(diff::rows_with(
+                            &src.0,
+                            &src.1,
+                            diff::ROWS_LIMIT,
+                            o,
+                        )));
+                    }
                     let Some(Ok(diff::Outcome::Text(t))) = shown.as_deref() else {
                         return diff::compare_with(&a, &b, o).map_err(|e| e.to_string());
                     };
@@ -6436,6 +6476,17 @@ fn route_event(
             modifiers,
             ..
         }) if modifiers.is_empty() => Some(Message::Escape(window)),
+        // Any status: the search window's fields have focus, and they capture it.
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key: physical_key @ keyboard::key::Physical::Code(keyboard::key::Code::KeyL),
+            modifiers,
+            ..
+        }) if modifiers == Modifiers::ALT => Some(Message::FeedKey(
+            (status == event::Status::Ignored)
+                .then(|| keymap::action(&key, physical_key, modifiers))
+                .flatten(),
+        )),
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -10191,6 +10242,53 @@ mod tests {
     }
 
     #[test]
+    fn alt_l_feeds_find_results_in_any_layout() {
+        let alt_l = |c: &str, status| {
+            route_event(
+                cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(c.into()),
+                    modified_key: Key::Character(c.into()),
+                    physical_key: Physical::Code(Code::KeyL),
+                    location: Location::Standard,
+                    modifiers: Modifiers::ALT,
+                    text: None,
+                    repeat: false,
+                }),
+                status,
+                cosmic::iced::window::Id::unique(),
+            )
+        };
+        // Russian layout too; in a field nothing else would go, in the panel quick search would.
+        let m = alt_l("д", event::Status::Captured);
+        assert!(matches!(m, Some(Message::FeedKey(None))), "{m:?}");
+        let m = alt_l("l", event::Status::Ignored);
+        assert!(
+            matches!(m, Some(Message::FeedKey(Some(Action::QuickSearch('l'))))),
+            "{m:?}"
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.rs");
+        std::fs::write(&a, "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindStart);
+        let _ = app.update(Message::FeedKey(None)); // nothing found yet
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, vec![a])));
+        let mask = app.find.mask.clone();
+        // The focused field types the letter too: harmless, the fields were kept at the start.
+        let _ = app.update(Message::FindInput(
+            dialogs::FindField::Mask,
+            format!("{mask}l"),
+        ));
+        let _ = app.update(Message::FeedKey(None));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.find.mask, mask);
+        assert!(app.panes[0].active().results.is_some());
+    }
+
+    #[test]
     fn find_results_to_panel_and_back() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
@@ -10782,6 +10880,46 @@ mod tests {
         assert_ne!(diff_dlg(&mut app).id, shown);
         let _ = app.update(Message::DialogCancel);
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn diff_undo_restores_text_and_dirty_until_saved() {
+        let (tmp, mut app) = sync_setup();
+        let (l, r) = (tmp.path().join("l/a"), tmp.path().join("r/a"));
+        std::fs::write(&l, "x\nNEW\ny\n").unwrap();
+        std::fs::write(&r, "x\nold\ny\n").unwrap();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let id = diff_dlg(&mut app).id;
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nold\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let _ = app.update(Message::DiffUndo); // nothing copied yet
+        assert_eq!(diff_dlg(&mut app).id, id);
+        let _ = app.update(Message::DiffCopy(true));
+        let id = diff_dlg(&mut app).id;
+        let _ = app.update(Message::DiffUndo); // still copying: refused
+        assert_eq!(diff_dlg(&mut app).id, id);
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nNEW\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        assert_eq!(diff_dlg(&mut app).dirty, (false, true));
+        let _ = app.update(Message::DiffUndo);
+        let d = diff_dlg(&mut app);
+        assert_eq!(d.dirty, (false, false));
+        assert!(d.undo.is_empty());
+        assert!(d.result.is_none()); // re-comparing the texts from before the copy
+        // Save drops the history: undoing after it would not match the disk.
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nold\ny\n", 100);
+        let id = diff_dlg(&mut app).id;
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let _ = app.update(Message::DiffCopy(true));
+        let id = diff_dlg(&mut app).id;
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nNEW\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        assert_eq!(diff_dlg(&mut app).undo.len(), 1);
+        let _ = app.update(Message::DiffSave);
+        assert!(diff_dlg(&mut app).undo.is_empty());
     }
 
     #[test]
