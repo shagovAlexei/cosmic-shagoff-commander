@@ -4361,9 +4361,16 @@ impl App {
         if op == InputOp::Link {
             return self.make_links(side, &sources, &target);
         }
+        // The input's trailing `/` ("into this dir", TC) kept for `Change::Add`.
         let to_archive = (op != InputOp::Rename)
             .then(|| archive::split_path(&target))
-            .flatten();
+            .flatten()
+            .map(|(a, mut inner)| {
+                if input.ends_with('/') && !inner.as_os_str().is_empty() {
+                    inner.as_mut_os_string().push("/");
+                }
+                (a, inner)
+            });
         match (from_archive, to_archive) {
             (Some((from, inner)), Some((to, to_inner))) => {
                 let names: Vec<PathBuf> = (sources.iter())
@@ -4373,7 +4380,9 @@ impl App {
                 // real file: the same archive may be reached through a link).
                 let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
                 if real(&from) == real(&to) {
-                    let e = if inner == to_inner {
+                    // Into its own dir, or one file onto itself by name (`a.zip/x` → `a.zip/x`).
+                    let onto_itself = matches!(&names[..], [n] if inner.join(n) == to_inner);
+                    let e = if inner == to_inner || onto_itself {
                         sources.first().map(|s| PlanError::SameFile(s.clone()))
                     } else {
                         (names.iter().map(|n| inner.join(n)))

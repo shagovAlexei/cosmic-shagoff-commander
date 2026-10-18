@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
-    /// F5 / F6 into the archive: real files and dirs copied into the dir `inner`.
+    /// F5 / F6 into the archive: real files and dirs copied into the dir `inner`; a single source
+    /// to an `inner` that is no dir there (and has no trailing `/`) gets that path as its name.
     Add {
         sources: Vec<PathBuf>,
         inner: PathBuf,
@@ -249,18 +250,28 @@ fn apply(
 ) -> Result<Vec<PathBuf>, bool> {
     match change {
         Change::Add { sources, inner } => {
+            // TC, as `ops::plan`: one source and no such dir (nor a trailing `/`) → that name.
+            let slash = inner.as_os_str().as_encoded_bytes().ends_with(b"/");
+            let named = !slash
+                && sources.len() == 1
+                && !inner.as_os_str().is_empty()
+                && !inside(root, inner, true).is_ok_and(|p| p.is_dir());
+            let (dir_in, name) = match (named, inner.parent(), inner.file_name()) {
+                (true, Some(parent), Some(name)) => (parent, Some(name)),
+                _ => (inner.as_path(), None),
+            };
             let dir = retry(h, archive, || {
-                let dir = if inner.as_os_str().is_empty() {
+                let dir = if dir_in.as_os_str().is_empty() {
                     root.to_path_buf()
                 } else {
-                    inside(root, inner, true)?
+                    inside(root, dir_in, true)?
                 };
                 fs::create_dir_all(&dir)?;
                 Ok(dir)
             })?;
             let pairs: Vec<(PathBuf, PathBuf)> = sources
                 .iter()
-                .filter_map(|s| Some((s.clone(), dir.join(s.file_name()?))))
+                .filter_map(|s| Some((s.clone(), dir.join(name.or(s.file_name())?))))
                 .collect();
             let t = ops::transfer(Method::Copy, &pairs, h);
             if t.cancelled {
@@ -573,6 +584,33 @@ mod tests {
             );
             assert!(no_leftovers(d.path()), "{f:?}");
         }
+    }
+
+    #[test]
+    fn regression_one_file_to_a_new_name_inside_is_a_file_not_a_dir() {
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let new = d.path().join("new.txt");
+        fs::write(&new, "N").unwrap();
+        let add = |inner: &str| Change::Add {
+            sources: vec![new.clone()],
+            inner: inner.into(),
+        };
+        // TC, as `ops::plan`: one source, no such dir → that name; a trailing `/` → into a dir.
+        let r = modify(&a, &add("sub/renamed.txt"), &mut Script::default());
+        assert_eq!(r.completed, std::slice::from_ref(&new));
+        modify(&a, &add("fresh/"), &mut Script::default());
+        assert_eq!(
+            contents(&a),
+            [
+                "a.txt=A",
+                "fresh/",
+                "fresh/new.txt=N",
+                "sub/",
+                "sub/b.txt=B",
+                "sub/renamed.txt=N"
+            ]
+        );
     }
 
     #[test]
