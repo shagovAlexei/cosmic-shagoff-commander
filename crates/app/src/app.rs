@@ -5637,6 +5637,21 @@ impl App {
         }
         let side = job.side;
         let mut view = Task::none();
+        let mut focus = job.focus;
+        // N / P in the viewer inside an archive, its extraction cancelled or failed: the cursor
+        // goes back to the file still on screen.
+        if let Some((Open::Lister(_), file)) = &job.open
+            && (report.cancelled || !file.exists())
+            && let Some(name) = (self.lister.as_ref())
+                .filter(|l| l.side == side)
+                .map(|l| l.name.clone())
+        {
+            let panel = &mut self.panes[side].active_mut().panel;
+            if let Some(i) = panel.entries().iter().position(|e| e.name == name) {
+                panel.set_cursor(i);
+            }
+            focus = Some(name);
+        }
         if let Some((open, file)) = job.open
             && !report.cancelled
             && file.exists()
@@ -5677,7 +5692,7 @@ impl App {
         let here = self.panes[side].active().panel.cwd().to_path_buf();
         let there = self.panes[1 - side].active().panel.cwd().to_path_buf();
         let reload = Task::batch([
-            self.reload(side, here, job.focus),
+            self.reload(side, here, focus),
             self.reload(1 - side, there, None),
             view,
         ]);
@@ -7882,6 +7897,51 @@ mod tests {
         let _ = app.update(Message::Key(Action::View));
         assert!(app.lister.is_none());
         assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
+    }
+
+    #[test]
+    fn regression_viewer_n_in_an_archive_cancelled_keeps_the_cursor_on_the_shown_file() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&a).unwrap());
+        for n in ["a.txt", "b.txt"] {
+            z.start_file(n, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(b"x").unwrap();
+        }
+        z.finish().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::Down)); // a.txt
+        let cur = |app: &App| app.panes[0].active().panel.current().unwrap().name.clone();
+        // F3: extracted, then shown.
+        let _ = app.update(Message::Key(Action::View));
+        let file = app
+            .job
+            .as_ref()
+            .and_then(|j| j.open.as_ref())
+            .unwrap()
+            .1
+            .clone();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "x").unwrap();
+        let done = Report {
+            cancelled: false,
+            completed: vec![a.join("a.txt")],
+        };
+        let _ = app.update(Message::Op(jobs::Event::Finished(Arc::new(done))));
+        assert_eq!(app.lister.as_ref().unwrap().name, "a.txt");
+        // N: b.txt is being extracted, the cursor already on it; Esc stops that.
+        let _ = app.update(Message::ListerKey(ListerKey::Next));
+        assert_eq!(cur(&app), "b.txt");
+        let stopped = Report {
+            cancelled: true,
+            completed: Vec::new(),
+        };
+        let _ = app.update(Message::Op(jobs::Event::Finished(Arc::new(stopped))));
+        assert_eq!(app.lister.as_ref().unwrap().name, "a.txt");
+        assert_eq!(cur(&app), "a.txt"); // with the file on screen
     }
 
     #[test]
