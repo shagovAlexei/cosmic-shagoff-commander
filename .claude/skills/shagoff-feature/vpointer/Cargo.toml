@@ -9,3 +9,4 @@ description = "Headless test helper: click in a wlroots compositor through zwlr_
 [dependencies]
 wayland-client = "=0.31.15"
 wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
+wayland-protocols-misc = { version = "=0.3.12", features = ["client"] }

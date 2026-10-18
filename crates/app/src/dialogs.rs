@@ -144,6 +144,9 @@ pub enum Dialog {
     },
 }
 
+/// Both sides of a compare (left, right).
+pub type Texts = Arc<(String, String)>;
+
 pub struct DiffDlg {
     pub left: PathBuf,
     pub right: PathBuf,
@@ -171,6 +174,8 @@ pub struct DiffDlg {
     pub stamps: Option<[diff::Stamp; 2]>,
     /// A block copy is computing: (to the right, the texts before it).
     pub copying: Option<(bool, Arc<(String, String)>)>,
+    /// Texts and `dirty` before each copy that changed them, latest last; cleared by saving.
+    pub undo: Vec<(Texts, (bool, bool))>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1781,6 +1786,9 @@ pub fn view<'a>(
                     .on_press_maybe(nav.then_some(Message::DiffCopy(true))),
                 widget::button::standard(fl!("diff-copy-left"))
                     .on_press_maybe(nav.then_some(Message::DiffCopy(false))),
+                widget::button::standard(fl!("diff-undo")).on_press_maybe(
+                    (!d.undo.is_empty() && d.text().is_some()).then_some(Message::DiffUndo)
+                ),
                 widget::button::suggested(fl!("diff-save"))
                     .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave)),
             ]

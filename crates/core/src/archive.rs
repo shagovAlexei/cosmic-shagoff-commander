@@ -981,25 +981,7 @@ pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<E
             continue;
         }
         let own = parts.next().is_none();
-        let dir = !own || it.dir;
-        let entry = Entry {
-            ext: if dir {
-                String::new()
-            } else {
-                crate::listing::ext_of(&name)
-            },
-            os_name: os_name.clone(),
-            name,
-            size: if dir { 0 } else { it.size },
-            mtime: it.mtime,
-            kind: if dir { EntryKind::Dir } else { EntryKind::File },
-            is_link: own && it.link,
-            mode: it
-                .mode
-                .map_or(if dir { 0o755 } else { 0o644 }, |m| m & 0o7777),
-            owner: None,
-            target: None,
-        };
+        let entry = to_entry(it, os_name.clone(), name, !own || it.dir, own && it.link);
         match kids.get_mut(&os_name) {
             // An implicit dir takes the newest mtime inside; an own entry replaces it.
             Some(old) if !own => old.mtime = old.mtime.max(it.mtime),
@@ -1013,6 +995,75 @@ pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<E
         return Err(io::ErrorKind::NotFound.into());
     }
     Ok(kids.into_values().collect())
+}
+
+fn to_entry(it: &Item, os_name: std::ffi::OsString, name: String, dir: bool, link: bool) -> Entry {
+    Entry {
+        ext: if dir {
+            String::new()
+        } else {
+            crate::listing::ext_of(&name)
+        },
+        os_name,
+        name,
+        size: if dir { 0 } else { it.size },
+        mtime: it.mtime,
+        kind: if dir { EntryKind::Dir } else { EntryKind::File },
+        is_link: link,
+        mode: it
+            .mode
+            .map_or(if dir { 0o755 } else { 0o644 }, |m| m & 0o7777),
+        owner: None,
+        target: None,
+    }
+}
+
+/// Ctrl+B inside an archive: every file under `inner` at any depth (not the dirs), as paths
+/// through the archive (`/x/a.zip/docs/f`). Hidden: any part below `inner` starting with a dot.
+pub fn branch(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<PathBuf>> {
+    let items = index(archive)?;
+    Ok(items
+        .iter()
+        .filter(|it| !it.dir)
+        .filter_map(|it| {
+            let rest = it.path.strip_prefix(inner).ok()?;
+            let hidden = rest
+                .components()
+                .any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+            (show_hidden || !hidden).then(|| archive.join(&it.path))
+        })
+        .collect())
+}
+
+/// `listing::entries` for paths inside the archive of `root` (a branch read there): from the
+/// index in one pass; the name and `os_name` are the path below `root` — relative, unlike on disk,
+/// so the archive code's `inner.join(os_name)` stays inside the archive. Gone ones are left out.
+pub fn entries(paths: &[PathBuf], root: &Path) -> Vec<Entry> {
+    let Some((archive, _)) = split_path(root) else {
+        return Vec::new();
+    };
+    let Ok(items) = index(&archive) else {
+        return Vec::new();
+    };
+    let wanted: std::collections::HashSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
+    items
+        .iter()
+        .filter(|it| !it.dir)
+        .filter_map(|it| {
+            let path = archive.join(&it.path);
+            let below = path.strip_prefix(root).ok()?;
+            wanted.contains(path.as_path()).then(|| {
+                let name = below.to_string_lossy().into_owned();
+                let os = below.as_os_str().to_os_string();
+                let mut e = to_entry(it, os, name, false, it.link);
+                // From the file's own name: "conf.d/Makefile" has none.
+                e.ext = (it.path.file_name()).map_or_else(String::new, |n| {
+                    crate::listing::ext_of(&n.to_string_lossy())
+                });
+                e
+            })
+        })
+        .collect()
 }
 
 /// What the dir `inner` of `archive` holds, from the index (nothing unpacked): its files, their
@@ -2740,6 +2791,34 @@ mod tests {
             assert_eq!(listed(&sub), [("f".into(), false)], "{f:?}");
             assert_eq!(sub[0].size, 3, "{f:?}");
         }
+    }
+
+    #[test]
+    fn branch_lists_files_below_through_the_archive() {
+        let d = tempfile::tempdir().unwrap();
+        let z = d.path().join("a.zip");
+        zip_fixture(&z);
+        let mut all = branch(&z, Path::new(""), true).unwrap();
+        all.sort();
+        assert_eq!(
+            all,
+            [".hidden", "docs/a.txt", "docs/img/p.png", "top.txt"].map(|n| z.join(n))
+        );
+        assert_eq!(branch(&z, Path::new(""), false).unwrap().len(), 3);
+        let docs = branch(&z, Path::new("docs"), true).unwrap();
+        assert_eq!(docs.len(), 2);
+        // As the panel shows them: the path below the root, which also reaches it from there.
+        let root = z.join("docs");
+        let e = entries(&docs, &root);
+        assert_eq!(
+            listed(&e),
+            [("a.txt".into(), false), ("img/p.png".into(), false)]
+        );
+        let p = e.iter().find(|e| e.name == "img/p.png").unwrap();
+        assert_eq!((p.size, p.ext.as_str()), (3, "png"));
+        assert_eq!(root.join(&p.os_name), z.join("docs/img/p.png"));
+        // A file gone from the archive is left out.
+        assert_eq!(entries(&[z.join("docs/gone")], &root).len(), 0);
     }
 
     #[test]
