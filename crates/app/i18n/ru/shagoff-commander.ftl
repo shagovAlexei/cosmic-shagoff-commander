@@ -286,6 +286,7 @@ help-files = Файлы
 help-delete = Удалить в корзину
 help-archives = Архивы
 help-archive-enter = Архив открывается как папка (только чтение)
+help-find-feed = В окне поиска: найденное в панель
 help-search = Поиск и сравнение
 help-tabs = Вкладки
 help-next-tab = Следующая / предыдущая вкладка
