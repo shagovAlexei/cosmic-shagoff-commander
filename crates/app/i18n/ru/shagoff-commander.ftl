@@ -439,6 +439,7 @@ diff-ignore-space = Без учёта пробелов
 diff-ignore-case = Без учёта регистра
 diff-copy-right = Блок →
 diff-copy-left = ← Блок
+diff-undo = Отменить
 diff-save = Сохранить
 diff-saved = Сохранено
 diff-unsaved = Не сохранено

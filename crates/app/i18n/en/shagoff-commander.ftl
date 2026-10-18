@@ -438,6 +438,7 @@ diff-ignore-space = Ignore spaces
 diff-ignore-case = Ignore case
 diff-copy-right = Block →
 diff-copy-left = ← Block
+diff-undo = Undo
 diff-save = Save
 diff-saved = Saved
 diff-unsaved = Not saved
