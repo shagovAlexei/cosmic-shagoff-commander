@@ -11037,6 +11037,25 @@ mod tests {
     }
 
     #[test]
+    fn diff_scroll_makes_the_block_in_view_current() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let id = diff_dlg(&mut app).id;
+        let same = "s\n".repeat(40);
+        let t = shagoff_core::diff::rows(&format!("x\n{same}x\n"), &format!("y\n{same}y\n"), 100);
+        let _ = app.update(Message::DiffReady(
+            id,
+            Arc::new(Ok(shagoff_core::diff::Outcome::Text(t))),
+        ));
+        assert_eq!(diff_dlg(&mut app).block, 0);
+        let _ = app.update(Message::DiffScrolled(0, 0.0, 30.0 * dialogs::DIFF_ROW_H));
+        assert_eq!(diff_dlg(&mut app).block, 1);
+    }
+
+    #[test]
     fn diff_sides_scroll_together() {
         let (tmp, mut app) = sync_setup();
         std::fs::write(tmp.path().join("l/a"), "x\n").unwrap();
