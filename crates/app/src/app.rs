@@ -3526,7 +3526,9 @@ impl App {
             Action::SelectGroup | Action::UnselectGroup => {}
             // Also the drive list: a stick plugged in shows up (TC rereads drives too).
             Action::Reload => {
-                let cwd = panel.cwd().to_path_buf();
+                // Where the tab is going (results fed, a dir entered, not listed yet), not where
+                // it was: that would drop the results / undo the step.
+                let cwd = self.panes[side].active().target();
                 // Pictures are known by mtime: a chmod or `cp -p` is seen only on Ctrl+R.
                 self.thumbs.clear();
                 self.refresh_mounts();
@@ -7288,6 +7290,21 @@ mod tests {
         t.results = Some((t.panel.cwd().to_path_buf(), Arc::new(Vec::new())));
         let _ = app.update(Message::Changed(0));
         assert_eq!(pending_path(&app), None); // not read again
+    }
+
+    #[test]
+    fn regression_ctrl_r_before_the_results_arrive_keeps_them() {
+        let mut app = app_with(Config::default(), State::default());
+        let root = tempfile::tempdir().unwrap();
+        let t = app.panes[0].active_mut();
+        assert_ne!(t.panel.cwd(), root.path());
+        // «В панель»: the results are set, their listing not here yet.
+        t.results = Some((root.path().to_path_buf(), Arc::new(Vec::new())));
+        t.pending = Some((1, root.path().to_path_buf()));
+        let _ = app.update(Message::Key(Action::Reload));
+        let t = app.panes[0].active();
+        assert!(t.results.is_some());
+        assert_eq!(pending_path(&app).as_deref(), Some(root.path()));
     }
 
     #[test]
