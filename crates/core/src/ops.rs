@@ -175,6 +175,77 @@ pub fn rename_pairs(src: &Path, name: &str) -> Result<Vec<(PathBuf, PathBuf)>, P
     Ok(vec![(src.to_path_buf(), dst)])
 }
 
+/// "Move" into an archive: remove from `sources` only what `kept` says went in whole (a file
+/// that appeared or changed meanwhile stays), and a dir only once it is empty. Links are never
+/// followed. `completed`: the sources gone entirely.
+pub fn delete_kept(
+    sources: &[PathBuf],
+    kept: &mut dyn FnMut(&Path, &Metadata) -> bool,
+    h: &mut dyn Handler,
+) -> Report {
+    let mut report = Report::default();
+    for src in sources {
+        match prune(src, kept, h) {
+            Ok(true) => report.completed.push(src.clone()),
+            Ok(false) => {}
+            Err(()) => {
+                report.cancelled = true;
+                break;
+            }
+        }
+    }
+    report
+}
+
+/// `delete_kept` for one path: `Ok(true)` when it is gone, `Err` on cancel.
+fn prune(
+    p: &Path,
+    kept: &mut dyn FnMut(&Path, &Metadata) -> bool,
+    h: &mut dyn Handler,
+) -> Result<bool, ()> {
+    if h.cancelled() {
+        return Err(());
+    }
+    let Ok(m) = fs::symlink_metadata(p) else {
+        return Ok(true); // already gone
+    };
+    if !m.is_dir() {
+        if !kept(p, &m) {
+            return Ok(false);
+        }
+        return remove_asking(p, h, |p| fs::remove_file(p));
+    }
+    let Ok(rd) = fs::read_dir(p) else {
+        return Ok(false);
+    };
+    let mut all = true;
+    for e in rd.flatten() {
+        all &= prune(&e.path(), kept, h)?;
+    }
+    if !all {
+        return Ok(false); // something stays inside: so does the dir
+    }
+    remove_asking(p, h, |p| fs::remove_dir(p))
+}
+
+/// `remove(p)`, asking on an error: `Ok(true)` removed, `Ok(false)` skipped, `Err` cancelled.
+fn remove_asking(
+    p: &Path,
+    h: &mut dyn Handler,
+    remove: fn(&Path) -> io::Result<()>,
+) -> Result<bool, ()> {
+    loop {
+        match remove(p) {
+            Ok(()) => return Ok(true),
+            Err(e) => match h.error(p, &e) {
+                ErrorChoice::Retry => {}
+                ErrorChoice::Skip => return Ok(false),
+                ErrorChoice::Cancel => return Err(()),
+            },
+        }
+    }
+}
+
 /// F8 (trash) / Shift+F8 (permanent, never following symlinks). Progress counts items.
 pub fn delete(paths: &[PathBuf], permanent: bool, h: &mut dyn Handler) -> Report {
     let mut report = Report::default();
@@ -1550,5 +1621,42 @@ mod tests {
         assert!(!new_file(&p).unwrap()); // there already: opened as is
         assert_eq!(fs::read_to_string(&p).unwrap(), "kept");
         assert!(new_file(&d.path().join("no/such/dir/x")).is_err());
+    }
+
+    #[test]
+    fn delete_kept_leaves_what_did_not_go_in() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("dir");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::create_dir_all(src.join("empty")).unwrap();
+        fs::write(src.join("a"), "A").unwrap();
+        fs::write(src.join("sub/b"), "B").unwrap();
+        fs::write(src.join("new"), "came later").unwrap();
+        fs::write(src.join("changed"), "longer now").unwrap();
+        let one = d.path().join("one");
+        fs::write(&one, "1").unwrap();
+        // What made it in: name and size (as packed).
+        let packed = [
+            ("dir/a", 1),
+            ("dir/sub/b", 1),
+            ("dir/changed", 3),
+            ("one", 1),
+        ];
+        let mut kept = |p: &Path, m: &Metadata| {
+            let rel = p.strip_prefix(d.path()).unwrap();
+            packed
+                .iter()
+                .any(|(n, len)| rel == Path::new(n) && m.len() == *len)
+        };
+        let r = delete_kept(
+            &[src.clone(), one.clone()],
+            &mut kept,
+            &mut Script::default(),
+        );
+        assert!(!r.cancelled);
+        assert_eq!(r.completed, std::slice::from_ref(&one)); // `dir` stays: something is left in it
+        assert!(!one.exists() && !src.join("a").exists() && !src.join("sub").exists());
+        assert!(!src.join("empty").exists());
+        assert!(src.join("new").exists() && src.join("changed").exists());
     }
 }

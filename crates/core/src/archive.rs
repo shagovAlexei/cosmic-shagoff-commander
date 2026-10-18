@@ -936,6 +936,16 @@ fn index(archive: &Path) -> io::Result<Index> {
     Ok(i)
 }
 
+/// Every file and link in `archive`: path inside → (is a link, size). For "move to archive":
+/// only what is really in it may be deleted.
+pub fn packed(archive: &Path) -> io::Result<std::collections::HashMap<PathBuf, (bool, u64)>> {
+    Ok(index(archive)?
+        .iter()
+        .filter(|i| !i.dir)
+        .map(|i| (i.path.clone(), (i.link, i.size)))
+        .collect())
+}
+
 /// "/x/a.zip/docs" → ("/x/a.zip", "docs"). `None` if `p` is a real dir or no ancestor (up to the
 /// first real dir) is a regular file with a tree format.
 pub fn split_path(p: &Path) -> Option<(PathBuf, PathBuf)> {
