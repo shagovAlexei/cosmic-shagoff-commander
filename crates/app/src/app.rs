@@ -533,6 +533,7 @@ pub enum Message {
     DiffReread,
     /// Copy the current block of differences left → right (true) or right → left.
     DiffCopy(bool),
+    DiffUndo,
     DiffSave,
     /// Alt+F7: the "regular expression" checkbox.
     FindRegex,
@@ -555,6 +556,9 @@ pub enum Message {
     PropsDone(usize, Vec<String>),
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
     FindFeed,
+    /// Alt+L, by the physical key (any layout): "To panel" in the search window, otherwise the
+    /// action it would have been (quick search; `None` from a text field).
+    FeedKey(Option<Action>),
     Op(jobs::Event),
     Resolve(Resolution),
     ErrorAnswer(ErrorChoice),
@@ -1563,7 +1567,10 @@ impl App {
                 }
             }
             Message::PropsBit(b) => {
-                if let Some(Dialog::Props(p)) = &mut self.dialog {
+                // In an archive the bits are only shown.
+                if let Some(Dialog::Props(p)) = &mut self.dialog
+                    && p.archive.is_none()
+                {
                     if p.mixed & !p.touched & b != 0 {
                         p.mode |= b; // `?` → on
                     } else {
@@ -1613,6 +1620,18 @@ impl App {
                 return Task::batch(tasks);
             }
             Message::FindFeed => return self.find_feed(),
+            Message::FeedKey(other) => {
+                // As the button: nothing to feed, nothing done.
+                if let Some(Dialog::Find(f)) = &self.dialog {
+                    return match f.results.is_empty() {
+                        true => Task::none(),
+                        false => self.find_feed(),
+                    };
+                }
+                if let Some(a) = other {
+                    return self.update(Message::Key(a));
+                }
+            }
             Message::FindStart => return self.start_find(),
             Message::FindSubmit => {
                 if let Some(Dialog::Find(f)) = &self.dialog
@@ -1700,6 +1719,7 @@ impl App {
                         if let Some((to_right, before)) = d.copying.take()
                             && t.src != before
                         {
+                            d.undo.push((before, d.dirty));
                             if to_right {
                                 d.dirty.1 = true;
                             } else {
@@ -1745,7 +1765,7 @@ impl App {
                         dialogs::DiffOpt::Space => d.opts.ignore_space ^= true,
                         dialogs::DiffOpt::Case => d.opts.ignore_case ^= true,
                     }
-                    return self.start_diff_with(Some(shown), None);
+                    return self.start_diff_with(Some(shown), None, None);
                 }
             }
             Message::DiffCopy(to_right) => {
@@ -1756,7 +1776,18 @@ impl App {
                     d.copying = Some((to_right, src));
                     d.confirm_close = false;
                     let block = d.block;
-                    return self.start_diff_with(Some(shown), Some((block, to_right)));
+                    return self.start_diff_with(Some(shown), Some((block, to_right)), None);
+                }
+            }
+            Message::DiffUndo => {
+                // Not while a compare runs: it may hold a copy that would land after the undo.
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && d.text().is_some()
+                    && let Some((src, dirty)) = d.undo.pop()
+                {
+                    d.dirty = dirty;
+                    d.confirm_close = false;
+                    return self.start_diff_with(None, None, Some(src));
                 }
             }
             Message::DiffSave => {
@@ -1788,6 +1819,8 @@ impl App {
                     }
                     d.stamps = new;
                     d.confirm_close = false;
+                    // The disk now holds what undoing would have changed.
+                    d.undo.clear();
                     match failed {
                         Some(e) => self.say(StatusKind::Error, e),
                         None => self.say(StatusKind::Info, fl!("diff-saved")),
@@ -3549,6 +3582,9 @@ impl App {
             }
             Action::Properties => {
                 let paths = panel.targets();
+                if let Some((arc, _)) = archive::split_path(panel.cwd()) {
+                    return (!paths.is_empty()).then(|| self.archive_props(side, arc, paths));
+                }
                 (!paths.is_empty()).then(|| self.props_dialog(side, paths))
             }
             // TC: marked files get a rename mask, copied in this dir (`*.bak`, `copy_*`).
@@ -3788,6 +3824,7 @@ impl App {
                     confirm_close: false,
                     stamps: None,
                     copying: None,
+                    undo: Vec::new(),
                 })))
             }
             Action::SyncDirs => Some(Dialog::Sync(Box::new(dialogs::SyncDlg {
@@ -4405,15 +4442,16 @@ impl App {
     }
 
     fn start_diff(&mut self) -> Task<Message> {
-        self.start_diff_with(None, None)
+        self.start_diff_with(None, None, None)
     }
 
     /// Compare the dialog's files: read them (`src` None), or the texts in hand with new options
-    /// or after copying block `copy.0` (`copy.1`: left → right).
+    /// or after copying block `copy.0` (`copy.1`: left → right), or the texts `undo` (a copy undone).
     fn start_diff_with(
         &mut self,
         shown: Option<Arc<Result<shagoff_core::diff::Outcome, String>>>,
         copy: Option<(usize, bool)>,
+        undo: Option<Arc<(String, String)>>,
     ) -> Task<Message> {
         use shagoff_core::diff;
         let id = self.next_id();
@@ -4427,6 +4465,14 @@ impl App {
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
+                    if let Some(src) = undo {
+                        return Ok(diff::Outcome::Text(diff::rows_with(
+                            &src.0,
+                            &src.1,
+                            diff::ROWS_LIMIT,
+                            o,
+                        )));
+                    }
                     let Some(Ok(diff::Outcome::Text(t))) = shown.as_deref() else {
                         return diff::compare_with(&a, &b, o).map_err(|e| e.to_string());
                     };
@@ -4603,6 +4649,54 @@ impl App {
             usage: None,
             id: 0, // set by `start_usage`
             stop: Arc::new(AtomicBool::new(false)),
+            archive: None,
+        }))
+    }
+
+    /// Alt+Enter inside an archive: what its index says, nothing to change (the bits are shown
+    /// greyed, no group, no Apply).
+    fn archive_props(&self, side: usize, arc: PathBuf, paths: Vec<PathBuf>) -> Dialog {
+        let panel = &self.panes[side].active().panel;
+        let entries: Vec<&Entry> = (panel.entries().iter())
+            .filter(|e| paths.contains(&panel.cwd().join(&e.os_name)))
+            .collect();
+        let mut facts = Vec::new();
+        if let [e] = entries.as_slice() {
+            facts.push((fl!("props-name"), e.name.clone()));
+            let kind = if e.is_dir() {
+                fl!("props-folder")
+            } else if e.is_link {
+                fl!("props-link-archive")
+            } else {
+                format::mime_type(&e.ext).unwrap_or_else(|| "—".into())
+            };
+            facts.push((fl!("props-type"), kind));
+            facts.push((fl!("props-modified"), format::date(e.mtime, &self.tz)));
+        } else {
+            facts.push((fl!("props-selected"), fl!("props-items", n = paths.len())));
+        }
+        facts.push((fl!("props-archive"), arc.display().to_string()));
+        let all = entries.iter().fold(0o7777, |a, e| a & e.mode);
+        let any = entries.iter().fold(0, |a, e| a | e.mode);
+        Dialog::Props(Box::new(dialogs::Props {
+            side,
+            paths,
+            facts,
+            mode: if entries.is_empty() { 0 } else { all },
+            mixed: any & !all,
+            own_mixed: any & !all,
+            touched: 0,
+            has_dir: false,
+            recursive: false,
+            gids: Vec::new(),
+            group_names: Vec::new(),
+            group: None,
+            group0: None,
+            can_chgrp: false,
+            usage: None,
+            id: 0,
+            stop: Arc::new(AtomicBool::new(false)),
+            archive: Some(arc),
         }))
     }
 
@@ -4613,12 +4707,20 @@ impl App {
             return Task::none();
         };
         p.id = id;
-        let (paths, stop) = (p.paths.clone(), p.stop.clone());
+        let (paths, stop, arc) = (p.paths.clone(), p.stop.clone(), p.archive.clone());
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || shagoff_core::props::usage(&paths, &stop))
-                    .await
-                    .unwrap_or_default()
+                tokio::task::spawn_blocking(move || match arc {
+                    Some(a) => {
+                        let inner: Vec<PathBuf> = (paths.iter())
+                            .filter_map(|p| Some(p.strip_prefix(&a).ok()?.to_path_buf()))
+                            .collect();
+                        archive::usage_of(&a, &inner).ok()
+                    }
+                    None => shagoff_core::props::usage(&paths, &stop),
+                })
+                .await
+                .unwrap_or_default()
             },
             move |u| cosmic::Action::App(Message::PropsUsage(id, u)),
         )
@@ -4835,13 +4937,18 @@ impl App {
             return self.load(side, root, None);
         }
         let cwd = t.panel.cwd().to_path_buf();
-        if inside_archive(&cwd.join("x")) || t.results.is_some() {
+        if t.results.is_some() {
             self.say(StatusKind::Error, fl!("results-unsupported"));
             return Task::none();
         }
         let dirs: Vec<PathBuf> = if action == Action::BranchSel {
+            // From the listing: inside an archive nothing is on disk.
+            let dirs: std::collections::HashSet<&std::ffi::OsStr> = (t.panel.entries().iter())
+                .filter(|e| e.is_dir())
+                .map(|e| e.os_name.as_os_str())
+                .collect();
             (t.panel.targets().into_iter())
-                .filter(|p| p.is_dir())
+                .filter(|p| p.file_name().is_some_and(|n| dirs.contains(n)))
                 .collect()
         } else {
             vec![cwd.clone()]
@@ -4859,9 +4966,20 @@ impl App {
         self.say(StatusKind::Busy, fl!("branch-reading"));
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || listing::branch(&dirs, hidden, &stop))
-                    .await
-                    .unwrap_or(Some(Vec::new())) // the walker died: an empty branch, as before
+                tokio::task::spawn_blocking(move || match archive::split_path(&dirs[0]) {
+                    // ponytail: the index is read whole, Esc does not stop it (as entering one).
+                    Some((a, _)) => Some(
+                        (dirs.iter())
+                            .filter_map(|d| {
+                                archive::branch(&a, d.strip_prefix(&a).ok()?, hidden).ok()
+                            })
+                            .flatten()
+                            .collect(),
+                    ),
+                    None => listing::branch(&dirs, hidden, &stop),
+                })
+                .await
+                .unwrap_or(Some(Vec::new())) // the walker died: an empty branch, as before
             },
             move |paths| {
                 cosmic::Action::App(Message::BranchListed {
@@ -5272,7 +5390,7 @@ impl App {
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
             // Shift+F5 inside one copies from the archive into itself.
-            Action::CopySame | Action::NewFile | Action::Properties => inside(side),
+            Action::CopySame | Action::NewFile => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
                 inside(side) || inside(1 - side)
@@ -6425,6 +6543,17 @@ fn route_event(
             modifiers,
             ..
         }) if modifiers.is_empty() => Some(Message::Escape(window)),
+        // Any status: the search window's fields have focus, and they capture it.
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key: physical_key @ keyboard::key::Physical::Code(keyboard::key::Code::KeyL),
+            modifiers,
+            ..
+        }) if modifiers == Modifiers::ALT => Some(Message::FeedKey(
+            (status == event::Status::Ignored)
+                .then(|| keymap::action(&key, physical_key, modifiers))
+                .flatten(),
+        )),
         cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -6581,6 +6710,8 @@ fn read_listing(
     results: Option<&Vec<PathBuf>>,
 ) -> Result<Vec<Entry>, String> {
     match results {
+        // A branch read inside an archive: from its index.
+        Some(r) if archive::split_path(path).is_some() => Ok(archive::entries(r, path)),
         Some(r) => Ok(listing::entries(r, path)),
         None => listing::scan(path, show_hidden).map_err(|e| e.to_string()),
     }
@@ -9539,6 +9670,56 @@ mod tests {
     }
 
     #[test]
+    fn alt_enter_inside_an_archive_shows_and_changes_nothing() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::End)); // top.txt
+        let _ = app.update(Message::Key(Action::Properties));
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("no properties dialog");
+        };
+        assert_eq!(p.archive.as_deref(), Some(a.as_path()));
+        assert_eq!(p.paths, [a.join("top.txt")]);
+        assert!(p.facts.iter().any(|(_, v)| v == "top.txt"));
+        let mode = p.mode;
+        let _ = app.update(Message::PropsBit(0o100));
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("closed");
+        };
+        assert_eq!((p.mode, p.touched), (mode, 0));
+        let _ = app.update(Message::DialogSubmit); // Enter: just closes
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn ctrl_b_inside_an_archive_lists_from_its_index() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let tab = app.panes[0].active().id;
+        let _ = app.update(Message::Key(Action::Branch));
+        let id = app.panes[0]
+            .active()
+            .branching
+            .expect("not refused inside an archive");
+        let paths = shagoff_core::archive::branch(&a, Path::new(""), false).ok();
+        let _ = app.update(Message::BranchListed {
+            side: 0,
+            tab,
+            id,
+            root: a.clone(),
+            paths,
+        });
+        let (root, paths) = app.panes[0].active().results.clone().unwrap();
+        let mut names: Vec<String> = read_listing(&root, false, Some(&paths))
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, ["d/f.txt", "top.txt"]);
+    }
+
+    #[test]
     fn enter_on_archive_goes_inside_and_back() {
         let (tmp, mut app, a) = zip_setup();
         let _ = app.update(Message::Key(Action::Enter));
@@ -10150,6 +10331,53 @@ mod tests {
     }
 
     #[test]
+    fn alt_l_feeds_find_results_in_any_layout() {
+        let alt_l = |c: &str, status| {
+            route_event(
+                cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(c.into()),
+                    modified_key: Key::Character(c.into()),
+                    physical_key: Physical::Code(Code::KeyL),
+                    location: Location::Standard,
+                    modifiers: Modifiers::ALT,
+                    text: None,
+                    repeat: false,
+                }),
+                status,
+                cosmic::iced::window::Id::unique(),
+            )
+        };
+        // Russian layout too; in a field nothing else would go, in the panel quick search would.
+        let m = alt_l("д", event::Status::Captured);
+        assert!(matches!(m, Some(Message::FeedKey(None))), "{m:?}");
+        let m = alt_l("l", event::Status::Ignored);
+        assert!(
+            matches!(m, Some(Message::FeedKey(Some(Action::QuickSearch('l'))))),
+            "{m:?}"
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.rs");
+        std::fs::write(&a, "").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindStart);
+        let _ = app.update(Message::FeedKey(None)); // nothing found yet
+        let id = find_dialog(&mut app).id;
+        let _ = app.update(Message::Find(crate::find::FindEvent::Found(id, vec![a])));
+        let mask = app.find.mask.clone();
+        // The focused field types the letter too: harmless, the fields were kept at the start.
+        let _ = app.update(Message::FindInput(
+            dialogs::FindField::Mask,
+            format!("{mask}l"),
+        ));
+        let _ = app.update(Message::FeedKey(None));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.find.mask, mask);
+        assert!(app.panes[0].active().results.is_some());
+    }
+
+    #[test]
     fn find_results_to_panel_and_back() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
@@ -10741,6 +10969,46 @@ mod tests {
         assert_ne!(diff_dlg(&mut app).id, shown);
         let _ = app.update(Message::DialogCancel);
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn diff_undo_restores_text_and_dirty_until_saved() {
+        let (tmp, mut app) = sync_setup();
+        let (l, r) = (tmp.path().join("l/a"), tmp.path().join("r/a"));
+        std::fs::write(&l, "x\nNEW\ny\n").unwrap();
+        std::fs::write(&r, "x\nold\ny\n").unwrap();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let id = diff_dlg(&mut app).id;
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nold\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let _ = app.update(Message::DiffUndo); // nothing copied yet
+        assert_eq!(diff_dlg(&mut app).id, id);
+        let _ = app.update(Message::DiffCopy(true));
+        let id = diff_dlg(&mut app).id;
+        let _ = app.update(Message::DiffUndo); // still copying: refused
+        assert_eq!(diff_dlg(&mut app).id, id);
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nNEW\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        assert_eq!(diff_dlg(&mut app).dirty, (false, true));
+        let _ = app.update(Message::DiffUndo);
+        let d = diff_dlg(&mut app);
+        assert_eq!(d.dirty, (false, false));
+        assert!(d.undo.is_empty());
+        assert!(d.result.is_none()); // re-comparing the texts from before the copy
+        // Save drops the history: undoing after it would not match the disk.
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nold\ny\n", 100);
+        let id = diff_dlg(&mut app).id;
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let _ = app.update(Message::DiffCopy(true));
+        let id = diff_dlg(&mut app).id;
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nNEW\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        assert_eq!(diff_dlg(&mut app).undo.len(), 1);
+        let _ = app.update(Message::DiffSave);
+        assert!(diff_dlg(&mut app).undo.is_empty());
     }
 
     #[test]
