@@ -409,6 +409,8 @@ pub struct App {
     pub(crate) lister: Option<Box<Lister>>,
     /// Files from archives open in the editor (F4).
     pub(crate) edited: Vec<Edited>,
+    /// The edited file being put back («Обновить» answered): if that fails, it is asked again.
+    updating: Option<PathBuf>,
     /// Ctrl+F in progress: (address, cancel flag set by Esc).
     pub(crate) connecting: Option<(String, Arc<AtomicBool>)>,
     /// Command line under the panels (TC `path>`): its text, field id, history (last first).
@@ -1024,6 +1026,7 @@ impl App {
             ctx_row: false,
             lister: None,
             edited: Vec::new(),
+            updating: None,
             connecting: None,
             cmdline: String::new(),
             cmd_id: widget::Id::unique(),
@@ -4214,6 +4217,7 @@ impl App {
                 archive,
                 entry,
             } => {
+                self.updating = Some(file.clone());
                 let job = Job::Repack {
                     archive,
                     change: Change::Replace { entry, file },
@@ -5617,6 +5621,13 @@ impl App {
         let Some(job) = self.job.take() else {
             return Task::none();
         };
+        // Not put back (an error, cancelled): the next tick asks about that change again.
+        if let Some(file) = self.updating.take()
+            && (report.cancelled || report.completed.is_empty())
+            && let Some(e) = self.edited.iter_mut().find(|e| e.file == file)
+        {
+            e.mtime = SystemTime::UNIX_EPOCH;
+        }
         if self.quitting {
             return self.handle(Message::Exit);
         }
@@ -9976,6 +9987,34 @@ mod tests {
         let _ = app.update(Message::EditTick);
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Repack));
+    }
+
+    #[test]
+    fn regression_edited_file_is_asked_again_when_putting_it_back_failed() {
+        let (tmp, mut app, a) = zip_setup();
+        let file = tmp.path().join("out/top.txt");
+        std::fs::write(&file, "x").unwrap();
+        app.edited.push(Edited {
+            file,
+            archive: a,
+            entry: "top.txt".into(),
+            mtime: std::time::UNIX_EPOCH,
+        });
+        let _ = app.update(Message::EditTick);
+        let _ = app.update(Message::DialogSubmit); // «Обновить»
+        let failed = Arc::new(Report::default()); // nothing completed: an error
+        let _ = app.update(Message::Op(jobs::Event::Finished(failed)));
+        let _ = app.update(Message::EditTick);
+        assert!(matches!(app.dialog, Some(Dialog::UpdateArchive { .. })));
+        // Put back this time: not asked again.
+        let _ = app.update(Message::DialogSubmit);
+        let done = Arc::new(Report {
+            cancelled: false,
+            completed: vec![PathBuf::from("a.zip")],
+        });
+        let _ = app.update(Message::Op(jobs::Event::Finished(done)));
+        let _ = app.update(Message::EditTick);
+        assert!(app.dialog.is_none());
     }
 
     #[test]
