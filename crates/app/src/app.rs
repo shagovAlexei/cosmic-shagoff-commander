@@ -1307,8 +1307,7 @@ impl App {
                 }
             }
             Message::Click(side, i) => {
-                self.search = None;
-                self.active = side;
+                self.click_pane(side);
                 let t = self.panes[side].active_mut();
                 t.panel.set_cursor(i);
                 if self.mods.control() {
@@ -1318,8 +1317,7 @@ impl App {
                 return self.reveal(side, tab); // a half-visible row scrolls fully in
             }
             Message::RightClick(side, i) if self.config.right_marks => {
-                self.search = None;
-                self.active = side;
+                self.click_pane(side);
                 self.ctx_row = true;
                 let t = self.panes[side].active_mut();
                 t.panel.set_cursor(i);
@@ -1327,8 +1325,7 @@ impl App {
                 return Task::batch([self.reveal(side, tab), self.right_press(side, Some(i))]);
             }
             Message::RightEmpty(side) if self.config.right_marks => {
-                self.search = None;
-                self.active = side;
+                self.click_pane(side);
                 // The same press on a row came first: that row's hold stands.
                 if !std::mem::take(&mut self.ctx_row) {
                     return self.right_press(side, None);
@@ -3097,6 +3094,16 @@ impl App {
             },
             cosmic::Action::App,
         )
+    }
+
+    /// A click in pane `side`: as a key there (and Tab away from the other) — the error shown
+    /// in the pane left and in this one goes, quick search closes.
+    fn click_pane(&mut self, side: usize) {
+        self.search = None;
+        for s in [self.active, side] {
+            self.panes[s].active_mut().error = None;
+        }
+        self.active = side;
     }
 
     fn act(&mut self, side: usize, action: Action) -> Task<Message> {
@@ -7334,6 +7341,17 @@ mod tests {
         assert_eq!(app.panes[0].active().panel.filter(), None);
         let _ = app.update(Message::Key(Action::PrevTab));
         assert_eq!(app.panes[0].active().panel.filter(), Some("*.rs")); // the old tab keeps it
+    }
+
+    #[test]
+    fn regression_click_in_the_other_pane_clears_the_error_like_tab() {
+        let mut app = app_with(Config::default(), State::default());
+        app.panes[0].active_mut().error = Some("no access".into());
+        let _ = app.update(Message::Click(1, 0));
+        assert_eq!(
+            (app.active, app.panes[0].active().error.as_deref()),
+            (1, None)
+        );
     }
 
     #[test]
