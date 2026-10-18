@@ -1219,7 +1219,9 @@ impl App {
                             return Task::none();
                         }
                         Action::Up | Action::Down => {} // filter: plain cursor move, field stays
-                        _ => self.search = None,        // any other key closes the field and acts
+                        // The field lost focus (a click): Alt+letter goes on with its text.
+                        Action::QuickSearch(_) if !filter => {}
+                        _ => self.search = None, // any other key closes the field and acts
                     }
                 }
                 // Only the Enter key runs a typed line (the field lost focus to a click); a double
@@ -8523,6 +8525,18 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down)); // wraps
         assert_eq!(cursor_name(&app), "b1");
         assert!(app.search.is_some());
+    }
+
+    #[test]
+    fn regression_alt_letter_adds_to_the_open_search() {
+        let mut app = files_app(&["alpha", "beta", "bravo"]);
+        let _ = app.update(Message::Key(Action::QuickSearch('b')));
+        // Unfocused, the field's typing comes as keys: Alt+r adds to "b", not starts over.
+        let _ = app.update(Message::Key(Action::QuickSearch('r')));
+        assert_eq!(app.search.as_ref().map(|s| s.text.as_str()), Some("br"));
+        assert_eq!(cursor_name(&app), "bravo");
+        let _ = app.update(Message::Key(Action::QuickSearch('z'))); // no match: not taken
+        assert_eq!(app.search.as_ref().map(|s| s.text.as_str()), Some("br"));
     }
 
     #[test]
