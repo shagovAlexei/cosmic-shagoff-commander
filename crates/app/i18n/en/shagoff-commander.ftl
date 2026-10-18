@@ -177,6 +177,7 @@ diff-close = Close
 diff-running = Comparing…
 diff-same = The files are identical
 diff-count = Difference { $i } of { $n }
+diff-count-past = More differences past the rows shown: { $n }
 diff-binary-same = Binary files, identical
 diff-binary-differ = Binary files, different
 diff-next = ↓ Next

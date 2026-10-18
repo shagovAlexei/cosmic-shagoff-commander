@@ -1819,7 +1819,11 @@ pub fn view<'a>(
                     if more > 0 {
                         lists[0].push(widget::text(fl!("find-more", n = more)).into());
                     }
-                    match t.blocks.len() {
+                    // Counted only the blocks ↓ / «Блок →» can reach; the rest named apart.
+                    let n = d.blocks().len();
+                    let past = t.blocks.len() - n;
+                    let count = match n {
+                        0 if past > 0 => String::new(),
                         0 if t.eol_differs => fl!("diff-eol"),
                         0 => fl!("diff-same"),
                         n => fl!(
@@ -1827,6 +1831,12 @@ pub fn view<'a>(
                             i = (d.block + 1).to_string(),
                             n = n.to_string()
                         ),
+                    };
+                    match past {
+                        0 => count,
+                        p => format!("{count}   {}", fl!("diff-count-past", n = p))
+                            .trim_start()
+                            .to_string(),
                     }
                 }
             };

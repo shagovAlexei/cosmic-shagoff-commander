@@ -178,6 +178,7 @@ diff-close = Закрыть
 diff-running = Сравнение…
 diff-same = Файлы одинаковые
 diff-count = Отличие { $i } из { $n }
+diff-count-past = Ещё отличий за показанными строками: { $n }
 diff-binary-same = Двоичные файлы, одинаковые
 diff-binary-differ = Двоичные файлы, различаются
 diff-next = ↓ Следующее
