@@ -36,6 +36,12 @@ impl Entry {
     pub fn is_dir(&self) -> bool {
         self.kind == Kind::Dir
     }
+
+    /// Only its name and type are known (its dir is r-- without x: stat fails): size, date and
+    /// permissions are shown empty, not as 0 / 1970 / `---------`.
+    pub fn unknown(&self) -> bool {
+        self.mode == 0 && self.size == 0 && self.mtime == UNIX_EPOCH && self.owner.is_none()
+    }
 }
 
 /// Lists `path` without `..`. Unreadable items are skipped; only failing to read the dir itself is an error.
@@ -246,6 +252,13 @@ mod tests {
         let v = v.unwrap();
         assert_eq!(find(&v, "f.txt").kind, Kind::File);
         assert_eq!(find(&v, "sub").kind, Kind::Dir);
+        // As root stat works anyway.
+        if fs::symlink_metadata(locked.join("f.txt")).is_ok() && v.iter().all(|e| !e.unknown()) {
+            return;
+        }
+        assert!(find(&v, "f.txt").unknown() && find(&v, "sub").unknown());
+        let fine = scan(d.path(), false).unwrap();
+        assert!(!find(&fine, "locked").unknown());
     }
 
     fn fixture() -> tempfile::TempDir {

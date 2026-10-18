@@ -114,7 +114,7 @@ pub fn details(
         return String::new();
     }
     // stat failed (dir readable but not searchable): nothing but the name is known.
-    if e.mode == 0 && e.owner.is_none() {
+    if e.unknown() {
         return e.name.clone();
     }
     let mut parts = vec![match &e.target {
@@ -354,7 +354,9 @@ mod tests {
         assert!(details(&l, &tz, &o, self::size).starts_with("lib → /usr/lib/x   1 204 567"));
         assert_eq!(details(&full("..", Kind::Dir), &tz, &o, self::size), "");
         let mut unreadable = full("secret", Kind::File); // stat failed (dir r-- without x)
+        // As `listing::scan` makes it.
         (unreadable.mode, unreadable.owner) = (0, None);
+        (unreadable.size, unreadable.mtime) = (0, UNIX_EPOCH);
         assert_eq!(details(&unreadable, &tz, &o, self::size), "secret");
     }
 }

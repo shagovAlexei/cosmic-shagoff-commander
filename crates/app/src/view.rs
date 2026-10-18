@@ -828,10 +828,11 @@ fn file_row<'a>(
     let modern = app.config.skin == Skin::Modern;
     let size = match bytes {
         None => "<DIR>".to_string(),
+        Some(_) if e.unknown() => String::new(),
         Some(b) if format::human_size(b, app.config.human_sizes, modern) => human(b),
         Some(b) => format::size(b),
     };
-    let (date, attrs) = if is_parent {
+    let (date, attrs) = if is_parent || e.unknown() {
         (String::new(), String::new())
     } else {
         (format::date(e.mtime, &app.tz), format::attrs(e))
