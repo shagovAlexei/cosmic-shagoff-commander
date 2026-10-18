@@ -7,11 +7,14 @@
 #   headless.sh key ARGS...        wtype ARGS (e.g. -k F7, -M shift -k F2 -m shift)
 #   headless.sh click X Y [right|middle|double|none|up|down]  mouse at (X, Y), click or wheel (built from ./vpointer once)
 #   headless.sh drag X1 Y1 X2 Y2   press at (X1, Y1), move to (X2, Y2), release
+#   headless.sh vkey [ctrl] [alt] [shift] [ru] KEY  a real key (a-z or evdev code) on a us,ru keymap:
+#                                  Ctrl+letters and Alt+letters arrive as from a keyboard
 #   headless.sh shot NAME          screenshot to $DIR/NAME.png
 #   headless.sh stop
 #
 # Limits: wtype uploads its own keymap, so letter shortcuts bound to physical keys (Ctrl+M,
-# Ctrl+Shift+S…) do not arrive; named keys (F-keys, Enter, Tab, arrows, Alt+F7…) do. Keys need
+# Ctrl+Shift+S, Alt+L…) do not arrive through `key` — send those with `vkey`; named keys (F-keys,
+# Enter, Tab, arrows, Alt+F7…) and typed text go through `key`. Keys need
 # the 300 ms pauses below or the first one is lost to the keymap switch.
 set -euo pipefail
 DIR=${SHAGOFF_HEADLESS:-/tmp/shagoff-headless}
@@ -57,6 +60,10 @@ drag)
     (cd "$vp" && cargo build -q --release --offline)
     size=$(cat "$DIR/size" 2>/dev/null || echo 1036x530)
     WAYLAND_DISPLAY="$(sock)" "$vp/target/release/vpointer" drag "$2" "$3" "$4" "$5" "${size%x*}" "${size#*x}"; sleep 0.5 ;;
+vkey)
+    shift; vp="$ROOT/.claude/skills/shagoff-feature/vpointer"
+    (cd "$vp" && cargo build -q --release --offline)
+    WAYLAND_DISPLAY="$(sock)" "$vp/target/release/vkey" "$@"; sleep 0.3 ;;
 shot) WAYLAND_DISPLAY="$(sock)" grim "$DIR/$2.png"; echo "$DIR/$2.png" ;;
 stop) kill_pid app; kill_pid sway ;;
 *) sed -n '2,15p' "$0"; exit 1 ;;
