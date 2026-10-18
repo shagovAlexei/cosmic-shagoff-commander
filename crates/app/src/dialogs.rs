@@ -383,6 +383,8 @@ pub struct Props {
     pub usage: Option<shagoff_core::props::Usage>,
     pub id: u64,
     pub stop: Arc<AtomicBool>,
+    /// Inside this archive: shown from its index, nothing can be changed.
+    pub archive: Option<PathBuf>,
 }
 
 impl Props {
@@ -1037,24 +1039,26 @@ pub fn view<'a>(
                 ),
             };
             body = body.push(line(fl!("props-size"), size));
-            // As chgrp: the user's own groups (another needs root).
-            body = body.push(
-                row![
-                    widget::text::body(fl!("props-group-line")).width(Length::Fixed(LABEL)),
-                    if p.can_chgrp {
-                        Element::from(widget::dropdown(
-                            &p.group_names,
-                            p.group,
-                            Message::PropsGroup,
-                        ))
-                    } else {
-                        let name = p.group.and_then(|i| p.group_names.get(i));
-                        widget::text::body(name.cloned().unwrap_or_else(|| "—".into())).into()
-                    },
-                ]
-                .spacing(8)
-                .align_y(cosmic::iced::Alignment::Center),
-            );
+            // As chgrp: the user's own groups (another needs root). An archive keeps none.
+            if p.archive.is_none() {
+                body = body.push(
+                    row![
+                        widget::text::body(fl!("props-group-line")).width(Length::Fixed(LABEL)),
+                        if p.can_chgrp {
+                            Element::from(widget::dropdown(
+                                &p.group_names,
+                                p.group,
+                                Message::PropsGroup,
+                            ))
+                        } else {
+                            let name = p.group.and_then(|i| p.group_names.get(i));
+                            widget::text::body(name.cloned().unwrap_or_else(|| "—".into())).into()
+                        },
+                    ]
+                    .spacing(8)
+                    .align_y(cosmic::iced::Alignment::Center),
+                );
+            }
             let bit = |b: u32| {
                 let unknown = p.mixed & !p.touched & b != 0;
                 let cell: Element<'a, Message> = if unknown {
@@ -1066,7 +1070,9 @@ pub fn view<'a>(
                         .into()
                 } else {
                     widget::checkbox(p.mode & b != 0)
-                        .on_toggle(move |_| Message::PropsBit(b))
+                        .on_toggle_maybe(
+                            p.archive.is_none().then_some(move |_| Message::PropsBit(b)),
+                        )
                         .into()
                 };
                 // One height for both kinds, so the rows don't jump when `?` turns into a box.
@@ -1149,16 +1155,24 @@ pub fn view<'a>(
                         .on_toggle(|_| Message::PropsRecursive),
                 );
             }
-            widget::dialog()
+            let dialog = widget::dialog()
                 .title(fl!("props-title"))
-                .control(widget::scrollable(control).height(Length::Shrink))
-                .primary_action(
-                    widget::button::suggested(fl!("props-apply")).on_press(Message::DialogSubmit),
-                )
-                .secondary_action(
-                    widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
-                )
-                .into()
+                .control(widget::scrollable(control).height(Length::Shrink));
+            match p.archive {
+                // Nothing to apply: Close alone.
+                Some(_) => dialog.primary_action(
+                    widget::button::standard(fl!("diff-close")).on_press(Message::DialogCancel),
+                ),
+                None => dialog
+                    .primary_action(
+                        widget::button::suggested(fl!("props-apply"))
+                            .on_press(Message::DialogSubmit),
+                    )
+                    .secondary_action(
+                        widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
+                    ),
+            }
+            .into()
         }
         Dialog::List {
             kind,
