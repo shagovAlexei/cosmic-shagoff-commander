@@ -4,7 +4,18 @@ English | [Русский](README_ru.md)
 
 A dual-pane file manager in the spirit of Total Commander, built with libcosmic for the COSMIC desktop (Pop!_OS 24.04).
 
-**Status:** early development. See [.claude/docs/ROADMAP.md](.claude/docs/ROADMAP.md).
+![Shagoff Commander, Classic look](res/screenshots/classic.png)
+
+**Status:** active development, used daily. See [.claude/docs/ROADMAP.md](.claude/docs/ROADMAP.md).
+
+## Two looks
+
+*Configuration → Settings… → Look* (Ctrl+,) switches them live.
+
+| Classic (Total Commander) | Modern (COSMIC) |
+|---|---|
+| ![Classic](res/screenshots/classic.png) | ![Modern](res/screenshots/modern.png) |
+| Toolbar, drive drop-down, tab strip and path line, compact rows | Drive buttons, breadcrumbs, panels as cards, larger rows |
 
 ## Features
 
@@ -15,6 +26,35 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Find files (masks or regex, text inside, size / date, inside archives), compare and synchronize folders, compare files side by side
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs
 - Right button marks files as in Total Commander, held it opens the menu (or the menu at once — a setting), full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
+
+## Keys
+
+Total Commander's layout, so the hands already know it:
+
+| | |
+|---|---|
+| F3 / F4 | View / edit |
+| F5 / F6 | Copy / move; F2 in the dialog puts it in the queue |
+| Shift+F5 / Shift+F6 | Copy here under a new name / rename |
+| F7 / F8 | New folder / delete (Shift+F8: permanently) |
+| Insert, Space, Num+ / Num− | Mark one / by mask |
+| Alt+F7 | Find files |
+| Alt+F5 / Alt+F9 | Pack / unpack |
+| Ctrl+B | Branch view: every file below, in one list |
+| Ctrl+D | Hotlist |
+| Ctrl+F | Connect to a server (sftp, smb, ftp, dav) |
+| Ctrl+T / Ctrl+W | New / close tab |
+| Ctrl+Shift+D | Compare files by content |
+| Alt+Enter | Properties |
+
+## A closer look
+
+| | |
+|---|---|
+| ![Pack](res/screenshots/pack.png) | ![Colors by file type](res/screenshots/colors.png) |
+| Pack: zip, tar.*, 7z, encrypted | Colors by file type: mask, size, age, attributes |
+| ![Find files](res/screenshots/find.png) | ![Settings](res/screenshots/settings.png) |
+| Find files: masks, regex, text, inside archives | Settings, applied as you change them |
 
 ## Toolbar buttons
 
