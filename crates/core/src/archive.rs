@@ -1043,6 +1043,27 @@ pub fn usage(archive: &Path, inner: &Path) -> io::Result<crate::props::Usage> {
     Ok(u)
 }
 
+/// `usage` of several entries of `archive` (Alt+Enter on a selection there): a file counts as
+/// itself, a dir as itself and what it holds.
+pub fn usage_of(archive: &Path, inners: &[PathBuf]) -> io::Result<crate::props::Usage> {
+    let items = index(archive)?;
+    let mut u = crate::props::Usage::default();
+    for inner in inners {
+        match items.iter().find(|it| it.path == *inner && !it.dir) {
+            Some(f) => {
+                u.files += 1;
+                u.bytes += f.size;
+            }
+            None => {
+                let d = usage(archive, inner)?;
+                (u.files, u.dirs, u.bytes) =
+                    (u.files + d.files, u.dirs + d.dirs, u.bytes + d.bytes);
+            }
+        }
+    }
+    Ok(u)
+}
+
 /// Where files opened from archives (Enter, F3) are extracted: the user's cache dir, on disk —
 /// `$XDG_RUNTIME_DIR` is a small RAM tmpfs that other session services need.
 pub fn temp_root() -> PathBuf {
@@ -2810,6 +2831,10 @@ mod tests {
         assert_eq!((u.files, u.dirs, u.bytes), (2, 2, 5)); // docs + img
         let all = usage(&z, Path::new("")).unwrap();
         assert_eq!((all.files, all.dirs, all.bytes), (4, 3, 7));
+        // Alt+Enter on a selection: a file counts as itself.
+        let sel = [PathBuf::from("docs"), PathBuf::from("top.txt")];
+        let u = usage_of(&z, &sel).unwrap();
+        assert_eq!((u.files, u.dirs, u.bytes), (3, 2, 6));
     }
 
     #[test]

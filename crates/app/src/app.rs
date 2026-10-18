@@ -1563,7 +1563,10 @@ impl App {
                 }
             }
             Message::PropsBit(b) => {
-                if let Some(Dialog::Props(p)) = &mut self.dialog {
+                // In an archive the bits are only shown.
+                if let Some(Dialog::Props(p)) = &mut self.dialog
+                    && p.archive.is_none()
+                {
                     if p.mixed & !p.touched & b != 0 {
                         p.mode |= b; // `?` → on
                     } else {
@@ -3549,6 +3552,9 @@ impl App {
             }
             Action::Properties => {
                 let paths = panel.targets();
+                if let Some((arc, _)) = archive::split_path(panel.cwd()) {
+                    return (!paths.is_empty()).then(|| self.archive_props(side, arc, paths));
+                }
                 (!paths.is_empty()).then(|| self.props_dialog(side, paths))
             }
             // TC: marked files get a rename mask, copied in this dir (`*.bak`, `copy_*`).
@@ -4603,6 +4609,54 @@ impl App {
             usage: None,
             id: 0, // set by `start_usage`
             stop: Arc::new(AtomicBool::new(false)),
+            archive: None,
+        }))
+    }
+
+    /// Alt+Enter inside an archive: what its index says, nothing to change (the bits are shown
+    /// greyed, no group, no Apply).
+    fn archive_props(&self, side: usize, arc: PathBuf, paths: Vec<PathBuf>) -> Dialog {
+        let panel = &self.panes[side].active().panel;
+        let entries: Vec<&Entry> = (panel.entries().iter())
+            .filter(|e| paths.contains(&panel.cwd().join(&e.os_name)))
+            .collect();
+        let mut facts = Vec::new();
+        if let [e] = entries.as_slice() {
+            facts.push((fl!("props-name"), e.name.clone()));
+            let kind = if e.is_dir() {
+                fl!("props-folder")
+            } else if e.is_link {
+                fl!("props-link-archive")
+            } else {
+                format::mime_type(&e.ext).unwrap_or_else(|| "—".into())
+            };
+            facts.push((fl!("props-type"), kind));
+            facts.push((fl!("props-modified"), format::date(e.mtime, &self.tz)));
+        } else {
+            facts.push((fl!("props-selected"), fl!("props-items", n = paths.len())));
+        }
+        facts.push((fl!("props-archive"), arc.display().to_string()));
+        let all = entries.iter().fold(0o7777, |a, e| a & e.mode);
+        let any = entries.iter().fold(0, |a, e| a | e.mode);
+        Dialog::Props(Box::new(dialogs::Props {
+            side,
+            paths,
+            facts,
+            mode: if entries.is_empty() { 0 } else { all },
+            mixed: any & !all,
+            own_mixed: any & !all,
+            touched: 0,
+            has_dir: false,
+            recursive: false,
+            gids: Vec::new(),
+            group_names: Vec::new(),
+            group: None,
+            group0: None,
+            can_chgrp: false,
+            usage: None,
+            id: 0,
+            stop: Arc::new(AtomicBool::new(false)),
+            archive: Some(arc),
         }))
     }
 
@@ -4613,12 +4667,20 @@ impl App {
             return Task::none();
         };
         p.id = id;
-        let (paths, stop) = (p.paths.clone(), p.stop.clone());
+        let (paths, stop, arc) = (p.paths.clone(), p.stop.clone(), p.archive.clone());
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || shagoff_core::props::usage(&paths, &stop))
-                    .await
-                    .unwrap_or_default()
+                tokio::task::spawn_blocking(move || match arc {
+                    Some(a) => {
+                        let inner: Vec<PathBuf> = (paths.iter())
+                            .filter_map(|p| Some(p.strip_prefix(&a).ok()?.to_path_buf()))
+                            .collect();
+                        archive::usage_of(&a, &inner).ok()
+                    }
+                    None => shagoff_core::props::usage(&paths, &stop),
+                })
+                .await
+                .unwrap_or_default()
             },
             move |u| cosmic::Action::App(Message::PropsUsage(id, u)),
         )
@@ -5272,7 +5334,7 @@ impl App {
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
             // Shift+F5 inside one copies from the archive into itself.
-            Action::CopySame | Action::NewFile | Action::Properties => inside(side),
+            Action::CopySame | Action::NewFile => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
                 inside(side) || inside(1 - side)
@@ -9531,6 +9593,28 @@ mod tests {
         listed_at(&mut app, 1, &tmp.path().join("out"));
         let _ = app.update(Message::Key(Action::End)); // "..", out/, a.zip
         (tmp, app, a)
+    }
+
+    #[test]
+    fn alt_enter_inside_an_archive_shows_and_changes_nothing() {
+        let (_tmp, mut app, a) = zip_setup();
+        listed_at(&mut app, 0, &a);
+        let _ = app.update(Message::Key(Action::End)); // top.txt
+        let _ = app.update(Message::Key(Action::Properties));
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("no properties dialog");
+        };
+        assert_eq!(p.archive.as_deref(), Some(a.as_path()));
+        assert_eq!(p.paths, [a.join("top.txt")]);
+        assert!(p.facts.iter().any(|(_, v)| v == "top.txt"));
+        let mode = p.mode;
+        let _ = app.update(Message::PropsBit(0o100));
+        let Some(Dialog::Props(p)) = &app.dialog else {
+            panic!("closed");
+        };
+        assert_eq!((p.mode, p.touched), (mode, 0));
+        let _ = app.update(Message::DialogSubmit); // Enter: just closes
+        assert!(app.dialog.is_none());
     }
 
     #[test]
