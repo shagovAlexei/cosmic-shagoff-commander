@@ -553,6 +553,20 @@ pub enum Item {
 }
 
 impl Dialog {
+    /// The files a copy / move / link / pack / unpack dialog is about.
+    pub fn sources(&self) -> Option<&[PathBuf]> {
+        match self {
+            Dialog::Input {
+                op: InputOp::Copy | InputOp::Move | InputOp::Link,
+                sources,
+                ..
+            } => Some(sources),
+            Dialog::Pack(p) => Some(&p.sources),
+            Dialog::Unpack { archives, .. } => Some(archives),
+            _ => None,
+        }
+    }
+
     /// The text field, for dialogs that have one.
     pub fn input_mut(&mut self) -> Option<&mut String> {
         match self {
@@ -694,6 +708,30 @@ fn problem(p: Problem) -> String {
 }
 
 /// "a.txt" for one path, "3 files" for several.
+/// What a copy / move / pack goes on and where: the name on a line of its own (accent, so a long
+/// one does not run into the action), «to:» and the path field under it.
+/// `icon`: the file's own, beside the name (`None`: several files, or not in a panel).
+fn what_to<'a>(
+    paths: &[PathBuf],
+    icon: Option<widget::Icon>,
+    to: String,
+    field: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let name = widget::text::title4(what(paths))
+        .class(cosmic::theme::Text::Accent)
+        .wrapping(Wrapping::WordOrGlyph);
+    column![
+        row![]
+            .push_maybe(icon)
+            .push(name)
+            .spacing(12)
+            .align_y(cosmic::iced::Alignment::Center),
+        column![widget::text::caption(to), field].spacing(4),
+    ]
+    .spacing(12)
+    .into()
+}
+
 fn what(paths: &[PathBuf]) -> String {
     match paths {
         [one] => one
@@ -796,6 +834,7 @@ pub fn view<'a>(
     tz: &TimeZone,
     list_h: f32,
     font: ListFont,
+    icon: Option<widget::Icon>,
 ) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
@@ -820,18 +859,24 @@ pub fn view<'a>(
             op, sources, input, ..
         } => {
             let title = match op {
-                InputOp::Copy => fl!("copy-to", what = what(sources)),
-                InputOp::Move => fl!("move-to", what = what(sources)),
-                InputOp::Link => fl!("link-to", what = what(sources)),
+                InputOp::Copy => fl!("copy"),
+                InputOp::Move => fl!("move"),
+                InputOp::Link => fl!("link"),
                 InputOp::Mkdir => fl!("mkdir"),
                 InputOp::NewFile => fl!("new-file"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
                 InputOp::OpenWith => fl!("open-with-other-title"),
             };
+            let control = match op {
+                InputOp::Copy | InputOp::Move | InputOp::Link => {
+                    what_to(sources, icon, fl!("to"), field(input).into())
+                }
+                _ => field(input).into(),
+            };
             let dialog = widget::dialog()
                 .title(title)
-                .control(field(input))
+                .control(control)
                 .primary_action(ok)
                 .secondary_action(cancel);
             match op {
@@ -1397,10 +1442,10 @@ pub fn view<'a>(
                 .into_iter()
                 .fold(row![].spacing(8), |r, f| r.push(format(f)));
             widget::dialog()
-                .title(fl!("pack-to", what = what(&p.sources)))
+                .title(fl!("pack"))
                 .control(
                     column![
-                        field(&p.path),
+                        what_to(&p.sources, icon, fl!("to"), field(&p.path).into()),
                         formats,
                         widget::checkbox(p.move_after)
                             .label(fl!("pack-move"))
@@ -1524,10 +1569,10 @@ pub fn view<'a>(
             own_dir,
             ..
         } => widget::dialog()
-            .title(fl!("unpack-to", what = what(archives)))
+            .title(fl!("unpack"))
             .control(
                 column![
-                    field(path),
+                    what_to(archives, icon, fl!("to"), field(path).into()),
                     widget::checkbox(*own_dir)
                         .label(fl!("unpack-own-dir"))
                         .on_toggle(|_| Message::Toggle(Toggle::OwnDir)),

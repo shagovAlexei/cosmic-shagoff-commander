@@ -28,8 +28,9 @@ select-group = Выделить группу
 unselect-group = Снять выделение
 ok = OK
 cancel = Отмена
-copy-to = Копировать { $what } в:
-move-to = Переместить { $what } в:
+copy = Копировать
+move = Переместить
+to = в:
 n-files = { $n ->
     [one] { $n } файл
     [few] { $n } файла
@@ -122,8 +123,6 @@ mr-exists = имя занято
 
 pack = Упаковать
 unpack = Распаковать
-pack-to = Упаковать { $what } в
-unpack-to = Распаковать { $what } в
 pack-move = Переместить в архив (удалить исходные)
 archive-password = Пароль архива
 archive-password-wrong = Неверный пароль: { $name }
@@ -209,7 +208,7 @@ drop-menu = { $what }: брошено сюда
 drop-copy = &Копировать
 drop-move = &Переместить
 drop-link = &Ссылка
-link-to = Создать символические ссылки на { $what } в:
+link = Создать символические ссылки
 link-failed = Не удалось создать ссылку { $path }: { $err }
 links-failed = Не создано ссылок: { $n }; { $path }: { $err }
 menu-link = Создать символическую ссылку…
