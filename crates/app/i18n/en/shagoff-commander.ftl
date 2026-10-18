@@ -28,8 +28,9 @@ select-group = Select group
 unselect-group = Unselect group
 ok = OK
 cancel = Cancel
-copy-to = Copy { $what } to:
-move-to = Move { $what } to:
+copy = Copy
+move = Move
+to = to:
 n-files = { $n ->
     [one] { $n } file
    *[other] { $n } files
@@ -121,8 +122,6 @@ mr-exists = name is taken
 
 pack = Pack
 unpack = Unpack
-pack-to = Pack { $what } to
-unpack-to = Unpack { $what } to
 pack-move = Move to archive (delete the originals)
 archive-password = Archive password
 archive-password-wrong = Wrong password: { $name }
@@ -208,7 +207,7 @@ drop-menu = { $what }: dropped here
 drop-copy = &Copy
 drop-move = &Move
 drop-link = &Link
-link-to = Create symbolic links to { $what } in:
+link = Create symbolic links
 link-failed = Cannot create the link { $path }: { $err }
 links-failed = { $n } links not created; { $path }: { $err }
 menu-link = Create symbolic link…
