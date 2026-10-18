@@ -6298,7 +6298,12 @@ impl App {
 
     /// Ctrl+↑: the dir under the cursor (an archive as a dir, ".." the parent), else the panel's own.
     fn tab_target(&self, side: usize) -> PathBuf {
-        let panel = &self.panes[side].active().panel;
+        let t = self.panes[side].active();
+        let panel = &t.panel;
+        // ".." in search results / a branch leads back to the dir they are of (as Backspace).
+        if t.results.is_some() && panel.current().is_some_and(|e| e.name == PARENT) {
+            return panel.cwd().to_path_buf();
+        }
         if let Some((path, _)) = panel.enter_path() {
             return path;
         }
@@ -11447,6 +11452,20 @@ mod tests {
             key(&mut app, Action::End);
             key(&mut app, Action::TabOpen);
             assert_eq!(app.panes[0].active().target(), tmp3.path());
+        }
+
+        #[test]
+        fn regression_ctrl_up_on_dotdot_in_results_opens_the_searched_dir() {
+            let (tmp, mut app) = setup();
+            let f = tmp.path().join("f");
+            let t = app.panes[0].active_mut();
+            t.results = Some((tmp.path().to_path_buf(), Arc::new(vec![f.clone()])));
+            let rows = read_listing(tmp.path(), false, Some(&vec![f])).unwrap();
+            t.panel.set_listing(tmp.path().to_path_buf(), rows, None);
+            key(&mut app, Action::Home); // ".."
+            key(&mut app, Action::TabOpen);
+            // As Backspace there: the dir that was searched, not its parent.
+            assert_eq!(app.panes[0].active().target(), tmp.path());
         }
 
         fn cwds_or_targets(app: &App, side: usize) -> Vec<PathBuf> {
