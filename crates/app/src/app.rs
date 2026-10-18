@@ -1771,6 +1771,17 @@ impl App {
                         return Task::none();
                     }
                     (d.x, d.offset) = (x, y);
+                    // Scrolled away from the current block: the first one in view takes over.
+                    let (top, bottom) = d.view_rows();
+                    if let Some(t) = d.text() {
+                        d.block = shagoff_core::diff::block_in_view(
+                            &t.rows,
+                            d.blocks(),
+                            d.block,
+                            top,
+                            bottom,
+                        );
+                    }
                     let to = AbsoluteOffset {
                         x: Some(x),
                         y: Some(y),
@@ -4562,11 +4573,13 @@ impl App {
         let Some(Dialog::Diff(d)) = &mut self.dialog else {
             return Task::none();
         };
-        let n = d.blocks().len();
-        if n == 0 {
+        let (Some(t), (top, bottom)) = (d.text(), d.view_rows()) else {
+            return Task::none();
+        };
+        if d.blocks().is_empty() {
             return Task::none();
         }
-        d.block = d.block.saturating_add_signed(delta).min(n - 1);
+        d.block = shagoff_core::diff::step(&t.rows, d.blocks(), d.block, delta > 0, top, bottom);
         self.diff_scroll()
     }
 
@@ -11021,6 +11034,25 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down));
         let _ = app.update(Message::Key(Action::Down));
         assert_eq!(diff_dlg(&mut app).block, 1); // two blocks: clamped
+    }
+
+    #[test]
+    fn diff_scroll_makes_the_block_in_view_current() {
+        let (_tmp, mut app) = sync_setup();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let id = diff_dlg(&mut app).id;
+        let same = "s\n".repeat(40);
+        let t = shagoff_core::diff::rows(&format!("x\n{same}x\n"), &format!("y\n{same}y\n"), 100);
+        let _ = app.update(Message::DiffReady(
+            id,
+            Arc::new(Ok(shagoff_core::diff::Outcome::Text(t))),
+        ));
+        assert_eq!(diff_dlg(&mut app).block, 0);
+        let _ = app.update(Message::DiffScrolled(0, 0.0, 30.0 * dialogs::DIFF_ROW_H));
+        assert_eq!(diff_dlg(&mut app).block, 1);
     }
 
     #[test]

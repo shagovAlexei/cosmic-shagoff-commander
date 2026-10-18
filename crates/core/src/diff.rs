@@ -349,6 +349,71 @@ fn split_eol(text: &str) -> Vec<(&str, &str)> {
         .collect()
 }
 
+/// End (exclusive) of the block of differences starting at row `start`: the first same row after
+/// it, or the end of the rows.
+pub fn block_end(rows: &[Row], start: usize) -> usize {
+    let tail = rows.get(start..).unwrap_or_default();
+    start + tail.iter().take_while(|r| r.kind != Kind::Same).count()
+}
+
+/// Index of the first block of `blocks` not wholly above row `top`.
+fn first_from(rows: &[Row], blocks: &[usize], top: usize) -> usize {
+    blocks.partition_point(|&b| block_end(rows, b) <= top)
+}
+
+/// After a scroll that shows rows `top..bottom`: the current block stays if any of it is in view,
+/// else the first one in view becomes current (so «Block →» acts on what is seen); none in view —
+/// it stays as it was.
+pub fn block_in_view(
+    rows: &[Row],
+    blocks: &[usize],
+    cur: usize,
+    top: usize,
+    bottom: usize,
+) -> usize {
+    let seen = |i: usize| {
+        blocks
+            .get(i)
+            .is_some_and(|&b| b < bottom && block_end(rows, b) > top)
+    };
+    if seen(cur) {
+        return cur;
+    }
+    let i = first_from(rows, blocks, top);
+    if seen(i) { i } else { cur }
+}
+
+/// ↓ (`down`) / ↑ from the current block when rows `top..bottom` are in view: the next / previous
+/// one; with the current one scrolled out of view, the first below / last above the view.
+pub fn step(
+    rows: &[Row],
+    blocks: &[usize],
+    cur: usize,
+    down: bool,
+    top: usize,
+    bottom: usize,
+) -> usize {
+    let Some(last) = blocks.len().checked_sub(1) else {
+        return 0;
+    };
+    let seen = blocks
+        .get(cur)
+        .is_some_and(|&b| b < bottom && block_end(rows, b) > top);
+    if seen {
+        return if down {
+            (cur + 1).min(last)
+        } else {
+            cur.saturating_sub(1)
+        };
+    }
+    let i = first_from(rows, blocks, top); // the first one below the view (none is in it)
+    if down {
+        i.min(last)
+    } else {
+        i.saturating_sub(1)
+    }
+}
+
 /// Copy difference block `block` of the shown `t` to the other side (`to_right`: left → right):
 /// the target's lines of that block are replaced by the source's. Uses the rows on screen (not a
 /// new diff: one cut short by the deadline may align differently). Every other line keeps its
@@ -748,5 +813,32 @@ mod tests {
             0o751
         );
         assert_eq!(fs::read_dir(d.path()).unwrap().count(), 1); // no part file left
+    }
+
+    #[test]
+    fn current_block_follows_the_view() {
+        // Blocks at rows 1..3, 6..7 and 10..11 (between them same lines).
+        let a = "s\nx\nx\ns\ns\ns\nx\ns\ns\ns\nx\n";
+        let b = "s\ny\ny\ns\ns\ns\ny\ns\ns\ns\ny\n";
+        let t = rows(a, b, 100);
+        let (r, bl) = (&t.rows[..], &t.blocks[..]);
+        assert_eq!(bl, [1, 6, 10]);
+        assert_eq!(block_end(r, 1), 3);
+        assert_eq!(block_end(r, 10), 11);
+        // Still partly in view: stays.
+        assert_eq!(block_in_view(r, bl, 0, 2, 5), 0);
+        // Scrolled away: the first in view takes over.
+        assert_eq!(block_in_view(r, bl, 0, 5, 9), 1);
+        assert_eq!(block_in_view(r, bl, 2, 0, 4), 0);
+        // None in view: unchanged.
+        assert_eq!(block_in_view(r, bl, 0, 3, 6), 0);
+        // ↓ / ↑ in view: neighbours, clamped.
+        assert_eq!(step(r, bl, 0, true, 0, 4), 1);
+        assert_eq!(step(r, bl, 0, false, 0, 4), 0);
+        assert_eq!(step(r, bl, 2, true, 9, 11), 2);
+        // The current one (0) out of view, rows 7..10 seen (none there): ↓ first below, ↑ last above.
+        assert_eq!(step(r, bl, 0, true, 7, 10), 2);
+        assert_eq!(step(r, bl, 0, false, 7, 10), 1);
+        assert_eq!(step(r, &[], 0, true, 0, 4), 0);
     }
 }
