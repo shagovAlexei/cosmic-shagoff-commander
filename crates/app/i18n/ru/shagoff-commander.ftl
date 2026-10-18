@@ -448,7 +448,7 @@ diff-unsaved-close = Не сохранено: ещё раз Esc — закрыт
 # Сеть, дополнения
 connect-saved = Сохранённые
 connect-browse = Обзор сети
-connect-browsing = Поиск…
+connect-browsing = Поиск… (остановить)
 connect-none-found = В сети ничего не найдено
 connect-cancelled = Подключение отменено
 

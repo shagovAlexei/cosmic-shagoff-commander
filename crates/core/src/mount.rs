@@ -83,10 +83,11 @@ pub fn network(gio_list: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Browse the local network (gvfs `network:///`).
-pub fn browse() -> Result<Vec<(String, String)>, Error> {
+/// Browse the local network (gvfs `network:///`); `cancel` kills `gio` (`Error::Cancelled`).
+pub fn browse(cancel: &Arc<AtomicBool>) -> Result<Vec<(String, String)>, Error> {
     let attrs = "standard::display-name,standard::target-uri";
-    talk(gio(["list", "-a", attrs, "network:///"]), "").map(|s| network(&s))
+    let cmd = gio(["list", "-a", attrs, "network:///"]);
+    talk_until(cmd, "", Some(cancel)).map(|s| network(&s))
 }
 
 /// Volumes with a unix device and `can_mount=1`, from `gio mount -li`.
