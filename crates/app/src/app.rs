@@ -1286,6 +1286,9 @@ impl App {
                         return self.reveal(side, tab);
                     }
                     Err(e) => {
+                        // An Alt+← / Alt+→ step that failed: history back on the dir shown.
+                        let shown = t.panel.cwd().to_path_buf();
+                        t.history.seat(&shown);
                         let ask = archive::needs_password(&e)
                             .then(|| archive::split_path(&path))
                             .flatten();
@@ -7402,6 +7405,32 @@ mod tests {
         assert!(app.msg().is_some());
         let _ = app.update(Message::StatusClose);
         assert!(app.msg().is_none());
+    }
+
+    #[test]
+    fn regression_alt_left_to_a_deleted_dir_keeps_history_on_the_dir_shown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+        std::fs::create_dir_all(b.join("sub")).unwrap();
+        std::fs::create_dir(&a).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, &a);
+        listed_at(&mut app, 0, &b);
+        std::fs::remove_dir(&a).unwrap();
+        let _ = app.update(Message::Key(Action::HistoryBack));
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: a.clone(),
+            focus: None,
+            result: Err("No such file or directory".into()),
+            space: None,
+        });
+        listed_at(&mut app, 0, &b.join("sub")); // Enter
+        let recent = app.panes[0].active().history.recent();
+        assert_eq!(recent[..2], [b.join("sub"), b.clone()]); // /b is not lost
     }
 
     #[test]

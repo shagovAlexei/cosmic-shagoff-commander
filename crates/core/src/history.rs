@@ -46,6 +46,21 @@ impl History {
         Some(self.items[self.pos].clone())
     }
 
+    /// A step (Alt+← / Alt+→) whose dir could not be read: back on `shown`, the dir still on
+    /// screen (the entry nearest the step), so the next visit cuts "forward" after it, not after
+    /// the dir that failed.
+    pub fn seat(&mut self, shown: &Path) {
+        if self.items.get(self.pos).is_some_and(|p| p == shown) {
+            return;
+        }
+        let near = (0..self.items.len())
+            .filter(|&i| self.items[i] == shown)
+            .min_by_key(|&i| i.abs_diff(self.pos));
+        if let Some(i) = near {
+            self.pos = i;
+        }
+    }
+
     /// Forget everything but the dir the tab is in.
     pub fn clear(&mut self) {
         let current = self.items.get(self.pos).cloned();
@@ -159,5 +174,21 @@ mod tests {
     fn recent_is_unique_newest_first() {
         let h = h(&["/a", "/b", "/a", "/c"]);
         assert_eq!(h.recent(), [PathBuf::from("/c"), "/a".into(), "/b".into()]);
+    }
+
+    #[test]
+    fn regression_failed_step_then_enter_keeps_the_shown_dir() {
+        let mut h = History::default();
+        for p in ["/a", "/b"] {
+            h.visit(Path::new(p));
+        }
+        assert_eq!(h.back(), Some("/a".into())); // /a was deleted: the listing fails
+        h.seat(Path::new("/b")); // still on /b
+        h.visit(Path::new("/b/sub")); // Enter
+        assert_eq!(
+            h.recent(),
+            [PathBuf::from("/b/sub"), "/b".into(), "/a".into()]
+        );
+        assert_eq!(h.back(), Some("/b".into()));
     }
 }
