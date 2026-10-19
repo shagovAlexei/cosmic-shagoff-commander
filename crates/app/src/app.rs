@@ -530,6 +530,8 @@ pub enum Message {
     DiffPrev,
     /// A side was scrolled: (side, x, y); the other one follows.
     DiffScrolled(usize, f32, f32),
+    /// The × on the status message card.
+    StatusClose,
     DiffOpt(dialogs::DiffOpt),
     /// Read both files again (TC "Compare" / rescan); not with unsaved changes.
     DiffReread,
@@ -2626,6 +2628,7 @@ impl App {
             }
             Message::WindowWidth(window, w) if window == self.window_id() => self.win_w = w,
             Message::WindowWidth(..) => {}
+            Message::StatusClose => self.status = None,
             Message::SplitStart => (self.splitting, self.split_from) = (true, None),
             Message::SplitAt(window, x) if self.splitting && window == self.window_id() => {
                 let from = *self.split_from.get_or_insert(x);
@@ -7387,6 +7390,18 @@ mod tests {
             (app.active, app.panes[0].active().error.as_deref()),
             (1, None)
         );
+    }
+
+    #[test]
+    fn status_card_closes_by_its_cross() {
+        let mut app = app_with(Config::default(), State::default());
+        app.say(
+            StatusKind::Error,
+            "a long message that no longer has to fit half a line".into(),
+        );
+        assert!(app.msg().is_some());
+        let _ = app.update(Message::StatusClose);
+        assert!(app.msg().is_none());
     }
 
     #[test]

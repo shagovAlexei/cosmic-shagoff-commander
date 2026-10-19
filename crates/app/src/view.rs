@@ -51,6 +51,53 @@ pub fn lister_window(app: &App, id: cosmic::iced::window::Id) -> Element<'_, Mes
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    let content = main_view(app);
+    match status_popup(app) {
+        // Over the bottom of the panels: clicks elsewhere go through to them.
+        Some(card) => cosmic::iced::widget::stack![
+            content,
+            container(card)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_y(Alignment::End)
+                .padding(8)
+        ]
+        .into(),
+        None => content,
+    }
+}
+
+/// The status message (error, note, "working…") as a card of its own: whole, wrapped, with ×;
+/// it lasts as it did in the status line — until the next action or its result.
+fn status_popup(app: &App) -> Option<Element<'_, Message>> {
+    let s = app.status.as_ref()?;
+    let (class, icon) = match s.kind {
+        StatusKind::Info => (theme::Text::Default, "dialog-information-symbolic"),
+        StatusKind::Busy => (theme::Text::Accent, "process-working-symbolic"),
+        StatusKind::Error => (theme::Text::Custom(destructive), "dialog-error-symbolic"),
+    };
+    let card = row![
+        widget::icon::from_name(icon).size(16),
+        text(s.text.as_str())
+            .size(TEXT)
+            .class(class)
+            .wrapping(Wrapping::WordOrGlyph)
+            .width(Length::Fill),
+        button::icon(widget::icon::from_name("window-close-symbolic"))
+            .on_press(Message::StatusClose),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    Some(
+        container(card)
+            .padding([4, 4, 4, 12])
+            .width(Length::Fill)
+            .class(theme::Container::Dialog(true)) // opaque even in a translucent theme
+            .into(),
+    )
+}
+
+fn main_view(app: &App) -> Element<'_, Message> {
     if let Some(l) = app.lister.as_deref().filter(|l| l.in_place()) {
         return crate::lister::view(l);
     }
@@ -1032,13 +1079,12 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         let totals = container(pane_status(app, side))
             .width(Length::FillPortion(3))
             .clip(true);
-        // Nothing to show (no message, cursor on ".."): the totals take the whole half.
-        let extra = app.status.is_some()
-            || app.panes[side]
-                .active()
-                .panel
-                .current()
-                .is_some_and(|e| e.name != shagoff_core::panel::PARENT);
+        // Nothing to show (cursor on ".."): the totals take the whole half.
+        let extra = app.panes[side]
+            .active()
+            .panel
+            .current()
+            .is_some_and(|e| e.name != shagoff_core::panel::PARENT);
         let line = if side == app.active && extra {
             row![
                 totals,
@@ -1144,24 +1190,8 @@ fn job_line(app: &App) -> Option<Element<'_, Message>> {
     Some(container(line).padding([0, 8]).into())
 }
 
+/// The entry under the cursor (messages are a card of their own: `status_popup`).
 fn window_status(app: &App) -> Element<'_, Message> {
-    if let Some(s) = &app.status {
-        let class = match s.kind {
-            StatusKind::Info => theme::Text::Default,
-            StatusKind::Busy => theme::Text::Accent,
-            StatusKind::Error => theme::Text::Custom(destructive),
-        };
-        return container(
-            text(s.text.as_str())
-                .size(TEXT)
-                .class(class)
-                .wrapping(Wrapping::None)
-                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
-        )
-        .width(Length::Fill)
-        .align_x(Alignment::End)
-        .into();
-    }
     let p = &app.panes[app.active].active().panel;
     let details = p
         .current()
