@@ -6030,6 +6030,29 @@ impl App {
         if old.panel_font != self.config.panel_font {
             self.face = font_named(&self.config.panel_font);
         }
+        // Changed under the open Ctrl+D (by hand, another window): its rows are indices into the
+        // list, so they are rebuilt, the cursor kept on the same entry.
+        if old.hotlist != self.config.hotlist
+            && let Some(Dialog::List {
+                kind: ListKind::Hotlist,
+                items,
+                cursor,
+                ..
+            }) = &self.dialog
+        {
+            let was = items
+                .get(*cursor)
+                .map(|it| (it.label.clone(), it.path.clone()));
+            let at = *cursor;
+            self.hotlist_refresh(at);
+            if let (Some(was), Some(Dialog::List { items, cursor, .. })) = (was, &mut self.dialog)
+                && let Some(i) = items
+                    .iter()
+                    .position(|it| (&it.label, &it.path) == (&was.0, &was.1))
+            {
+                *cursor = i;
+            }
+        }
         if let Some(l) = &mut self.lister
             && l.size != self.config.lister_size()
         {
@@ -8742,6 +8765,30 @@ mod tests {
             }) => items.iter().map(|i| i.path.clone()).collect(),
             _ => panic!("hotlist not open"),
         }
+    }
+
+    #[test]
+    fn regression_hotlist_delete_after_an_outside_change_deletes_the_entry_shown() {
+        let hot = |name: &str, path: &str| HotEntry {
+            name: name.into(),
+            path: path.into(),
+        };
+        let config = Config {
+            hotlist: vec![hot("A", "/a"), hot("B", "/b")],
+            ..Config::default()
+        };
+        let mut app = app_with(config.clone(), State::default());
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let _ = app.update(Message::Key(Action::Down)); // on B
+        // Edited outside meanwhile: an entry added at the top.
+        let edited = Config {
+            hotlist: vec![hot("X", "/x"), hot("A", "/a"), hot("B", "/b")],
+            ..config
+        };
+        let _ = app.update(Message::Config(Box::new(edited)));
+        let _ = app.update(Message::Key(Action::Delete));
+        let left: Vec<&str> = app.config.hotlist.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(left, ["X", "A"]); // B, the one under the cursor, not A
     }
 
     #[test]
