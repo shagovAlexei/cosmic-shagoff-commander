@@ -5745,7 +5745,14 @@ impl App {
                 match ops::plan(sources, target) {
                     Ok(p) => *pairs = p,
                     Err(e) => {
-                        self.say(StatusKind::Error, plan_error(&e));
+                        // Under the error already shown (the job just ended, one dropped before).
+                        let text = match self.status.take() {
+                            Some(s) if s.kind == StatusKind::Error => {
+                                format!("{}\n{}", s.text, plan_error(&e))
+                            }
+                            _ => plan_error(&e),
+                        };
+                        self.say(StatusKind::Error, text);
                         continue;
                     }
                 }
@@ -9180,6 +9187,33 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(copied.exists());
+    }
+
+    #[test]
+    fn regression_every_job_dropped_from_the_queue_says_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.start_job(0, OpKind::Delete, idle_job(), None);
+        for name in ["one", "two"] {
+            std::fs::create_dir(tmp.path().join(name)).unwrap();
+            app.dialog = Some(Dialog::Input {
+                op: InputOp::Copy,
+                side: 0,
+                sources: vec![tmp.path().join(name)],
+                input: tmp.path().join(format!("to-{name}")).display().to_string(),
+            });
+            let _ = app.update(Message::DialogSubmit);
+        }
+        assert_eq!(app.queue.len(), 2);
+        // Each target became a link to its own source meanwhile: a dir into itself, refused.
+        for name in ["one", "two"] {
+            std::os::unix::fs::symlink(name, tmp.path().join(format!("to-{name}"))).unwrap();
+        }
+        let _ = app.finish_job(&Report::default());
+        assert!(app.job.is_none() && app.queue.is_empty());
+        let msg = app.msg().unwrap();
+        assert!(msg.contains("one") && msg.contains("two"), "{msg}");
     }
 
     #[test]
