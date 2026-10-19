@@ -530,8 +530,8 @@ pub enum Message {
     DiffPrev,
     /// A side was scrolled: (side, x, y); the other one follows.
     DiffScrolled(usize, f32, f32),
-    /// The × on the status message card.
-    StatusClose,
+    /// The × on a message card: the window's message (`None`) or a pane's read error.
+    Dismiss(Option<usize>),
     DiffOpt(dialogs::DiffOpt),
     /// Read both files again (TC "Compare" / rescan); not with unsaved changes.
     DiffReread,
@@ -2631,7 +2631,8 @@ impl App {
             }
             Message::WindowWidth(window, w) if window == self.window_id() => self.win_w = w,
             Message::WindowWidth(..) => {}
-            Message::StatusClose => self.status = None,
+            Message::Dismiss(None) => self.status = None,
+            Message::Dismiss(Some(side)) => self.panes[side].active_mut().error = None,
             Message::SplitStart => (self.splitting, self.split_from) = (true, None),
             Message::SplitAt(window, x) if self.splitting && window == self.window_id() => {
                 let from = *self.split_from.get_or_insert(x);
@@ -7403,8 +7404,11 @@ mod tests {
             "a long message that no longer has to fit half a line".into(),
         );
         assert!(app.msg().is_some());
-        let _ = app.update(Message::StatusClose);
+        let _ = app.update(Message::Dismiss(None));
         assert!(app.msg().is_none());
+        app.panes[1].active_mut().error = Some("No such file or directory".into());
+        let _ = app.update(Message::Dismiss(Some(1)));
+        assert!(app.panes[1].active().error.is_none());
     }
 
     #[test]
