@@ -1204,6 +1204,9 @@ impl App {
                 if let Some(task) = self.lister_action(action) {
                     return task;
                 }
+                if action == Action::RunTerminal {
+                    return Task::none(); // not the panel's file from under the viewer
+                }
                 return self.act(self.active, action);
             }
             Message::Key(action) => {
@@ -1351,8 +1354,11 @@ impl App {
                 }
                 // Only the Enter key runs a typed line (the field lost focus to a click); a double
                 // click or quick search's Enter opens the entry.
-                if action == Action::Enter && self.cmd_ready() && !self.cmdline.trim().is_empty() {
-                    return self.cmd_run(false);
+                if matches!(action, Action::Enter | Action::RunTerminal)
+                    && self.cmd_ready()
+                    && !self.cmdline.trim().is_empty()
+                {
+                    return self.cmd_run(action == Action::RunTerminal);
                 }
                 return self.act(self.active, action);
             }
@@ -3613,6 +3619,25 @@ impl App {
             }
             Action::Sort(key) => panel.set_sort(key),
             // The rows on screen belong to the dir being left: entering one would undo the navigation.
+            // Shift+Enter, no line typed: the file under the cursor in the terminal (a dir: Enter).
+            Action::RunTerminal => {
+                let cwd = panel.cwd().to_path_buf();
+                let file = (panel.current())
+                    .filter(|e| e.kind == shagoff_core::listing::Kind::File)
+                    .map(|e| e.name.clone());
+                let Some(name) = file else {
+                    return self.act(side, Action::Enter);
+                };
+                if archive::within(&cwd) {
+                    self.say(StatusKind::Error, fl!("archive-read-only"));
+                    return Task::none();
+                }
+                let prefix = self.terminal_prefix();
+                let line = cmdline::quote(&format!("./{name}"));
+                if let Err(e) = spawn_in(&cmdline::argv(&line, &cwd, Some(&prefix)), &cwd) {
+                    self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
+                }
+            }
             Action::Enter if stepping => {}
             Action::Enter => {
                 if let Some((path, focus)) = panel.enter_path() {
@@ -10077,6 +10102,34 @@ mod tests {
         // `terminal` changed by hand (before the menu existed): it still wins.
         app.config.terminal = vec!["xterm".into(), "-e".into()];
         assert_eq!(app.terminal_prefix(), ["xterm", "-e"]);
+    }
+
+    #[test]
+    fn shift_enter_from_the_panel_runs_the_line_else_enters_a_dir() {
+        let mut app = app_with(Config::default(), State::default());
+        app.config.terminal = vec!["true".into()]; // a harmless "terminal"
+        app.cmdline = "echo hi".into(); // typed, then a click on the panel
+        let _ = app.update(Message::Key(Action::RunTerminal));
+        assert!(app.cmdline.is_empty());
+        assert_eq!(app.commands.first().map(String::as_str), Some("echo hi"));
+        // Nothing typed, the cursor on a dir: Shift+Enter enters it, as Enter.
+        let mut app = files_app(&[]);
+        let t = app.panes[0].active();
+        let (id, cwd) = (t.id, t.panel.cwd().to_path_buf());
+        let _ = app.load(0, cwd.clone(), None);
+        let generation = app.panes[0].active().pending.as_ref().unwrap().0;
+        let mut sub = entry("sub");
+        sub.kind = shagoff_core::listing::Kind::Dir;
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: cwd.clone(),
+            focus: Some("sub".into()),
+            result: Ok(vec![sub]),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::RunTerminal));
+        assert_eq!(pending_path(&app), Some(cwd.join("sub")));
     }
 
     #[test]

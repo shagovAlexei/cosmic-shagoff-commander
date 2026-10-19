@@ -109,6 +109,9 @@ pub enum Action {
     /// panel's path (Ctrl+P), the previous command (Ctrl+E), the history list (Alt+F8).
     CmdName,
     CmdPath,
+    /// Shift+Enter from the panel: the typed line, else the file under the cursor, in the
+    /// external terminal (TC: `cmd /k`).
+    RunTerminal,
     CmdCwd,
     CmdPrevious,
     CmdHistory,
@@ -211,6 +214,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::End, false, false) => Action::End,
             (Named::Enter, false, false) => Action::Enter,
             (Named::Enter, true, false) => Action::CmdName,
+            (Named::Enter, false, true) => Action::RunTerminal,
             (Named::Enter, true, true) => Action::CmdPath,
             (Named::Backspace, false, false) | (Named::PageUp, true, false) => Action::Parent,
             // TC: Ctrl+PgDn enters the dir or archive under the cursor.
@@ -558,13 +562,16 @@ mod tests {
     fn command_line_keys() {
         assert_eq!(named(Named::Enter, CTRL), Some(Action::CmdName));
         assert_eq!(
+            named(Named::Enter, Modifiers::SHIFT),
+            Some(Action::RunTerminal)
+        );
+        assert_eq!(
             named(Named::Enter, CTRL | Modifiers::SHIFT),
             Some(Action::CmdPath)
         );
         assert_eq!(named(Named::F8, ALT), Some(Action::CmdHistory));
         assert_eq!(chr("з", Code::KeyP, CTRL), Some(Action::CmdCwd));
         assert_eq!(chr("e", Code::KeyE, CTRL), Some(Action::CmdPrevious));
-        assert_eq!(named(Named::Enter, Modifiers::SHIFT), None); // the field's own Enter
     }
 
     #[test]
