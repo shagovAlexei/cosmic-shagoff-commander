@@ -350,6 +350,7 @@ lister-image = Картинка (4)
 lister-loading = Чтение…
 lister-info-lines = строк: { $n }, { $size } б
 lister-info = { $size } б
+lister-info-too-big = { $size } б: картинка больше { $limit } б не показывается, только её байты
 lister-info-image = { $w }×{ $h }, { $p }%, { $size } б
 lister-fit = Вписать
 lister-find = Поиск (F7)

@@ -88,7 +88,9 @@ impl Loaded {
     pub fn read(path: &Path, name: &str) -> Result<Self, String> {
         let doc = lister::load(path).map_err(|e| e.to_string())?;
         let text = Text::new(&doc, Encoding::Auto, None);
-        let image = lister::is_image(name).then(|| {
+        // Over `LIMIT` only a window is read: cut bytes do not decode (it opens as hex instead).
+        let whole = doc.start == 0 && doc.end() == doc.total;
+        let image = (whole && lister::is_image(name)).then(|| {
             if name.to_ascii_lowercase().ends_with(".svg") {
                 Image::Svg(widget::svg::Handle::from_memory(doc.bytes.clone()))
             } else {
@@ -343,13 +345,21 @@ impl Lister {
         self.quick.is_none() && self.window.is_none()
     }
 
+    /// A picture too big to show (`LIMIT`): shown as hex, the info line says why.
+    pub fn too_big(&self) -> bool {
+        lister::is_image(&self.name) && self.ok().is_some_and(|l| l.image.is_none())
+    }
+
     pub fn ok(&self) -> Option<&Loaded> {
         self.loaded.as_deref().and_then(|r| r.as_ref().ok())
     }
 
     pub fn set_loaded(&mut self, loaded: Arc<Result<Loaded, String>>) {
         if let Ok(l) = loaded.as_ref() {
-            self.mode = lister::detect(&self.name, l.doc.text());
+            self.mode = match lister::detect(&self.name, l.doc.text()) {
+                Mode::Image if l.image.is_none() => Mode::Hex,
+                m => m,
+            };
             // Not UTF-8: guess the code page, unless one was chosen (A / S / K, the list).
             if self.mode == Mode::Text && !self.chosen {
                 self.encoding = lister::guess(&l.doc.bytes);
@@ -808,6 +818,11 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
                     _ => fl!("lister-info", size = size),
                 }
             }
+            _ if l.too_big() => fl!(
+                "lister-info-too-big",
+                size = shagoff_core::format::size(x.doc.total),
+                limit = shagoff_core::format::size(lister::LIMIT)
+            ),
             _ => fl!(
                 "lister-info",
                 size = shagoff_core::format::size(x.doc.total)
@@ -1055,6 +1070,20 @@ mod tests {
         assert_eq!(l.zoom_image(true), None); // the last step
         l.set_loaded(Arc::new(Loaded::read(&path, "p.bmp")));
         assert_eq!(l.zoom, None); // the next picture opens fitted
+    }
+
+    #[test]
+    fn regression_a_picture_over_the_limit_opens_as_hex_and_says_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("big.png");
+        let f = std::fs::File::create(&path).unwrap();
+        f.set_len(lister::LIMIT + 10).unwrap(); // sparse; only its first 32 MB are read
+        let mut l = Lister::new(0, "big.png".into(), 0, 14);
+        l.set_loaded(Arc::new(Loaded::read(&path, "big.png")));
+        // Was: image mode, an empty field (the cut bytes do not decode), nothing said.
+        assert_eq!(l.mode, Mode::Hex);
+        assert!(l.ok().unwrap().image.is_none());
+        assert!(l.too_big());
     }
 
     fn text(s: &str) -> Lister {
