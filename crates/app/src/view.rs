@@ -67,34 +67,44 @@ pub fn view(app: &App) -> Element<'_, Message> {
     }
 }
 
-/// The status message (error, note, "working…") as a card of its own: whole, wrapped, with ×;
-/// it lasts as it did in the status line — until the next action or its result.
+/// Messages as cards of their own: the window's (error, note, "working…") and each pane's read
+/// error — whole, wrapped, each with its ×; they last as they did in the status line, until the
+/// next action (in that pane) or the result.
 fn status_popup(app: &App) -> Option<Element<'_, Message>> {
-    let s = app.status.as_ref()?;
-    let (class, icon) = match s.kind {
-        StatusKind::Info => (theme::Text::Default, "dialog-information-symbolic"),
-        StatusKind::Busy => (theme::Text::Accent, "process-working-symbolic"),
-        StatusKind::Error => (theme::Text::Custom(destructive), "dialog-error-symbolic"),
-    };
-    let card = row![
-        widget::icon::from_name(icon).size(16),
-        text(s.text.as_str())
-            .size(TEXT)
-            .class(class)
-            .wrapping(Wrapping::WordOrGlyph)
-            .width(Length::Fill),
-        button::icon(widget::icon::from_name("window-close-symbolic"))
-            .on_press(Message::StatusClose),
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center);
-    Some(
-        container(card)
+    let card = |kind: StatusKind, msg: &str, who: Option<usize>| -> Element<'_, Message> {
+        let (class, icon) = match kind {
+            StatusKind::Info => (theme::Text::Default, "dialog-information-symbolic"),
+            StatusKind::Busy => (theme::Text::Accent, "process-working-symbolic"),
+            StatusKind::Error => (theme::Text::Custom(destructive), "dialog-error-symbolic"),
+        };
+        let line = row![
+            widget::icon::from_name(icon).size(16),
+            text(msg.to_string())
+                .size(TEXT)
+                .class(class)
+                .wrapping(Wrapping::WordOrGlyph)
+                .width(Length::Fill),
+            button::icon(widget::icon::from_name("window-close-symbolic"))
+                .on_press(Message::Dismiss(who)),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        container(line)
             .padding([4, 4, 4, 12])
             .width(Length::Fill)
             .class(theme::Container::Dialog(true)) // opaque even in a translucent theme
-            .into(),
-    )
+            .into()
+    };
+    let mut cards: Vec<Element<'_, Message>> = Vec::new();
+    for side in 0..2 {
+        if let Some(e) = &app.panes[side].active().error {
+            cards.push(card(StatusKind::Error, e, Some(side)));
+        }
+    }
+    if let Some(s) = &app.status {
+        cards.push(card(s.kind, &s.text, None));
+    }
+    (!cards.is_empty()).then(|| widget::Column::with_children(cards).spacing(6).into())
 }
 
 fn main_view(app: &App) -> Element<'_, Message> {
@@ -1005,7 +1015,7 @@ fn panel_cell(s: String, (font, size): (Font, u16)) -> widget::Text<'static, cos
         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
 }
 
-/// A pane's part of the status line: quick search / filter field, read error, or totals.
+/// A pane's part of the status line: quick search / filter field, or totals (a read error is a card).
 fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
     let p = app.panes[side].active();
     match (&app.search, &p.error) {
@@ -1027,16 +1037,8 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
             .align_y(Alignment::Center)
             .into()
         }
-        (_, Some(e)) => text(e.clone())
-            .size(TEXT)
-            .wrapping(Wrapping::None)
-            .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
-            .class(theme::Text::Custom(|t| cosmic::iced::widget::text::Style {
-                color: Some(t.cosmic().destructive_color().into()),
-                ..Default::default()
-            }))
-            .into(),
-        (_, None) => {
+        // A read error is a card of its own (`status_popup`): the totals stay.
+        _ => {
             let (t, m) = (p.panel.totals(), p.panel.marked_totals());
             let size = |n| match app.config.human_sizes() {
                 true => human(n),
