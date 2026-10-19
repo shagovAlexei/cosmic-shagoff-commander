@@ -5135,6 +5135,45 @@ impl App {
             return Task::none();
         }
         let side = s.side;
+        // One side inside an archive: what comes out is extracted, what goes in added, each a
+        // job of its own (queued).
+        if let Some(ap) = shagoff_core::sync::archive_plan(&s.left, &s.right, &s.rows) {
+            self.dialog = None;
+            let mut tasks = Vec::new();
+            if let Some((archive, inner, names, dest)) = ap.extract {
+                let job = Job::Extract {
+                    archive,
+                    inner,
+                    names,
+                    dest,
+                };
+                tasks.push(self.start_job(side, OpKind::Extract, job, None));
+            }
+            for (archive, inner, sources) in ap.add {
+                let change = Change::Add {
+                    sources,
+                    inner,
+                    move_sources: false,
+                };
+                let job = Job::Repack { archive, change };
+                tasks.push(self.start_job(side, OpKind::Repack, job, None));
+            }
+            if let Some((archive, entries)) = ap.delete_in {
+                let job = Job::Repack {
+                    archive,
+                    change: Change::Delete(entries),
+                };
+                tasks.push(self.start_job(side, OpKind::Repack, job, None));
+            }
+            if !ap.delete_disk.is_empty() {
+                let job = Job::Delete {
+                    paths: ap.delete_disk,
+                    permanent: false,
+                };
+                tasks.push(self.start_job(side, OpKind::Delete, job, None));
+            }
+            return Task::batch(tasks);
+        }
         self.dialog = None;
         let job = Job::Sync {
             to_right: p.to_right,
@@ -5977,9 +6016,9 @@ impl App {
             // Shift+F5 inside one copies from the archive into itself.
             Action::CopySame | Action::NewFile => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
-            Action::Pack | Action::Unpack | Action::SyncDirs | Action::Link => {
-                inside(side) || inside(1 - side)
-            }
+            Action::Pack | Action::Unpack | Action::Link => inside(side) || inside(1 - side),
+            // One side in an archive syncs (158): jobs extract from it and add to it.
+            Action::SyncDirs => inside(side) && inside(1 - side),
             _ => false,
         }
     }
@@ -12410,9 +12449,13 @@ mod tests {
     }
 
     #[test]
-    fn sync_with_archive_panel_is_read_only() {
+    fn sync_with_an_archive_panel_opens_with_two_it_does_not() {
         let (_tmp, mut app, a) = zip_setup();
         listed_at(&mut app, 1, &a);
+        let _ = app.update(Message::Key(Action::SyncDirs));
+        assert!(matches!(app.dialog, Some(Dialog::Sync(_))));
+        app.dialog = None;
+        listed_at(&mut app, 0, &a.join("d"));
         let _ = app.update(Message::Key(Action::SyncDirs));
         assert!(app.dialog.is_none());
         assert!(app.msg().is_some());
