@@ -198,16 +198,17 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     let p = tabs.active();
     let active = app.active == side;
 
+    let cwd = app.shown(p.panel.cwd());
     let title = match &p.results {
-        Some(_) if p.branch => fl!("branch-title", dir = p.panel.cwd().display().to_string()),
-        Some(_) => fl!("find-results", dir = p.panel.cwd().display().to_string()),
-        None => p.panel.cwd().display().to_string(),
+        Some(_) if p.branch => fl!("branch-title", dir = cwd.display().to_string()),
+        Some(_) => fl!("find-results", dir = cwd.display().to_string()),
+        None => cwd.display().to_string(),
     };
     let skin = app.config.skin;
     let path: Element<'_, Message> = match (skin, &p.results) {
-        (Skin::Modern, None) => breadcrumbs(side, p.panel.cwd(), active),
+        (Skin::Modern, None) => breadcrumbs(side, &cwd, active),
         // TC: the plain path line, each part clickable.
-        (Skin::Classic, None) => container(path_parts(side, p.panel.cwd()))
+        (Skin::Classic, None) => container(path_parts(side, &cwd))
             .padding([2, 6])
             .width(Length::Fill)
             .class(bar_style(active))
@@ -1126,10 +1127,8 @@ pub fn footer(app: &App) -> Element<'_, Message> {
 
 /// TC `path>`: the active panel's dir and the command field.
 fn command_line(app: &App) -> Element<'_, Message> {
-    let cwd = app.panes[app.active]
-        .active()
-        .panel
-        .cwd()
+    let cwd = app
+        .shown(app.panes[app.active].active().panel.cwd())
         .display()
         .to_string();
     // A deep path must leave the field room: it is cut in the middle.
