@@ -104,9 +104,6 @@ pub struct Tab {
     counting: Arc<AtomicBool>,
     /// Stops the Ctrl+B read under way (Esc, the dir left).
     branch_stop: Arc<AtomicBool>,
-    /// Restored at startup, not read yet: its dir may be gone (it goes up to one that is there,
-    /// found by the background read — never a `stat` on the UI thread, a dead mount would hang).
-    restored: bool,
 }
 
 /// A closed tab's background reads (branch, dir sizes) stop with it.
@@ -145,7 +142,6 @@ impl Tab {
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
-            restored: false,
         }
     }
 
@@ -210,7 +206,6 @@ impl Tab {
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
-            restored: false,
         }
     }
 }
@@ -1080,7 +1075,6 @@ impl App {
                 t.brief = !t.thumbs && saved.brief.get(i).copied().unwrap_or(false);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
                 t.history = saved.history.get(i).cloned().unwrap_or_default();
-                t.restored = true;
             }
             if let Some(l) = extra {
                 tabs.open_after(app.new_tab(l));
@@ -3101,7 +3095,10 @@ impl App {
         };
         let tab = t.id;
         let (show_hidden, sort) = (t.panel.show_hidden(), t.panel.sort());
-        let resolve = std::mem::take(&mut t.restored).then(|| self.home.clone());
+        // The dir shown read again (restored at startup, a watcher event, Ctrl+R) and gone: up to
+        // one that is there, as TC. Found by the background read — never a `stat` on the UI
+        // thread, a dead mount would hang it. A step elsewhere into a gone dir stays an error.
+        let resolve = (path == t.panel.cwd()).then(|| self.home.clone());
         Task::perform(
             async move {
                 let (result, space, path) = tokio::task::spawn_blocking(move || {
@@ -7553,7 +7550,6 @@ mod tests {
         // Not looked at on the UI thread (a dead mount would hang the start): the tab's first
         // read goes up to an existing dir (`session::existing_dir`, in the background).
         assert_eq!(cwds(&app, 1), [tmp.path().join("gone")]);
-        assert!(!app.panes[1].active().restored); // its read is under way, resolving
         assert_eq!(app.active, 1);
     }
 

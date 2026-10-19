@@ -27,12 +27,19 @@ pub fn watch(side: usize, dir: PathBuf) -> Subscription<Message> {
         let (side, dir) = (*side, dir.clone());
         cosmic::iced::stream::channel(1, async move |mut out| {
             let (tx, mut rx) = mpsc::unbounded();
-            let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if res.is_ok_and(|e| relevant(&e.kind)) {
-                    let _ = tx.unbounded_send(());
-                }
+            // inotify_add_watch hangs on a dead network mount: not on an executor thread.
+            let path = dir.clone();
+            let watcher = tokio::task::spawn_blocking(move || {
+                notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                    if res.is_ok_and(|e| relevant(&e.kind)) {
+                        let _ = tx.unbounded_send(());
+                    }
+                })
+                .and_then(|mut w| w.watch(&path, RecursiveMode::NonRecursive).map(|()| w))
             })
-            .and_then(|mut w| w.watch(&dir, RecursiveMode::NonRecursive).map(|()| w));
+            .await
+            .map_err(|e| notify::Error::generic(&e.to_string()))
+            .flatten();
             // Kept alive for the life of the stream; dropping it stops the watch.
             let _watcher = match watcher {
                 Ok(w) => w,
