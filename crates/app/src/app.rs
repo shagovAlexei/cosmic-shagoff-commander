@@ -61,6 +61,9 @@ pub struct Hold {
     pub row: Option<usize>,
     /// Held long enough: the release opens the menu.
     pub armed: bool,
+    /// Dragged onto other rows (TC): the mark they all get and the last row reached. The release
+    /// then neither toggles nor opens the menu.
+    pub drag: Option<(bool, usize)>,
 }
 
 /// The viewer window's title bar.
@@ -487,6 +490,8 @@ pub enum Message {
     RightHeld(u64),
     /// The right button came up, anywhere.
     RightUp,
+    /// The pointer onto row `i` of a pane while the right button is held there (`right_hold`).
+    RowEnter(usize, usize),
     /// A button of one pane (column header, `\\`, `..`): that pane becomes active and acts.
     PaneKey(usize, Action),
     /// side, scroll offset y, viewport height (of the active tab)
@@ -1365,9 +1370,34 @@ impl App {
                     return self.right_press(side, None);
                 }
             }
+            Message::RowEnter(side, i) => {
+                let Some(h) = &mut self.right_hold else {
+                    return Task::none();
+                };
+                let t = self.panes[side].active_mut();
+                let Some(start) = h.row.filter(|_| h.side == side && h.tab == t.id) else {
+                    return Task::none();
+                };
+                let (on, last) = match h.drag {
+                    Some(d) => d,
+                    None if i == start => return Task::none(),
+                    // Off the pressed row: a drag, marking as that row would have become.
+                    None => {
+                        let e = t.panel.entries().get(start);
+                        (!e.is_some_and(|e| t.panel.is_marked(e)), start)
+                    }
+                };
+                h.drag = Some((on, i));
+                // From the last row reached: a quick move skips rows' enter events.
+                t.panel.mark_range(last, i, on);
+                t.panel.set_cursor(i);
+                let tab = t.id;
+                return self.reveal(side, tab);
+            }
             Message::RightHeld(n) => {
                 if let Some(h) = &mut self.right_hold
                     && h.n == n
+                    && h.drag.is_none()
                 {
                     h.armed = true;
                     self.ctx_entry = h.row.is_some();
@@ -1377,6 +1407,9 @@ impl App {
                 let Some(h) = self.right_hold.take() else {
                     return Task::none();
                 };
+                if h.drag.is_some() {
+                    return Task::none(); // marked while dragging: done
+                }
                 let t = self.panes[h.side].active_mut();
                 // Only where it was pressed: not after a tab switch, or with the cursor moved.
                 if t.id != h.tab || h.row.is_none_or(|r| r != t.panel.cursor()) {
@@ -6757,6 +6790,7 @@ impl App {
             tab,
             row,
             armed: false,
+            drag: None,
         });
         Task::perform(async { tokio::time::sleep(HOLD).await }, move |()| {
             cosmic::Action::App(Message::RightHeld(n))
@@ -10973,6 +11007,40 @@ mod tests {
         let _ = app.update(Message::RightEmpty(1));
         assert!(!app.ctx_entry);
         assert_eq!(app.active, 1);
+    }
+
+    #[test]
+    fn right_drag_marks_the_rows_passed_as_tc() {
+        let mut app = files_app(&["a", "b", "c", "d", "e"]); // .., a, b, c, d, e
+        let names = |app: &App| -> Vec<String> {
+            let p = &app.panes[0].active().panel;
+            (p.entries().iter())
+                .filter(|e| p.is_marked(e))
+                .map(|e| e.name.clone())
+                .collect()
+        };
+        let _ = app.update(Message::RightClick(0, 1)); // on "a"
+        let _ = app.update(Message::RowEnter(0, 1)); // still on it: nothing yet
+        assert!(names(&app).is_empty());
+        let _ = app.update(Message::RowEnter(0, 2));
+        let _ = app.update(Message::RowEnter(0, 4)); // a quick move skips "c": marked too
+        assert_eq!(names(&app), ["a", "b", "c", "d"]);
+        assert_eq!(cursor_name(&app), "d");
+        let n = app.right_hold.unwrap().n;
+        let _ = app.update(Message::RightHeld(n)); // held long while dragging: no menu
+        assert!(!app.right_hold.unwrap().armed);
+        let _ = app.update(Message::RightUp); // no toggle on release
+        assert_eq!(names(&app), ["a", "b", "c", "d"]);
+        // From a marked row: the drag unmarks.
+        let _ = app.update(Message::RightClick(0, 3));
+        let _ = app.update(Message::RowEnter(0, 2));
+        let _ = app.update(Message::RightUp);
+        assert_eq!(names(&app), ["a", "d"]);
+        // Into the other pane: not this drag's rows.
+        let _ = app.update(Message::RightClick(0, 5));
+        let _ = app.update(Message::RowEnter(1, 0));
+        let _ = app.update(Message::RightUp);
+        assert_eq!(names(&app), ["a", "d", "e"]); // a plain right click on "e"
     }
 
     #[test]

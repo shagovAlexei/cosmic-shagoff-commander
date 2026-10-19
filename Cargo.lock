@@ -4538,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-commander"
-version = "0.62.13"
+version = "0.63.0"
 dependencies = [
  "i18n-embed",
  "i18n-embed-fl",
@@ -4559,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-core"
-version = "0.62.13"
+version = "0.63.0"
 dependencies = [
  "bzip2",
  "chardetng",

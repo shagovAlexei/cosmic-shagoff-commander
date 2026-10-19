@@ -24,17 +24,21 @@ pub struct DragSource<'a, Message, D> {
     content: Box<dyn Fn() -> D + 'a>,
     /// What follows the pointer.
     icon: Box<dyn Fn() -> Element<'static, ()> + 'a>,
+    /// The right button starts a drag too (not while it marks files, TC).
+    right: bool,
     /// `true`: started with the right button.
     on_start: Box<dyn Fn(bool) -> Message + 'a>,
     on_end: Message,
 }
 
+#[allow(clippy::too_many_arguments)] // libcosmic's `dnd_source` arguments plus `right`
 pub fn drag_source<'a, Message: 'static, D>(
     child: impl Into<Element<'a, Message>>,
     window: window::Id,
     action: DndAction,
     content: impl Fn() -> D + 'a,
     icon: impl Fn() -> Element<'static, ()> + 'a,
+    right: bool,
     on_start: impl Fn(bool) -> Message + 'a,
     on_end: Message,
 ) -> DragSource<'a, Message, D> {
@@ -45,6 +49,7 @@ pub fn drag_source<'a, Message: 'static, D>(
         window,
         content: Box::new(content),
         icon: Box::new(icon),
+        right,
         on_start: Box::new(on_start),
         on_end,
     }
@@ -131,7 +136,9 @@ impl<Message: Clone + 'static, D: AsMimeTypes + Send + 'static> Widget<Message, 
             Event::Mouse(mouse::Event::ButtonPressed(
                 b @ (mouse::Button::Left | mouse::Button::Right),
             )) => {
-                if let Some(p) = cursor.position_over(layout.bounds()) {
+                if let Some(p) = cursor.position_over(layout.bounds())
+                    && (*b == mouse::Button::Left || self.right)
+                {
                     let right = *b == mouse::Button::Right;
                     state.pressed = Some((p, right));
                     if !right {

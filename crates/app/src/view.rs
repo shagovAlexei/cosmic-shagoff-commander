@@ -454,7 +454,7 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
         // While a header edge is dragged, rows must not take the pointer's moves (a drag
         // source captures them, and the pane follows the edge through them).
         list = list.push(if app.col_drag.is_none() {
-            dnd_row(app.window_id(), side, p, i, &marked, inner, row)
+            dnd_row(app, side, p, i, &marked, inner, row)
         } else {
             row
         });
@@ -469,12 +469,7 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
 
 /// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
 fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {
-    let (skin, hover, window, scheme) = (
-        app.config.skin,
-        app.drop_hover,
-        app.window_id(),
-        &app.scheme,
-    );
+    let (skin, hover, scheme) = (app.config.skin, app.drop_hover, &app.scheme);
     let row_h = app.row_h();
     let font = app.panel_font();
     let (entries, cursor) = (p.panel.entries(), p.panel.cursor());
@@ -507,11 +502,8 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
                     (i - c * rows) % 2 == 1,
                     scheme.paint(),
                 ));
-            let cell = mouse_area(cell)
-                .on_press(Message::Click(side, i))
-                .on_right_press(Message::RightClick(side, i))
-                .on_double_click(Message::DoubleClick(side, i));
-            list = list.push(dnd_row(window, side, p, i, &marked, inner, cell.into()));
+            let cell = row_area(app, side, i, cell.into());
+            list = list.push(dnd_row(app, side, p, i, &marked, inner, cell));
         }
         grid = grid.push(container(list).width(Length::FillPortion(1)).clip(true));
     }
@@ -579,19 +571,8 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
                     false,
                     scheme.paint(),
                 ));
-            let cell = mouse_area(cell)
-                .on_press(Message::Click(side, i))
-                .on_right_press(Message::RightClick(side, i))
-                .on_double_click(Message::DoubleClick(side, i));
-            line = line.push(dnd_row(
-                app.window_id(),
-                side,
-                p,
-                i,
-                &marked,
-                inner,
-                cell.into(),
-            ));
+            let cell = row_area(app, side, i, cell.into());
+            line = line.push(dnd_row(app, side, p, i, &marked, inner, cell));
         }
         list = list.push(line);
     }
@@ -936,18 +917,31 @@ fn file_row<'a>(
             i % 2 == 1,
             app.scheme.paint(),
         ));
-    mouse_area(row)
+    row_area(app, side, i, row.into())
+}
+
+/// A row's clicks; while the right button is held in this pane, its entering too (drag marking).
+fn row_area<'a>(
+    app: &App,
+    side: usize,
+    i: usize,
+    row: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let area = mouse_area(row)
         .on_press(Message::Click(side, i))
         .on_right_press(Message::RightClick(side, i))
-        .on_double_click(Message::DoubleClick(side, i))
-        .into()
+        .on_double_click(Message::DoubleClick(side, i));
+    match app.right_hold.is_some_and(|h| h.side == side) {
+        true => area.on_enter(Message::RowEnter(side, i)).into(),
+        false => area.into(),
+    }
 }
 
 /// A row can be dragged (the marked files if it is one of them, TC); a dir row also takes drops.
 /// `marked`: the pane's marked files, gathered once per frame and only if a marked row is shown.
 /// `inner`: the pane is inside an archive (its rows go only to our panes).
 fn dnd_row<'a>(
-    window: cosmic::iced::window::Id,
+    app: &App,
     side: usize,
     p: &'a Tab,
     i: usize,
@@ -977,7 +971,9 @@ fn dnd_row<'a>(
                 fl!("drag-items", n = n),
             ),
         };
-        crate::clip::drag(row, paths, inner, window, icon)
+        // The right button marks (TC): it does not drag then.
+        let right = !app.config.right_marks;
+        crate::clip::drag(row, paths, inner, app.window_id(), right, icon)
     };
     // A dir or an archive file (packed into it, as TC). The path itself, not the row number: a
     // rescan before the drop may move the rows.
