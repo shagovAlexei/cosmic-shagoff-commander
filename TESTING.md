@@ -1010,7 +1010,7 @@
 
 ### Ошибка записи настроек видна (137)
 
-- [ ] `chmod a-w ~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1`; Ctrl+H — скрытые переключились, карточка «Настройки не сохранены: …»; то же для ширины столбцов, Ctrl+D «Добавить», настроек (Ctrl+,). После — `chmod u+w` того же каталога
+- [x] `chmod a-w ~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1`; Ctrl+H — скрытые переключились, карточка «Настройки не сохранены: …»; то же для ширины столбцов, Ctrl+D «Добавить», настроек (Ctrl+,). После — `chmod u+w` того же каталога
 
 ## Регрессионные тесты
 
