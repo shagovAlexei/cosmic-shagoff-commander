@@ -1777,7 +1777,7 @@ fn pack_one(
             Err(false) => return Packed::Dropped,
         };
         let outcome = Packer::new(f, w, password)
-            .and_then(|p| write_archive(p, base, sources, dest, &part, h));
+            .and_then(|p| write_archive(p, base, sources, dest, &part, h, &Default::default()));
         match outcome {
             Ok(Some(skipped)) => {
                 return match place(&part, dest, policy, h) {
@@ -1802,7 +1802,54 @@ fn pack_one(
     }
 }
 
+/// Zip only, `repack`'s fast way: a new zip at `dest` with the entries of `archive` that `keep`
+/// names — raw, neither unpacked nor packed again; renamed where the name differs — then what is
+/// under `base`, written as `pack` writes it (dirs the kept entries have already left out).
+/// `Ok(Some(skipped))`, `Ok(None)` = cancelled.
+pub fn zip_rewrite(
+    archive: &Path,
+    dest: &Path,
+    keep: &dyn Fn(&str) -> Option<String>,
+    base: &Path,
+    h: &mut dyn Handler,
+) -> io::Result<Option<bool>> {
+    let mut src = zip::ZipArchive::new(File::open(archive)?)?;
+    let mut z = zip::ZipWriter::new(File::create_new(dest)?);
+    let mut have = std::collections::HashSet::new();
+    for i in 0..src.len() {
+        if h.cancelled() {
+            return Ok(None);
+        }
+        let e = src.by_index_raw(i)?;
+        let Some(name) = keep(e.name()) else {
+            continue;
+        };
+        for (at, _) in name.match_indices('/') {
+            have.insert(name[..=at].to_string());
+        }
+        if name == e.name() {
+            z.raw_copy_file(e)?;
+        } else {
+            z.raw_copy_file_rename(e, &name)?;
+        }
+        have.insert(name);
+    }
+    let sources: Vec<PathBuf> = (fs::read_dir(base)?)
+        .map(|e| e.map(|e| e.path()))
+        .collect::<io::Result<_>>()?;
+    write_archive(
+        Packer::Zip(Box::new(z), None),
+        base,
+        &sources,
+        dest,
+        dest,
+        h,
+        &have,
+    )
+}
+
 /// Write the archive into `part`. `Ok(Some(skipped))` = written; `Ok(None)` = cancelled.
+/// `have`: zip names already written (`zip_rewrite`): those dirs are not written again.
 fn write_archive(
     mut p: Packer,
     base: &Path,
@@ -1810,6 +1857,7 @@ fn write_archive(
     dest: &Path,
     part: &Path,
     h: &mut dyn Handler,
+    have: &std::collections::HashSet<String>,
 ) -> io::Result<Option<bool>> {
     let mut skip = vec![];
     for p in [part, dest] {
@@ -1847,7 +1895,12 @@ fn write_archive(
             }
         }
         if m.is_dir() {
-            p.dir(rel, m)?;
+            if !rel
+                .to_str()
+                .is_some_and(|r| have.contains(&format!("{r}/")))
+            {
+                p.dir(rel, m)?;
+            }
         } else if m.file_type().is_symlink() {
             let target = fs::read_link(path)?;
             skipped |= !p.symlink(rel, &target, m)?;

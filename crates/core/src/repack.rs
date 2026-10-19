@@ -2,8 +2,8 @@
 //! change the files on disk, pack them again in the same format and rename over the original.
 //! The original is untouched until the new one is complete, so cancel or an error leaves it as it
 //! was. Every format works the same way and conflicts, errors and progress come from `unpack`,
-//! `ops::transfer` and `pack`.
-// ponytail: rewrites the whole archive; raw-copy zip entries if big archives get slow.
+//! `ops::transfer` and `pack`. A zip (156) is faster: its entries are copied over raw, only
+//! the change is written (`rewrite_zip`); where a question could come up it goes the whole way.
 
 use crate::archive::{self, Format};
 use crate::ops::{self, ErrorChoice, Handler, Method, Report};
@@ -73,7 +73,20 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
             return report;
         }
     };
-    let outcome = rewrite(&real, format, &name, &staging, change, h);
+    let fast = (format == Format::Zip)
+        .then(|| rewrite_zip(&real, &name, &staging, change, h))
+        .flatten();
+    let outcome = match fast {
+        Some(outcome) => outcome,
+        None => {
+            // A try that gave up leaves its files behind: the whole way starts clean.
+            let _ = fs::remove_dir_all(&staging);
+            match retry(h, archive, || fs::create_dir(&staging)) {
+                Ok(()) => rewrite(&real, format, &name, &staging, change, h),
+                Err(cancel) => Err(cancel),
+            }
+        }
+    };
     let _ = fs::remove_dir_all(&staging); // never follows symlinks
     match outcome {
         // Paths as the caller knows them (through the link, if any).
@@ -213,10 +226,23 @@ fn rewrite(
             "some entries can't be packed again; the archive is left as it was",
         )?;
     }
+    finish(archive, &new, change, done, &copies, h)
+}
+
+/// The new archive over the old one (its permissions kept); with F6 into it, the sources that
+/// went in whole deleted.
+fn finish(
+    archive: &Path,
+    new: &Path,
+    change: &Change,
+    done: Vec<PathBuf>,
+    copies: &[(PathBuf, PathBuf)],
+    h: &mut dyn Handler,
+) -> Result<Vec<PathBuf>, bool> {
     retry(h, archive, || {
         let perms = fs::metadata(archive)?.permissions();
-        fs::set_permissions(&new, perms)?;
-        fs::rename(&new, archive)
+        fs::set_permissions(new, perms)?;
+        fs::rename(new, archive)
     })?;
     if let Change::Add {
         move_sources: true, ..
@@ -244,6 +270,138 @@ fn rewrite(
         ops::delete_kept(&sources, &mut kept, h);
     }
     Ok(done)
+}
+
+/// The names of a zip's entries; `None` when one is encrypted, a link or there twice — those go
+/// the whole way (a password to write with, a link to keep a link, a name to keep apart).
+fn zip_names(archive: &Path) -> io::Result<Option<Vec<String>>> {
+    let mut z = zip::ZipArchive::new(fs::File::open(archive)?)?;
+    let mut names = Vec::with_capacity(z.len());
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..z.len() {
+        let e = z.by_index_raw(i)?;
+        if e.encrypted() || e.is_symlink() || !seen.insert(e.name().to_string()) {
+            return Ok(None);
+        }
+        names.push(e.name().to_string());
+    }
+    Ok(Some(names))
+}
+
+/// A zip name is `p` or under it (`p/`, `p/…`).
+fn under(name: &str, p: &str) -> bool {
+    name.strip_prefix(p)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// A zip, the fast way: its entries copied over raw (`archive::zip_rewrite`), only the change
+/// written. `None`: not for this one — encrypted or link entries, a name already taken (a
+/// conflict to ask about), an entry not there (an error to show): the whole rewrite does it.
+fn rewrite_zip(
+    archive: &Path,
+    name: &str,
+    staging: &Path,
+    change: &Change,
+    h: &mut dyn Handler,
+) -> Option<Result<Vec<PathBuf>, bool>> {
+    let names = zip_names(archive).ok()??;
+    let s = |p: &Path| p.to_str().map(|s| s.trim_end_matches('/').to_string());
+    let exists = |p: &str| exists_in(&names, p);
+    let is_dir = |p: &str| p.is_empty() || names.iter().any(|n| n.starts_with(&format!("{p}/")));
+    let root = staging.join("t");
+    fs::create_dir(&root).ok()?;
+    let mut keep: Keep = Box::new(|n| Some(n.to_string()));
+    let mut copies = Vec::new();
+    let done = match change {
+        Change::Add { sources, inner, .. } => {
+            let dir = s(inner)?;
+            // As `apply`: one source to a path that is no dir there gets that name.
+            let slash = inner.as_os_str().as_encoded_bytes().ends_with(b"/");
+            let named = !slash && sources.len() == 1 && !is_dir(&dir);
+            let taken = match named {
+                true => exists(&dir),
+                false => (sources.iter()).any(|src| {
+                    src.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_none_or(|n| exists(format!("{dir}/{n}").trim_start_matches('/')))
+                }),
+            };
+            if taken {
+                return None;
+            }
+            if !dir.is_empty() && is_dir(&dir) {
+                fs::create_dir_all(inside(&root, Path::new(&dir), true).ok()?).ok()?;
+            }
+            apply(archive, &root, change, &mut copies, h)
+        }
+        Change::Mkdir(d) => {
+            if exists(&s(d)?) {
+                return None;
+            }
+            apply(archive, &root, change, &mut copies, h)
+        }
+        Change::Replace { entry, .. } => {
+            let e = s(entry)?;
+            if !names.contains(&e) {
+                return None;
+            }
+            if let Some(parent) = entry.parent().filter(|p| !p.as_os_str().is_empty()) {
+                fs::create_dir_all(inside(&root, parent, true).ok()?).ok()?;
+            }
+            keep = Box::new(move |n| (n != e).then(|| n.to_string()));
+            apply(archive, &root, change, &mut copies, h)
+        }
+        Change::Delete(entries) => {
+            let gone: Vec<String> = entries.iter().map(|e| s(e)).collect::<Option<_>>()?;
+            if !gone.iter().all(|g| !g.is_empty() && exists(g)) {
+                return None;
+            }
+            keep = Box::new(move |n| (!gone.iter().any(|g| under(n, g))).then(|| n.to_string()));
+            Ok(entries.iter().map(|e| archive.join(e)).collect())
+        }
+        Change::Rename(pairs) => {
+            let mut now = names.clone();
+            for (from, to) in pairs {
+                let (f, t) = (s(from)?, s(to)?);
+                if f.is_empty() || t.is_empty() || !exists_in(&now, &f) || exists_in(&now, &t) {
+                    return None;
+                }
+                for n in &mut now {
+                    if let Some(rest) = n.strip_prefix(f.as_str()).filter(|_| under(n, &f)) {
+                        *n = format!("{t}{rest}");
+                    }
+                }
+            }
+            let map: std::collections::HashMap<String, String> =
+                names.iter().cloned().zip(now).collect();
+            keep = Box::new(move |n| map.get(n).cloned());
+            Ok(vec![archive.to_path_buf()])
+        }
+    };
+    let done = match done {
+        Ok(d) if !d.is_empty() => d,
+        Ok(_) => return Some(Err(false)),
+        Err(cancel) => return Some(Err(cancel)),
+    };
+    let new = staging.join(name);
+    let written = match archive::zip_rewrite(archive, &new, &*keep, &root, h) {
+        Ok(Some(false)) => Ok(()),
+        Ok(Some(true)) => give_up(
+            h,
+            archive,
+            "some entries can't be packed again; the archive is left as it was",
+        ),
+        Ok(None) => Err(true),
+        Err(e) => Err(h.error(archive, &e) == ErrorChoice::Cancel),
+    };
+    Some(written.and_then(|()| finish(archive, &new, change, done, &copies, h)))
+}
+
+/// A zip entry's new name, `None`: left out.
+type Keep = Box<dyn Fn(&str) -> Option<String>>;
+
+fn exists_in(names: &[String], p: &str) -> bool {
+    names.iter().any(|n| under(n, p))
 }
 
 /// Say why the archive stays unchanged; always `Err` (cancelled or given up).
@@ -467,6 +625,83 @@ mod tests {
         }
         v.sort();
         v
+    }
+
+    /// Each entry's (name, compression method), in order.
+    fn methods(a: &Path) -> Vec<(String, zip::CompressionMethod)> {
+        let mut z = zip::ZipArchive::new(fs::File::open(a).unwrap()).unwrap();
+        (0..z.len())
+            .map(|i| {
+                let e = z.by_index_raw(i).unwrap();
+                (e.name().to_string(), e.compression())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn zip_entries_are_copied_over_raw_and_only_the_change_is_written() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut w = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        w.add_directory("docs/", stored).unwrap();
+        w.start_file("docs/old.txt", stored).unwrap();
+        io::Write::write_all(&mut w, b"OLD").unwrap();
+        w.start_file("keep.txt", stored).unwrap();
+        io::Write::write_all(&mut w, b"K").unwrap();
+        w.finish().unwrap();
+        let new = d.path().join("new.txt");
+        fs::write(&new, "N").unwrap();
+        let h = &mut Script::default();
+        let add = Change::Add {
+            sources: vec![new.clone()],
+            inner: PathBuf::from("docs"),
+            move_sources: false,
+        };
+        assert!(!modify(&a, &add, h).cancelled);
+        let stored_m = zip::CompressionMethod::Stored;
+        // The old entries as they were (Stored: the whole way packs everything Deflated), "docs/"
+        // once, the new file in it.
+        assert_eq!(
+            methods(&a),
+            [
+                ("docs/".to_string(), stored_m),
+                ("docs/old.txt".to_string(), stored_m),
+                ("keep.txt".to_string(), stored_m),
+                ("docs/new.txt".to_string(), zip::CompressionMethod::Deflated),
+            ]
+        );
+        let rename = Change::Rename(vec![(PathBuf::from("docs"), PathBuf::from("papers"))]);
+        assert!(!modify(&a, &rename, h).cancelled);
+        let r = modify(
+            &a,
+            &Change::Delete(vec![PathBuf::from("papers/old.txt")]),
+            h,
+        );
+        assert_eq!(r.completed, [a.join("papers/old.txt")]);
+        assert!(!modify(&a, &Change::Mkdir(PathBuf::from("papers/x/y")), h).cancelled);
+        assert_eq!(
+            contents(&a),
+            [
+                "keep.txt=K",
+                "papers/",
+                "papers/new.txt=N",
+                "papers/x/",
+                "papers/x/y/"
+            ]
+        );
+        assert_eq!(methods(&a)[1], ("keep.txt".to_string(), stored_m));
+        assert_eq!(h.errors + h.conflicted, 0);
+        // Taken already: the whole way, which asks (Cancel here: unchanged).
+        let before = methods(&a);
+        let add_taken = Change::Add {
+            sources: vec![new],
+            inner: PathBuf::from("papers"),
+            move_sources: false,
+        };
+        assert!(modify(&a, &add_taken, h).cancelled);
+        assert_eq!((h.conflicted, methods(&a)), (1, before));
     }
 
     #[test]
