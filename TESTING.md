@@ -1001,7 +1001,7 @@
 
 ### Неудачный шаг по истории не теряет показанный каталог (135)
 
-- [ ] Зайти в `/tmp/h1`, потом в `/tmp/h2` (`mkdir -p /tmp/h1 /tmp/h2/sub`); `rmdir /tmp/h1`; Alt+← — ошибка, на экране `/tmp/h2`; Enter в `sub`; Alt+↓ — в списке `sub` и `/tmp/h2`; Alt+← — `/tmp/h2`
+- [x] Зайти в `/tmp/h1`, потом в `/tmp/h2` (`mkdir -p /tmp/h1 /tmp/h2/sub`); `rmdir /tmp/h1`; Alt+← — ошибка, на экране `/tmp/h2`; Enter в `sub`; Alt+↓ — в списке `sub` и `/tmp/h2`; Alt+← — `/tmp/h2`
 
 ## Регрессионные тесты
 
