@@ -146,6 +146,7 @@ job-unqueue = Remove from the queue
 job-running = Another operation is running: wait for it to finish
 unpacking = Unpacking
 archive-read-only = The archive is read-only
+nested-read-only = An archive opened from inside another is read-only: copy files out of it
 extracting = Extracting
 find-files = Find files
 find-mask = Search for

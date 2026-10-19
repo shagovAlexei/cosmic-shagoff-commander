@@ -288,6 +288,9 @@ enum Open {
     },
     /// In the viewer, under this name.
     Lister(String),
+    /// An archive inside an archive: in the panel, as a dir; Backspace at its root goes back to
+    /// this dir of the outer one.
+    Browse(PathBuf),
 }
 
 /// What to do with a file extracted from an archive.
@@ -297,6 +300,8 @@ enum How {
     /// F4: the editor, and watch the file.
     Edit(Vec<String>),
     Lister,
+    /// Enter on an archive inside an archive: open it in the panel.
+    Browse,
 }
 
 /// A file extracted for F4 from an archive: a newer mtime offers to put it back.
@@ -450,6 +455,9 @@ pub struct App {
     pub(crate) lister: Option<Box<Lister>>,
     /// Files from archives open in the editor (F4).
     pub(crate) edited: Vec<Edited>,
+    /// Archives opened from inside another (155): the copy in the temp dir → the dir in the outer
+    /// archive it came from (Backspace at its root goes back there).
+    nested: HashMap<PathBuf, PathBuf>,
     /// The edited file being put back («Обновить» answered): if that fails, it is asked again.
     updating: Option<PathBuf>,
     /// Ctrl+F in progress: (address, cancel flag set by Esc).
@@ -1149,6 +1157,7 @@ impl App {
             ctx_row: false,
             lister: None,
             edited: Vec::new(),
+            nested: HashMap::new(),
             updating: None,
             connecting: None,
             cmdline: String::new(),
@@ -3281,7 +3290,32 @@ impl App {
 
     /// Scan `path` for the active tab of `side` in the background; the result lands in `Message::Listed`.
     /// Go to `path` in the active tab (leaves search results).
+    /// A path inside a nested archive's temp copy as where that archive lies (`outer.zip/inner.zip/…`).
+    pub fn shown(&self, p: &Path) -> PathBuf {
+        for (tmp, back) in &self.nested {
+            if let Ok(rest) = p.strip_prefix(tmp) {
+                let name = tmp.file_name().unwrap_or_default();
+                return self.shown(&back.join(name).join(rest));
+            }
+        }
+        p.to_path_buf()
+    }
+
+    /// `shown`'s way back: a path through a nested archive (a click on the path line, `cd`) to its
+    /// temp copy; the deepest nesting that matches.
+    fn real(&self, p: &Path) -> PathBuf {
+        (self.nested.keys())
+            .filter_map(|tmp| {
+                let root = self.shown(tmp);
+                let rest = p.strip_prefix(&root).ok()?;
+                Some((root.components().count(), tmp.join(rest)))
+            })
+            .max_by_key(|(n, _)| *n)
+            .map_or_else(|| p.to_path_buf(), |(_, real)| real)
+    }
+
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
+        let path = self.real(&path);
         // A locked tab keeps its dir: going elsewhere happens in a new tab next to it (TC).
         if path != self.panes[side].active().panel.cwd() {
             self.leave_locked(side);
@@ -3504,6 +3538,11 @@ impl App {
             self.say(StatusKind::Error, fl!("archive-read-only"));
             return Task::none();
         }
+        // Said before its dialog (the job would be refused anyway: `changes_nested`).
+        if self.nested_change(side, action) {
+            self.say(StatusKind::Error, fl!("nested-read-only"));
+            return Task::none();
+        }
         if action == Action::Hotlist {
             self.hot_sub.clear(); // Ctrl+D always opens at the top
         }
@@ -3654,6 +3693,12 @@ impl App {
             }
             Action::Enter if stepping => {}
             Action::Enter => {
+                // ".." at a nested archive's root: back into the outer one, as Backspace.
+                if panel.current().is_some_and(|e| e.name == PARENT)
+                    && self.nested.contains_key(panel.cwd())
+                {
+                    return self.act(side, Action::Parent);
+                }
                 if let Some((path, focus)) = panel.enter_path() {
                     return self.load(side, path, focus);
                 }
@@ -3662,13 +3707,11 @@ impl App {
                 if let Some((os_name, name)) = current {
                     match archive::split_path(&cwd) {
                         Some((arc, inner)) => {
-                            return self.open_from_archive(
-                                side,
-                                arc,
-                                inner,
-                                os_name,
-                                How::Run(Vec::new(), &["xdg-open"]),
-                            );
+                            let how = match Format::detect(&name).is_some_and(Format::is_tree) {
+                                true => How::Browse,
+                                false => How::Run(Vec::new(), &["xdg-open"]),
+                            };
+                            return self.open_from_archive(side, arc, inner, os_name, how);
                         }
                         // Not inside one already: archives inside archives open as files.
                         None if Format::detect(&name).is_some_and(Format::is_tree) => {
@@ -3688,6 +3731,11 @@ impl App {
             }
             // From where the tab is going, so quick Backspaces on a slow fs are not lost.
             Action::Parent => {
+                // The root of an archive opened from inside another: back into that one.
+                if let Some(back) = self.nested.get(&target).cloned() {
+                    let name = target.file_name().map(|n| n.to_string_lossy().into_owned());
+                    return self.load(side, back, name);
+                }
                 if let Some((path, focus)) = panel::parent_of(&target) {
                     return self.load(side, path, Some(focus));
                 }
@@ -5405,6 +5453,7 @@ impl App {
                 entry: inner.join(&name),
             },
             How::Lister => Open::Lister(name.to_string_lossy().into_owned()),
+            How::Browse => Open::Browse(archive.join(&inner)),
         };
         let job = Job::Extract {
             archive,
@@ -5880,6 +5929,31 @@ impl App {
     }
 
     /// Actions that would change an archive (this panel inside one, or the other one as target).
+    /// `action` would change an archive opened from inside another (155): a temp copy.
+    fn nested_change(&self, side: usize, action: Action) -> bool {
+        let nested = |s: usize| {
+            let t = self.panes[s].active().target();
+            t.starts_with(archive::temp_root()) && archive::split_path(&t).is_some()
+        };
+        use Action as A;
+        let here = matches!(
+            action,
+            A::Delete
+                | A::DeletePermanent
+                | A::Mkdir
+                | A::Rename
+                | A::NewFile
+                | A::MultiRename
+                | A::Edit
+                | A::Move
+                | A::CopySame
+                | A::Properties
+                | A::ClipCut
+                | A::ClipPaste
+        );
+        (here && nested(side)) || (matches!(action, A::Copy | A::Move) && nested(1 - side))
+    }
+
     fn read_only(&self, side: usize, action: Action) -> bool {
         let inside = |s: usize| archive::split_path(&self.panes[s].active().target()).is_some();
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
@@ -5931,6 +6005,10 @@ impl App {
         focus: Option<String>,
         replan: Option<(Vec<PathBuf>, PathBuf)>,
     ) -> Task<Message> {
+        if changes_nested(&job) {
+            self.say(StatusKind::Error, fl!("nested-read-only"));
+            return Task::none();
+        }
         // One at a time: a second one waits in the queue for the first to end (TC F2 «В очередь»).
         if self.job.is_some() {
             self.queue.push_back(Queued {
@@ -6040,6 +6118,7 @@ impl App {
         }
         let side = job.side;
         let mut view = Task::none();
+        let mut browse = None;
         let mut focus = job.focus;
         // N / P in the viewer inside an archive, its extraction cancelled or failed: the cursor
         // goes back to the file still on screen.
@@ -6086,6 +6165,10 @@ impl App {
                     }
                 },
                 Open::Lister(name) => view = self.open_lister(side, file, name),
+                Open::Browse(back) => {
+                    self.nested.insert(file.clone(), back);
+                    browse = Some(file);
+                }
             }
         }
         self.panes[side]
@@ -6095,7 +6178,10 @@ impl App {
         let here = self.panes[side].active().panel.cwd().to_path_buf();
         let there = self.panes[1 - side].active().panel.cwd().to_path_buf();
         let reload = Task::batch([
-            self.reload(side, here, focus),
+            match browse {
+                Some(arc) => self.load(side, arc, None),
+                None => self.reload(side, here, focus),
+            },
             self.reload(1 - side, there, None),
             view,
         ]);
@@ -7294,6 +7380,22 @@ fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
 }
 
 /// Window events → messages. Panel keys only when no widget took the event (`Ignored`).
+/// An archive opened from inside another (155) is a copy in the temp dir: a change to it would
+/// reach nothing the user keeps — refused, by the one place every archive change goes through.
+fn changes_nested(job: &Job) -> bool {
+    let tmp = archive::temp_root();
+    match job {
+        Job::Repack { archive, .. } => archive.starts_with(&tmp),
+        Job::Cross {
+            from,
+            to,
+            move_after,
+            ..
+        } => to.starts_with(&tmp) || (*move_after && from.starts_with(&tmp)),
+        _ => false,
+    }
+}
+
 fn route_event(
     event: cosmic::iced::Event,
     status: event::Status,
@@ -10145,6 +10247,34 @@ mod tests {
         // `terminal` changed by hand (before the menu existed): it still wins.
         app.config.terminal = vec!["xterm".into(), "-e".into()];
         assert_eq!(app.terminal_prefix(), ["xterm", "-e"]);
+    }
+
+    #[test]
+    fn a_nested_archive_shows_where_it_lies_and_is_never_changed() {
+        let mut app = app_with(Config::default(), State::default());
+        let tmp = archive::temp_root().join("1/0/inner.zip");
+        app.nested
+            .insert(tmp.clone(), PathBuf::from("/d/outer.zip/sub"));
+        let shown = PathBuf::from("/d/outer.zip/sub/inner.zip/x");
+        assert_eq!(app.shown(&tmp.join("x")), shown);
+        assert_eq!(app.real(&shown), tmp.join("x"));
+        assert_eq!(
+            app.real(Path::new("/d/outer.zip")),
+            PathBuf::from("/d/outer.zip")
+        );
+        // One deeper: an archive opened from inside the nested one.
+        let deeper = archive::temp_root().join("1/1/core.7z");
+        app.nested.insert(deeper.clone(), tmp.join("lib"));
+        let far = PathBuf::from("/d/outer.zip/sub/inner.zip/lib/core.7z");
+        assert_eq!(app.shown(&deeper), far);
+        assert_eq!(app.real(&far.join("a")), deeper.join("a"));
+        let change = shagoff_core::repack::Change::Delete(vec![PathBuf::from("x")]);
+        let repack = |archive: PathBuf| Job::Repack {
+            archive,
+            change: change.clone(),
+        };
+        assert!(changes_nested(&repack(tmp)));
+        assert!(!changes_nested(&repack("/d/outer.zip".into())));
     }
 
     #[test]
