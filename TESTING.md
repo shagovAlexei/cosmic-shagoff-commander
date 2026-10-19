@@ -1151,3 +1151,4 @@
 | `regression_every_job_dropped_from_the_queue_says_why` | Несколько операций, отброшенных из очереди подряд (план не сложился при старте), — в строке была видна только последняя причина | 140 |
 | `regression_closing_the_window_warns_of_unsaved_diff_copies` | × окна при несохранённых переносах блоков в сравнении закрывал программу без вопроса | 141 |
 | `regression_a_picture_over_the_limit_opens_as_hex_and_says_why` | Картинка больше 32 МБ во вьюере — пустое поле без объяснения | 142 |
+| `regression_quick_search_up_in_an_empty_list` | ↑ в быстром поиске при пустом списке — переполнение `0 + 0 - 1` (паника в отладочной сборке) | 07 |
