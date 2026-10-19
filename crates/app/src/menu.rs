@@ -168,6 +168,11 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             a(Action::ToggleHidden),
         ),
         (vec![Ctrl], K::Letter(Code::KeyO, "o"), a(Action::TermFull)),
+        (
+            vec![Ctrl],
+            K::Letter(Code::Backquote, "`"),
+            a(Action::ToggleTerminal),
+        ),
         (vec![], K::Named(Named::F1), a(Action::Help)),
         (vec![Ctrl], K::Named(Named::F1), a(Action::ViewBrief)),
         (
@@ -677,7 +682,6 @@ mod tests {
                             | Action::ConfigureColors
                             | Action::OpenTerminal
                             | Action::PickTerminal
-                            | Action::ToggleTerminal
                             | Action::PickShell
                     )
                 ) {

@@ -951,7 +951,8 @@ where
                     shell.request_input_method(&self.input_method(state, layout, &terminal));
                 }
                 cosmic::iced::window::Event::Unfocused => {
-                    state.away_focused = std::mem::take(&mut state.is_focused);
+                    // `|=`: the window may be left twice before it comes back.
+                    state.away_focused |= std::mem::take(&mut state.is_focused);
                     state.autoscroll.stop();
                     if let Some(on_window_unfocused) = &self.on_window_unfocused {
                         shell.publish(on_window_unfocused());

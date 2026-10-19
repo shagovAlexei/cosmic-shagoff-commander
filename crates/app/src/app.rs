@@ -397,6 +397,8 @@ pub struct App {
     term_blur: bool,
     /// The terminal has the keys (`TermFocused`).
     term_focused: bool,
+    /// Turned on by Ctrl+`: focused once its shell starts.
+    term_want_focus: bool,
     /// The gvfs mounts last read (`Message::Gvfs`), appended to `drives`.
     gvfs: Vec<Drive>,
     /// The gvfs dir is to be read again / is being read: in the background, one read at a time —
@@ -871,9 +873,14 @@ impl Application for App {
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
         self.term_follow();
-        let blur = match std::mem::take(&mut self.term_blur) {
-            true => unfocus(),
-            false => Task::none(),
+        let blur = if std::mem::take(&mut self.term_blur) {
+            unfocus()
+        } else if self.term_want_focus && self.term.is_some() {
+            // Turned on by Ctrl+`: its keys once its shell is up.
+            self.term_want_focus = false;
+            cosmic::iced::runtime::widget::operation::focus(self.term_id.clone())
+        } else {
+            Task::none()
         };
         Task::batch([
             task,
@@ -1109,6 +1116,7 @@ impl App {
             term_rows: 0,
             term_blur: false,
             term_focused: false,
+            term_want_focus: false,
             gvfs: Vec::new(),
             gvfs_want: false,
             gvfs_busy: false,
@@ -3394,7 +3402,14 @@ impl App {
                 return self.set(Setting::ActiveFrame(!self.config.active_frame));
             }
             Action::ToggleTerminal => {
-                return self.set(Setting::TermBuiltin(!self.config.term_builtin));
+                let on = !self.config.term_builtin;
+                self.term_want_focus = on;
+                let task = self.set(Setting::TermBuiltin(on));
+                // Hidden while it had the keys: back to the panels.
+                return match on {
+                    true => task,
+                    false => Task::batch([task, unfocus()]),
+                };
             }
             Action::TermFull => {
                 if !self.config.term_builtin {
