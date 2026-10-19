@@ -201,7 +201,13 @@ fn rewrite(
         )?;
     }
     let mut copies = Vec::new();
-    let done = apply(archive, &root, change, &mut copies, h)?;
+    let done = apply(
+        archive,
+        &root,
+        change,
+        &mut copies,
+        &mut shown(h, &root, archive),
+    )?;
     if done.is_empty() {
         return Err(false);
     }
@@ -332,13 +338,25 @@ fn rewrite_zip(
             if !dir.is_empty() && is_dir(&dir) {
                 fs::create_dir_all(inside(&root, Path::new(&dir), true).ok()?).ok()?;
             }
-            apply(archive, &root, change, &mut copies, h)
+            apply(
+                archive,
+                &root,
+                change,
+                &mut copies,
+                &mut shown(h, &root, archive),
+            )
         }
         Change::Mkdir(d) => {
             if exists(&s(d)?) {
                 return None;
             }
-            apply(archive, &root, change, &mut copies, h)
+            apply(
+                archive,
+                &root,
+                change,
+                &mut copies,
+                &mut shown(h, &root, archive),
+            )
         }
         Change::Replace { entry, .. } => {
             let e = s(entry)?;
@@ -349,7 +367,13 @@ fn rewrite_zip(
                 fs::create_dir_all(inside(&root, parent, true).ok()?).ok()?;
             }
             keep = Box::new(move |n| (n != e).then(|| n.to_string()));
-            apply(archive, &root, change, &mut copies, h)
+            apply(
+                archive,
+                &root,
+                change,
+                &mut copies,
+                &mut shown(h, &root, archive),
+            )
         }
         Change::Delete(entries) => {
             let gone: Vec<String> = entries.iter().map(|e| s(e)).collect::<Option<_>>()?;
@@ -402,6 +426,48 @@ type Keep = Box<dyn Fn(&str) -> Option<String>>;
 
 fn exists_in(names: &[String], p: &str) -> bool {
     names.iter().any(|n| under(n, p))
+}
+
+/// Questions and progress about the tree being changed name the archive's paths (`a.zip/sub/b`),
+/// not the staging dir's.
+struct Shown<'a> {
+    h: &'a mut dyn Handler,
+    root: &'a Path,
+    archive: &'a Path,
+}
+
+fn shown<'a>(h: &'a mut dyn Handler, root: &'a Path, archive: &'a Path) -> Shown<'a> {
+    Shown { h, root, archive }
+}
+
+impl Shown<'_> {
+    fn map(&self, p: &Path) -> PathBuf {
+        p.strip_prefix(self.root)
+            .map_or_else(|_| p.to_path_buf(), |rel| self.archive.join(rel))
+    }
+}
+
+impl Handler for Shown<'_> {
+    fn progress(&mut self, done: u64, total: u64, current: &Path) {
+        let current = self.map(current);
+        self.h.progress(done, total, &current);
+    }
+    fn conflict(&mut self, src: &ops::FileInfo, dst: &ops::FileInfo) -> ops::Resolution {
+        let at = |i: &ops::FileInfo| ops::FileInfo {
+            path: self.map(&i.path),
+            size: i.size,
+            mtime: i.mtime,
+        };
+        let (src, dst) = (at(src), at(dst));
+        self.h.conflict(&src, &dst)
+    }
+    fn error(&mut self, path: &Path, err: &io::Error) -> ErrorChoice {
+        let path = self.map(path);
+        self.h.error(&path, err)
+    }
+    fn cancelled(&self) -> bool {
+        self.h.cancelled()
+    }
 }
 
 /// Say why the archive stays unchanged; always `Err` (cancelled or given up).
@@ -625,6 +691,36 @@ mod tests {
         }
         v.sort();
         v
+    }
+
+    #[test]
+    fn regression_a_conflict_names_the_archive_not_the_staging_dir() {
+        struct Asked(Vec<PathBuf>);
+        impl Handler for Asked {
+            fn progress(&mut self, _: u64, _: u64, _: &Path) {}
+            fn conflict(&mut self, src: &FileInfo, dst: &FileInfo) -> Resolution {
+                self.0.extend([src.path.clone(), dst.path.clone()]);
+                Resolution::Skip
+            }
+            fn error(&mut self, _: &Path, _: &io::Error) -> ErrorChoice {
+                ErrorChoice::Skip
+            }
+            fn cancelled(&self) -> bool {
+                false
+            }
+        }
+        let d = tempfile::tempdir().unwrap();
+        let a = sample(d.path(), Format::Zip);
+        let new = d.path().join("a.txt");
+        fs::write(&new, "N").unwrap();
+        let add = Change::Add {
+            sources: vec![new.clone()],
+            inner: PathBuf::new(),
+            move_sources: false,
+        };
+        let mut h = Asked(Vec::new());
+        let _ = modify(&a, &add, &mut h);
+        assert_eq!(h.0, [new, a.join("a.txt")]);
     }
 
     /// Each entry's (name, compression method), in order.

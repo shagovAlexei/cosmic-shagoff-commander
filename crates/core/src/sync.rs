@@ -120,6 +120,23 @@ pub fn compare(left: &Path, right: &Path, o: &Options, stop: &AtomicBool) -> Vec
 /// A dir's entries, and the names whose metadata could not be read. `None`: the dir itself
 /// can't be read (gone, no permission) — then nothing below it is known.
 fn list(dir: &Path, hidden: bool) -> Option<(BTreeMap<OsString, Info>, BTreeSet<OsString>)> {
+    // Inside an archive (158): from its index, nothing unpacked.
+    if crate::archive::split_path(dir).is_some() {
+        let entries = crate::listing::scan(dir, hidden).ok()?;
+        let map = (entries.into_iter())
+            .filter(|e| e.name != crate::panel::PARENT)
+            .map(|e| {
+                let info = Info {
+                    size: if e.is_dir() { 0 } else { e.size },
+                    mtime: e.mtime,
+                    dir: e.is_dir(),
+                    link: e.is_link,
+                };
+                (e.os_name, info)
+            })
+            .collect();
+        return Some((map, BTreeSet::new()));
+    }
     let mut map = BTreeMap::new();
     let mut unknown = BTreeSet::new();
     for e in fs::read_dir(dir).ok()? {
@@ -332,6 +349,67 @@ pub fn plan(left: &Path, right: &Path, rows: &[Row]) -> Plan {
     p
 }
 
+/// The plan when one side is a dir inside an archive (158), as archive jobs: what comes out of it
+/// (one extraction: names below its dir), what goes in (an add per target dir), what is deleted
+/// in it, and what is deleted on the disk side.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ArchivePlan {
+    /// (archive, its dir, names below it, the disk dir they go to).
+    pub extract: Option<(PathBuf, PathBuf, Vec<PathBuf>, PathBuf)>,
+    /// (archive, the dir inside with a trailing `/` — "into this dir" —, the files going there).
+    pub add: Vec<(PathBuf, PathBuf, Vec<PathBuf>)>,
+    /// (archive, entries).
+    pub delete_in: Option<(PathBuf, Vec<PathBuf>)>,
+    pub delete_disk: Vec<PathBuf>,
+}
+
+/// `None`: no side, or both, inside an archive.
+pub fn archive_plan(left: &Path, right: &Path, rows: &[Row]) -> Option<ArchivePlan> {
+    use crate::archive::split_path;
+    let (arc_dir, (archive, root), disk, arc_left) = match (split_path(left), split_path(right)) {
+        (Some(a), None) => (left, a, right, true),
+        (None, Some(a)) => (right, a, left, false),
+        _ => return None,
+    };
+    let p = plan(left, right, rows);
+    let (out, into) = match arc_left {
+        true => (p.to_right, p.to_left),
+        false => (p.to_left, p.to_right),
+    };
+    let mut ap = ArchivePlan::default();
+    let names: Vec<PathBuf> = (out.iter())
+        .filter_map(|(s, _)| s.strip_prefix(arc_dir).ok().map(Path::to_path_buf))
+        .collect();
+    if !names.is_empty() {
+        ap.extract = Some((archive.clone(), root.clone(), names, disk.to_path_buf()));
+    }
+    for (src, dst) in into {
+        let Some(rel) = dst.strip_prefix(arc_dir).ok().and_then(Path::parent) else {
+            continue;
+        };
+        let mut inner = root.join(rel).into_os_string();
+        if !inner.is_empty() {
+            inner.push("/");
+        }
+        let inner = PathBuf::from(inner);
+        match ap.add.iter_mut().find(|(_, i, _)| *i == inner) {
+            Some((_, _, v)) => v.push(src),
+            None => ap.add.push((archive.clone(), inner, vec![src])),
+        }
+    }
+    let mut entries = Vec::new();
+    for d in p.delete {
+        match d.strip_prefix(arc_dir) {
+            Ok(rel) => entries.push(root.join(rel)),
+            Err(_) => ap.delete_disk.push(d),
+        }
+    }
+    if !entries.is_empty() {
+        ap.delete_in = Some((archive, entries));
+    }
+    Some(ap)
+}
+
 /// Shift+F2: files to mark on each side — missing opposite, newer, or same date with another size.
 pub fn compare_lists(left: &[Entry], right: &[Entry]) -> (Vec<OsString>, Vec<OsString>) {
     let files = |v: &[Entry]| -> BTreeMap<OsString, (u64, SystemTime)> {
@@ -449,6 +527,74 @@ mod tests {
             .into_iter()
             .map(|x| (x.rel.to_string_lossy().into_owned(), x.state))
             .collect()
+    }
+
+    #[test]
+    fn a_dir_inside_an_archive_compares_and_plans_archive_jobs() {
+        struct No;
+        impl crate::ops::Handler for No {
+            fn progress(&mut self, _: u64, _: u64, _: &Path) {}
+            fn conflict(
+                &mut self,
+                _: &crate::ops::FileInfo,
+                _: &crate::ops::FileInfo,
+            ) -> crate::ops::Resolution {
+                crate::ops::Resolution::Cancel
+            }
+            fn error(&mut self, _: &Path, _: &io::Error) -> crate::ops::ErrorChoice {
+                crate::ops::ErrorChoice::Cancel
+            }
+            fn cancelled(&self) -> bool {
+                false
+            }
+        }
+        let (d, l, src) = pair();
+        // Zip keeps no time before 1980.
+        let t = 1_700_000_000;
+        put(&l.join("a"), "1", t);
+        put(&l.join("sub/b"), "new", t + 3000);
+        put(&l.join("same"), "s", t);
+        put(&src.join("sub/b"), "old", t);
+        put(&src.join("c"), "c", t);
+        put(&src.join("same"), "s", t);
+        let zip = d.path().join("r.zip");
+        let groups = [(
+            vec![src.join("sub"), src.join("c"), src.join("same")],
+            zip.clone(),
+        )];
+        crate::archive::pack(crate::archive::Format::Zip, &src, &groups, &mut No);
+        assert_eq!(
+            states(&l, &zip, &opts()),
+            [
+                ("a".into(), State::LeftOnly),
+                ("c".into(), State::RightOnly),
+                ("same".into(), State::Same),
+                ("sub/b".into(), State::LeftNewer),
+            ]
+        );
+        let mut rows = compare(&l, &zip, &opts(), &AtomicBool::new(false));
+        let ap = archive_plan(&l, &zip, &rows).unwrap();
+        assert_eq!(
+            ap.add,
+            [
+                (zip.clone(), PathBuf::new(), vec![l.join("a")]),
+                (zip.clone(), PathBuf::from("sub/"), vec![l.join("sub/b")]),
+            ]
+        );
+        assert_eq!(
+            ap.extract,
+            Some((
+                zip.clone(),
+                PathBuf::new(),
+                vec![PathBuf::from("c")],
+                l.clone()
+            ))
+        );
+        rows[1].dir = Dir::Delete; // c, right only: deleted in the archive instead
+        let ap = archive_plan(&l, &zip, &rows).unwrap();
+        assert_eq!(ap.extract, None);
+        assert_eq!(ap.delete_in, Some((zip.clone(), vec![PathBuf::from("c")])));
+        assert_eq!(archive_plan(&l, &src, &rows), None); // no archive side
     }
 
     #[test]
