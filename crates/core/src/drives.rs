@@ -23,31 +23,39 @@ pub fn parse<'a>(mounts: &'a str, home: &Path) -> Vec<Drive> {
             path: home.to_path_buf(),
         },
     ];
-    let mut devices: Vec<&str> = Vec::new(); // devices[i] owns out[i + 2]
+    let mut devices: Vec<String> = Vec::new(); // devices[i] owns out[i + 2]
     let fields = |line: &'a str| {
         let mut f = line.split_whitespace();
-        (f.next(), f.next(), f.next())
+        (f.next(), f.next(), f.next(), f.next())
+    };
+    // btrfs subvolumes share the device: each one is a disk of its own.
+    let id = |dev: &str, fs: Option<&str>, opts: Option<&str>| {
+        let sub = (fs == Some("btrfs"))
+            .then(|| opts?.split(',').find_map(|o| o.strip_prefix("subvol=")))
+            .flatten();
+        format!("{dev}\0{}", sub.unwrap_or_default())
     };
     // The devices behind `/` and `~` already have a button, wherever else they are mounted.
-    let builtin: Vec<&str> = mounts
+    let builtin: Vec<String> = mounts
         .lines()
         .filter_map(|l| match fields(l) {
-            (Some(dev), Some(point), _)
+            (Some(dev), Some(point), fs, opts)
                 if unescape(point) == Path::new("/") || unescape(point) == home =>
             {
-                Some(dev)
+                Some(id(dev, fs, opts))
             }
             _ => None,
         })
         .collect();
     for line in mounts.lines() {
-        let (Some(dev), Some(point), Some(fs)) = fields(line) else {
+        let (Some(dev), Some(point), Some(fs), opts) = fields(line) else {
             continue;
         };
+        let key = id(dev, Some(fs), opts);
         if !dev.starts_with("/dev/")
             || dev.starts_with("/dev/loop")
             || fs == "squashfs"
-            || builtin.contains(&dev)
+            || builtin.contains(&key)
         {
             continue;
         }
@@ -60,14 +68,14 @@ pub fn parse<'a>(mounts: &'a str, home: &Path) -> Vec<Drive> {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let drive = Drive { label, path };
-        match devices.iter().position(|d| *d == dev) {
+        match devices.iter().position(|d| *d == key) {
             Some(i) => {
                 if is_media(&drive.path) && !is_media(&out[i + 2].path) {
                     out[i + 2] = drive;
                 }
             }
             None => {
-                devices.push(dev);
+                devices.push(key);
                 out.push(drive);
             }
         }
@@ -154,6 +162,19 @@ tmpfs /run tmpfs rw 0 0
         let m = "/dev/sdb1 /mnt/x vfat rw 0 0\n/dev/sdb1 /run/media/u/X vfat rw 0 0\n";
         let d = parse(m, Path::new("/home/u"));
         assert_eq!(d[2].path, Path::new("/run/media/u/X"));
+    }
+
+    #[test]
+    fn regression_btrfs_subvolumes_on_the_root_device_get_buttons() {
+        let m = "/dev/nvme0n1p2 / btrfs rw,subvolid=256,subvol=/@ 0 0\n\
+                 /dev/nvme0n1p2 /home btrfs rw,subvolid=257,subvol=/@home 0 0\n\
+                 /dev/nvme0n1p2 /media/u/data btrfs rw,subvolid=300,subvol=/@data 0 0\n\
+                 /dev/nvme0n1p2 /mnt/data btrfs rw,subvolid=300,subvol=/@data 0 0\n\
+                 /dev/nvme0n1p2 /mnt/root btrfs rw,subvolid=256,subvol=/@ 0 0\n";
+        let d = parse(m, Path::new("/home/u"));
+        // `/@data` is a disk of its own (once, at its /media mount); `/@` again is `/`.
+        assert_eq!(labels(&d), ["/", "~", "home", "data"]);
+        assert_eq!(d[3].path, Path::new("/media/u/data"));
     }
 
     #[test]

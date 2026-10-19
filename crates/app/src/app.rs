@@ -3727,7 +3727,7 @@ impl App {
             Action::SelectGroup | Action::UnselectGroup => Some(Dialog::Mask {
                 side,
                 select: action == Action::SelectGroup,
-                input: self.masks.first().cloned().unwrap_or_else(|| "*".into()),
+                input: self.masks.first().cloned().unwrap_or_else(|| "*.*".into()),
             }),
             Action::Copy | Action::Move | Action::Link => {
                 let sources = panel.targets();
@@ -9522,6 +9522,9 @@ mod tests {
             Some(Dialog::Mask { input, .. }) => input.clone(),
             _ => panic!("no mask dialog"),
         };
+        let _ = app.update(Message::Key(Action::SelectGroup));
+        assert_eq!(mask(&app), "*.*"); // nothing typed yet: as TC
+        app.dialog = None;
         for m in ["*.rs", "*.txt"] {
             let _ = app.update(Message::Key(Action::SelectGroup));
             let _ = app.update(Message::DialogInput(m.into()));
