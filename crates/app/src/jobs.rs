@@ -38,6 +38,8 @@ pub enum Job {
         to_left: Vec<(PathBuf, PathBuf)>,
         /// Mirror / ✕ rows: to the trash, after the copies.
         delete: Vec<PathBuf>,
+        /// Deleted for good instead (tests: no real trash).
+        permanent: bool,
     },
     /// F5 / Ctrl+C / Enter in an archive panel: `names` of the dir `inner` into `dest`.
     Extract {
@@ -201,6 +203,7 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                 to_right,
                 to_left,
                 delete,
+                permanent,
             } => {
                 let a = ops::transfer(Method::Copy, &to_right, &mut h);
                 if a.cancelled {
@@ -215,7 +218,7 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                             completed: done,
                         }
                     } else {
-                        let d = ops::delete(&delete, false, &mut h);
+                        let d = ops::delete(&delete, permanent, &mut h);
                         done.extend(d.completed);
                         Report {
                             cancelled: d.cancelled,
@@ -394,6 +397,7 @@ mod sync_tests {
             to_right: vec![(l.join("a"), r.join("a"))],
             to_left: vec![],
             delete: vec![],
+            permanent: true,
         };
         let (_control, mut rx) = spawn(job);
         let asked = block_on(async {
@@ -422,6 +426,32 @@ mod sync_tests {
             }
             panic!("no Finished")
         })
+    }
+
+    #[test]
+    fn sync_copies_both_ways_then_deletes() {
+        let d = tempfile::tempdir().unwrap();
+        let (l, r) = (d.path().join("l"), d.path().join("r"));
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a"), "A").unwrap();
+        std::fs::write(r.join("b"), "B").unwrap();
+        std::fs::write(r.join("gone"), "x").unwrap();
+        let rep = run(Job::Sync {
+            to_right: vec![(l.join("a"), r.join("a"))],
+            to_left: vec![(r.join("b"), l.join("b"))],
+            delete: vec![r.join("gone")],
+            permanent: true,
+        });
+        assert!(!rep.cancelled);
+        assert_eq!(std::fs::read_to_string(r.join("a")).unwrap(), "A");
+        assert_eq!(std::fs::read_to_string(l.join("b")).unwrap(), "B");
+        assert!(!r.join("gone").exists());
+        assert!(
+            rep.completed.contains(&r.join("gone")),
+            "{:?}",
+            rep.completed
+        );
     }
 
     #[test]
