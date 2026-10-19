@@ -6797,6 +6797,11 @@ fn route_event(
             cosmic::iced::mouse::Button::Right,
         )) => Some(Message::RightUp),
         // The divider's share is of the window's width.
+        // Ctrl / Shift let go in another window are never seen here: not held any more (a click
+        // back in must not mark as Ctrl+click). Not left to the compositor's ModifiersChanged.
+        cosmic::iced::Event::Window(cosmic::iced::window::Event::Unfocused) => {
+            Some(Message::Modifiers(Modifiers::empty()))
+        }
         cosmic::iced::Event::Window(cosmic::iced::window::Event::Closed) => {
             Some(Message::WindowClosed(window))
         }
@@ -9513,6 +9518,14 @@ mod tests {
         let again = app_with(Config::default(), saved);
         let recent = again.panes[0].active().history.recent();
         assert!(recent.contains(&PathBuf::from("/a")), "{recent:?}");
+    }
+
+    #[test]
+    fn regression_ctrl_is_let_go_when_the_window_loses_focus() {
+        let ev = cosmic::iced::Event::Window(cosmic::iced::window::Event::Unfocused);
+        let id = cosmic::iced::window::Id::unique();
+        let m = route_event(ev, event::Status::Ignored, id);
+        assert!(matches!(m, Some(Message::Modifiers(m)) if m.is_empty()));
     }
 
     #[test]
