@@ -2903,6 +2903,15 @@ impl App {
             Message::CloseRequested(_) => {}
             // Confirmed, but the worker hangs in blocking I/O (a dead network mount): × again quits.
             Message::Quit if self.quitting => return self.handle(Message::Exit),
+            // Unsaved copied blocks in the comparison: the first × only warns, as Esc.
+            Message::Quit
+                if matches!(&self.dialog, Some(Dialog::Diff(d))
+                    if (d.dirty.0 || d.dirty.1) && !d.confirm_close) =>
+            {
+                if let Some(Dialog::Diff(d)) = &mut self.dialog {
+                    d.confirm_close = true;
+                }
+            }
             Message::Quit if self.job.is_some() || !self.queue.is_empty() => {
                 // A job's question steps aside (its reply kept); any other dialog gives way.
                 if let Some(
@@ -11519,6 +11528,22 @@ mod tests {
             (diff_dlg(&mut app).x, diff_dlg(&mut app).offset),
             (120.0, 44.0)
         );
+    }
+
+    #[test]
+    fn regression_closing_the_window_warns_of_unsaved_diff_copies() {
+        let (tmp, mut app) = sync_setup();
+        std::fs::write(tmp.path().join("l/a"), "x\n").unwrap();
+        std::fs::write(tmp.path().join("r/a"), "y\n").unwrap();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        diff_dlg(&mut app).dirty = (false, true); // a block copied, not saved
+        // × of the window: warns as the first Esc, the copies are not lost.
+        assert!(matches!(app.on_app_exit(), Some(Message::Quit)));
+        let _ = app.update(Message::Quit);
+        assert!(diff_dlg(&mut app).confirm_close);
     }
 
     #[test]

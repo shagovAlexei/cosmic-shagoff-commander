@@ -445,7 +445,7 @@ diff-undo = Undo
 diff-save = Save
 diff-saved = Saved
 diff-unsaved = Not saved
-diff-unsaved-close = Not saved: Esc again closes without saving
+diff-unsaved-close = Not saved: Esc or × again closes without saving
 
 # Network, more
 connect-saved = Saved
