@@ -984,6 +984,10 @@
 
 - [x] Alt+b (поле поиска открыто), щелчок по строке пути (поле без фокуса), Alt+r — в поле «br», курсор на первом имени на «br»
 
+### Ctrl+D после правки конфига снаружи (132)
+
+- [x] Ctrl+D, курсор на втором пункте; в другом окне добавить пункт в начало `~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/hotlist` — список в диалоге обновился, курсор на том же пункте; Delete — удалён он
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
@@ -1089,3 +1093,4 @@
 | `regression_ctrl_t_does_not_copy_the_filter` | Ctrl+T копировал в новую вкладку фильтр Ctrl+S (в TC — нет) | 128 |
 | `regression_click_in_the_other_pane_clears_the_error_like_tab` | Ошибка панели оставалась после щелчка мышью по другой панели (Tab её убирал) | 130 |
 | `regression_alt_letter_adds_to_the_open_search` | Alt+буква при открытом, но не сфокусированном поле быстрого поиска начинала поиск заново вместо дописывания | 131 |
+| `regression_hotlist_delete_after_an_outside_change_deletes_the_entry_shown` | Delete в открытом Ctrl+D после правки конфига снаружи удалял пункт по старому номеру — не тот | 132 |
