@@ -56,12 +56,17 @@ pub fn idle(stat: &str) -> bool {
 /// shell with a line editor (zsh, bash, fish…) has the terminal in raw mode (`canonical` false):
 /// it puts it back the moment a line is accepted, before its hooks and the command run — the
 /// foreground alone still looks idle then. `sh` / `dash` have no line editor: the foreground only.
+/// Anything else (`tmux`, `screen`, a program set by hand) is never at a prompt: it keeps the
+/// terminal raw all the time, and what is typed goes to whatever runs in it.
 pub fn at_prompt(stat: &str, canonical: Option<bool>, shell: &str) -> bool {
-    let plain = matches!(
-        Path::new(shell).file_name().and_then(|n| n.to_str()),
-        Some("sh" | "dash" | "posh" | "ksh")
-    );
-    idle(stat) && (plain || canonical == Some(false))
+    let editing = match Path::new(shell).file_name().and_then(|n| n.to_str()) {
+        Some("sh" | "dash" | "posh" | "ksh") => false,
+        Some(
+            "bash" | "zsh" | "fish" | "mksh" | "tcsh" | "csh" | "yash" | "elvish" | "nu" | "xonsh",
+        ) => true,
+        _ => return false,
+    };
+    idle(stat) && (!editing || canonical == Some(false))
 }
 
 /// Whether the terminal `pid`'s stdin is on is in canonical (line) mode. Opens the tty, never
@@ -128,6 +133,14 @@ mod tests {
         assert!(at_prompt(free, Some(true), "/bin/dash")); // no line editor: canonical always
         let busy = "4242 (zsh) S 4200 4242 4242 34817 5000 0";
         assert!(!at_prompt(busy, Some(false), "/bin/zsh"));
+    }
+
+    #[test]
+    fn regression_tmux_as_the_shell_is_never_typed_into() {
+        let free = "4242 (tmux: client) S 4200 4242 4242 34817 4242 0";
+        assert!(!at_prompt(free, Some(false), "/usr/bin/tmux"));
+        assert!(!at_prompt(free, Some(false), "/usr/bin/screen"));
+        assert!(!at_prompt(free, Some(true), "/opt/x/myprog"));
     }
 
     #[test]
