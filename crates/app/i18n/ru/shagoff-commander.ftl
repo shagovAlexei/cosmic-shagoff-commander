@@ -446,7 +446,7 @@ diff-undo = Отменить
 diff-save = Сохранить
 diff-saved = Сохранено
 diff-unsaved = Не сохранено
-diff-unsaved-close = Не сохранено: ещё раз Esc — закрыть без сохранения
+diff-unsaved-close = Не сохранено: ещё раз Esc или × — закрыть без сохранения
 
 # Сеть, дополнения
 connect-saved = Сохранённые
