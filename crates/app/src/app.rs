@@ -675,6 +675,7 @@ pub enum Message {
     /// A toolbar program exited with an error: its last stderr line (or exit status).
     ToolFailed(String),
     ToolEdit(crate::toolbar::ToolMsg),
+    KeyEdit(crate::hotkeys::KeyMsg),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
     /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
@@ -877,6 +878,8 @@ impl Application for App {
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
         self.term_follow();
+        let waiting = matches!(&self.dialog, Some(Dialog::Keys(k)) if k.capturing);
+        keymap::CAPTURE.store(waiting, Ordering::Relaxed);
         let blur = if std::mem::take(&mut self.term_blur) {
             unfocus()
         } else if self.term_want_focus && self.term.is_some() {
@@ -1188,6 +1191,7 @@ impl App {
             }
             app.panes[side] = tabs;
         }
+        keymap::set_own(crate::hotkeys::resolve(&app.config.hotkeys));
         app.refresh_mounts();
         let task = Task::batch([app.load_all(), app.read_gvfs(), scan_terminals()]);
         (app, task)
@@ -2649,6 +2653,11 @@ impl App {
                     c.update(m);
                 }
             }
+            Message::KeyEdit(m) => {
+                if let Some(Dialog::Keys(k)) = &mut self.dialog {
+                    k.update(m);
+                }
+            }
             Message::ToolEdit(m) => {
                 if let Some(Dialog::Toolbar(t)) = &mut self.dialog {
                     let open = matches!(m, crate::toolbar::ToolMsg::PickOpen);
@@ -3588,6 +3597,11 @@ impl App {
                     cursor,
                     items,
                 });
+                return Task::none();
+            }
+            Action::ConfigureKeys => {
+                let list = self.config.hotkeys.clone();
+                self.dialog = Some(Dialog::Keys(Box::new(crate::hotkeys::KeyEdit::new(list))));
                 return Task::none();
             }
             Action::ConfigureToolbar => {
@@ -4573,6 +4587,19 @@ impl App {
                     }
                     None => self.config.toolbar = t.list,
                 }
+                Task::none()
+            }
+            Dialog::Keys(k) => {
+                let list = k.result();
+                match &self.config_handler {
+                    Some(h) => {
+                        if let Err(e) = self.config.set_hotkeys(h, list) {
+                            self.config_not_saved(&e);
+                        }
+                    }
+                    None => self.config.hotkeys = list,
+                }
+                keymap::set_own(crate::hotkeys::resolve(&self.config.hotkeys));
                 Task::none()
             }
             d @ Dialog::List { .. } => {
@@ -6388,6 +6415,9 @@ impl App {
     /// New settings, from the settings drawer or the config watcher (a hand edit).
     fn apply_config(&mut self, c: Config) -> Task<Message> {
         let old = std::mem::replace(&mut self.config, c);
+        if old.hotkeys != self.config.hotkeys {
+            keymap::set_own(crate::hotkeys::resolve(&self.config.hotkeys));
+        }
         self.scheme =
             shagoff_core::colors::Scheme::new(&self.config.colors).with_panel(&self.config.panel);
         self.cols = self.config.columns;
@@ -7270,6 +7300,19 @@ fn route_event(
     window: cosmic::iced::window::Id,
 ) -> Option<Message> {
     match event {
+        // The hotkeys dialog waits for a key: the next one, whatever it is (not Escape).
+        cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            physical_key,
+            modifiers,
+            ..
+        }) if keymap::CAPTURE.load(std::sync::atomic::Ordering::Relaxed)
+            && keymap::key_name(physical_key).is_some() =>
+        {
+            let b = keymap::bind_of(physical_key, modifiers)?;
+            Some(Message::KeyEdit(crate::hotkeys::KeyMsg::Captured(
+                b.to_string(),
+            )))
+        }
         // Any status, any widget under it: the list's own mouse handling takes the release, and a
         // header-edge drag must end wherever the button comes up.
         cosmic::iced::Event::Mouse(cosmic::iced::mouse::Event::ButtonReleased(

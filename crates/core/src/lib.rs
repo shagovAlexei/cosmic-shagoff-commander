@@ -9,6 +9,7 @@ pub mod diff;
 pub mod drives;
 pub mod format;
 pub mod history;
+pub mod hotkey;
 pub mod icons;
 pub mod keyring;
 pub mod launch;

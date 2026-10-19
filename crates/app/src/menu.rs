@@ -206,7 +206,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
 }
 
 fn key_binds() -> HashMap<KeyBind, MenuAct> {
-    table()
+    let mut binds: HashMap<KeyBind, MenuAct> = table()
         .into_iter()
         .map(|(modifiers, k, act)| {
             let key = match k {
@@ -215,7 +215,99 @@ fn key_binds() -> HashMap<KeyBind, MenuAct> {
             };
             (KeyBind { modifiers, key }, act)
         })
-        .collect()
+        .collect();
+    // The user's own keys (Configuration → Hotkeys) shown in place of the defaults they replace.
+    for (b, act) in crate::keymap::own() {
+        let kb = shown(&b);
+        binds.remove(&kb);
+        if let Some(a) = act {
+            binds.retain(|_, v| *v != MenuAct::Key(a));
+            binds.insert(kb, MenuAct::Key(a));
+        }
+    }
+    binds
+}
+
+/// A `Bind` as the menu shows a key (as `table` writes them).
+fn shown(b: &shagoff_core::hotkey::Bind) -> KeyBind {
+    let mut modifiers = Vec::new();
+    for (on, m) in [
+        (b.ctrl, Modifier::Ctrl),
+        (b.alt, Modifier::Alt),
+        (b.shift, Modifier::Shift),
+    ] {
+        if on {
+            modifiers.push(m);
+        }
+    }
+    let named = |n| Key::Named(n);
+    let ch = |s: &str| Key::Character(s.into());
+    let key = match b.key.as_str() {
+        k if k.chars().count() == 1 => ch(&k.to_lowercase()),
+        "Up" => ch("↑"),
+        "Down" => ch("↓"),
+        "Left" => ch("←"),
+        "Right" => ch("→"),
+        "PageUp" => ch("PgUp"),
+        "PageDown" => ch("PgDn"),
+        "NumpadAdd" => ch("Num +"),
+        "NumpadSubtract" => ch("Num −"),
+        "NumpadMultiply" => ch("Num *"),
+        "Backquote" => ch("`"),
+        "Comma" => ch(","),
+        "Enter" => named(Named::Enter),
+        "Tab" => named(Named::Tab),
+        "Space" => ch("Space"),
+        "Backspace" => named(Named::Backspace),
+        "Delete" => named(Named::Delete),
+        "Insert" => named(Named::Insert),
+        "Home" => named(Named::Home),
+        "End" => named(Named::End),
+        f if f.starts_with('F') && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) => {
+            let n = f[1..].parse::<u8>().unwrap_or(1);
+            named(
+                [
+                    Named::F1,
+                    Named::F2,
+                    Named::F3,
+                    Named::F4,
+                    Named::F5,
+                    Named::F6,
+                    Named::F7,
+                    Named::F8,
+                    Named::F9,
+                    Named::F10,
+                    Named::F11,
+                    Named::F12,
+                ][usize::from(n - 1)],
+            )
+        }
+        k => ch(k),
+    };
+    KeyBind { modifiers, key }
+}
+
+/// Every command the menus give, as ("menu → item", action): what a key can be set to (hotkeys).
+pub fn commands() -> Vec<(String, Action)> {
+    fn walk(path: &str, items: &[Item], out: &mut Vec<(String, Action)>) {
+        for i in items {
+            match i {
+                menu::Item::Button(l, _, MenuAct::Key(a))
+                | menu::Item::CheckBox(l, _, _, MenuAct::Key(a)) => {
+                    if !out.iter().any(|(_, b)| b == a) {
+                        out.push((format!("{path} → {l}"), *a));
+                    }
+                }
+                menu::Item::Folder(l, sub) => walk(&format!("{path} → {l}"), sub, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (title, items) in menus(Checks::default(), false) {
+        walk(&title, &items, &mut out);
+    }
+    out
 }
 
 type Item = menu::Item<MenuAct, String>;
@@ -391,6 +483,7 @@ fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-settings"), Action::Settings),
                 b(fl!("menu-toolbar"), Action::ConfigureToolbar),
                 b(fl!("menu-colors"), Action::ConfigureColors),
+                b(fl!("menu-keys"), Action::ConfigureKeys),
             ],
         ),
         (
@@ -680,6 +773,7 @@ mod tests {
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar
                             | Action::ConfigureColors
+                            | Action::ConfigureKeys
                             | Action::OpenTerminal
                             | Action::PickTerminal
                             | Action::PickShell
