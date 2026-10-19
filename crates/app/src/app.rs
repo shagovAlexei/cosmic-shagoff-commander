@@ -3374,7 +3374,7 @@ impl App {
                 match &self.config_handler {
                     Some(h) => {
                         if let Err(e) = self.config.set_show_hidden(h, on) {
-                            log::warn!("config: {e}");
+                            self.config_not_saved(&e);
                         }
                     }
                     None => self.config.show_hidden = on,
@@ -4201,11 +4201,10 @@ impl App {
             Dialog::Colors(c) => {
                 match &self.config_handler {
                     Some(h) => {
-                        if let Err(e) = self.config.set_colors(h, c.list) {
-                            log::warn!("config: {e}");
-                        }
-                        if let Err(e) = self.config.set_panel(h, c.panel) {
-                            log::warn!("config: {e}");
+                        let colors = self.config.set_colors(h, c.list);
+                        let panel = self.config.set_panel(h, c.panel);
+                        if let Err(e) = colors.and(panel) {
+                            self.config_not_saved(&e);
                         }
                     }
                     None => (self.config.colors, self.config.panel) = (c.list, c.panel),
@@ -4218,7 +4217,7 @@ impl App {
                 match &self.config_handler {
                     Some(h) => {
                         if let Err(e) = self.config.set_toolbar(h, t.list) {
-                            log::warn!("config: {e}");
+                            self.config_not_saved(&e);
                         }
                     }
                     None => self.config.toolbar = t.list,
@@ -6010,7 +6009,7 @@ impl App {
         if let Some(h) = &self.config_handler
             && let Err(e) = c.write_entry(h)
         {
-            log::warn!("config: {e}");
+            self.config_not_saved(&e);
         }
         self.apply_config(c)
     }
@@ -6312,7 +6311,7 @@ impl App {
         match &self.config_handler {
             Some(h) => {
                 if let Err(e) = self.config.set_pack_format(h, v) {
-                    log::warn!("config: {e}");
+                    self.config_not_saved(&e);
                 }
             }
             None => self.config.pack_format = v,
@@ -6327,7 +6326,7 @@ impl App {
         match &self.config_handler {
             Some(h) => {
                 if let Err(e) = self.config.set_columns(h, self.cols) {
-                    log::warn!("config: {e}");
+                    self.config_not_saved(&e);
                 }
             }
             None => self.config.columns = self.cols,
@@ -6377,15 +6376,20 @@ impl App {
         }
     }
 
+    /// A setting could not be written: it holds until exit only — said, not just logged.
+    fn config_not_saved(&mut self, e: &dyn std::fmt::Display) {
+        log::warn!("config: {e}");
+        self.say(
+            StatusKind::Error,
+            fl!("config-not-saved", err = e.to_string()),
+        );
+    }
+
     fn save_hotlist(&mut self, list: Vec<HotEntry>) {
         match &self.config_handler {
             Some(h) => {
                 if let Err(e) = self.config.set_hotlist(h, list) {
-                    log::warn!("config: {e}");
-                    self.say(
-                        StatusKind::Error,
-                        fl!("config-not-saved", err = e.to_string()),
-                    );
+                    self.config_not_saved(&e);
                 }
             }
             None => self.config.hotlist = list,
@@ -6396,7 +6400,7 @@ impl App {
         match &self.config_handler {
             Some(h) => {
                 if let Err(e) = self.config.set_connections(h, list) {
-                    log::warn!("config: {e}");
+                    self.config_not_saved(&e);
                 }
             }
             None => self.config.connections = list,
