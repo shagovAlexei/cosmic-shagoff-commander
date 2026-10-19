@@ -1211,3 +1211,4 @@
 | `regression_btrfs_subvolumes_on_the_root_device_get_buttons` | Подтом btrfs в `/media` на одном устройстве с `/` не получал кнопку диска | 144 |
 | `regression_ctrl_is_let_go_when_the_window_loses_focus` | Ctrl, отпущенный в другом окне, оставался «зажатым»: щелчок по возвращении отмечал файл | 145 |
 | `regression_keys_the_focused_terminal_took_do_not_act_on_the_panels` | F8 / Ctrl+R / Esc в сфокусированном встроенном терминале действовали на панели | 149 |
+| `regression_tmux_as_the_shell_is_never_typed_into` | `tmux` в `term_shell`: `cd` панели набирался в его окно (хоть в vim) | 149 |
