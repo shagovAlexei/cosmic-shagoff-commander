@@ -1081,6 +1081,59 @@ pub fn entries(paths: &[PathBuf], root: &Path) -> Vec<Entry> {
         .collect()
 }
 
+/// Search results inside archives fed to a panel on disk at `root` (157): an entry each from its
+/// archive's index (nothing unpacked), named by its path below `root`, its whole path as `os_name`
+/// (as `listing::entries` gives the ones on disk). One not in its index (gone since): none.
+pub fn found_entries(paths: &[PathBuf], root: &Path) -> Vec<Entry> {
+    let mut out = Vec::new();
+    for group in split_by(paths, |p| p.parent().and_then(split_path).map(|(a, _)| a)) {
+        let Some((archive, _)) = group.first().and_then(|p| p.parent()).and_then(split_path) else {
+            continue;
+        };
+        let Ok(items) = index(&archive) else {
+            continue;
+        };
+        let by_path: std::collections::HashMap<&Path, &Item> =
+            items.iter().map(|it| (it.path.as_path(), it)).collect();
+        for p in &group {
+            let Some(it) = (p.strip_prefix(&archive).ok()).and_then(|inner| by_path.get(inner))
+            else {
+                continue;
+            };
+            let name = p
+                .strip_prefix(root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .into_owned();
+            let mut e = to_entry(it, p.as_os_str().to_owned(), name, it.dir, it.link);
+            if !it.dir {
+                e.ext = (p.file_name()).map_or_else(String::new, |n| {
+                    crate::listing::ext_of(&n.to_string_lossy())
+                });
+            }
+            out.push(e);
+        }
+    }
+    out
+}
+
+/// `paths` split by `key`, in the order each key first comes (the ones without one together):
+/// files from several archives (search results) go out or are deleted one archive at a time.
+pub fn split_by<K: PartialEq>(
+    paths: &[PathBuf],
+    key: impl Fn(&Path) -> Option<K>,
+) -> Vec<Vec<PathBuf>> {
+    let mut groups: Vec<(Option<K>, Vec<PathBuf>)> = Vec::new();
+    for p in paths {
+        let k = key(p);
+        match groups.iter_mut().find(|(g, _)| *g == k) {
+            Some((_, v)) => v.push(p.clone()),
+            None => groups.push((k, vec![p.clone()])),
+        }
+    }
+    groups.into_iter().map(|(_, v)| v).collect()
+}
+
 /// What the dir `inner` of `archive` holds, from the index (nothing unpacked): its files, their
 /// size and its dirs, the dir itself counted (as `props::usage`); dirs with no entry of their own
 /// (`a/b/f` without `a/b/`) count too.
@@ -2761,6 +2814,47 @@ mod tests {
     }
 
     /// zip with `docs/a.txt`, `docs/img/p.png`, `.hidden`, `top.txt` — no explicit dir entries.
+    #[test]
+    fn found_in_archives_listed_from_the_index_and_split_by_archive() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        z.add_directory("docs/img/", o).unwrap();
+        z.start_file("docs/a.txt", o).unwrap();
+        io::Write::write_all(&mut z, b"aa").unwrap();
+        z.finish().unwrap();
+        // Search finds dirs with an entry of their own; one gone since lists as nothing.
+        let found = [a.join("docs/a.txt"), a.join("docs/img"), a.join("gone.txt")];
+        let e = found_entries(&found, d.path());
+        let rows: Vec<(&str, bool, u64)> = e
+            .iter()
+            .map(|e| (e.name.as_str(), e.is_dir(), e.size))
+            .collect();
+        assert_eq!(
+            rows,
+            [("a.zip/docs/a.txt", false, 2), ("a.zip/docs/img", true, 0)]
+        );
+        assert_eq!(e[0].os_name, a.join("docs/a.txt").into_os_string());
+        assert_eq!(e[0].ext, "txt");
+        let paths: Vec<PathBuf> = ["/d/x", "/z.zip/a", "/d/y", "/w.7z/b", "/z.zip/c"]
+            .map(PathBuf::from)
+            .to_vec();
+        let by_first = |p: &Path| {
+            p.to_str()
+                .filter(|s| s.contains(".zip") || s.contains(".7z"))
+                .map(|s| s[..6].to_string())
+        };
+        assert_eq!(
+            split_by(&paths, by_first),
+            [
+                vec![PathBuf::from("/d/x"), PathBuf::from("/d/y")],
+                vec![PathBuf::from("/z.zip/a"), PathBuf::from("/z.zip/c")],
+                vec![PathBuf::from("/w.7z/b")],
+            ]
+        );
+    }
+
     fn zip_fixture(path: &Path) {
         use std::io::Write;
         let mut z = zip::ZipWriter::new(fs::File::create(path).unwrap());
