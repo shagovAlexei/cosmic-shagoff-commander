@@ -1221,7 +1221,7 @@ impl App {
                             let from = if down {
                                 p.cursor() + 1
                             } else {
-                                p.cursor() + n - 1
+                                (p.cursor() + n).saturating_sub(1) // empty list: none found
                             };
                             if let Some(i) = p.find(&text, from, down) {
                                 let t = self.panes[side].active_mut();
@@ -9224,6 +9224,22 @@ mod tests {
         assert!(app.job.is_none() && app.queue.is_empty());
         let msg = app.msg().unwrap();
         assert!(msg.contains("one") && msg.contains("two"), "{msg}");
+    }
+
+    #[test]
+    fn regression_quick_search_up_in_an_empty_list() {
+        let mut app = app_with(Config::default(), State::default());
+        app.panes[0]
+            .active_mut()
+            .panel
+            .set_listing("/".into(), Vec::new(), None);
+        app.search = Some(Search {
+            side: 0,
+            text: "a".into(),
+            filter: false,
+        });
+        let _ = app.update(Message::Key(Action::Up)); // was: `0 + 0 - 1`, overflow
+        assert_eq!(app.panes[0].active().panel.cursor(), 0);
     }
 
     #[test]
