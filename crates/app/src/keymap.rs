@@ -1,6 +1,7 @@
 //! TC key bindings → `Action`. One table; the F-key buttons dispatch the same actions.
 
 use cosmic::iced::keyboard::{Key, Modifiers, key::Physical};
+use shagoff_core::hotkey::Bind;
 use shagoff_core::lister::{Encoding, Mode};
 use shagoff_core::sort::SortKey;
 
@@ -158,12 +159,77 @@ pub enum Action {
     ToggleTerminal,
     /// Commands → "Shell…": the built-in terminal's shell.
     PickShell,
+    /// Configuration → "Hotkeys…" (TC: redefine hotkeys).
+    ConfigureKeys,
+}
+
+/// The user's own keys (Configuration → Hotkeys), tried before the table; `None` turns a key off.
+/// Global: `route_event` runs without the app.
+static OWN: std::sync::RwLock<Vec<(Bind, Option<Action>)>> = std::sync::RwLock::new(Vec::new());
+
+/// The hotkeys dialog waits for a key: `route_event` hands the next one over as it is.
+pub static CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_own(list: Vec<(Bind, Option<Action>)>) {
+    *OWN.write().unwrap_or_else(|e| e.into_inner()) = list;
+}
+
+pub fn own() -> Vec<(Bind, Option<Action>)> {
+    OWN.read().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// A key's name in a `Bind`: letters and digits by their place (any layout), the rest by code;
+/// modifiers alone and Escape (closes dialogs, cancels) have none.
+pub fn key_name(physical: Physical) -> Option<String> {
+    use cosmic::iced::keyboard::key::Code;
+    let Physical::Code(code) = physical else {
+        return None;
+    };
+    Some(match code {
+        Code::ShiftLeft
+        | Code::ShiftRight
+        | Code::ControlLeft
+        | Code::ControlRight
+        | Code::AltLeft
+        | Code::AltRight
+        | Code::SuperLeft
+        | Code::SuperRight
+        | Code::CapsLock
+        | Code::Escape => return None,
+        Code::Enter | Code::NumpadEnter => "Enter".into(),
+        Code::ArrowUp => "Up".into(),
+        Code::ArrowDown => "Down".into(),
+        Code::ArrowLeft => "Left".into(),
+        Code::ArrowRight => "Right".into(),
+        c => {
+            let s = format!("{c:?}");
+            let short = (s.strip_prefix("Key").or_else(|| s.strip_prefix("Digit")))
+                .filter(|r| r.len() == 1)
+                .map(String::from);
+            short.unwrap_or(s)
+        }
+    })
+}
+
+pub fn bind_of(physical: Physical, mods: Modifiers) -> Option<Bind> {
+    Some(Bind {
+        ctrl: mods.control(),
+        alt: mods.alt(),
+        shift: mods.shift(),
+        key: key_name(physical)?,
+    })
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
     use cosmic::iced::keyboard::key::{Code, Named};
     if mods.logo() {
         return None;
+    }
+    if let Some(b) = bind_of(physical, mods) {
+        let own = OWN.read().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, a)) = own.iter().find(|(o, _)| *o == b) {
+            return *a;
+        }
     }
     if mods.alt() {
         // Alt+F1/F2: drives; Alt+symbol: quick search (TC). Other Alt combos belong to the compositor.

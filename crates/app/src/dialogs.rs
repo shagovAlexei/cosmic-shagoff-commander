@@ -91,6 +91,8 @@ pub enum Dialog {
     /// Ctrl+D → "Configure…".
     Hotlist(Box<crate::hotlist::HotEdit>),
     Toolbar(Box<crate::toolbar::ToolEdit>),
+    /// Configuration → Hotkeys.
+    Keys(Box<crate::hotkeys::KeyEdit>),
     /// Configuration → "Colors by type…".
     Colors(Box<crate::colorrules::ColorEdit>),
     /// Ctrl+M: files snapshot at open (panel order) and the form. Boxed: the form is large.
@@ -1076,6 +1078,7 @@ pub fn view<'a>(
         }
         Dialog::Hotlist(h) => crate::hotlist::view(h, cancel.into(), font),
         Dialog::Toolbar(t) => crate::toolbar::view(t, cancel.into(), font),
+        Dialog::Keys(k) => crate::hotkeys::view(k, cancel.into(), font),
         Dialog::Colors(c) => crate::colorrules::view(c, cancel.into(), font),
         Dialog::Props(p) => {
             const LABEL: f32 = 150.0;

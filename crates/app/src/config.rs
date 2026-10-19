@@ -146,6 +146,9 @@ pub struct Config {
     pub columns: [f32; 4],
     /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
     pub toolbar: Vec<ToolButton>,
+    /// The user's own keys (Configuration → Hotkeys): ("Ctrl+K", action name — `hotkeys::name`
+    /// — or "" to turn the key off), tried before the default table.
+    pub hotkeys: Vec<(String, String)>,
     /// Name colours by type (TC "Color by file type"), first match wins.
     pub colors: Vec<shagoff_core::colors::Rule>,
     /// The file list's colours: its text and background, marked rows, the cursor; empty: the theme's.
@@ -248,6 +251,7 @@ impl Default for Config {
             f12: ToolButton::default(),
             columns: [60.0, 90.0, 130.0, 80.0],
             toolbar: crate::toolbar::default_bar(),
+            hotkeys: Vec::new(),
             colors: shagoff_core::colors::defaults(),
             panel: shagoff_core::colors::default_panel(),
             panel_font: String::new(),
