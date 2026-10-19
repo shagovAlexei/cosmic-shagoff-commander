@@ -120,6 +120,12 @@ pub struct Config {
     /// Commands → Terminal: the `.desktop` id of the terminal chosen; empty: the system's default.
     /// Shift+Enter uses it unless `terminal` was changed from its default by hand.
     pub terminal_app: String,
+    /// View → Built-in terminal: under the panels in place of the command line.
+    pub term_builtin: bool,
+    /// Commands → Shell…: its path (`/etc/shells`); empty: `$SHELL`.
+    pub term_shell: String,
+    /// Its height under the panels, in rows (its top edge dragged).
+    pub term_rows: u16,
     pub skin: Skin,
     /// TC "Select with right mouse button": a right click marks, a long press opens the menu;
     /// off: a right click opens the menu at once.
@@ -230,6 +236,9 @@ impl Default for Config {
             keep_history: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
             terminal_app: String::new(),
+            term_builtin: false,
+            term_shell: String::new(),
+            term_rows: 8,
             skin: Skin::Classic,
             right_marks: true,
             lister_window: true,

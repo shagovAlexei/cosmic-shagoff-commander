@@ -26,6 +26,7 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Find files (masks or regex, text inside, size / date, inside archives), compare and synchronize folders, compare files side by side
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs
 - Terminal of your choice (Commands → Terminal…: the system default or any installed one) opens in the panel's folder and runs Shift+Enter
+- Built-in terminal under the panels in place of the command line (Ctrl+` or View → Built-in terminal, off by default): follows the active panel's folder, Ctrl+O over the whole window, shell from Commands → Shell…
 - Right button marks files as in Total Commander (drag it across rows to mark them), held it opens the menu (or the menu at once — a setting), full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
 
 ## Keys
@@ -56,6 +57,10 @@ Total Commander's layout, so the hands already know it:
 | Pack: zip, tar.*, 7z, encrypted | Colors by file type: mask, size, age, attributes |
 | ![Find files](res/screenshots/find.png) | ![Settings](res/screenshots/settings.png) |
 | Find files: masks, regex, text, inside archives | Settings, applied as you change them |
+
+![Built-in terminal](res/screenshots/terminal.png)
+
+Built-in terminal under the panels (Ctrl+`): its shell follows the active panel's folder, Ctrl+O over the whole window
 
 ## Toolbar buttons
 

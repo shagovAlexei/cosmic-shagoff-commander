@@ -54,6 +54,9 @@ pub fn font_families() -> Vec<String> {
 pub enum Setting {
     /// Commands → Terminal: a `.desktop` id, empty for the system's default.
     TerminalApp(String),
+    TermBuiltin(bool),
+    TermShell(String),
+    TermRows(u16),
     /// Index into [system, LANGUAGES…].
     Language(usize),
     Theme(usize),
@@ -174,10 +177,11 @@ fn help() -> Element<'static, Message> {
         let mut s = settings::section().title(title);
         for (keys, what, _) in rows {
             // The text takes what the keys leave: a long one no longer pushes them off the edge.
-            s = s.add(settings::item_row(vec![
-                widget::text::body(what).width(Length::Fill).into(),
-                keys_view(keys),
-            ]));
+            let mut row = vec![widget::text::body(what).width(Length::Fill).into()];
+            if !keys.is_empty() {
+                row.push(keys_view(keys));
+            }
+            s = s.add(settings::item_row(row));
         }
         col = col.push(s);
     }

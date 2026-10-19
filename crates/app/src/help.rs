@@ -215,6 +215,21 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             ],
         ),
         (
+            fl!("help-term"),
+            vec![
+                r("Ctrl+`", fl!("help-term-toggle"), Action::ToggleTerminal),
+                r("Ctrl+O", fl!("help-term-full"), Action::TermFull),
+                o("Ctrl+Shift+C / Ctrl+Shift+V", fl!("help-term-copy")),
+                o("Shift+PgUp / Shift+PgDn", fl!("help-term-scroll")),
+                o("exit", fl!("help-term-exit")),
+                // No key: what the mouse does and what goes on by itself.
+                o("LMB", fl!("help-term-click")),
+                o("", fl!("help-term-edge")),
+                o("", fl!("help-term-follow")),
+                r("", fl!("help-term-shell"), Action::PickShell),
+            ],
+        ),
+        (
             fl!("help-window"),
             vec![
                 r("F1", fl!("menu-help"), Action::Help),

@@ -148,6 +148,13 @@ pub enum Action {
     OpenTerminal,
     /// Commands → "Terminal…": choose the terminal from the installed ones.
     PickTerminal,
+    /// Ctrl+O (TC: hide the panels, see the console): the built-in terminal over the whole height
+    /// and back.
+    TermFull,
+    /// Ctrl+` (View → "Built-in terminal"): on / off; on, it takes the keys.
+    ToggleTerminal,
+    /// Commands → "Shell…": the built-in terminal's shell.
+    PickShell,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -247,6 +254,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyD), true, true) => Some(Action::CompareFiles),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
+        (Physical::Code(Code::KeyO), true, false) => Some(Action::TermFull),
+        (Physical::Code(Code::Backquote), true, false) => Some(Action::ToggleTerminal),
         (Physical::Code(Code::KeyQ), true, false) => Some(Action::QuickView),
         (Physical::Code(Code::KeyB), true, false) => Some(Action::Branch),
         (Physical::Code(Code::KeyB), true, true) => Some(Action::BranchSel),
@@ -593,6 +602,14 @@ mod tests {
         assert_eq!(chr("d", Code::KeyD, CTRL), Some(Action::Hotlist));
         assert_eq!(chr("в", Code::KeyD, CTRL), Some(Action::Hotlist));
         assert_eq!(chr("u", Code::KeyU, CTRL), Some(Action::SwapPanes));
+        assert_eq!(
+            chr("`", Code::Backquote, CTRL),
+            Some(Action::ToggleTerminal)
+        );
+        assert_eq!(
+            chr("ё", Code::Backquote, CTRL),
+            Some(Action::ToggleTerminal)
+        );
         assert_eq!(chr("г", Code::KeyU, CTRL), Some(Action::SwapPanes));
         assert_eq!(chr("й", Code::KeyQ, CTRL), Some(Action::QuickView));
         assert_eq!(chr("и", Code::KeyB, CTRL), Some(Action::Branch));

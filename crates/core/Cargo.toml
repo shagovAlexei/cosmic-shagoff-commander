@@ -17,7 +17,7 @@ liblzma = { version = "0.4", features = ["static"] }
 memchr = "2"
 mime_guess = "2"
 regex = "1"
-rustix = { version = "1", features = ["fs", "process"] }
+rustix = { version = "1", features = ["fs", "process", "termios"] }
 serde = { version = "1", features = ["derive"] }
 sevenz-rust2 = "0.23"
 similar = { version = "2", default-features = false, features = ["text"] }

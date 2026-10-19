@@ -14,6 +14,7 @@ mod jobs;
 mod keymap;
 mod lister;
 mod menu;
+mod term;
 mod thumbs;
 mod toolbar;
 mod view;
