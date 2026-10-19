@@ -986,7 +986,7 @@
 
 ### Ctrl+D после правки конфига снаружи (132)
 
-- [ ] Ctrl+D, курсор на втором пункте; в другом окне добавить пункт в начало `~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/hotlist` — список в диалоге обновился, курсор на том же пункте; Delete — удалён он
+- [x] Ctrl+D, курсор на втором пункте; в другом окне добавить пункт в начало `~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/hotlist` — список в диалоге обновился, курсор на том же пункте; Delete — удалён он
 
 ## Регрессионные тесты
 
