@@ -245,6 +245,23 @@ impl Panel {
         self.touched();
     }
 
+    /// Rows `from..=to` (either order, clamped) marked or not; `..` never. Right-button drag.
+    pub fn mark_range(&mut self, from: usize, to: usize, on: bool) {
+        let last = self.entries.len().saturating_sub(1);
+        let (a, b) = (from.min(to).min(last), from.max(to).min(last));
+        for e in self.entries.get(a..=b).unwrap_or_default() {
+            if e.name == PARENT {
+                continue;
+            }
+            if on {
+                self.marked.insert(e.os_name.clone());
+            } else {
+                self.marked.remove(&e.os_name);
+            }
+        }
+        self.touched();
+    }
+
     /// Insert / Shift+↓ (+1), Shift+↑ (−1).
     pub fn toggle_mark_and_move(&mut self, delta: isize) {
         self.toggle_mark();
@@ -514,6 +531,23 @@ mod tests {
             vec![d("docs"), f("data.txt", 1), f("readme", 2), f("dump", 3)],
         )
         // sorted: .., docs, data.txt, dump, readme
+    }
+
+    #[test]
+    fn mark_range_sets_rows_both_ways_but_never_parent() {
+        let mut p = three(); // .., docs, data.txt, dump, readme
+        let marked = |p: &Panel| -> Vec<String> {
+            (p.entries().iter())
+                .filter(|e| p.is_marked(e))
+                .map(|e| e.name.clone())
+                .collect()
+        };
+        p.mark_range(3, 0, true); // upwards, over ".."
+        assert_eq!(marked(&p), ["docs", "data.txt", "dump"]);
+        p.mark_range(2, 4, false);
+        assert_eq!(marked(&p), ["docs"]);
+        p.mark_range(4, 9, true); // past the end: clamped
+        assert_eq!(marked(&p), ["docs", "readme"]);
     }
 
     #[test]

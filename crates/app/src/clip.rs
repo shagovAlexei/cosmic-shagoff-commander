@@ -102,6 +102,7 @@ pub fn drag<'a>(
     paths: std::sync::Arc<Vec<PathBuf>>,
     inner: bool,
     window: cosmic::iced::window::Id,
+    right: bool,
     icon: impl Fn() -> cosmic::Element<'static, ()> + 'a,
 ) -> cosmic::Element<'a, Message> {
     use cosmic::iced::clipboard::dnd::DndAction;
@@ -115,6 +116,7 @@ pub fn drag<'a>(
             inner,
         },
         icon,
+        right,
         move |right| Message::DragStart(right.then(|| started.clone())),
         Message::DragEnd,
     )
