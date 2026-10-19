@@ -72,6 +72,7 @@ drives = Drive
 size-units = B KB MB GB TB PB
 decimal-sep = .
 broken-link = { $name }: the link points to nothing
+file-unreadable = { $name }: can't open — { $err }
 list-failed = Cannot read { $path }: { $err }
 mkdir-failed = Cannot create { $path }: { $err }
 search-label = Search:

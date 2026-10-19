@@ -3409,8 +3409,8 @@ impl App {
                     .filter(|e| !e.is_dir() && e.name != PARENT)
                     .map(|e| (panel.cwd().join(&e.os_name), e.name.clone()));
                 if let Some((file, name)) = file {
-                    if !file.exists() {
-                        self.say(StatusKind::Error, fl!("broken-link", name = name));
+                    if let Some(why) = unopenable(&file, &name) {
+                        self.say(StatusKind::Error, why);
                         return Task::none();
                     }
                     let argv = if action == Action::View {
@@ -5273,8 +5273,8 @@ impl App {
             return self.open_from_archive(side, arc, inner, os_name, How::Lister);
         }
         let file = cwd.join(&os_name);
-        if !file.exists() {
-            self.say(StatusKind::Error, fl!("broken-link", name = name));
+        if let Some(why) = unopenable(&file, &name) {
+            self.say(StatusKind::Error, why);
             return Task::none();
         }
         self.open_lister(side, file, name)
@@ -6839,6 +6839,18 @@ fn plan_error(e: &PlanError) -> String {
 }
 
 /// Run a gio call off the UI thread.
+/// Why F3 / F4 can't open `file` (shown as `name`), if they can't: a link to nothing says so,
+/// anything else (deleted meanwhile, in a dir r-- without x) gives the system's reason.
+fn unopenable(file: &Path, name: &str) -> Option<String> {
+    let e = std::fs::metadata(file).err()?;
+    let link = std::fs::symlink_metadata(file).is_ok_and(|m| m.file_type().is_symlink());
+    Some(if link && e.kind() == std::io::ErrorKind::NotFound {
+        fl!("broken-link", name = name)
+    } else {
+        fl!("file-unreadable", name = name, err = e.to_string())
+    })
+}
+
 fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, mount::Error> + Send + 'static,
     msg: impl FnOnce(Result<T, mount::Error>) -> Message + Send + 'static,
@@ -7653,6 +7665,22 @@ mod tests {
         let _ = app.update(Message::Key(Action::View));
         let err = app.msg().unwrap_or_default().to_string();
         assert_eq!(err, fl!("broken-link", name = "dangling"));
+    }
+
+    #[test]
+    fn regression_unopenable_says_why_not_always_broken_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("nowhere", tmp.path().join("dangling")).unwrap();
+        assert_eq!(
+            unopenable(&tmp.path().join("dangling"), "dangling"),
+            Some(fl!("broken-link", name = "dangling"))
+        );
+        // Deleted meanwhile: not a link, the system's reason.
+        let gone = unopenable(&tmp.path().join("gone.txt"), "gone.txt").unwrap();
+        assert_ne!(gone, fl!("broken-link", name = "gone.txt"));
+        assert!(gone.contains("gone.txt"));
+        std::fs::write(tmp.path().join("ok"), "x").unwrap();
+        assert_eq!(unopenable(&tmp.path().join("ok"), "ok"), None);
     }
 
     /// Pane 0 in a temp dir with `sub/`, `a.txt` ("alpha\nfoo\n"), `b.bin`; cursor on `a.txt`.

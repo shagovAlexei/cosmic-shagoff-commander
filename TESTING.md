@@ -1012,6 +1012,11 @@
 
 - [x] `chmod a-w ~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1`; Ctrl+H — скрытые переключились, карточка «Настройки не сохранены: …»; то же для ширины столбцов, Ctrl+D «Добавить», настроек (Ctrl+,). После — `chmod u+w` того же каталога
 
+### F3 / F4: причина, почему файл не открыть (138)
+
+- [x] F3 на битой ссылке — «…: ссылка никуда не ведёт»
+- [x] Удалить файл в терминале, не обновляя панель, F3 на нём — «…: не открыть — No such file or directory»; в каталоге `r--` (`/tmp/r` из 129) — «…: не открыть — Permission denied»
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
@@ -1120,3 +1125,4 @@
 | `regression_hotlist_delete_after_an_outside_change_deletes_the_entry_shown` | Delete в открытом Ctrl+D после правки конфига снаружи удалял пункт по старому номеру — не тот | 132 |
 | `regression_hotlist_add_of_a_non_utf8_dir_says_why` | Папка с именем не в UTF-8 молча не сохранялась в избранное (ошибка только в логе) | 133 |
 | `regression_failed_step_then_enter_keeps_the_shown_dir`, `regression_alt_left_to_a_deleted_dir_keeps_history_on_the_dir_shown` | Alt+← в удалённый каталог, затем Enter в подкаталог — показанный каталог пропадал из истории | 135 |
+| `regression_unopenable_says_why_not_always_broken_link` | F3 / F4 писали «ссылка никуда не ведёт» про любой файл, который не открыть (удалён снаружи, в каталоге `r--`) | 138 |
