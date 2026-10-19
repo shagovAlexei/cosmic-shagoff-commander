@@ -1,17 +1,21 @@
 name: release
 
 # Push a tag `vX.Y.Z` (matching `version` in Cargo.toml) → a GitHub release with the .deb attached.
+# A PR changing this file builds the .deb only (an artifact, no release).
 on:
   push:
     tags: ['v*']
+  pull_request:
+    paths: ['.github/workflows/release.yml', 'justfile']
 
 permissions:
   contents: write
 
 jobs:
   deb:
-    # Same Ubuntu base (glibc 2.39) as Pop!_OS 24.04.
-    runs-on: ubuntu-24.04
+    # The oldest supported Ubuntu (glibc 2.35): the .deb then installs there and on everything
+    # newer (Ubuntu 24.04, Pop!_OS 24.04, Mint 21 / 22, Debian 12…). Built on 24.04 it needed 2.39.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -21,12 +25,15 @@ jobs:
           sudo apt-get install -y \
             libxkbcommon-dev libwayland-dev libudev-dev libinput-dev libseat-dev \
             libgbm-dev libegl1-mesa-dev libssl-dev pkg-config \
-            just dpkg-dev
+            dpkg-dev
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # `just` is not packaged in 22.04.
+      - uses: taiki-e/install-action@just
 
       - name: Tag matches the crate version
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$version in Cargo.toml"; exit 1; }
@@ -34,7 +41,21 @@ jobs:
       - name: Build .deb
         run: just deb
 
+      - name: Needs at most glibc 2.35
+        run: |
+          need=$(objdump -T target/release/shagoff-commander | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "needs $need"
+          test "$(printf '%s\nGLIBC_2.35\n' "$need" | sort -V | tail -1)" = GLIBC_2.35
+          dpkg-deb -f target/deb/*.deb Depends
+
       - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" target/deb/*.deb --generate-notes
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: deb
+          path: target/deb/*.deb
