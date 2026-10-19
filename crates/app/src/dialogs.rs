@@ -181,6 +181,9 @@ pub struct DiffDlg {
     pub copying: Option<(bool, Arc<(String, String)>)>,
     /// Texts and `dirty` before each copy that changed them, latest last; cleared by saving.
     pub undo: Vec<(Texts, (bool, bool))>,
+    /// «Edit left / right» (TC's edit mode): that side's whole text in an editor, in place of its
+    /// half; «Done» compares again (159).
+    pub editing: Option<(usize, cosmic::iced::widget::text_editor::Content)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1748,6 +1751,15 @@ pub fn view<'a>(
         }
         Dialog::Diff(d) => {
             let name = |p: &PathBuf| p.display().to_string();
+            // ✎ ← / ✎ →, named in a tooltip: words would not fit the toolbar in Russian.
+            let edit_btn = |tip: String, side: usize, on: bool| {
+                widget::tooltip(
+                    widget::button::standard(if side == 0 { "✎ ←" } else { "✎ →" })
+                        .on_press_maybe(on.then_some(Message::DiffEdit(side))),
+                    widget::text(tip),
+                    widget::tooltip::Position::Bottom,
+                )
+            };
             let mut lists: [Vec<Element<'a, Message>>; 2] = [Vec::new(), Vec::new()];
             let status = match d.result.as_deref() {
                 None => fl!("diff-running"),
@@ -1885,6 +1897,8 @@ pub fn view<'a>(
                 ),
                 widget::button::suggested(fl!("diff-save"))
                     .on_press_maybe((dirty && d.text().is_some()).then_some(Message::DiffSave)),
+                edit_btn(fl!("diff-edit-left"), 0, d.text().is_some()),
+                edit_btn(fl!("diff-edit-right"), 1, d.text().is_some()),
             ]
             .spacing(8);
             // Under the text with the status, as TC keeps them out of the toolbar.
@@ -1912,7 +1926,19 @@ pub fn view<'a>(
                 .class(cosmic::theme::Container::Card)
             };
             let [left, right] = lists;
-            let pane = |list: Vec<Element<'a, Message>>, side: usize| {
+            let edited = d.editing.as_ref().map(|(s, _)| *s);
+            let editor = |side: usize| -> Option<Element<'a, Message>> {
+                let (_, content) = d.editing.as_ref().filter(|(s, _)| *s == side)?;
+                let e = cosmic::iced::widget::text_editor(content)
+                    .font(cosmic::font::mono())
+                    .on_action(Message::DiffEditAct)
+                    .height(Length::Fixed(DIFF_LIST_H));
+                Some(widget::container(e).width(Length::FillPortion(1)).into())
+            };
+            let pane = |list: Vec<Element<'a, Message>>, side: usize| -> Element<'a, Message> {
+                if let Some(e) = editor(side) {
+                    return e;
+                }
                 widget::scrollable(widget::Column::with_children(list))
                     .id(d.scroll[side].clone())
                     .on_scroll(move |v| {
@@ -1925,6 +1951,18 @@ pub fn view<'a>(
                     })
                     .width(Length::FillPortion(1))
                     .height(Length::Fixed(DIFF_LIST_H))
+                    .into()
+            };
+            // Editing: the toolbar is Done / Cancel only (the rows are of the text before).
+            let buttons: Element<'a, Message> = match edited {
+                Some(_) => row![
+                    widget::button::suggested(fl!("diff-edit-done"))
+                        .on_press(Message::DiffEditDone(true)),
+                    widget::button::standard(fl!("cancel")).on_press(Message::DiffEditDone(false)),
+                ]
+                .spacing(8)
+                .into(),
+                None => buttons.into(),
             };
             widget::dialog()
                 .title(fl!("diff-title"))

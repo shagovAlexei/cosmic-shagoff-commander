@@ -15,6 +15,7 @@ use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::clipboard::dnd::{DndEvent, OfferEvent};
 use cosmic::iced::keyboard::Modifiers;
 use cosmic::iced::widget::scrollable::{self, AbsoluteOffset};
+use cosmic::iced::widget::text_editor;
 use cosmic::iced::{Size, Subscription, event, keyboard, mouse};
 use cosmic::{Application, Element, widget};
 use shagoff_core::archive::{self, Format};
@@ -612,6 +613,11 @@ pub enum Message {
     /// Copy the current block of differences left → right (true) or right → left.
     DiffCopy(bool),
     DiffUndo,
+    /// «Edit left / right» (0 / 1): that side's text in an editor.
+    DiffEdit(usize),
+    DiffEditAct(cosmic::iced::widget::text_editor::Action),
+    /// Done (`true`: compare the edited text again) or Cancel.
+    DiffEditDone(bool),
     DiffSave,
     /// Alt+F7: the "regular expression" checkbox.
     FindRegex,
@@ -1998,6 +2004,34 @@ impl App {
                     return self.start_diff_with(Some(shown), Some((block, to_right)), None);
                 }
             }
+            Message::DiffEdit(side) => {
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && let Some(src) = d.text().map(|t| t.src.clone())
+                {
+                    let text = if side == 0 { &src.0 } else { &src.1 };
+                    d.editing = Some((side, text_editor::Content::with_text(text)));
+                    d.confirm_close = false;
+                }
+            }
+            Message::DiffEditAct(a) => {
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && let Some((_, content)) = &mut d.editing
+                {
+                    content.perform(a);
+                }
+            }
+            Message::DiffEditDone(apply) => {
+                if let Some(Dialog::Diff(d)) = &mut self.dialog
+                    && let Some((side, content)) = d.editing.take()
+                    && apply
+                    && let Some(src) = d.text().map(|t| t.src.clone())
+                    && let Some(texts) = shagoff_core::diff::edited(&src, side, &content.text())
+                {
+                    // As a copied block: undoable, that side unsaved (`DiffReady`).
+                    d.copying = Some((side == 1, src));
+                    return self.start_diff_with(None, None, Some(Arc::new(texts)));
+                }
+            }
             Message::DiffUndo => {
                 // Not while a compare runs: it may hold a copy that would land after the undo.
                 if let Some(Dialog::Diff(d)) = &mut self.dialog
@@ -2312,6 +2346,11 @@ impl App {
                 self.right_drag = None;
                 self.drop_hover = None;
                 return cosmic::iced::runtime::dnd::end_dnd();
+            }
+            // Esc in the compare's editor: out of editing, the dialog stays.
+            Message::Escape(_) if matches!(&self.dialog, Some(Dialog::Diff(d)) if d.editing.is_some()) =>
+            {
+                return self.handle(Message::DiffEditDone(false));
             }
             Message::Escape(_) => return self.handle(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
@@ -4339,6 +4378,7 @@ impl App {
                     stamps: None,
                     copying: None,
                     undo: Vec::new(),
+                    editing: None,
                 })))
             }
             Action::SyncDirs => Some(Dialog::Sync(Box::new(dialogs::SyncDlg {
@@ -12625,6 +12665,38 @@ mod tests {
         assert!(matches!(app.on_app_exit(), Some(Message::Quit)));
         let _ = app.update(Message::Quit);
         assert!(diff_dlg(&mut app).confirm_close);
+    }
+
+    #[test]
+    fn diff_edit_a_side_then_it_is_unsaved_and_undoable() {
+        let (tmp, mut app) = sync_setup();
+        let (l, r) = (tmp.path().join("l/a"), tmp.path().join("r/a"));
+        std::fs::write(&l, "x\n").unwrap();
+        std::fs::write(&r, "y\n").unwrap();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let id = diff_dlg(&mut app).id;
+        let t = shagoff_core::diff::rows("x\n", "y\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let _ = app.update(Message::DiffEdit(1));
+        assert!(diff_dlg(&mut app).editing.is_some());
+        // Esc leaves the editor, not the dialog.
+        let _ = app.update(Message::Escape(app.window_id()));
+        assert!(diff_dlg(&mut app).editing.is_none());
+        let _ = app.update(Message::DiffEdit(1));
+        let typed = text_editor::Action::Edit(text_editor::Edit::Insert('z'));
+        let _ = app.update(Message::DiffEditAct(typed));
+        let _ = app.update(Message::DiffEditDone(true));
+        let d = diff_dlg(&mut app);
+        assert!(d.editing.is_none() && d.result.is_none()); // comparing the edited text
+        let id = d.id;
+        let t = shagoff_core::diff::rows("x\n", "zy\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let d = diff_dlg(&mut app);
+        assert_eq!((d.dirty, d.undo.len()), ((false, true), 1));
+        assert_eq!(std::fs::read_to_string(&r).unwrap(), "y\n"); // not saved yet
     }
 
     #[test]

@@ -505,6 +505,16 @@ pub fn copy_block(t: &Text, block: usize, to_right: bool) -> Option<String> {
     Some(lines.iter().flat_map(|(t, e)| [*t, *e]).collect())
 }
 
+/// The texts with `side` (0 left, 1 right) edited to `new` (159); `None` when nothing changed.
+pub fn edited(src: &(String, String), side: usize, new: &str) -> Option<(String, String)> {
+    let (l, r) = src.clone();
+    match side {
+        0 if l != new => Some((new.to_string(), r)),
+        1 if r != new => Some((l, new.to_string())),
+        _ => None,
+    }
+}
+
 /// Write `text` to the file `path` names (through a symlink: the link stays) via a part file and
 /// a rename (a crash never leaves half a file), keeping its permissions. Refused when the file
 /// is read-only, has other hard links (they would keep the old text), or changed since `read`.
@@ -840,5 +850,12 @@ mod tests {
         assert_eq!(step(r, bl, 0, true, 7, 10), 2);
         assert_eq!(step(r, bl, 0, false, 7, 10), 1);
         assert_eq!(step(r, &[], 0, true, 0, 4), 0);
+    }
+
+    #[test]
+    fn an_edited_side_replaces_its_text_and_unchanged_is_nothing() {
+        let src = ("a\n".to_string(), "b\r\n".to_string());
+        assert_eq!(edited(&src, 0, "A\n"), Some(("A\n".into(), "b\r\n".into())));
+        assert_eq!(edited(&src, 1, "b\r\n"), None);
     }
 }
