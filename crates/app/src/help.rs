@@ -139,12 +139,6 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             fl!("help-show"),
             vec![
                 r("Ctrl+H", fl!("menu-hidden"), Action::ToggleHidden),
-                r("Ctrl+O", fl!("help-term-full"), Action::TermFull),
-                r(
-                    "Ctrl+`",
-                    fl!("menu-builtin-terminal"),
-                    Action::ToggleTerminal,
-                ),
                 r("Ctrl+F1", fl!("menu-brief"), Action::ViewBrief),
                 r("Ctrl+F2", fl!("menu-full"), Action::ViewFull),
                 r("Ctrl+Shift+F1", fl!("menu-thumbs"), Action::ViewThumbs),
@@ -218,6 +212,21 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+P", fl!("help-cmd-cwd"), Action::CmdCwd),
                 r("Ctrl+E", fl!("help-cmd-previous"), Action::CmdPrevious),
                 r("Alt+F8", fl!("cmd-history"), Action::CmdHistory),
+            ],
+        ),
+        (
+            fl!("help-term"),
+            vec![
+                r("Ctrl+`", fl!("help-term-toggle"), Action::ToggleTerminal),
+                r("Ctrl+O", fl!("help-term-full"), Action::TermFull),
+                o("Ctrl+Shift+C / Ctrl+Shift+V", fl!("help-term-copy")),
+                o("Shift+PgUp / Shift+PgDn", fl!("help-term-scroll")),
+                o("exit", fl!("help-term-exit")),
+                // No key: what the mouse does and what goes on by itself.
+                o("LMB", fl!("help-term-click")),
+                o("", fl!("help-term-edge")),
+                o("", fl!("help-term-follow")),
+                r("", fl!("help-term-shell"), Action::PickShell),
             ],
         ),
         (
