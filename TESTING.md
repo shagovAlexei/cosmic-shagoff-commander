@@ -988,6 +988,10 @@
 
 - [x] Ctrl+D, курсор на втором пункте; в другом окне добавить пункт в начало `~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/hotlist` — список в диалоге обновился, курсор на том же пункте; Delete — удалён он
 
+### Избранное: папка с именем не в UTF-8 (133)
+
+- [x] `mkdir "$(printf '/tmp/caf\xe9')"`, войти в неё, Ctrl+D → «Добавить текущий каталог» — в строке состояния ошибка «байты не в UTF-8…», в избранном её нет
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
@@ -1094,3 +1098,4 @@
 | `regression_click_in_the_other_pane_clears_the_error_like_tab` | Ошибка панели оставалась после щелчка мышью по другой панели (Tab её убирал) | 130 |
 | `regression_alt_letter_adds_to_the_open_search` | Alt+буква при открытом, но не сфокусированном поле быстрого поиска начинала поиск заново вместо дописывания | 131 |
 | `regression_hotlist_delete_after_an_outside_change_deletes_the_entry_shown` | Delete в открытом Ctrl+D после правки конфига снаружи удалял пункт по старому номеру — не тот | 132 |
+| `regression_hotlist_add_of_a_non_utf8_dir_says_why` | Папка с именем не в UTF-8 молча не сохранялась в избранное (ошибка только в логе) | 133 |

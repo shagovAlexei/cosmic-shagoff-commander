@@ -6220,6 +6220,12 @@ impl App {
         }
         if what == Some(Item::Add) {
             let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+            // The config is text (RON): a path that is not UTF-8 can't be written to it.
+            if cwd.to_str().is_none() {
+                self.dialog = None;
+                self.say(StatusKind::Error, fl!("hotlist-not-utf8"));
+                return Task::none();
+            }
             if !self.config.hotlist.iter().any(|e| e.path == cwd) {
                 let mut list = self.config.hotlist.clone();
                 // Into the submenu shown, before its `--`.
@@ -6369,6 +6375,10 @@ impl App {
             Some(h) => {
                 if let Err(e) = self.config.set_hotlist(h, list) {
                     log::warn!("config: {e}");
+                    self.say(
+                        StatusKind::Error,
+                        fl!("config-not-saved", err = e.to_string()),
+                    );
                 }
             }
             None => self.config.hotlist = list,
@@ -9244,6 +9254,24 @@ mod tests {
         // regression: the field lets ↑ / ↓ through as plain keys, which went nowhere
         let _ = app.update(Message::Key(Action::Up));
         assert_eq!(mask(&app), "*.rs");
+    }
+
+    #[test]
+    fn regression_hotlist_add_of_a_non_utf8_dir_says_why() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+        std::fs::create_dir(&dir).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, &dir);
+        let _ = app.update(Message::Key(Action::Hotlist));
+        let add = match &app.dialog {
+            Some(Dialog::List { items, .. }) => items.iter().position(|i| i.kind == Item::Add),
+            _ => None,
+        };
+        let _ = app.pick(add.expect("«Add»"));
+        assert!(app.config.hotlist.is_empty());
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
     }
 
     #[test]
