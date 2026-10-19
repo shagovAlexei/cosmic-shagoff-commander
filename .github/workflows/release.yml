@@ -1,12 +1,12 @@
 name: release
 
-# Push a tag `vX.Y.Z` (matching `version` in Cargo.toml) → a GitHub release with the .deb attached.
+# Push a tag `vX.Y.Z` (matching `version` in Cargo.toml) → a GitHub release with the .deb and .rpm.
 # A PR changing this file builds the .deb only (an artifact, no release).
 on:
   push:
     tags: ['v*']
   pull_request:
-    paths: ['.github/workflows/release.yml', 'justfile']
+    paths: ['.github/workflows/release.yml', 'justfile', 'res/*.1']
 
 permissions:
   contents: write
@@ -30,7 +30,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # `just` is not packaged in 22.04.
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-generate-rpm
 
       - name: Tag matches the crate version
         if: startsWith(github.ref, 'refs/tags/')
@@ -40,6 +42,9 @@ jobs:
 
       - name: Build .deb
         run: just deb
+
+      - name: Build .rpm
+        run: just rpm
 
       - name: Needs at most glibc 2.35
         run: |
@@ -52,10 +57,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" target/deb/*.deb --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" target/deb/*.deb target/generate-rpm/*.rpm --generate-notes
 
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'pull_request'
         with:
-          name: deb
-          path: target/deb/*.deb
+          name: packages
+          path: |
+            target/deb/*.deb
+            target/generate-rpm/*.rpm

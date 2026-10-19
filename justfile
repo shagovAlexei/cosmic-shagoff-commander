@@ -29,9 +29,12 @@ install:
     install -Dm0644 res/{{appid}}.desktop {{dest}}/share/applications/{{appid}}.desktop
     install -Dm0644 res/{{appid}}.metainfo.xml {{dest}}/share/metainfo/{{appid}}.metainfo.xml
     install -Dm0644 res/icons/{{appid}}.svg {{dest}}/share/icons/hicolor/scalable/apps/{{appid}}.svg
+    install -d {{dest}}/share/man/man1
+    gzip -9nc res/{{name}}.1 > {{dest}}/share/man/man1/{{name}}.1.gz
+    chmod 0644 {{dest}}/share/man/man1/{{name}}.1.gz
 
 uninstall:
-    rm -f {{dest}}/bin/{{name}} {{dest}}/share/applications/{{appid}}.desktop {{dest}}/share/metainfo/{{appid}}.metainfo.xml {{dest}}/share/icons/hicolor/scalable/apps/{{appid}}.svg
+    rm -f {{dest}}/bin/{{name}} {{dest}}/share/applications/{{appid}}.desktop {{dest}}/share/metainfo/{{appid}}.metainfo.xml {{dest}}/share/icons/hicolor/scalable/apps/{{appid}}.svg {{dest}}/share/man/man1/{{name}}.1.gz
 
 # .deb for Debian / Ubuntu / Pop!_OS into target/deb/ (dpkg-deb; library deps from dpkg-shlibdeps)
 deb: (build-release '--locked')
@@ -77,3 +80,8 @@ deb: (build-release '--locked')
     EOF
     sed -i 's/^    //' "$root/DEBIAN/control"
     dpkg-deb --root-owner-group --build "$root" "target/deb/{{name}}_${version}_${arch}.deb"
+
+# .rpm for Fedora / openSUSE into target/generate-rpm/ (cargo-generate-rpm; library deps found by ldd)
+rpm: (build-release '--locked')
+    mkdir -p target/man && gzip -9nc res/{{name}}.1 > target/man/{{name}}.1.gz
+    cargo generate-rpm -p crates/app --auto-req builtin

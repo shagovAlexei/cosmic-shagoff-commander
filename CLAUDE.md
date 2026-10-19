@@ -27,8 +27,9 @@ just build-debug / build-release
 just run-logs                    # RUST_LOG=debug cargo run
 cargo run -p shagoff-commander   # run the app (default log level: warn)
 cargo test -p shagoff-core <name>
-sudo just install                # binary, .desktop, metainfo, icon into /usr (rootdir=… to stage)
+sudo just install                # binary, .desktop, metainfo, icon, man page (res/shagoff-commander.1) into /usr (rootdir=… to stage)
 just deb                         # target/deb/*.deb (dpkg-deb, deps by dpkg-shlibdeps); tag vX.Y.Z → release with it (built on Ubuntu 22.04: glibc ≥ 2.35)
+just rpm                         # target/generate-rpm/*.rpm (cargo-generate-rpm, metadata in crates/app/Cargo.toml); in the release too
 ```
 
 `main.rs` probes the GPU first: without `SHADER_F16_IN_F32` (old / software GL, e.g. X11 without DRI3) iced_wgpu panics on its shaders, so it sets `ICED_BACKEND=tiny-skia` (software renderer); a hand-set `ICED_BACKEND` wins. Without the "Cosmic" icon theme (outside COSMIC) it passes the desktop's icon theme (xfconf, gtk-3.0 `settings.ini`, gsettings) as `default_icon_theme`, else libcosmic's icons (title bar buttons, toolbar) come out blank.

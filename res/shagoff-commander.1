@@ -1,0 +1,83 @@
+.TH SHAGOFF-COMMANDER 1 "2026" "Shagoff Commander" "User Commands"
+.SH NAME
+shagoff-commander \- Total Commander-style dual-pane file manager for COSMIC
+.SH SYNOPSIS
+.B shagoff-commander
+.RI [ dir ]
+.SH DESCRIPTION
+.B Shagoff Commander
+is a dual-pane file manager for the COSMIC desktop, written with libcosmic.
+Its layout and keys follow Total Commander for Windows: two panels with tabs, F-key operations,
+archives (zip, tar.*, 7z) opened as folders, file search, directory sync and compare, network
+mounts through gvfs, a viewer, a command line and a built-in terminal.
+.PP
+With
+.I dir
+the left panel opens there; otherwise both panels open where they were left.
+.SH KEYS
+Press F1 in the program for the full list. The main ones:
+.TP
+.B Tab
+Switch panel.
+.TP
+.B Insert, Space, Num+, Num\-, Num*
+Mark files (operations apply to the marked files, else to the one under the cursor).
+.TP
+.B F3, F4
+View, edit.
+.TP
+.B F5, F6, Shift+F6
+Copy, move, rename.
+.TP
+.B F7, F8, Shift+F8
+New folder, delete to trash, delete permanently.
+.TP
+.B Alt+F1, Alt+F2
+Drive list of the left / right panel.
+.TP
+.B Alt+F5, Alt+F9
+Pack, unpack.
+.TP
+.B Alt+F7
+Find files.
+.TP
+.B Ctrl+D
+Directory hotlist.
+.TP
+.B Ctrl+F
+Connect to a server (sftp, smb, ftp, dav).
+.TP
+.B Ctrl+T, Ctrl+W
+New tab, close tab.
+.TP
+.B Ctrl+`, Ctrl+O
+Built-in terminal on / off, terminal over the whole window.
+.TP
+.B Ctrl+,
+Settings.
+.SH FILES
+.TP
+.I ~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/
+Settings, one file per field; a change made by hand applies at once.
+.TP
+.I ~/.local/state/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/
+Tabs, paths and histories, kept between runs.
+.SH ENVIRONMENT
+.TP
+.B ICED_BACKEND
+.B tiny-skia
+forces the software renderer (chosen by itself on a GPU that cannot run the default one).
+.TP
+.B RUST_LOG
+Log level on standard error (default
+.BR warn ).
+.TP
+.B SHELL
+The built-in terminal's shell, unless another is chosen in Commands \(-> Shell.
+.SH SEE ALSO
+.BR gio (1),
+.BR xdg-open (1)
+.PP
+https://github.com/shagovAlexei/cosmic-shagoff-commander
+.SH LICENSE
+GPL-3.0-only.

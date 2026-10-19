@@ -87,6 +87,9 @@ A `.deb` for Pop!_OS 24.04 / Ubuntu 22.04 and newer (Mint 21+, Debian 12+; built
 sudo apt install ./shagoff-commander_*_amd64.deb
 ```
 
+Fedora / openSUSE: the `.rpm` from the same release (`sudo dnf install ./shagoff-commander-*.x86_64.rpm`).
+`man shagoff-commander` — the command line, files and main keys.
+
 ## Update
 
 Which version you have: **Help → About**, or `dpkg -s shagoff-commander | grep Version`.
@@ -116,7 +119,7 @@ Then close the running Shagoff Commander and start it again.
 
 ```sh
 just build-release
-sudo just install   # or: just deb → target/deb/shagoff-commander_<version>_<arch>.deb
+sudo just install   # or: just deb → target/deb/…deb, just rpm → target/generate-rpm/…rpm (cargo install cargo-generate-rpm)
 ```
 
 ## License
