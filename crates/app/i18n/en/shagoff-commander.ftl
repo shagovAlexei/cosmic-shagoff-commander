@@ -420,7 +420,6 @@ find-regex-help = Regular expressions: in "Text" with "Regular expression" ticke
     • Text:  TODO|FIXME  — either;  ^\s*fn   — lines starting with fn;  \d{"{"}3{"}"}-\d{"{"}2{"}"}-\d{"{"}2{"}"}  — 123-45-67
     • Without "Case sensitive" upper and lower case are the same (Cyrillic too).
 find-archives = Search in archives (names and text)
-find-feed-archives = Found inside archives ({ $n }) are not listed in the panel
 find-regex = Text is a regular expression
 find-min-size = Size from, KB
 find-max-size = Size up to, KB

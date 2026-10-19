@@ -3705,8 +3705,10 @@ impl App {
                 let cwd = panel.cwd().to_path_buf();
                 let current = panel.current().map(|e| (e.os_name.clone(), e.name.clone()));
                 if let Some((os_name, name)) = current {
-                    match archive::split_path(&cwd) {
+                    let (dir, own) = located(&cwd, &os_name);
+                    match archive::split_path(&dir) {
                         Some((arc, inner)) => {
+                            let os_name = own;
                             let how = match Format::detect(&name).is_some_and(Format::is_tree) {
                                 true => How::Browse,
                                 false => How::Run(Vec::new(), &["xdg-open"]),
@@ -3795,7 +3797,10 @@ impl App {
                     .current()
                     .filter(|e| !e.is_dir() && e.name != PARENT)
                     .map(|e| e.os_name.clone());
-                if let (Some(os_name), Some((arc, inner))) = (current, archive::split_path(&cwd)) {
+                let current = current.map(|os| located(&cwd, &os));
+                if let Some((os_name, (arc, inner))) =
+                    current.and_then(|(dir, own)| Some((own, archive::split_path(&dir)?)))
+                {
                     // A link entry would open (and on "update", overwrite) whatever it points to.
                     let link = panel.current().is_some_and(|e| e.is_link);
                     if action == Action::Edit && link {
@@ -4830,6 +4835,21 @@ impl App {
         sources: Vec<PathBuf>,
         input: &str,
     ) -> Task<Message> {
+        // Search results in the panel: files from archives go out one archive dir at a time (each
+        // its own job, queued), the ones on disk together.
+        if op != InputOp::Rename {
+            let groups = archive::split_by(&sources, |p| {
+                p.parent()
+                    .filter(|d| archive::within(d))
+                    .map(Path::to_path_buf)
+            });
+            if groups.len() > 1 {
+                let tasks: Vec<_> = (groups.into_iter())
+                    .map(|g| self.start_transfer(op, side, g, input))
+                    .collect();
+                return Task::batch(tasks);
+            }
+        }
         // While a navigation is in flight the rows still show the dir being left; aim at where the tab is going.
         let cwd = self.panes[side].active().target();
         // From the rows' own dir: right after Enter on an archive they still show the dir left.
@@ -5352,12 +5372,7 @@ impl App {
             return Task::none();
         };
         let paths = Arc::new(f.results.clone());
-        // Only real files can be listed and operated on; say what was left out.
-        let in_archives = paths.iter().filter(|p| inside_archive(p)).count();
         self.dialog = None; // stops the search
-        if in_archives > 0 {
-            self.say(StatusKind::Info, fl!("find-feed-archives", n = in_archives));
-        }
         self.active = side;
         self.leave_locked(side);
         let t = self.panes[side].active_mut();
@@ -5705,8 +5720,9 @@ impl App {
             return Task::none();
         };
         let (os_name, name) = (e.os_name.clone(), e.name.clone());
-        if let Some((arc, inner)) = archive::split_path(&cwd) {
-            return self.open_from_archive(side, arc, inner, os_name, How::Lister);
+        let (dir, own) = located(&cwd, &os_name);
+        if let Some((arc, inner)) = archive::split_path(&dir) {
+            return self.open_from_archive(side, arc, inner, own, How::Lister);
         }
         let file = cwd.join(&os_name);
         if let Some(why) = unopenable(&file, &name) {
@@ -5969,6 +5985,16 @@ impl App {
     }
 
     fn start_delete(&mut self, side: usize, permanent: bool, paths: Vec<PathBuf>) -> Task<Message> {
+        // Search results in the panel: each archive rewritten once, the files on disk together.
+        let groups = archive::split_by(&paths, |p| {
+            p.parent().and_then(archive::split_path).map(|(a, _)| a)
+        });
+        if groups.len() > 1 {
+            let tasks: Vec<_> = (groups.into_iter())
+                .map(|g| self.start_delete(side, permanent, g))
+                .collect();
+            return Task::batch(tasks);
+        }
         let dir = paths
             .first()
             .and_then(|p| p.parent())
@@ -7631,6 +7657,14 @@ fn read_listing(
     match results {
         // A branch read inside an archive: from its index.
         Some(r) if archive::split_path(path).is_some() => Ok(archive::entries(r, path)),
+        // Search results fed to the panel: the ones inside archives from their indexes.
+        Some(r) if r.iter().any(|p| inside_archive(p)) => {
+            let (arc, disk): (Vec<PathBuf>, Vec<PathBuf>) =
+                r.iter().cloned().partition(|p| inside_archive(p));
+            let mut v = listing::entries(&disk, path, stop);
+            v.extend(archive::found_entries(&arc, path));
+            Ok(v)
+        }
         Some(r) => Ok(listing::entries(r, path, stop)),
         None => listing::scan(path, show_hidden).map_err(|e| e.to_string()),
     }
@@ -7715,6 +7749,16 @@ fn open_with_items(apps: Vec<openwith::App>, all: bool) -> Vec<ListItem> {
 
 /// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
 /// name only — a stat per result would stall on a million of them.
+/// Where a row's file lies: its dir and its own name — not `cwd` for search results fed to the
+/// panel, whose rows carry whole paths (157: some inside archives).
+fn located(cwd: &Path, os_name: &std::ffi::OsStr) -> (PathBuf, OsString) {
+    let full = cwd.join(os_name);
+    match (full.parent(), full.file_name()) {
+        (Some(d), Some(n)) => (d.to_path_buf(), n.to_os_string()),
+        _ => (cwd.to_path_buf(), os_name.to_os_string()),
+    }
+}
+
 fn inside_archive(p: &Path) -> bool {
     p.parent().is_some_and(shagoff_core::archive::within)
 }
@@ -10247,6 +10291,38 @@ mod tests {
         // `terminal` changed by hand (before the menu existed): it still wins.
         app.config.terminal = vec!["xterm".into(), "-e".into()];
         assert_eq!(app.terminal_prefix(), ["xterm", "-e"]);
+    }
+
+    #[test]
+    fn found_in_archives_are_listed_and_deleted_one_archive_at_a_time() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let zip_at = |name: &str| {
+            let a = tmp.path().join(name);
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&a).unwrap());
+            z.start_file("f.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(b"x").unwrap();
+            z.finish().unwrap();
+            a
+        };
+        let (a, b) = (zip_at("a.zip"), zip_at("b.zip"));
+        let disk = tmp.path().join("d.txt");
+        std::fs::write(&disk, "d").unwrap();
+        let found = vec![disk.clone(), a.join("f.txt"), b.join("f.txt")];
+        let rows = read_listing(tmp.path(), false, Some(&found), &AtomicBool::new(false)).unwrap();
+        let names: Vec<&str> = rows.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["d.txt", "a.zip/f.txt", "b.zip/f.txt"]);
+        assert_eq!(
+            located(tmp.path(), &rows[1].os_name),
+            (a.clone(), "f.txt".into())
+        );
+        // F8 on all three: a's rewrite runs, b's and the disk file's wait their turn (never run
+        // here: the trash is not the test's to touch).
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.start_delete(0, false, vec![a.join("f.txt"), b.join("f.txt"), disk]);
+        assert!(app.job.is_some());
+        assert_eq!(app.queue.len(), 2);
     }
 
     #[test]
