@@ -156,6 +156,11 @@ impl Panel {
         self.resort(name);
     }
 
+    /// A sort as it is (a new tab takes the one it was opened from); rows sorted by the next read.
+    pub fn set_sort_order(&mut self, s: crate::sort::Sort) {
+        self.sort = s;
+    }
+
     /// Ctrl+F3…F6 as `set_sort`, the rows left as they are: a big list is sorted by the
     /// background read that follows (`set_listing` takes it as it comes).
     pub fn set_sort_key(&mut self, key: SortKey) {

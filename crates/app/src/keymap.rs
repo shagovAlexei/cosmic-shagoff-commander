@@ -161,6 +161,8 @@ pub enum Action {
     PickShell,
     /// Configuration → "Hotkeys…" (TC: redefine hotkeys).
     ConfigureKeys,
+    /// Tabs → "Locked, dir changes allowed" (TC): moves about, back to its dir when left (160).
+    TabRoam,
 }
 
 /// The user's own keys (Configuration → Hotkeys), tried before the table; `None` turns a key off.

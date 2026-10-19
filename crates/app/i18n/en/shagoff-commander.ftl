@@ -479,6 +479,7 @@ menu-tab-open-other = Folder in a new tab of the other panel
 menu-tab-copy-other = Copy tab to the other panel
 menu-tab-move-other = Move tab to the other panel
 menu-tab-lock = Locked tab
+menu-tab-roam = Locked, dir changes allowed
 menu-tab-rename = Rename tab…
 menu-close-other-tabs = Close other tabs
 menu-tab-left = Move tab left

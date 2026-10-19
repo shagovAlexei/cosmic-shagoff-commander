@@ -761,7 +761,7 @@ fn tab_bar(
             .on_right_press(Message::SelectTab(side, i))
             .on_middle_press(Message::CloseTabAt(side, i))
             .on_double_click(Message::CloseTabAt(side, i));
-        let ctx = crate::menu::Ctx::Tab { locked: t.locked };
+        let ctx = crate::menu::Ctx::Tab { lock: t.lock() };
         let tab = widget::context_menu(tab, Some(crate::menu::context(ctx)))
             .window_id(window)
             .on_surface_action(Message::Surface);
