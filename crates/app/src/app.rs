@@ -104,6 +104,9 @@ pub struct Tab {
     counting: Arc<AtomicBool>,
     /// Stops the Ctrl+B read under way (Esc, the dir left).
     branch_stop: Arc<AtomicBool>,
+    /// Restored at startup, not read yet: its dir may be gone (it goes up to one that is there,
+    /// found by the background read — never a `stat` on the UI thread, a dead mount would hang).
+    restored: bool,
 }
 
 /// A closed tab's background reads (branch, dir sizes) stop with it.
@@ -142,6 +145,7 @@ impl Tab {
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
+            restored: false,
         }
     }
 
@@ -206,6 +210,7 @@ impl Tab {
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
+            restored: false,
         }
     }
 }
@@ -1064,6 +1069,7 @@ impl App {
                 t.brief = !t.thumbs && saved.brief.get(i).copied().unwrap_or(false);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
                 t.history = saved.history.get(i).cloned().unwrap_or_default();
+                t.restored = true;
             }
             if let Some(l) = extra {
                 tabs.open_after(app.new_tab(l));
@@ -3077,10 +3083,14 @@ impl App {
         };
         let tab = t.id;
         let (show_hidden, sort) = (t.panel.show_hidden(), t.panel.sort());
+        let resolve = std::mem::take(&mut t.restored).then(|| self.home.clone());
         Task::perform(
             async move {
-                let p = path.clone();
-                let (result, space) = tokio::task::spawn_blocking(move || {
+                let (result, space, path) = tokio::task::spawn_blocking(move || {
+                    let p = match resolve {
+                        Some(home) => session::existing_dir(&path, &home),
+                        None => path,
+                    };
                     let mut result = read_listing(&p, show_hidden, results.as_deref(), &stop);
                     // Sorted here, not on the UI thread; the panel only checks the order.
                     // ponytail: counted dir sizes are not known here; a Size sort with them is
@@ -3088,10 +3098,11 @@ impl App {
                     if let Ok(entries) = &mut result {
                         shagoff_core::sort::sort_entries(entries, sort, &HashMap::new());
                     }
-                    (result, drives::space(&p))
+                    let space = drives::space(&p);
+                    (result, space, p)
                 })
                 .await
-                .unwrap_or_else(|e| (Err(e.to_string()), None));
+                .unwrap_or_else(|e| (Err(e.to_string()), None, PathBuf::new()));
                 Message::Listed {
                     tab,
                     generation,
@@ -7498,7 +7509,10 @@ mod tests {
         let app = app_with(Config::default(), state);
         assert_eq!(cwds(&app, 0), [tmp.path().to_path_buf(), a]);
         assert_eq!(app.panes[0].active_index(), 1);
-        assert_eq!(cwds(&app, 1), [tmp.path().to_path_buf()]);
+        // Not looked at on the UI thread (a dead mount would hang the start): the tab's first
+        // read goes up to an existing dir (`session::existing_dir`, in the background).
+        assert_eq!(cwds(&app, 1), [tmp.path().join("gone")]);
+        assert!(!app.panes[1].active().restored); // its read is under way, resolving
         assert_eq!(app.active, 1);
     }
 
