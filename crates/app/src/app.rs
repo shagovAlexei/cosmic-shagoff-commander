@@ -4721,6 +4721,7 @@ impl App {
             to_right: p.to_right,
             to_left: p.to_left,
             delete: p.delete,
+            permanent: false,
         };
         self.start_job(side, OpKind::Sync, job, None)
     }
