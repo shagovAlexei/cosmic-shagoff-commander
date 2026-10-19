@@ -87,6 +87,9 @@
 sudo apt install ./shagoff-commander_*_amd64.deb
 ```
 
+Fedora / openSUSE: `.rpm` из того же релиза (`sudo dnf install ./shagoff-commander-*.x86_64.rpm`).
+`man shagoff-commander` — запуск, файлы и главные клавиши.
+
 ## Обновление
 
 Какая версия стоит: **Справка → О программе** или `dpkg -s shagoff-commander | grep Version`.
@@ -116,7 +119,7 @@ git pull && sudo just install
 
 ```sh
 just build-release
-sudo just install   # или: just deb → target/deb/shagoff-commander_<версия>_<arch>.deb
+sudo just install   # или: just deb → target/deb/…deb, just rpm → target/generate-rpm/…rpm (cargo install cargo-generate-rpm)
 ```
 
 ## Лицензия
