@@ -39,8 +39,8 @@ pub fn expand_home(path: &Path, home: &Path) -> PathBuf {
     }
 }
 
-/// `path` or its nearest existing ancestor dir; `fallback` for relative or empty paths.
-// ponytail: `is_dir` blocks on a dead network mount at startup; restore in spawn_blocking if that bites.
+/// `path` or its nearest existing ancestor dir; `fallback` for relative or empty paths. Touches the
+/// disk (a dead mount blocks): call it off the UI thread.
 pub fn existing_dir(path: &Path, fallback: &Path) -> PathBuf {
     path.ancestors()
         .find(|p| p.is_absolute() && (p.is_dir() || crate::archive::split_path(p).is_some()))
@@ -48,15 +48,17 @@ pub fn existing_dir(path: &Path, fallback: &Path) -> PathBuf {
         .unwrap_or_else(|| fallback.to_path_buf())
 }
 
-/// Tab paths to open and the active index; never empty.
+/// Tab paths to open and the active index; never empty. No disk access (a dead network mount
+/// would hang the start): a gone dir is found out by the tab's first read (`existing_dir`).
 pub fn restore(state: &PaneState, fallback: &Path) -> (Vec<PathBuf>, usize) {
     if state.tabs.is_empty() {
         return (vec![fallback.to_path_buf()], 0);
     }
-    let tabs: Vec<PathBuf> = state
-        .tabs
-        .iter()
-        .map(|p| existing_dir(p, fallback))
+    let tabs: Vec<PathBuf> = (state.tabs.iter())
+        .map(|p| match p.is_absolute() {
+            true => p.clone(),
+            false => fallback.to_path_buf(),
+        })
         .collect();
     let active = state.active.min(tabs.len() - 1);
     (tabs, active)
@@ -121,17 +123,25 @@ mod tests {
     }
 
     #[test]
-    fn restore_clamps_active_and_fixes_paths() {
-        let tmp = tempfile::tempdir().unwrap();
+    fn restore_clamps_active_and_fixes_paths_without_the_disk() {
         let state = PaneState {
-            tabs: vec![tmp.path().into(), tmp.path().join("gone"), "rel".into()],
+            // A dead network mount: never looked at here (its first read resolves it).
+            tabs: vec![
+                "/run/user/1000/gvfs/dead".into(),
+                "/gone/x".into(),
+                "rel".into(),
+            ],
             active: 7,
             ..PaneState::default()
         };
         let (tabs, active) = restore(&state, Path::new("/fb"));
         assert_eq!(
             tabs,
-            [tmp.path().to_path_buf(), tmp.path().into(), "/fb".into()]
+            [
+                PathBuf::from("/run/user/1000/gvfs/dead"),
+                "/gone/x".into(),
+                "/fb".into()
+            ]
         );
         assert_eq!(active, 2);
     }

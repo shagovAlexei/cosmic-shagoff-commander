@@ -364,6 +364,12 @@ pub struct App {
     split_from: Option<f32>,
     win_w: f32,
     pub drives: Vec<Drive>,
+    /// The gvfs mounts last read (`Message::Gvfs`), appended to `drives`.
+    gvfs: Vec<Drive>,
+    /// The gvfs dir is to be read again / is being read: in the background, one read at a time —
+    /// it blocks while any of its network mounts hangs.
+    gvfs_want: bool,
+    gvfs_busy: bool,
     /// Column widths as shown: the config's, or the one being dragged (written on release).
     pub cols: [f32; 4],
     /// A header edge being dragged: (side, edge 1..=4, first pointer x and the width then).
@@ -449,6 +455,8 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
+    /// The gvfs mounts, read in the background (`App::read_gvfs`).
+    Gvfs(Vec<Drive>),
     Click(usize, usize),
     DoubleClick(usize, usize),
     /// Context menu "Open": like a double click, not like the Enter key (which runs a typed command).
@@ -806,7 +814,7 @@ impl Application for App {
             true => Task::none(),
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
-        Task::batch([task, follow, back, self.want_thumbs()])
+        Task::batch([task, follow, back, self.want_thumbs(), self.read_gvfs()])
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -1006,6 +1014,9 @@ impl App {
             split_from: None,
             win_w: 0.0,
             drives: Vec::new(),
+            gvfs: Vec::new(),
+            gvfs_want: false,
+            gvfs_busy: false,
             cols,
             col_drag: None,
             tab_drag: None,
@@ -1071,7 +1082,7 @@ impl App {
             app.panes[side] = tabs;
         }
         app.refresh_mounts();
-        let task = app.load_all();
+        let task = Task::batch([app.load_all(), app.read_gvfs()]);
         (app, task)
     }
 
@@ -2753,6 +2764,13 @@ impl App {
                     }));
                 }
             }
+            Message::Gvfs(drives) => {
+                self.gvfs_busy = false;
+                if drives != self.gvfs {
+                    self.gvfs = drives;
+                    self.set_drives();
+                }
+            }
             Message::Mounted(side, result) => {
                 self.refresh_mounts();
                 let volumes = self.refresh_volumes(true);
@@ -3077,10 +3095,17 @@ impl App {
         };
         let tab = t.id;
         let (show_hidden, sort) = (t.panel.show_hidden(), t.panel.sort());
+        // The dir shown read again (restored at startup, a watcher event, Ctrl+R) and gone: up to
+        // one that is there, as TC. Found by the background read — never a `stat` on the UI
+        // thread, a dead mount would hang it. A step elsewhere into a gone dir stays an error.
+        let resolve = (path == t.panel.cwd()).then(|| self.home.clone());
         Task::perform(
             async move {
-                let p = path.clone();
-                let (result, space) = tokio::task::spawn_blocking(move || {
+                let (result, space, path) = tokio::task::spawn_blocking(move || {
+                    let p = match resolve {
+                        Some(home) => session::existing_dir(&path, &home),
+                        None => path,
+                    };
                     let mut result = read_listing(&p, show_hidden, results.as_deref(), &stop);
                     // Sorted here, not on the UI thread; the panel only checks the order.
                     // ponytail: counted dir sizes are not known here; a Size sort with them is
@@ -3088,10 +3113,11 @@ impl App {
                     if let Ok(entries) = &mut result {
                         shagoff_core::sort::sort_entries(entries, sort, &HashMap::new());
                     }
-                    (result, drives::space(&p))
+                    let space = drives::space(&p);
+                    (result, space, p)
                 })
                 .await
-                .unwrap_or_else(|e| (Err(e.to_string()), None));
+                .unwrap_or_else(|e| (Err(e.to_string()), None, PathBuf::new()));
                 Message::Listed {
                     tab,
                     generation,
@@ -6087,14 +6113,37 @@ impl App {
     }
 
     /// Mounts change rarely and procfs never blocks: re-read with every listing.
-    /// gvfs network mounts are dirs under `$XDG_RUNTIME_DIR/gvfs`, not separate mounts.
+    /// gvfs network mounts are dirs under `$XDG_RUNTIME_DIR/gvfs`, not separate mounts: that dir
+    /// blocks while one of them hangs, so it is read in the background (`read_gvfs`).
     fn refresh_mounts(&mut self) {
+        self.gvfs_want = true;
+        self.set_drives();
+    }
+
+    fn set_drives(&mut self) {
         if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
             self.drives = drives::parse(&m, &self.home);
         }
-        if let Some(gvfs) = mount::gvfs_root() {
-            self.drives.extend(mount::gvfs_drives(&gvfs));
+        self.drives.extend(self.gvfs.iter().cloned());
+    }
+
+    /// Run after every `update`: the gvfs dir read asked for by `refresh_mounts`, if none is
+    /// under way (a hung one would otherwise pile up threads).
+    fn read_gvfs(&mut self) -> Task<Message> {
+        if !self.gvfs_want || self.gvfs_busy {
+            return Task::none();
         }
+        let Some(root) = mount::gvfs_root() else {
+            return Task::none();
+        };
+        (self.gvfs_want, self.gvfs_busy) = (false, true);
+        Task::perform(
+            async move {
+                let drives = tokio::task::spawn_blocking(move || mount::gvfs_drives(&root));
+                Message::Gvfs(drives.await.unwrap_or_default())
+            },
+            cosmic::Action::App,
+        )
     }
 
     /// Ctrl+Shift+F: unmount the removable or network drive holding the active panel. Not while a
@@ -7498,8 +7547,29 @@ mod tests {
         let app = app_with(Config::default(), state);
         assert_eq!(cwds(&app, 0), [tmp.path().to_path_buf(), a]);
         assert_eq!(app.panes[0].active_index(), 1);
-        assert_eq!(cwds(&app, 1), [tmp.path().to_path_buf()]);
+        // Not looked at on the UI thread (a dead mount would hang the start): the tab's first
+        // read goes up to an existing dir (`session::existing_dir`, in the background).
+        assert_eq!(cwds(&app, 1), [tmp.path().join("gone")]);
         assert_eq!(app.active, 1);
+    }
+
+    #[test]
+    fn regression_gvfs_dir_is_never_read_on_the_ui_thread() {
+        // A hung network mount blocks the gvfs dir: listing it in `update` froze the window.
+        let mut app = app_with(Config::default(), State::default());
+        let net = Drive {
+            label: "net".into(),
+            path: "/run/user/1000/gvfs/sftp:host=h".into(),
+        };
+        app.gvfs_busy = true; // the read is under way
+        app.refresh_mounts();
+        assert!(app.gvfs_want && !app.drives.contains(&net));
+        let _ = app.read_gvfs(); // one at a time: a hung read does not pile up threads
+        assert!(app.gvfs_want);
+        let _ = app.handle(Message::Gvfs(vec![net.clone()]));
+        assert!(!app.gvfs_busy && app.drives.contains(&net));
+        app.refresh_mounts(); // kept while the next read runs
+        assert!(app.drives.contains(&net));
     }
 
     #[test]
