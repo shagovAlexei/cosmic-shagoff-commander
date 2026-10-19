@@ -117,6 +117,9 @@ pub struct Config {
     pub keep_history: bool,
     /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
     pub terminal: Vec<String>,
+    /// Commands → Terminal: the `.desktop` id of the terminal chosen; empty: the system's default.
+    /// Shift+Enter uses it unless `terminal` was changed from its default by hand.
+    pub terminal_app: String,
     pub skin: Skin,
     /// TC "Select with right mouse button": a right click marks, a long press opens the menu;
     /// off: a right click opens the menu at once.
@@ -226,6 +229,7 @@ impl Default for Config {
             show_cmdline: true,
             keep_history: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
+            terminal_app: String::new(),
             skin: Skin::Classic,
             right_marks: true,
             lister_window: true,

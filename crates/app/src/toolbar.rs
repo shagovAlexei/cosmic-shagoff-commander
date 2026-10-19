@@ -170,6 +170,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-count-dirs"
         ),
         b!(
+            "cm_ExecuteDOS",
+            OpenTerminal,
+            "utilities-terminal-symbolic",
+            "menu-open-terminal"
+        ),
+        b!(
             "cm_ConfigToolbars",
             ConfigureToolbar,
             "applications-system-symbolic",

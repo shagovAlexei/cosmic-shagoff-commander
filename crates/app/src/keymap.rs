@@ -143,6 +143,11 @@ pub enum Action {
     ConfigureToolbar,
     /// Configuration → "Colors by type…".
     ConfigureColors,
+    /// Commands → "Open terminal": the chosen terminal in the active panel's dir (TC
+    /// `cm_ExecuteDOS`).
+    OpenTerminal,
+    /// Commands → "Terminal…": choose the terminal from the installed ones.
+    PickTerminal,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
