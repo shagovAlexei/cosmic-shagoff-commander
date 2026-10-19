@@ -4592,7 +4592,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-commander"
-version = "0.65.1"
+version = "0.66.0"
 dependencies = [
  "alacritty_terminal",
  "cosmic-text",
@@ -4616,7 +4616,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-core"
-version = "0.65.1"
+version = "0.66.0"
 dependencies = [
  "bzip2",
  "chardetng",
@@ -4626,6 +4626,7 @@ dependencies = [
  "liblzma",
  "memchr",
  "mime_guess",
+ "percent-encoding",
  "regex",
  "rustix 1.1.5",
  "serde",
@@ -4635,6 +4636,7 @@ dependencies = [
  "tempfile",
  "trash",
  "url",
+ "zbus",
  "zip",
  "zstd 0.14.0",
 ]

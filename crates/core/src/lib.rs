@@ -10,6 +10,7 @@ pub mod drives;
 pub mod format;
 pub mod history;
 pub mod icons;
+pub mod keyring;
 pub mod launch;
 pub mod lister;
 pub mod listing;
