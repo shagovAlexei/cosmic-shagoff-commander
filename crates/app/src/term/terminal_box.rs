@@ -8,6 +8,7 @@ use alacritty_terminal::{
     term::{TermMode, cell::Flags},
     vte::ansi::{CursorShape, NamedColor},
 };
+use cosmic::iced::core::SmolStr;
 use cosmic::{
     Renderer,
     cosmic_theme::palette::{WithAlpha, blend::Compose},
@@ -35,14 +36,12 @@ use cosmic::{
     },
     theme::Theme,
 };
-use cosmic::iced::core::SmolStr;
 use cosmic_text::LayoutGlyph;
 use indexmap::IndexSet;
 use std::{
     array,
     cell::Cell,
     cmp,
-    collections::HashMap,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -889,6 +888,14 @@ where
             return;
         }
         let state = tree.state.downcast_mut::<State>();
+        // Focused, every key is the terminal's, handled below or not: none may reach the panels
+        // (Enter would open a row there). Only the app's own (`pass`: Ctrl+O) go through.
+        if let Event::Keyboard(KeyEvent::KeyPressed { key, modifiers, .. }) = event
+            && state.is_focused
+            && !(self.pass)(*modifiers, key)
+        {
+            shell.capture_event();
+        }
         let scrollbar_rect = state.scrollbar_rect.get();
         let mut terminal = self.terminal.lock().unwrap();
         let buffer_size = terminal.with_buffer(|buffer| buffer.size());
@@ -898,6 +905,8 @@ where
         match event {
             Event::Window(event) => match event {
                 cosmic::iced::window::Event::Focused => {
+                    // Back in the window: the keys go where they went (cosmic-term's app refocused).
+                    state.is_focused |= std::mem::take(&mut state.away_focused);
                     if let Some(on_window_focused) = &self.on_window_focused {
                         shell.publish(on_window_focused());
                     }
@@ -926,7 +935,7 @@ where
                     shell.request_input_method(&self.input_method(state, layout, &terminal));
                 }
                 cosmic::iced::window::Event::Unfocused => {
-                    state.is_focused = false;
+                    state.away_focused = std::mem::take(&mut state.is_focused);
                     state.autoscroll.stop();
                     if let Some(on_window_unfocused) = &self.on_window_unfocused {
                         shell.publish(on_window_unfocused());
@@ -1138,7 +1147,8 @@ where
                     match key.to_latin(*physical_key) {
                         Some('c') => {
                             if let Some(text) = terminal.term.lock().selection_to_string() {
-                                clipboard.write(cosmic::iced::core::clipboard::Kind::Standard, text);
+                                clipboard
+                                    .write(cosmic::iced::core::clipboard::Kind::Standard, text);
                             }
                             shell.capture_event();
                             return;
@@ -1246,6 +1256,10 @@ where
                 }
             },
             Event::Mouse(MouseEvent::ButtonPressed(button)) => {
+                // A click on the panels gives the keys back to them (cosmic-term focuses by app).
+                if cursor_position.position_in(layout.bounds()).is_none() {
+                    state.is_focused = false;
+                }
                 if let Some(p) = cursor_position.position_in(layout.bounds()) {
                     let x = p.x - self.padding.left;
                     let y = p.y - self.padding.top;
@@ -1916,6 +1930,8 @@ pub struct State {
     click: Option<(ClickKind, Instant)>,
     dragging: Option<Dragging>,
     is_focused: bool,
+    /// Focused when the window lost the keyboard: focused again when it comes back.
+    away_focused: bool,
     scroll_pixels: f32,
     scroll_lines: f32,
     scrollbar_rect: Cell<Rectangle<f32>>,
@@ -1931,6 +1947,7 @@ impl State {
             click: None,
             dragging: None,
             is_focused: false,
+            away_focused: false,
             scroll_pixels: 0.0,
             scroll_lines: 0.0,
             scrollbar_rect: Cell::new(Rectangle::default()),
@@ -1950,6 +1967,8 @@ impl operation::Focusable for State {
     }
 
     fn unfocus(&mut self) {
+        // Not taken back when the window comes back either (a click elsewhere meant it).
+        self.away_focused = false;
         self.is_focused = false;
     }
 }

@@ -139,6 +139,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             fl!("help-show"),
             vec![
                 r("Ctrl+H", fl!("menu-hidden"), Action::ToggleHidden),
+                r("Ctrl+O", fl!("help-term-full"), Action::TermFull),
                 r("Ctrl+F1", fl!("menu-brief"), Action::ViewBrief),
                 r("Ctrl+F2", fl!("menu-full"), Action::ViewFull),
                 r("Ctrl+Shift+F1", fl!("menu-thumbs"), Action::ViewThumbs),

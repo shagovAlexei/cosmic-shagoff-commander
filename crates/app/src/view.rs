@@ -111,6 +111,10 @@ fn main_view(app: &App) -> Element<'_, Message> {
     if let Some(l) = app.lister.as_deref().filter(|l| l.in_place()) {
         return crate::lister::view(l);
     }
+    // Ctrl+O: the terminal in place of the panels (TC: the panels hidden, the console seen).
+    if app.term_full {
+        return crate::term::view(app, true);
+    }
     // Ctrl+Q: the viewer in place of the other pane.
     let side = |s: usize| match app.lister.as_deref() {
         Some(l) if l.quick.is_some() && s != app.active => container(crate::lister::view(l))
@@ -1108,7 +1112,10 @@ pub fn footer(app: &App) -> Element<'_, Message> {
             .padding([2, 6])
             .height(Length::Shrink),
     );
-    if app.config.show_cmdline {
+    // The built-in terminal takes the command line's place (TC has none; Double Commander's).
+    if app.config.term_builtin && !app.term_full {
+        col = col.push(crate::term::view(app, false));
+    } else if app.config.show_cmdline && !app.config.term_builtin {
         col = col.push(command_line(app));
     }
     if app.config.show_fkeys {

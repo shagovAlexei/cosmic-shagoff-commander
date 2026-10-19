@@ -527,6 +527,8 @@ pub enum ListKind {
     OpenWith,
     /// Commands → "Terminal…": `path` is the terminal's `.desktop` id (empty: the default).
     Terminals,
+    /// Commands → "Shell…": `path` is the shell (empty: `$SHELL`).
+    Shells,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1289,6 +1291,7 @@ pub fn view<'a>(
                 ListKind::Commands => fl!("cmd-history"),
                 ListKind::OpenWith => fl!("open-with"),
                 ListKind::Terminals => fl!("menu-terminal"),
+                ListKind::Shells => fl!("menu-shell"),
             };
             let dialog = widget::dialog()
                 .title(title)

@@ -148,6 +148,13 @@ pub enum Action {
     OpenTerminal,
     /// Commands → "Terminal…": choose the terminal from the installed ones.
     PickTerminal,
+    /// Ctrl+O (TC: hide the panels, see the console): the built-in terminal over the whole height
+    /// and back.
+    TermFull,
+    /// View → "Built-in terminal": on / off.
+    ToggleTerminal,
+    /// Commands → "Shell…": the built-in terminal's shell.
+    PickShell,
 }
 
 pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> {
@@ -247,6 +254,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyD), true, true) => Some(Action::CompareFiles),
         (Physical::Code(Code::KeyD), true, false) => Some(Action::Hotlist),
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
+        (Physical::Code(Code::KeyO), true, false) => Some(Action::TermFull),
         (Physical::Code(Code::KeyQ), true, false) => Some(Action::QuickView),
         (Physical::Code(Code::KeyB), true, false) => Some(Action::Branch),
         (Physical::Code(Code::KeyB), true, true) => Some(Action::BranchSel),

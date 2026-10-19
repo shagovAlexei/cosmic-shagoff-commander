@@ -24,11 +24,10 @@ use cosmic_text::{
 use indexmap::IndexSet;
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fs, io, mem,
     path::PathBuf,
     sync::{
-        Arc, Mutex, Weak,
+        Arc, Weak,
         atomic::{AtomicU32, Ordering},
     },
     time::Instant,
@@ -293,6 +292,11 @@ impl Terminal {
         })
     }
 
+    /// The shell's pid: whether it waits at its prompt (`core::shell::idle`).
+    pub fn shell_pid(&self) -> Option<u32> {
+        self.shell_pid
+    }
+
     pub fn buffer_weak(&self) -> Weak<Buffer> {
         Arc::downgrade(&self.buffer)
     }
@@ -340,6 +344,7 @@ impl Terminal {
         self.zoom_adj = value;
     }
 
+    #[allow(dead_code)] // cosmic-term marked its focused pane; one terminal here
     fn set_focused(&mut self, is_focused: bool) {
         let focus_changed = self.is_focused != is_focused;
         self.is_focused = is_focused;
@@ -564,11 +569,7 @@ impl Terminal {
         self.update();
     }
 
-    pub fn set_config(
-        &mut self,
-        config: &AppConfig,
-        colors: &Colors,
-    ) {
+    pub fn set_config(&mut self, config: &AppConfig, colors: &Colors) {
         let mut update_cell_size = false;
         let mut update = false;
         let zoom_adj = self.zoom_adj;

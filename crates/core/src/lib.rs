@@ -25,6 +25,7 @@ pub mod quicksearch;
 pub mod repack;
 pub mod search;
 pub mod session;
+pub mod shell;
 pub mod sort;
 pub mod sync;
 pub mod tabs;

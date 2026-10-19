@@ -167,6 +167,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             K::Letter(Code::KeyH, "h"),
             a(Action::ToggleHidden),
         ),
+        (vec![Ctrl], K::Letter(Code::KeyO, "o"), a(Action::TermFull)),
         (vec![], K::Named(Named::F1), a(Action::Help)),
         (vec![Ctrl], K::Named(Named::F1), a(Action::ViewBrief)),
         (
@@ -224,6 +225,7 @@ pub struct Checks {
     /// The classic look: only there is «Frame around the active panel» offered (the modern
     /// look's cards have one of their own).
     pub classic: bool,
+    pub terminal: bool,
 }
 
 /// (title, items) of every menu.
@@ -287,6 +289,7 @@ fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-open-terminal"), Action::OpenTerminal),
                 b(fl!("menu-pick-terminal"), Action::PickTerminal),
+                b(fl!("menu-pick-shell"), Action::PickShell),
             ],
         ),
         (
@@ -343,6 +346,12 @@ fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
                     None,
                     checks.human_sizes,
                     MenuAct::Key(Action::ToggleHumanSizes),
+                ),
+                menu::Item::CheckBox(
+                    fl!("menu-builtin-terminal"),
+                    None,
+                    checks.terminal,
+                    MenuAct::Key(Action::ToggleTerminal),
                 ),
             ]
             .into_iter()
@@ -668,6 +677,8 @@ mod tests {
                             | Action::ConfigureColors
                             | Action::OpenTerminal
                             | Action::PickTerminal
+                            | Action::ToggleTerminal
+                            | Action::PickShell
                     )
                 ) {
                     continue;

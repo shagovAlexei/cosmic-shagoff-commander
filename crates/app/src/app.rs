@@ -9,6 +9,7 @@ use crate::hotlist::{self, HotEdit, HotMsg};
 use crate::jobs::{self, Job};
 use crate::keymap::{self, Action, ListerKey};
 use crate::lister::{self, Lister, Slide};
+use alacritty_terminal::event::Event as TermEvent;
 use cosmic::app::{Core, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::clipboard::dnd::{DndEvent, OfferEvent};
@@ -379,6 +380,21 @@ pub struct App {
     /// Installed terminals and the system's default among them (`terminals::scan`, at start).
     pub terminals: Vec<Terminal>,
     pub term_default: Option<usize>,
+    /// The built-in terminal's event channel (`term::subscription`, while it is on).
+    term_tx: Option<tokio::sync::mpsc::UnboundedSender<TermEvent>>,
+    /// The built-in terminal, once started; `None` after its shell ended (started again on Ctrl+O
+    /// or a click).
+    pub term: Option<Box<crate::term::Pane>>,
+    /// Ctrl+O: the terminal in place of the panels.
+    pub term_full: bool,
+    pub term_id: widget::Id,
+    /// Its shell ended: not started again on its own (Ctrl+O or a click does).
+    term_ended: bool,
+    /// Its top edge held: where the pointer was pressed (y) and the rows then; the rows now.
+    term_drag: Option<(f32, u16)>,
+    pub term_rows: u16,
+    /// A pane was clicked: the terminal gives the keys up (`update`'s tail).
+    term_blur: bool,
     /// The gvfs mounts last read (`Message::Gvfs`), appended to `drives`.
     gvfs: Vec<Drive>,
     /// The gvfs dir is to be read again / is being read: in the background, one read at a time —
@@ -478,6 +494,15 @@ pub enum Message {
         first: Option<String>,
         made: Result<(), String>,
     },
+    /// The built-in terminal's event channel is up: its shell starts.
+    TermTx(tokio::sync::mpsc::UnboundedSender<TermEvent>),
+    TermEvent(TermEvent),
+    /// A click on the ended terminal's line: start its shell again.
+    TermStart,
+    /// The terminal's top edge: pressed, the pointer at y (window), let go.
+    TermDragStart,
+    TermDragAt(f32),
+    TermDragEnd,
     /// The installed terminals and the default's index (`terminals::scan`).
     Terminals(Vec<Terminal>, Option<usize>),
     /// The gvfs mounts, read in the background (`App::read_gvfs`).
@@ -841,7 +866,19 @@ impl Application for App {
             true => Task::none(),
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
-        Task::batch([task, follow, back, self.want_thumbs(), self.read_gvfs()])
+        self.term_follow();
+        let blur = match std::mem::take(&mut self.term_blur) {
+            true => unfocus(),
+            false => Task::none(),
+        };
+        Task::batch([
+            task,
+            follow,
+            back,
+            self.want_thumbs(),
+            self.read_gvfs(),
+            blur,
+        ])
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -910,6 +947,21 @@ impl Application for App {
                 subs.push(crate::watcher::watch(side, cwd));
             }
         }
+        if self.config.term_builtin {
+            subs.push(crate::term::subscription());
+        }
+        // The terminal's top edge held: the pointer anywhere, and where the button comes up.
+        if self.term_drag.is_some() {
+            subs.push(event::listen_with(|e, _, _| match e {
+                cosmic::iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Message::TermDragAt(position.y))
+                }
+                cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Message::TermDragEnd)
+                }
+                _ => None,
+            }));
+        }
         Subscription::batch(subs)
     }
 
@@ -943,6 +995,7 @@ impl Application for App {
             human_sizes: c.human_sizes(),
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
+            terminal: c.term_builtin,
         };
         vec![crate::menu::bar(
             checks,
@@ -1043,6 +1096,14 @@ impl App {
             drives: Vec::new(),
             terminals: Vec::new(),
             term_default: None,
+            term_tx: None,
+            term: None,
+            term_full: false,
+            term_id: widget::Id::unique(),
+            term_ended: false,
+            term_drag: None,
+            term_rows: 0,
+            term_blur: false,
             gvfs: Vec::new(),
             gvfs_want: false,
             gvfs_busy: false,
@@ -2838,6 +2899,43 @@ impl App {
             Message::Terminals(list, default) => {
                 (self.terminals, self.term_default) = (list, default)
             }
+            Message::TermTx(tx) => {
+                self.term_tx = Some(tx);
+                self.term_start();
+            }
+            Message::TermStart => {
+                self.term_ended = false;
+                self.term_start();
+            }
+            Message::TermDragStart => self.term_drag = Some((f32::NAN, self.term_rows())),
+            Message::TermDragAt(y) => {
+                if let Some((from, rows)) = &mut self.term_drag {
+                    if from.is_nan() {
+                        *from = y;
+                    }
+                    let line = (f32::from(self.config.panel_size()) * 1.4).ceil();
+                    let n = f32::from(*rows) + (*from - y) / line;
+                    self.term_rows = n.round().clamp(3.0, 60.0) as u16;
+                }
+            }
+            Message::TermDragEnd => {
+                if self.term_drag.take().is_some() {
+                    return self.set(Setting::TermRows(self.term_rows));
+                }
+            }
+            Message::TermEvent(e) => {
+                use crate::term::Outcome;
+                let Some(pane) = &self.term else {
+                    return Task::none();
+                };
+                match crate::term::on_event(pane, e) {
+                    Outcome::None => {}
+                    Outcome::Exit => {
+                        (self.term, self.term_full, self.term_ended) = (None, false, true);
+                    }
+                    Outcome::Copy(text) => return cosmic::iced::clipboard::write(text),
+                }
+            }
             Message::Gvfs(drives) => {
                 self.gvfs_busy = false;
                 if drives != self.gvfs {
@@ -3219,6 +3317,8 @@ impl App {
     /// in the pane left and in this one goes, quick search closes.
     fn click_pane(&mut self, side: usize) {
         self.search = None;
+        // The terminal does not see a click its rows took first: the keys come back to the panels.
+        self.term_blur = self.term.is_some();
         for s in [self.active, side] {
             self.panes[s].active_mut().error = None;
         }
@@ -3279,6 +3379,38 @@ impl App {
             }
             Action::ToggleActiveFrame => {
                 return self.set(Setting::ActiveFrame(!self.config.active_frame));
+            }
+            Action::ToggleTerminal => {
+                let on = !self.config.term_builtin;
+                if !on {
+                    (self.term, self.term_tx, self.term_full) = (None, None, false);
+                }
+                return self.set(Setting::TermBuiltin(on));
+            }
+            Action::TermFull => {
+                if !self.config.term_builtin {
+                    return Task::none();
+                }
+                if self.term.is_none() {
+                    self.term_ended = false;
+                    self.term_start();
+                }
+                self.term_full = !self.term_full && self.term.is_some();
+                // Over the whole height: its keys; back: the panels'.
+                return match self.term_full {
+                    true => cosmic::iced::runtime::widget::operation::focus(self.term_id.clone()),
+                    false => unfocus(),
+                };
+            }
+            Action::PickShell => {
+                let (items, cursor) = self.shell_items();
+                self.dialog = Some(Dialog::List {
+                    kind: ListKind::Shells,
+                    side,
+                    cursor,
+                    items,
+                });
+                return Task::none();
             }
             Action::CopyNames | Action::CopyPaths => {
                 let paths = self.panes[side].active().panel.targets();
@@ -3567,6 +3699,9 @@ impl App {
             | Action::ToggleDividerLine
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
+            | Action::ToggleTerminal
+            | Action::TermFull
+            | Action::PickShell
             | Action::Donate
             | Action::OpenWith
             | Action::CopyNames
@@ -6087,6 +6222,9 @@ impl App {
                     .map_or(String::new(), |l| l.to_string());
             }
             Setting::TerminalApp(id) => c.terminal_app = id,
+            Setting::TermBuiltin(b) => c.term_builtin = b,
+            Setting::TermShell(s) => c.term_shell = s,
+            Setting::TermRows(n) => c.term_rows = n,
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
             Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
@@ -6379,6 +6517,19 @@ impl App {
                 self.say(StatusKind::Error, fl!("open-failed", err = e.to_string()));
             }
             return Task::none();
+        }
+        if kind == ListKind::Shells {
+            let path = items
+                .get(i)
+                .map(|it| it.path.to_string_lossy().into_owned());
+            let Some(path) = path.filter(|p| *p != self.config.term_shell) else {
+                return Task::none();
+            };
+            // A new shell from now on: the running one ends with its terminal.
+            self.term = None;
+            let task = self.set(Setting::TermShell(path));
+            self.term_start();
+            return task;
         }
         if kind == ListKind::Terminals {
             let id = items
@@ -6768,6 +6919,90 @@ impl App {
             .iter()
             .find(|t| !id.is_empty() && t.id == *id))
         .or_else(|| self.term_default.and_then(|i| self.terminals.get(i)))
+    }
+
+    /// The dir the terminal follows: the active panel's, on disk (not inside an archive).
+    fn term_dir(&self) -> Option<PathBuf> {
+        let t = self.panes[self.active].active();
+        let cwd = t.panel.cwd();
+        (t.pending.is_none() && !archive::within(cwd)).then(|| cwd.to_path_buf())
+    }
+
+    /// Start the built-in terminal's shell, if it is on, its channel is up and none runs.
+    fn term_start(&mut self) {
+        let Some(tx) = self.term_tx.clone().filter(|_| self.config.term_builtin) else {
+            return;
+        };
+        // Not before the panel's dir is read: the shell starts there (a `cd` typed while it
+        // still starts would show before its prompt).
+        let Some(dir) = self.term_dir().filter(|_| self.term.is_none()) else {
+            return;
+        };
+        let shell = shagoff_core::shell::pick(
+            &self.config.term_shell,
+            std::env::var("SHELL").ok().as_deref(),
+        );
+        let theme = cosmic::theme::active();
+        let c = theme.cosmic();
+        let bg = c.bg_color();
+        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let bg = 0xFF00_0000 | byte(bg.red) << 16 | byte(bg.green) << 8 | byte(bg.blue);
+        let style = crate::term::style::Style {
+            font_size: f32::from(self.config.panel_size()),
+            ..Default::default()
+        };
+        match crate::term::start(tx, &shell, Some(&dir), c.is_dark, bg, &style) {
+            Ok(pane) => self.term = Some(Box::new(pane)),
+            Err(e) => self.say(StatusKind::Error, fl!("term-failed", err = e.to_string())),
+        }
+    }
+
+    /// Rows under the panels: dragged now, else the setting.
+    pub fn term_rows(&self) -> u16 {
+        match self.term_drag {
+            Some(_) => self.term_rows,
+            None => self.config.term_rows,
+        }
+    }
+
+    /// After every `update`: the shell starts once the panel's dir is read, then goes where the
+    /// active panel is (`term::follow`).
+    fn term_follow(&mut self) {
+        if self.term.is_none() {
+            if !self.term_ended && self.term_tx.is_some() {
+                self.term_start();
+            }
+            return;
+        }
+        if let Some(dir) = self.term_dir()
+            && let Some(pane) = &mut self.term
+        {
+            crate::term::follow(pane, &dir);
+        }
+    }
+
+    /// Commands → "Shell…": `$SHELL` first, then `/etc/shells`; the chosen one ticked.
+    fn shell_items(&self) -> (Vec<ListItem>, usize) {
+        let etc = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+        let list = shagoff_core::shell::shells(&etc);
+        let chosen = &self.config.term_shell;
+        let at = list.iter().position(|s| s == chosen);
+        let env = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let tick = |on: bool, label: String| format!("{}{label}", if on { "✓ " } else { "    " });
+        let items = std::iter::once(ListItem {
+            label: tick(chosen.is_empty(), fl!("menu-shell-default", name = env)),
+            path: PathBuf::new(),
+            kind: Item::App,
+            icon: String::new(),
+        })
+        .chain(list.iter().enumerate().map(|(i, s)| ListItem {
+            label: tick(at == Some(i), s.clone()),
+            path: PathBuf::from(s),
+            kind: Item::App,
+            icon: String::new(),
+        }))
+        .collect();
+        (items, at.map_or(0, |i| i + 1))
     }
 
     /// Commands → "Terminal…": the default first, then the installed ones; the chosen one ticked
@@ -9756,6 +9991,37 @@ mod tests {
         // `terminal` changed by hand (before the menu existed): it still wins.
         app.config.terminal = vec!["xterm".into(), "-e".into()];
         assert_eq!(app.terminal_prefix(), ["xterm", "-e"]);
+    }
+
+    #[test]
+    fn builtin_terminal_rows_shell_and_ctrl_o() {
+        let mut app = app_with(Config::default(), State::default());
+        // Off: Ctrl+O does nothing (TC's console is not ours to hide panels for).
+        let _ = app.update(Message::Key(Action::TermFull));
+        assert!(!app.term_full);
+        let _ = app.update(Message::Key(Action::ToggleTerminal));
+        assert!(app.config.term_builtin);
+        // Its top edge dragged up 3 lines: 3 rows more, saved on release.
+        let line = (f32::from(app.config.panel_size()) * 1.4).ceil();
+        let rows = app.config.term_rows;
+        let _ = app.update(Message::TermDragStart);
+        let _ = app.update(Message::TermDragAt(400.0));
+        let _ = app.update(Message::TermDragAt(400.0 - 3.0 * line));
+        assert_eq!(app.term_rows(), rows + 3);
+        assert_eq!(app.config.term_rows, rows); // not yet
+        let _ = app.update(Message::TermDragEnd);
+        assert_eq!(app.config.term_rows, rows + 3);
+        // Commands → Shell…: `$SHELL` first, a pick sets it.
+        let _ = app.update(Message::Key(Action::PickShell));
+        let Some(Dialog::List { items, .. }) = &app.dialog else {
+            panic!("no list");
+        };
+        let last = items.len() - 1;
+        let shell = items[last].path.clone();
+        let _ = app.update(Message::ListPick(last));
+        assert_eq!(PathBuf::from(&app.config.term_shell), shell);
+        let _ = app.update(Message::Key(Action::ToggleTerminal));
+        assert!(!app.config.term_builtin && app.term.is_none());
     }
 
     #[test]
