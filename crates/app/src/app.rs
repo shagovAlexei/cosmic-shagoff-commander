@@ -39,12 +39,14 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
 // ponytail: list height is guessed until the scrollable reports its bounds (it does on the first event).
 const FALLBACK_LIST_H: f32 = 400.0;
 const FALLBACK_LIST_W: f32 = 500.0;
+/// How long Enter waits for the rows of the dir being entered (`Tab::pending_at`).
+const ENTER_WAIT: Duration = Duration::from_secs(1);
 
 /// A right press while the right button marks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +89,8 @@ pub struct Tab {
     wheel: f32,
     /// Generation and path of the scan in flight; any other result is stale.
     pub(crate) pending: Option<(u64, PathBuf)>,
+    /// When that scan started: Enter waits for a step's rows only so long (a hung read).
+    pending_at: Instant,
     pub error: Option<String>,
     /// Alt+← / Alt+→ / Alt+↓.
     pub(crate) history: History,
@@ -133,6 +137,7 @@ impl Tab {
             col: 0,
             wheel: 0.0,
             pending: None,
+            pending_at: Instant::now(),
             error: None,
             history: History::default(),
             results: None,
@@ -197,6 +202,7 @@ impl Tab {
             col: self.col,
             wheel: 0.0,
             pending: None,
+            pending_at: Instant::now(),
             error: None,
             history: self.history.clone(),
             results: self.results.clone(),
@@ -3092,6 +3098,7 @@ impl App {
         let generation = self.next_id();
         let t = &mut self.panes[side].items_mut()[i];
         t.pending = Some((generation, path.clone()));
+        t.pending_at = Instant::now();
         // Going anywhere else leaves the search results.
         if t.results.as_ref().is_some_and(|(root, _)| *root != path) {
             t.results = None;
@@ -3283,6 +3290,9 @@ impl App {
         let tab = t.id;
         let target = t.target();
         let loading = target != t.panel.cwd();
+        // A double Enter must not open a row of the dir being left; a read hung on a dead mount
+        // must not hold Enter for good: after a moment the rows on screen are what it opens.
+        let stepping = loading && t.pending_at.elapsed() < ENTER_WAIT;
         let panel = &mut t.panel;
         match action {
             Action::SwitchPane => {
@@ -3328,7 +3338,7 @@ impl App {
             Action::End => panel.cursor_end(),
             Action::Sort(key) => panel.set_sort(key),
             // The rows on screen belong to the dir being left: entering one would undo the navigation.
-            Action::Enter if loading => {}
+            Action::Enter if stepping => {}
             Action::Enter => {
                 if let Some((path, focus)) = panel.enter_path() {
                     return self.load(side, path, focus);
@@ -7701,6 +7711,19 @@ mod tests {
         let _ = app.load(0, "/usr".into(), None);
         let _ = app.update(Message::Key(Action::Enter)); // cursor on ".." of the old dir
         assert_eq!(pending_path(&app), Some(PathBuf::from("/usr")));
+    }
+
+    #[test]
+    fn regression_enter_works_again_while_a_read_hangs() {
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let tmp = std::env::temp_dir();
+        let _ = app.update(listed_ok(id, generation, &tmp)); // shows ".."
+        let _ = app.load(0, "/dead/mount".into(), None); // never answers
+        app.panes[0].active_mut().pending_at -= ENTER_WAIT;
+        let _ = app.update(Message::Key(Action::Enter)); // ".." of the dir shown
+        assert_eq!(pending_path(&app), tmp.parent().map(Path::to_path_buf));
     }
 
     #[test]
