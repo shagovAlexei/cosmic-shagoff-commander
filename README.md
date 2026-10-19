@@ -81,7 +81,7 @@ Use double quotes around the script (the inserted names carry their own single q
 
 ## Install
 
-A `.deb` for Pop!_OS 24.04 / Ubuntu 24.04 is attached to each [release](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases):
+A `.deb` for Pop!_OS 24.04 / Ubuntu 22.04 and newer (Mint 21+, Debian 12+; built against glibc 2.35) is attached to each [release](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases):
 
 ```sh
 sudo apt install ./shagoff-commander_*_amd64.deb

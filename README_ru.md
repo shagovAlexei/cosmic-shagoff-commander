@@ -81,7 +81,7 @@
 
 ## Установка
 
-К каждому [релизу](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases) приложен `.deb` для Pop!_OS 24.04 / Ubuntu 24.04:
+К каждому [релизу](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases) приложен `.deb` для Pop!_OS 24.04 / Ubuntu 22.04 и новее (Mint 21+, Debian 12+; собран под glibc 2.35):
 
 ```sh
 sudo apt install ./shagoff-commander_*_amd64.deb
