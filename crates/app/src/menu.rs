@@ -304,7 +304,7 @@ pub fn commands() -> Vec<(String, Action)> {
         }
     }
     let mut out = Vec::new();
-    for (title, items) in menus(Checks::default(), false) {
+    for (title, items) in menus(Checks::default(), Lock::default()) {
         walk(&title, &items, &mut out);
     }
     out
@@ -326,7 +326,7 @@ pub struct Checks {
 }
 
 /// (title, items) of every menu.
-fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
+fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
     let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
     let sort = |label: String, k: SortKey| b(label, Action::Sort(k));
     vec![
@@ -402,8 +402,14 @@ fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
                 menu::Item::CheckBox(
                     fl!("menu-tab-lock"),
                     None,
-                    locked,
+                    lock.locked,
                     MenuAct::Key(Action::TabLock),
+                ),
+                menu::Item::CheckBox(
+                    fl!("menu-tab-roam"),
+                    None,
+                    lock.roam,
+                    MenuAct::Key(Action::TabRoam),
                 ),
                 b(fl!("menu-tab-rename"), Action::TabRename),
                 b(fl!("menu-tab-left"), Action::MoveTabLeft),
@@ -509,8 +515,15 @@ pub enum Ctx {
     /// `..` or the empty space below the rows: the dir itself.
     Dir,
     Tab {
-        locked: bool,
+        lock: Lock,
     },
+}
+
+/// A tab's lock as its menus show it: locked (TC), or locked with dir changes allowed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Lock {
+    pub locked: bool,
+    pub roam: bool,
 }
 
 fn context_items(ctx: Ctx) -> Vec<Item> {
@@ -563,7 +576,7 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             b(fl!("menu-find"), Action::FindFiles),
             b(fl!("menu-new-tab"), Action::NewTab),
         ],
-        Ctx::Tab { locked } => vec![
+        Ctx::Tab { lock } => vec![
             b(fl!("menu-new-tab"), Action::NewTab),
             b(fl!("menu-reload"), Action::Reload),
             menu::Item::Divider,
@@ -574,8 +587,14 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             menu::Item::CheckBox(
                 fl!("menu-tab-lock"),
                 None,
-                locked,
+                lock.locked,
                 MenuAct::Key(Action::TabLock),
+            ),
+            menu::Item::CheckBox(
+                fl!("menu-tab-roam"),
+                None,
+                lock.roam,
+                MenuAct::Key(Action::TabRoam),
             ),
             b(fl!("menu-tab-rename"), Action::TabRename),
             menu::Item::Divider,
@@ -590,9 +609,9 @@ pub fn context(ctx: Ctx) -> Vec<menu::Tree<Message>> {
     menu::items(&key_binds(), context_items(ctx))
 }
 
-pub fn bar(checks: Checks, locked: bool) -> Element<'static, Message> {
+pub fn bar(checks: Checks, lock: Lock) -> Element<'static, Message> {
     let binds = key_binds();
-    let roots = menus(checks, locked)
+    let roots = menus(checks, lock)
         .into_iter()
         .map(|(title, items)| {
             menu::Tree::with_children(Element::from(menu::root(title)), menu::items(&binds, items))
@@ -644,7 +663,12 @@ mod tests {
         });
         assert!(zip.contains(&Action::Unpack) && zip.contains(&Action::TabOpen));
         assert!(actions(Ctx::Dir).contains(&Action::Mkdir));
-        let tab = actions(Ctx::Tab { locked: true });
+        let tab = actions(Ctx::Tab {
+            lock: Lock {
+                locked: true,
+                roam: false,
+            },
+        });
         for a in [
             Action::NewTab,
             Action::CloseTab,
@@ -730,7 +754,7 @@ mod tests {
                     classic,
                     ..Checks::default()
                 },
-                false,
+                Lock::default(),
             )
             .into_iter()
             .flat_map(|(_, items)| items)
@@ -751,7 +775,7 @@ mod tests {
             classic: true,
             ..Checks::default()
         };
-        for (title, items) in menus(all, false) {
+        for (title, items) in menus(all, Lock::default()) {
             for item in items {
                 let act = match item {
                     menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => a,
@@ -766,6 +790,7 @@ mod tests {
                             | Action::TabCopyOther
                             | Action::TabMoveOther
                             | Action::TabLock
+                            | Action::TabRoam
                             | Action::TabRename
                             | Action::ResetColumns
                             | Action::ToggleDividerLine

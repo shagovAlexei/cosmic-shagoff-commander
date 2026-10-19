@@ -480,6 +480,7 @@ menu-tab-open-other = Каталог в новой вкладке другой �
 menu-tab-copy-other = Копировать вкладку в другую панель
 menu-tab-move-other = Перенести вкладку в другую панель
 menu-tab-lock = Закреплённая вкладка
+menu-tab-roam = Закрепить с переходами
 menu-tab-rename = Переименовать вкладку…
 menu-close-other-tabs = Закрыть остальные вкладки
 menu-tab-left = Сдвинуть вкладку влево

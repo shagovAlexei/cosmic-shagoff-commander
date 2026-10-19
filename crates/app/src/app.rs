@@ -110,6 +110,9 @@ pub struct Tab {
     pub(crate) branching: Option<u64>,
     /// TC locked tab: cannot be closed, leaving its dir opens a new tab.
     pub locked: bool,
+    /// TC «locked, dir changes allowed» (160): its dir. It moves about, but is read there again
+    /// once another tab is shown, and opens there next time; cannot be closed.
+    pub home: Option<PathBuf>,
     /// Own caption instead of the dir's name.
     pub name: Option<String>,
     /// Stops the dir size counts (Space, Alt+Shift+Enter) of the dir shown; set when it is left.
@@ -152,19 +155,34 @@ impl Tab {
             branch: false,
             branching: None,
             locked: false,
+            home: None,
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
         }
     }
 
-    /// Tab caption: own name or the dir's, `*` in front when locked (as in TC).
+    /// Tab caption: own name or the dir's, `*` in front when locked (as in TC); `!` when one
+    /// locked with dir changes allowed is away from its dir.
     pub fn title(&self) -> String {
         let name = (self.name.clone()).unwrap_or_else(|| format::dir_title(self.panel.cwd()));
-        if self.locked {
-            format!("*{name}")
-        } else {
-            name
+        match &self.home {
+            Some(h) if h != self.panel.cwd() => format!("!{name}"),
+            Some(_) => format!("*{name}"),
+            None if self.locked => format!("*{name}"),
+            None => name,
+        }
+    }
+
+    /// Not to be closed (Ctrl+W, Ctrl+Shift+W, the middle button).
+    pub fn pinned(&self) -> bool {
+        self.locked || self.home.is_some()
+    }
+
+    pub fn lock(&self) -> crate::menu::Lock {
+        crate::menu::Lock {
+            locked: self.locked,
+            roam: self.home.is_some(),
         }
     }
 
@@ -217,6 +235,7 @@ impl Tab {
             branch: self.branch,
             branching: None,
             locked: false,
+            home: None,
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
@@ -459,6 +478,9 @@ pub struct App {
     /// Archives opened from inside another (155): the copy in the temp dir → the dir in the outer
     /// archive it came from (Backspace at its root goes back there).
     nested: HashMap<PathBuf, PathBuf>,
+    /// Each pane's shown tab after the last `update`: one that stops being shown and is locked
+    /// with dir changes allowed goes back to its dir (`roam_back`).
+    shown_tabs: [u64; 2],
     /// The edited file being put back («Обновить» answered): if that fails, it is asked again.
     updating: Option<PathBuf>,
     /// Ctrl+F in progress: (address, cancel flag set by Esc).
@@ -891,6 +913,7 @@ impl Application for App {
             true => Task::none(),
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
+        let back = Task::batch([back, self.roam_back()]);
         self.term_follow();
         let waiting = matches!(&self.dialog, Some(Dialog::Keys(k)) if k.capturing);
         keymap::CAPTURE.store(waiting, Ordering::Relaxed);
@@ -1031,7 +1054,7 @@ impl Application for App {
         };
         vec![crate::menu::bar(
             checks,
-            self.panes[self.active].active().locked,
+            self.panes[self.active].active().lock(),
         )]
     }
 
@@ -1164,6 +1187,7 @@ impl App {
             lister: None,
             edited: Vec::new(),
             nested: HashMap::new(),
+            shown_tabs: [0; 2],
             updating: None,
             connecting: None,
             cmdline: String::new(),
@@ -1180,9 +1204,10 @@ impl App {
             let (mut paths, active) = session::restore(&state.panes[side], &app.home);
             let saved = &state.panes[side];
             let locked = |i: usize| saved.locked.get(i).copied().unwrap_or(false);
+            let roam = |i: usize| saved.roam.get(i).copied().unwrap_or(false);
             // A locked tab keeps its dir: the path opens in a new tab next to it.
             let extra = match &left {
-                Some(l) if side == 0 && locked(active) => Some(l.clone()),
+                Some(l) if side == 0 && (locked(active) || roam(active)) => Some(l.clone()),
                 Some(l) if side == 0 => {
                     paths[active] = l.clone();
                     None
@@ -1196,6 +1221,9 @@ impl App {
             tabs.select(active);
             for (i, t) in tabs.items_mut().iter_mut().enumerate() {
                 t.locked = locked(i);
+                if roam(i) {
+                    t.home = Some(t.panel.cwd().to_path_buf());
+                }
                 t.thumbs = saved.thumbs.get(i).copied().unwrap_or(false);
                 t.brief = !t.thumbs && saved.brief.get(i).copied().unwrap_or(false);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
@@ -1650,7 +1678,7 @@ impl App {
             }
             Message::CloseTabAt(side, i) => {
                 self.search = None;
-                if self.panes[side].items().get(i).is_some_and(|t| t.locked) {
+                if self.panes[side].items().get(i).is_some_and(Tab::pinned) {
                     self.say(StatusKind::Error, fl!("tab-locked"));
                     return Task::none();
                 }
@@ -3264,10 +3292,20 @@ impl App {
         };
         let state = State {
             panes: [0, 1].map(|s| PaneState {
+                // One locked with dir changes allowed opens in its dir next time.
                 tabs: self.panes[s]
                     .items()
                     .iter()
-                    .map(|t| t.panel.cwd().to_path_buf())
+                    .map(|t| {
+                        t.home
+                            .clone()
+                            .unwrap_or_else(|| t.panel.cwd().to_path_buf())
+                    })
+                    .collect(),
+                roam: self.panes[s]
+                    .items()
+                    .iter()
+                    .map(|t| t.home.is_some())
                     .collect(),
                 active: self.panes[s].active_index(),
                 locked: self.panes[s].items().iter().map(|t| t.locked).collect(),
@@ -3377,6 +3415,24 @@ impl App {
         }
         self.volumes_at = Some(now);
         blocking(mount::list, |r| Message::AllVolumes(r.unwrap_or_default()))
+    }
+
+    /// A tab locked with dir changes allowed that is no longer the shown one is read in its dir
+    /// again (TC: back to the locked dir on a tab change).
+    fn roam_back(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for side in 0..2 {
+            let now = self.panes[side].active().id;
+            let was = std::mem::replace(&mut self.shown_tabs[side], now);
+            let items = self.panes[side].items();
+            let away = (items.iter().position(|t| t.id == was && was != now))
+                .and_then(|i| Some((i, items[i].home.clone()?)))
+                .filter(|(i, home)| items[*i].target() != *home);
+            if let Some((i, home)) = away {
+                tasks.push(self.load_tab(side, i, home, None));
+            }
+        }
+        Task::batch(tasks)
     }
 
     /// A locked tab keeps its dir: what would move it happens in an unlocked copy opened next to it.
@@ -4012,7 +4068,10 @@ impl App {
                 } else {
                     1 - side
                 };
-                let tab = self.new_tab(path.clone());
+                // TC: in the sort of the tab it was opened from.
+                let sort = self.panes[side].active().panel.sort();
+                let mut tab = self.new_tab(path.clone());
+                tab.panel.set_sort_order(sort);
                 self.panes[to].open_after(tab);
                 return self.load(to, path, None);
             }
@@ -4036,9 +4095,19 @@ impl App {
                 }
                 return Task::batch(tasks);
             }
+            Action::TabRoam => {
+                let t = self.panes[side].active_mut();
+                t.home = match t.home {
+                    Some(_) => None,
+                    None => Some(t.panel.cwd().to_path_buf()),
+                };
+                t.locked = false;
+                return Task::none();
+            }
             Action::TabLock => {
                 let t = self.panes[side].active_mut();
                 t.locked = !t.locked;
+                t.home = None;
                 // A scan into another dir would still land and move it.
                 if t.locked && t.target() != t.panel.cwd() {
                     t.pending = None;
@@ -4046,7 +4115,7 @@ impl App {
                 return Task::none();
             }
             Action::CloseOtherTabs => {
-                self.panes[side].retain(|t| t.locked);
+                self.panes[side].retain(Tab::pinned);
                 return Task::none();
             }
             Action::NewTab => {
@@ -4057,7 +4126,7 @@ impl App {
                 return self.restore_scroll(side);
             }
             Action::CloseTab => {
-                if self.panes[side].active().locked {
+                if self.panes[side].active().pinned() {
                     self.say(StatusKind::Error, fl!("tab-locked"));
                     return Task::none();
                 }
@@ -13604,6 +13673,42 @@ mod tests {
             app.panes[0].select(1);
             key(&mut app, Action::TabLock);
             assert!(!app.panes[0].active().locked);
+        }
+
+        #[test]
+        fn a_tab_locked_with_changes_moves_and_goes_back_when_left() {
+            let (tmp, mut app) = setup();
+            key(&mut app, Action::TabRoam);
+            let t = app.panes[0].active();
+            assert_eq!((t.home.as_deref(), t.locked), (Some(tmp.path()), false));
+            key(&mut app, Action::CloseTab); // not closed, as locked
+            assert_eq!(app.panes[0].items().len(), 1);
+            key(&mut app, Action::Enter); // into `a`: in this very tab
+            assert_eq!(app.panes[0].items().len(), 1);
+            listed_at(&mut app, 0, &tmp.path().join("a"));
+            assert!(app.panes[0].active().title().starts_with('!'));
+            // Another tab shown: this one is read in its dir again.
+            key(&mut app, Action::NewTab);
+            let first = &app.panes[0].items()[0];
+            assert_eq!(first.target(), tmp.path());
+            // Saved: it opens there, still with dir changes allowed.
+            app.panes[0].select(0);
+            listed_at(&mut app, 0, &tmp.path().join("a"));
+            app.save_state();
+            let saved = &app.saved.panes[0];
+            assert_eq!((saved.tabs[0].as_path(), saved.roam[0]), (tmp.path(), true));
+            // Plain lock and this one exclude each other.
+            key(&mut app, Action::TabLock);
+            assert!(app.panes[0].active().locked && app.panes[0].active().home.is_none());
+        }
+
+        #[test]
+        fn ctrl_up_keeps_the_sort_of_its_tab() {
+            let (_tmp, mut app) = setup();
+            key(&mut app, Action::Sort(shagoff_core::sort::SortKey::Size));
+            let sort = app.panes[0].active().panel.sort();
+            key(&mut app, Action::TabOpen);
+            assert_eq!(app.panes[0].active().panel.sort(), sort);
         }
 
         #[test]

@@ -10,6 +10,9 @@ pub struct PaneState {
     /// Per tab, by index: locked (TC), own caption ("" = the dir's name). Missing in old state.
     #[serde(default)]
     pub locked: Vec<bool>,
+    /// Per tab: locked with dir changes allowed (its path above is that dir).
+    #[serde(default)]
+    pub roam: Vec<bool>,
     #[serde(default)]
     pub names: Vec<String>,
     /// Per tab: Brief view (Ctrl+F1) instead of Full.
