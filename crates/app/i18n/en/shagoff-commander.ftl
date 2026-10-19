@@ -349,6 +349,7 @@ lister-image = Image (4)
 lister-loading = Reading…
 lister-info-lines = { $n } lines, { $size } B
 lister-info = { $size } B
+lister-info-too-big = { $size } B: a picture over { $limit } B is not shown, its bytes are
 lister-info-image = { $w }×{ $h }, { $p }%, { $size } B
 lister-fit = Fit
 lister-find = Find (F7)
