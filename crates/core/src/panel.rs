@@ -151,10 +151,16 @@ impl Panel {
 
     /// Same column flips direction; a new column starts ascending. Keeps `..` first and the cursor on its name.
     pub fn set_sort(&mut self, key: SortKey) {
-        let asc = self.sort.key != key || !self.sort.asc;
-        self.sort = Sort { key, asc };
+        self.set_sort_key(key);
         let name = self.current().map(|e| e.name.clone());
         self.resort(name);
+    }
+
+    /// Ctrl+F3…F6 as `set_sort`, the rows left as they are: a big list is sorted by the
+    /// background read that follows (`set_listing` takes it as it comes).
+    pub fn set_sort_key(&mut self, key: SortKey) {
+        let asc = self.sort.key != key || !self.sort.asc;
+        self.sort = Sort { key, asc };
     }
 
     fn resort(&mut self, keep: Option<String>) {
