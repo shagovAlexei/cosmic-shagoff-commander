@@ -45,6 +45,8 @@ pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
 // ponytail: list height is guessed until the scrollable reports its bounds (it does on the first event).
 const FALLBACK_LIST_H: f32 = 400.0;
 const FALLBACK_LIST_W: f32 = 500.0;
+/// Rows sorted on the UI thread at most (Ctrl+F3…F6); more go through a background read.
+const SORT_HERE_MAX: usize = 20_000;
 /// How long Enter waits for the rows of the dir being entered (`Tab::pending_at`).
 const ENTER_WAIT: Duration = Duration::from_secs(1);
 
@@ -3358,6 +3360,11 @@ impl App {
             Action::PageDown => panel.move_cursor(page),
             Action::Home => panel.cursor_home(),
             Action::End => panel.cursor_end(),
+            // 100 000 rows take ~0.1 s to sort: a big list is sorted by a background read.
+            Action::Sort(key) if panel.entries().len() > SORT_HERE_MAX => {
+                panel.set_sort_key(key);
+                return self.reload(side, target, None);
+            }
             Action::Sort(key) => panel.set_sort(key),
             // The rows on screen belong to the dir being left: entering one would undo the navigation.
             Action::Enter if stepping => {}
@@ -7409,6 +7416,52 @@ mod tests {
             owner: None,
             target: None,
         }
+    }
+
+    #[test]
+    fn a_big_list_is_sorted_by_a_background_read_keeping_cursor_and_marks() {
+        use shagoff_core::sort::{Sort, SortKey};
+        let mut app = app_with(Config::default(), State::default());
+        let dir = PathBuf::from("/big");
+        let rows = |n: usize| -> Vec<Entry> {
+            (0..n)
+                .map(|i| Entry {
+                    size: (n - i) as u64, // by size: reversed
+                    ..entry(&format!("f{i:05}"))
+                })
+                .collect()
+        };
+        let t = app.panes[0].active_mut();
+        t.pending = None; // the startup read, never answered here
+        let p = &mut t.panel;
+        p.set_listing(dir.clone(), rows(SORT_HERE_MAX + 1), None);
+        p.set_cursor(2); // "f00001"
+        p.toggle_mark();
+        let _ = app.update(Message::Key(Action::Sort(SortKey::Size)));
+        // Not sorted here: the rows stay, the sort is set, the dir is read again.
+        let t = app.panes[0].active();
+        assert_eq!(t.panel.sort().key, SortKey::Size);
+        assert_eq!(t.panel.entries()[1].name, "f00000");
+        assert_eq!(pending_path(&app), Some(dir.clone()));
+        let mut sorted = rows(SORT_HERE_MAX + 1);
+        let sort = Sort {
+            key: SortKey::Size,
+            asc: true,
+        };
+        shagoff_core::sort::sort_entries(&mut sorted, sort, &HashMap::new());
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: dir,
+            focus: None,
+            result: Ok(sorted),
+            space: None,
+        });
+        let p = &app.panes[0].active().panel;
+        assert_eq!(p.entries()[1].name, format!("f{SORT_HERE_MAX:05}"));
+        assert_eq!(p.current().unwrap().name, "f00001"); // the cursor stays on its file
+        assert_eq!(p.targets(), [PathBuf::from("/big/f00001")]); // still marked
     }
 
     #[test]
