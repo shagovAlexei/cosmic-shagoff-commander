@@ -737,6 +737,10 @@ pub enum Message {
     UpdateChecked(shagoff_core::update::Status),
     /// Ctrl+F dialog: the password field.
     ConnectPassword(String),
+    /// «Remember the password» in Ctrl+F.
+    ConnectKeep(bool),
+    /// The password went to the keyring, or why not.
+    Kept(Result<(), mount::Error>),
     /// Volumes from gio for the drive list of this side.
     Volumes(usize, Vec<mount::Volume>),
     /// gio's volumes for the drive list (the unmounted ones are kept).
@@ -2859,6 +2863,16 @@ impl App {
                     *password = s;
                 }
             }
+            Message::ConnectKeep(on) => {
+                if let Some(Dialog::Connect { keep, .. }) = &mut self.dialog {
+                    *keep = on;
+                }
+            }
+            Message::Kept(r) => {
+                if let Err(mount::Error::Failed(e)) = r {
+                    self.say(StatusKind::Error, fl!("keyring-failed", error = e));
+                }
+            }
             Message::AllVolumes(vols) => {
                 self.volumes = vols.into_iter().filter(|v| v.mount.is_none()).collect();
             }
@@ -2988,12 +3002,30 @@ impl App {
                 if result.is_ok() {
                     let list = mount::remember(&self.config.connections, &url);
                     self.save_connections(list);
-                    if let Some(Dialog::Connect { browsing, .. }) = &self.dialog {
+                    let mut keep = Task::none();
+                    if let Some(Dialog::Connect {
+                        browsing,
+                        password,
+                        keep: on,
+                        ..
+                    }) = &self.dialog
+                    {
                         if let Some(stop) = browsing {
                             stop.store(true, Ordering::Relaxed); // a browse no one will see
                         }
+                        if *on && !password.is_empty() {
+                            let (url, password) = (url.clone(), password.clone());
+                            keep = blocking(
+                                move || {
+                                    shagoff_core::keyring::save(&url, &password)
+                                        .map_err(mount::Error::Failed)
+                                },
+                                Message::Kept,
+                            );
+                        }
                         self.dialog = None;
                     }
+                    return Task::batch([keep, self.handle(Message::Mounted(side, result))]);
                 } else if let Some(Dialog::Connect { note, .. }) = &mut self.dialog
                     && let Err(e) = &result
                     && *e != mount::Error::Cancelled
@@ -4084,6 +4116,7 @@ impl App {
                 side,
                 url: "sftp://".into(),
                 password: String::new(),
+                keep: false,
                 saved: self.config.connections.clone(),
                 found: Vec::new(),
                 browsing: None,
@@ -4420,6 +4453,7 @@ impl App {
                 side,
                 url,
                 password,
+                keep,
                 saved,
                 found,
                 browsing,
@@ -4432,6 +4466,7 @@ impl App {
                     side,
                     url,
                     password: password.clone(),
+                    keep,
                     saved,
                     found,
                     browsing,
@@ -12665,6 +12700,20 @@ mod tests {
             let _ = app.update(Message::Connected(0, "sftp://nas/".into(), bad));
             assert_eq!(note(&app), Some((true, "gio: no such host".into())));
             assert!(app.connecting.is_none());
+        }
+
+        #[test]
+        fn connect_keep_is_off_until_ticked() {
+            let mut app = app_with(Config::default(), State::default());
+            let _ = app.update(Message::Key(Action::Connect));
+            let keep = |app: &App| matches!(app.dialog, Some(Dialog::Connect { keep: true, .. }));
+            assert!(!keep(&app));
+            let _ = app.update(Message::ConnectKeep(true));
+            assert!(keep(&app));
+            // Connected: the dialog goes (the keyring task is never run in tests).
+            let _ = app.update(Message::ConnectPassword("pw".into()));
+            let _ = app.update(Message::Connected(0, "sftp://nas/".into(), Ok("/n".into())));
+            assert!(app.dialog.is_none());
         }
 
         #[test]

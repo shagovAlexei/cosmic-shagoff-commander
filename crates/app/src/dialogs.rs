@@ -133,6 +133,8 @@ pub enum Dialog {
         side: usize,
         url: String,
         password: String,
+        /// Keep the password in the keyring once connected (`core::keyring`).
+        keep: bool,
         /// Saved addresses when the dialog opened.
         saved: Vec<String>,
         /// "Browse network": (name, address).
@@ -1515,6 +1517,7 @@ pub fn view<'a>(
         Dialog::Connect {
             url,
             password,
+            keep,
             saved,
             found,
             browsing,
@@ -1530,6 +1533,13 @@ pub fn view<'a>(
                     .on_submit(|_| Message::DialogSubmit),
             ]
             .spacing(4);
+            if shagoff_core::keyring::keeps(url) {
+                col = col.push(
+                    widget::checkbox(*keep)
+                        .label(fl!("connect-keep"))
+                        .on_toggle(Message::ConnectKeep),
+                );
+            }
             let pick = |label: String, url: &str| {
                 widget::button::text(label)
                     .on_press(Message::ConnectPick(url.to_string()))

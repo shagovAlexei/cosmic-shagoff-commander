@@ -15,6 +15,7 @@ flate2 = "1"
 jiff = "0.2"
 liblzma = { version = "0.4", features = ["static"] }
 memchr = "2"
+percent-encoding = "2"
 mime_guess = "2"
 regex = "1"
 rustix = { version = "1", features = ["fs", "process", "termios"] }
@@ -24,6 +25,7 @@ similar = { version = "2", default-features = false, features = ["text"] }
 tar = "0.4"
 trash = "5"
 url = "2"
+zbus = "5.19"
 zip = { version = "8", default-features = false, features = ["deflate", "bzip2", "zstd", "aes-crypto"] }
 zstd = "0.14"
 
