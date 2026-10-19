@@ -123,6 +123,8 @@ pub struct TerminalBox<'a, Message> {
     on_open_hyperlink: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_window_focused: Option<Box<dyn Fn() -> Message + 'a>>,
     on_window_unfocused: Option<Box<dyn Fn() -> Message + 'a>>,
+    /// Told when the box gains or loses the keys (the app must not act on keys it takes).
+    on_focus: Option<Box<dyn Fn(bool) -> Message + 'a>>,
     pass: Pass,
     sharp_corners: bool,
     disabled: bool,
@@ -150,6 +152,7 @@ where
             on_open_hyperlink: None,
             on_window_focused: None,
             on_window_unfocused: None,
+            on_focus: None,
             sharp_corners: false,
             disabled: false,
         }
@@ -220,6 +223,11 @@ where
 
     pub fn on_window_focused(mut self, on_window_focused: impl Fn() -> Message + 'a) -> Self {
         self.on_window_focused = Some(Box::new(on_window_focused));
+        self
+    }
+
+    pub fn on_focus(mut self, on_focus: impl Fn(bool) -> Message + 'a) -> Self {
+        self.on_focus = Some(Box::new(on_focus));
         self
     }
 
@@ -888,6 +896,14 @@ where
             return;
         }
         let state = tree.state.downcast_mut::<State>();
+        // Focus changes in many places (a click, a focus operation, the window): told here, on the
+        // next event (a redraw follows each).
+        if state.is_focused != state.told_focused {
+            state.told_focused = state.is_focused;
+            if let Some(on_focus) = &self.on_focus {
+                shell.publish(on_focus(state.is_focused));
+            }
+        }
         // Focused, every key is the terminal's, handled below or not: none may reach the panels
         // (Enter would open a row there). Only the app's own (`pass`: Ctrl+O) go through.
         if let Event::Keyboard(KeyEvent::KeyPressed { key, modifiers, .. }) = event
@@ -1267,6 +1283,8 @@ where
                     let col = x / terminal.size().cell_width;
                     let row = y / terminal.size().cell_height;
 
+                    // A click takes the keys back, a program reading the mouse (mc, htop) or not.
+                    state.is_focused = true;
                     if is_mouse_mode {
                         state.autoscroll.stop();
                         terminal.report_mouse(
@@ -1932,6 +1950,8 @@ pub struct State {
     is_focused: bool,
     /// Focused when the window lost the keyboard: focused again when it comes back.
     away_focused: bool,
+    /// The focus the app was last told of (`on_focus`).
+    told_focused: bool,
     scroll_pixels: f32,
     scroll_lines: f32,
     scrollbar_rect: Cell<Rectangle<f32>>,
@@ -1948,6 +1968,7 @@ impl State {
             dragging: None,
             is_focused: false,
             away_focused: false,
+            told_focused: false,
             scroll_pixels: 0.0,
             scroll_lines: 0.0,
             scrollbar_rect: Cell::new(Rectangle::default()),

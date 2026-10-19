@@ -25,7 +25,12 @@ pub struct Pane {
     dir: Option<PathBuf>,
     /// Its path: whether it has a line editor (`shell::at_prompt`).
     shell: String,
+    /// When it was last found busy: asked again only after `RETRY` (not on every message of a
+    /// long build's output).
+    busy_at: Option<std::time::Instant>,
 }
+
+const RETRY: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Start `shell` in `dir` (none: inside an archive, the shell's own). `dark`: the COSMIC theme's
 /// colors; `bg`: the window's background (0xAARRGGBB), the terminal's own.
@@ -58,7 +63,19 @@ pub fn start(
         terminal: Mutex::new(t),
         dir: dir.map(Path::to_path_buf),
         shell: shell.to_string(),
+        busy_at: None,
     })
+}
+
+/// A new text size or theme for the running terminal.
+pub fn restyle(pane: &Pane, style: &style::Style, dark: bool, bg: u32) {
+    terminal::WINDOW_BG_COLOR.store(bg, Ordering::SeqCst);
+    let colors = match dark {
+        true => terminal_theme::cosmic_dark(),
+        false => terminal_theme::cosmic_light(),
+    };
+    let mut t = pane.terminal.lock().unwrap_or_else(|e| e.into_inner());
+    t.set_config(style, &colors);
 }
 
 /// What the app does about a terminal event.
@@ -93,7 +110,7 @@ pub fn on_event(pane: &Pane, event: Event) -> Outcome {
 /// The panel moved to `dir`: the shell follows, if it waits at its prompt (a running program is
 /// never typed into) and the dir is not where it already is.
 pub fn follow(pane: &mut Pane, dir: &Path) {
-    if pane.dir.as_deref() == Some(dir) {
+    if pane.dir.as_deref() == Some(dir) || pane.busy_at.is_some_and(|t| t.elapsed() < RETRY) {
         return;
     }
     let t = pane.terminal.lock().unwrap_or_else(|e| e.into_inner());
@@ -105,7 +122,10 @@ pub fn follow(pane: &mut Pane, dir: &Path) {
     if idle {
         t.input_no_scroll(shagoff_core::shell::cd_line(dir).into_bytes());
         drop(t);
-        pane.dir = Some(dir.to_path_buf());
+        (pane.dir, pane.busy_at) = (Some(dir.to_path_buf()), None);
+    } else {
+        drop(t);
+        pane.busy_at = Some(std::time::Instant::now());
     }
 }
 
@@ -140,6 +160,7 @@ pub fn view(app: &crate::app::App, full: bool) -> cosmic::Element<'_, Message> {
     let inner: cosmic::Element<'_, Message> = match &app.term {
         Some(p) => terminal_box::terminal_box(&p.terminal, pass)
             .id(app.term_id.clone())
+            .on_focus(Message::TermFocused)
             .padding(4)
             .into(),
         // Anywhere in its space: what was the terminal stays the place to click.

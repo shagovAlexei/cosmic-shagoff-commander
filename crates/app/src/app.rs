@@ -395,6 +395,8 @@ pub struct App {
     pub term_rows: u16,
     /// A pane was clicked: the terminal gives the keys up (`update`'s tail).
     term_blur: bool,
+    /// The terminal has the keys (`TermFocused`).
+    term_focused: bool,
     /// The gvfs mounts last read (`Message::Gvfs`), appended to `drives`.
     gvfs: Vec<Drive>,
     /// The gvfs dir is to be read again / is being read: in the background, one read at a time —
@@ -499,6 +501,8 @@ pub enum Message {
     TermEvent(TermEvent),
     /// A click on the ended terminal's line: start its shell again.
     TermStart,
+    /// The terminal gained / lost the keys.
+    TermFocused(bool),
     /// The terminal's top edge: pressed, the pointer at y (window), let go.
     TermDragStart,
     TermDragAt(f32),
@@ -1104,6 +1108,7 @@ impl App {
             term_drag: None,
             term_rows: 0,
             term_blur: false,
+            term_focused: false,
             gvfs: Vec::new(),
             gvfs_want: false,
             gvfs_busy: false,
@@ -1178,6 +1183,11 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
+            // The focused terminal took these (F8 in mc, Ctrl+R in bash, Esc in vim): a key a
+            // text field leaves to us, `route_event` passes on at any status — not this one's.
+            Message::FieldKey(_) | Message::Escape(_) | Message::FeedKey(_)
+                if self.term_focused && self.dialog.is_none() => {}
+            Message::TermFocused(on) => self.term_focused = on,
             Message::Key(action) if self.viewer() && self.dialog.is_none() && !self.busy() => {
                 if let Some(task) = self.lister_action(action) {
                     return task;
@@ -2907,7 +2917,10 @@ impl App {
                 self.term_ended = false;
                 self.term_start();
             }
-            Message::TermDragStart => self.term_drag = Some((f32::NAN, self.term_rows())),
+            Message::TermDragStart => {
+                self.term_rows = self.config.term_rows; // a press let go unmoved saves the same
+                self.term_drag = Some((f32::NAN, self.term_rows));
+            }
             Message::TermDragAt(y) => {
                 if let Some((from, rows)) = &mut self.term_drag {
                     if from.is_nan() {
@@ -3381,11 +3394,7 @@ impl App {
                 return self.set(Setting::ActiveFrame(!self.config.active_frame));
             }
             Action::ToggleTerminal => {
-                let on = !self.config.term_builtin;
-                if !on {
-                    (self.term, self.term_tx, self.term_full) = (None, None, false);
-                }
-                return self.set(Setting::TermBuiltin(on));
+                return self.set(Setting::TermBuiltin(!self.config.term_builtin));
             }
             Action::TermFull => {
                 if !self.config.term_builtin {
@@ -6317,6 +6326,15 @@ impl App {
         if old.app_theme != self.config.app_theme {
             tasks.push(cosmic::command::set_theme(self.config.app_theme.theme()));
         }
+        // Off by any path (the menu, a hand edit): the shell ends with its terminal.
+        if !self.config.term_builtin {
+            (self.term, self.term_tx, self.term_full, self.term_focused) =
+                (None, None, false, false);
+        }
+        // A new text size or theme: the running terminal too.
+        if old.panel_size() != self.config.panel_size() || old.app_theme != self.config.app_theme {
+            self.term_restyle();
+        }
         if old.show_hidden != self.config.show_hidden {
             tasks.push(self.apply_hidden());
         }
@@ -6942,6 +6960,19 @@ impl App {
             &self.config.term_shell,
             std::env::var("SHELL").ok().as_deref(),
         );
+        let (style, dark, bg) = self.term_look();
+        match crate::term::start(tx, &shell, Some(&dir), dark, bg, &style) {
+            Ok(pane) => self.term = Some(Box::new(pane)),
+            // Not again on every message: Ctrl+O or a click on its line tries again.
+            Err(e) => {
+                self.term_ended = true;
+                self.say(StatusKind::Error, fl!("term-failed", err = e.to_string()));
+            }
+        }
+    }
+
+    /// The terminal's text size (the panels'), and the theme: dark or not, its background.
+    fn term_look(&self) -> (crate::term::style::Style, bool, u32) {
         let theme = cosmic::theme::active();
         let c = theme.cosmic();
         let bg = c.bg_color();
@@ -6951,9 +6982,14 @@ impl App {
             font_size: f32::from(self.config.panel_size()),
             ..Default::default()
         };
-        match crate::term::start(tx, &shell, Some(&dir), c.is_dark, bg, &style) {
-            Ok(pane) => self.term = Some(Box::new(pane)),
-            Err(e) => self.say(StatusKind::Error, fl!("term-failed", err = e.to_string())),
+        (style, c.is_dark, bg)
+    }
+
+    /// The running terminal takes the panels' text size and the theme now.
+    fn term_restyle(&mut self) {
+        let (style, dark, bg) = self.term_look();
+        if let Some(pane) = &self.term {
+            crate::term::restyle(pane, &style, dark, bg);
         }
     }
 
@@ -7049,10 +7085,10 @@ impl App {
             .unwrap_or(cwd);
         let argv = match self.terminal() {
             Some(t) => t.argv.clone(),
-            None => self.config.terminal[..1].to_vec(),
+            None => self.config.terminal.iter().take(1).cloned().collect(),
         };
         if let Err(e) = spawn_in(&argv, &dir) {
-            let error = format!("{}: {e}", argv[0]);
+            let error = format!("{}: {e}", argv.first().map_or("", String::as_str));
             self.say(StatusKind::Error, fl!("cmd-failed", error = error));
         }
     }
@@ -7542,7 +7578,6 @@ fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A command line in `dir`, its output dropped (TC closes the console too).
 /// The installed terminals, read once at start (`.desktop` files and `gio`: not on the UI thread).
 fn scan_terminals() -> Task<Message> {
     use i18n_embed::LanguageLoader;
@@ -7557,6 +7592,7 @@ fn scan_terminals() -> Task<Message> {
     )
 }
 
+/// A command line in `dir`, its output dropped (TC closes the console too).
 fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
     use std::process::Stdio;
     let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
@@ -10022,6 +10058,20 @@ mod tests {
         assert_eq!(PathBuf::from(&app.config.term_shell), shell);
         let _ = app.update(Message::Key(Action::ToggleTerminal));
         assert!(!app.config.term_builtin && app.term.is_none());
+    }
+
+    #[test]
+    fn regression_keys_the_focused_terminal_took_do_not_act_on_the_panels() {
+        let mut app = files_app(&["a"]);
+        let _ = app.update(Message::Key(Action::Down)); // on "a"
+        let _ = app.update(Message::TermFocused(true));
+        // F8 in mc, Ctrl+R in bash: `route_event` passes them on as field keys.
+        let _ = app.update(Message::FieldKey(Action::Delete));
+        let _ = app.update(Message::FieldKey(Action::Reload));
+        assert!(app.dialog.is_none());
+        let _ = app.update(Message::TermFocused(false));
+        let _ = app.update(Message::FieldKey(Action::Delete));
+        assert!(app.dialog.is_some()); // the panels' again
     }
 
     #[test]

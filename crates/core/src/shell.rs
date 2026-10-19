@@ -79,10 +79,12 @@ pub fn canonical(pid: u32) -> Option<bool> {
     Some(t.local_modes.contains(LocalModes::ICANON))
 }
 
-/// What the terminal is sent to follow the panel to `dir`: a leading space keeps it out of
-/// bash / zsh history (`ignorespace`), `--` and quoting take any name.
+/// What the terminal is sent to follow the panel to `dir`. First Ctrl+E Ctrl+U: a command typed
+/// and not run yet goes (bash / zsh keep it for Ctrl+Y), never runs with `cd` glued to it. A
+/// leading space keeps the line out of bash / zsh history (`ignorespace`); `--` and quoting take
+/// any name.
 pub fn cd_line(dir: &Path) -> String {
-    format!(" cd -- {}\r", quote(&dir.to_string_lossy()))
+    format!("\x05\x15 cd -- {}\r", quote(&dir.to_string_lossy()))
 }
 
 #[cfg(test)]
@@ -129,11 +131,12 @@ mod tests {
     }
 
     #[test]
-    fn cd_line_quotes_and_stays_out_of_history() {
-        assert_eq!(cd_line(Path::new("/tmp/a b")), " cd -- '/tmp/a b'\r");
+    fn cd_line_clears_the_typed_line_quotes_and_stays_out_of_history() {
         assert_eq!(
-            cd_line(Path::new("/x/it's")),
-            r#" cd -- '/x/it'\''s'"#.to_string() + "\r"
+            cd_line(Path::new("/tmp/a b")),
+            "\x05\x15 cd -- '/tmp/a b'\r"
         );
+        let q = r#" cd -- '/x/it'\''s'"#;
+        assert_eq!(cd_line(Path::new("/x/it's")), format!("\x05\x15{q}\r"));
     }
 }
