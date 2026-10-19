@@ -284,6 +284,9 @@ fn menus(checks: Checks, locked: bool) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-filter"), Action::QuickFilter),
                 b(fl!("menu-reload"), Action::Reload),
+                menu::Item::Divider,
+                b(fl!("menu-open-terminal"), Action::OpenTerminal),
+                b(fl!("menu-pick-terminal"), Action::PickTerminal),
             ],
         ),
         (
@@ -663,6 +666,8 @@ mod tests {
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar
                             | Action::ConfigureColors
+                            | Action::OpenTerminal
+                            | Action::PickTerminal
                     )
                 ) {
                     continue;

@@ -525,6 +525,8 @@ pub enum ListKind {
     Commands,
     /// Context menu "Open with…": `path` is the program's `.desktop` file.
     OpenWith,
+    /// Commands → "Terminal…": `path` is the terminal's `.desktop` id (empty: the default).
+    Terminals,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1286,6 +1288,7 @@ pub fn view<'a>(
                 ListKind::Hotlist => fl!("hotlist"),
                 ListKind::Commands => fl!("cmd-history"),
                 ListKind::OpenWith => fl!("open-with"),
+                ListKind::Terminals => fl!("menu-terminal"),
             };
             let dialog = widget::dialog()
                 .title(title)

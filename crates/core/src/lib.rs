@@ -28,5 +28,6 @@ pub mod session;
 pub mod sort;
 pub mod sync;
 pub mod tabs;
+pub mod terminals;
 pub mod update;
 pub mod viewport;

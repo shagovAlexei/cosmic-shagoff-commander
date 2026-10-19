@@ -33,6 +33,7 @@ use shagoff_core::panel::{self, PARENT, Panel};
 use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
+use shagoff_core::terminals::{self, Terminal};
 use shagoff_core::viewport;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -375,6 +376,9 @@ pub struct App {
     split_from: Option<f32>,
     win_w: f32,
     pub drives: Vec<Drive>,
+    /// Installed terminals and the system's default among them (`terminals::scan`, at start).
+    pub terminals: Vec<Terminal>,
+    pub term_default: Option<usize>,
     /// The gvfs mounts last read (`Message::Gvfs`), appended to `drives`.
     gvfs: Vec<Drive>,
     /// The gvfs dir is to be read again / is being read: in the background, one read at a time —
@@ -474,6 +478,8 @@ pub enum Message {
         first: Option<String>,
         made: Result<(), String>,
     },
+    /// The installed terminals and the default's index (`terminals::scan`).
+    Terminals(Vec<Terminal>, Option<usize>),
     /// The gvfs mounts, read in the background (`App::read_gvfs`).
     Gvfs(Vec<Drive>),
     Click(usize, usize),
@@ -1035,6 +1041,8 @@ impl App {
             split_from: None,
             win_w: 0.0,
             drives: Vec::new(),
+            terminals: Vec::new(),
+            term_default: None,
             gvfs: Vec::new(),
             gvfs_want: false,
             gvfs_busy: false,
@@ -1103,7 +1111,7 @@ impl App {
             app.panes[side] = tabs;
         }
         app.refresh_mounts();
-        let task = Task::batch([app.load_all(), app.read_gvfs()]);
+        let task = Task::batch([app.load_all(), app.read_gvfs(), scan_terminals()]);
         (app, task)
     }
 
@@ -2827,6 +2835,9 @@ impl App {
                 Ok(()) => {}
                 Err(e) => self.say(StatusKind::Error, fl!("mkdir-failed", path = name, err = e)),
             },
+            Message::Terminals(list, default) => {
+                (self.terminals, self.term_default) = (list, default)
+            }
             Message::Gvfs(drives) => {
                 self.gvfs_busy = false;
                 if drives != self.gvfs {
@@ -3369,6 +3380,20 @@ impl App {
                 let mut edit = crate::colorrules::ColorEdit::new(self.config.colors.clone());
                 edit.panel = self.config.panel.clone();
                 self.dialog = Some(Dialog::Colors(Box::new(edit)));
+                return Task::none();
+            }
+            Action::OpenTerminal => {
+                self.open_terminal();
+                return Task::none();
+            }
+            Action::PickTerminal => {
+                let (items, cursor) = self.terminal_items();
+                self.dialog = Some(Dialog::List {
+                    kind: ListKind::Terminals,
+                    side,
+                    cursor,
+                    items,
+                });
                 return Task::none();
             }
             Action::ConfigureToolbar => {
@@ -6061,6 +6086,7 @@ impl App {
                     .and_then(|i| config::LANGUAGES.get(i))
                     .map_or(String::new(), |l| l.to_string());
             }
+            Setting::TerminalApp(id) => c.terminal_app = id,
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
             Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::ShowFkeys(b) => c.show_fkeys = b,
@@ -6353,6 +6379,12 @@ impl App {
                 self.say(StatusKind::Error, fl!("open-failed", err = e.to_string()));
             }
             return Task::none();
+        }
+        if kind == ListKind::Terminals {
+            let id = items
+                .get(i)
+                .map(|it| it.path.to_string_lossy().into_owned());
+            return id.map_or(Task::none(), |id| self.set(Setting::TerminalApp(id)));
         }
         if kind == ListKind::Commands {
             if let Some(item) = items.get(i) {
@@ -6717,7 +6749,8 @@ impl App {
         let task = match cmd {
             Cmd::Cd(dir) => self.go_to(side, dir),
             Cmd::Run(line) => {
-                let term = terminal.then_some(self.config.terminal.as_slice());
+                let prefix = self.terminal_prefix();
+                let term = terminal.then_some(prefix.as_slice());
                 if let Err(e) = spawn_in(&cmdline::argv(&line, &cwd, term), &cwd) {
                     self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
                 }
@@ -6725,6 +6758,68 @@ impl App {
             }
         };
         Task::batch([unfocus(), task])
+    }
+
+    /// The terminal chosen in Commands → Terminal, else the system's default.
+    pub fn terminal(&self) -> Option<&Terminal> {
+        let id = &self.config.terminal_app;
+        (self
+            .terminals
+            .iter()
+            .find(|t| !id.is_empty() && t.id == *id))
+        .or_else(|| self.term_default.and_then(|i| self.terminals.get(i)))
+    }
+
+    /// Commands → "Terminal…": the default first, then the installed ones; the chosen one ticked
+    /// and under the cursor.
+    fn terminal_items(&self) -> (Vec<ListItem>, usize) {
+        let id = &self.config.terminal_app;
+        let chosen = (self.terminals.iter()).position(|t| !id.is_empty() && t.id == *id);
+        let default = match self.term_default.and_then(|i| self.terminals.get(i)) {
+            Some(t) => fl!("menu-terminal-default", name = t.name.clone()),
+            None => fl!("menu-terminal-none"),
+        };
+        let tick = |on: bool, label: String| format!("{}{label}", if on { "✓ " } else { "    " });
+        let items = std::iter::once(ListItem {
+            label: tick(chosen.is_none(), default),
+            path: PathBuf::new(),
+            kind: Item::App,
+            icon: String::new(),
+        })
+        .chain(self.terminals.iter().enumerate().map(|(i, t)| ListItem {
+            label: tick(chosen == Some(i), t.name.clone()),
+            path: PathBuf::from(&t.id),
+            kind: Item::App,
+            icon: String::new(),
+        }))
+        .collect();
+        (items, chosen.map_or(0, |i| i + 1))
+    }
+
+    /// Shift+Enter's terminal: `terminal` changed by hand wins (older setups), then the chosen one.
+    fn terminal_prefix(&self) -> Vec<String> {
+        let by_hand = self.config.terminal != Config::default().terminal;
+        match self.terminal().filter(|_| !by_hand) {
+            Some(t) => t.run_prefix(),
+            None => self.config.terminal.clone(),
+        }
+    }
+
+    /// Commands → Open terminal: a window in the active panel's dir (inside an archive: the
+    /// archive's dir, the one on disk).
+    fn open_terminal(&mut self) {
+        let cwd = self.panes[self.active].active().panel.cwd().to_path_buf();
+        let dir = archive::split_path(&cwd)
+            .and_then(|(a, _)| a.parent().map(Path::to_path_buf))
+            .unwrap_or(cwd);
+        let argv = match self.terminal() {
+            Some(t) => t.argv.clone(),
+            None => self.config.terminal[..1].to_vec(),
+        };
+        if let Err(e) = spawn_in(&argv, &dir) {
+            let error = format!("{}: {e}", argv[0]);
+            self.say(StatusKind::Error, fl!("cmd-failed", error = error));
+        }
     }
 
     /// Ctrl+↑: the dir under the cursor (an archive as a dir, ".." the parent), else the panel's own.
@@ -7213,6 +7308,20 @@ fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
 }
 
 /// A command line in `dir`, its output dropped (TC closes the console too).
+/// The installed terminals, read once at start (`.desktop` files and `gio`: not on the UI thread).
+fn scan_terminals() -> Task<Message> {
+    use i18n_embed::LanguageLoader;
+    let lang = (crate::i18n::LANGUAGE_LOADER.current_language().language).to_string();
+    Task::perform(
+        async move {
+            let scan = tokio::task::spawn_blocking(move || terminals::scan(&lang)).await;
+            let (list, default) = scan.unwrap_or_default();
+            Message::Terminals(list, default)
+        },
+        cosmic::Action::App,
+    )
+}
+
 fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
     use std::process::Stdio;
     let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
@@ -9613,6 +9722,40 @@ mod tests {
         let id = cosmic::iced::window::Id::unique();
         let m = route_event(ev, event::Status::Ignored, id);
         assert!(matches!(m, Some(Message::Modifiers(m)) if m.is_empty()));
+    }
+
+    #[test]
+    fn the_terminal_is_chosen_in_the_menu_and_runs_shift_enter() {
+        let mut app = app_with(Config::default(), State::default());
+        let term = |id: &str, prog: &str| Terminal {
+            id: id.into(),
+            name: id.into(),
+            argv: vec![prog.into()],
+        };
+        let list = vec![term("a.desktop", "alacritty"), term("f.desktop", "foot")];
+        let _ = app.update(Message::Terminals(list, Some(0)));
+        assert_eq!(app.terminal_prefix(), ["alacritty", "-e"]); // the system's default
+        let pick = |app: &mut App, row: usize| {
+            let _ = app.update(Message::Key(Action::PickTerminal));
+            let _ = app.update(Message::ListPick(row));
+        };
+        pick(&mut app, 2); // .., default, a, f → "f"
+        assert_eq!(app.config.terminal_app, "f.desktop");
+        assert_eq!(app.terminal_prefix(), ["foot"]);
+        let _ = app.update(Message::Key(Action::PickTerminal));
+        match &app.dialog {
+            Some(Dialog::List { cursor, items, .. }) => {
+                assert_eq!(*cursor, 2); // the chosen one
+                assert!(items[2].label.starts_with('✓') && !items[0].label.starts_with('✓'));
+            }
+            _ => panic!("no list"),
+        }
+        app.dialog = None;
+        pick(&mut app, 0);
+        assert_eq!(app.config.terminal_app, "");
+        // `terminal` changed by hand (before the menu existed): it still wins.
+        app.config.terminal = vec!["xterm".into(), "-e".into()];
+        assert_eq!(app.terminal_prefix(), ["xterm", "-e"]);
     }
 
     #[test]

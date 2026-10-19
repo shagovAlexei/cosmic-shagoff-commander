@@ -52,6 +52,8 @@ pub fn font_families() -> Vec<String> {
 
 #[derive(Clone, Debug)]
 pub enum Setting {
+    /// Commands → Terminal: a `.desktop` id, empty for the system's default.
+    TerminalApp(String),
     /// Index into [system, LANGUAGES…].
     Language(usize),
     Theme(usize),
