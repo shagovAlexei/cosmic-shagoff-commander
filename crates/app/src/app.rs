@@ -461,6 +461,14 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
+    /// F7 done (`App::mkdir`): the dir it was typed in, the name as typed and its first part.
+    Made {
+        side: usize,
+        cwd: PathBuf,
+        name: String,
+        first: Option<String>,
+        made: Result<(), String>,
+    },
     /// The gvfs mounts, read in the background (`App::read_gvfs`).
     Gvfs(Vec<Drive>),
     Click(usize, usize),
@@ -2770,6 +2778,20 @@ impl App {
                     }));
                 }
             }
+            Message::Made {
+                side,
+                cwd,
+                name,
+                first,
+                made,
+            } => match made {
+                // Still that dir: the cursor goes onto the new one.
+                Ok(()) if self.panes[side].active().target() == cwd => {
+                    return self.reload(side, cwd, first);
+                }
+                Ok(()) => {}
+                Err(e) => self.say(StatusKind::Error, fl!("mkdir-failed", path = name, err = e)),
+            },
             Message::Gvfs(drives) => {
                 self.gvfs_busy = false;
                 if drives != self.gvfs {
@@ -4370,16 +4392,24 @@ impl App {
             };
             return self.start_job(side, OpKind::Repack, job, first());
         }
-        match std::fs::create_dir_all(cwd.join(name)) {
-            Ok(()) => self.reload(side, cwd, first()),
-            Err(e) => {
-                self.say(
-                    StatusKind::Error,
-                    fl!("mkdir-failed", path = name, err = e.to_string()),
-                );
-                Task::none()
-            }
-        }
+        // In the background: on a dead network mount `mkdir` never returns.
+        let (dir, name, first) = (cwd.join(name), name.to_string(), first());
+        Task::perform(
+            async move {
+                let made = tokio::task::spawn_blocking(move || std::fs::create_dir_all(dir))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r.map_err(|e| e.to_string()));
+                Message::Made {
+                    side,
+                    cwd,
+                    name,
+                    first,
+                    made,
+                }
+            },
+            cosmic::Action::App,
+        )
     }
 
     /// Ctrl+Shift+F5: links placed by F5's rules; instant, so no job. Both panes reread.
@@ -7711,6 +7741,26 @@ mod tests {
         let _ = app.load(0, "/usr".into(), None);
         let _ = app.update(Message::Key(Action::Enter)); // cursor on ".." of the old dir
         assert_eq!(pending_path(&app), Some(PathBuf::from("/usr")));
+    }
+
+    #[test]
+    fn f7_made_in_the_background_rereads_or_says_why() {
+        let mut app = app_with(Config::default(), State::default());
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let tmp = std::env::temp_dir();
+        let _ = app.update(listed_ok(id, generation, &tmp));
+        let made = |made| Message::Made {
+            side: 0,
+            cwd: tmp.clone(),
+            name: "new/sub".into(),
+            first: Some("new".into()),
+            made,
+        };
+        let _ = app.update(made(Err("Permission denied".into())));
+        assert!(app.msg().is_some_and(|m| m.contains("Permission denied")));
+        let _ = app.update(made(Ok(())));
+        assert_eq!(pending_path(&app), Some(tmp.clone())); // read again, the cursor onto "new"
     }
 
     #[test]

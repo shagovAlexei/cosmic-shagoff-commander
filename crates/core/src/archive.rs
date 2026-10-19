@@ -946,21 +946,26 @@ pub fn packed(archive: &Path) -> io::Result<std::collections::HashMap<PathBuf, (
         .collect())
 }
 
-/// "/x/a.zip/docs" → ("/x/a.zip", "docs"). `None` if `p` is a real dir or no ancestor (up to the
-/// first real dir) is a regular file with a tree format.
+/// "/x/a.zip/docs" → ("/x/a.zip", "docs"). `None` if no ancestor named as a tree format is a
+/// regular file. Called on the UI thread all the time: only those names are looked up on disk, a
+/// plain path never is (a dead network mount would hang the window).
 pub fn split_path(p: &Path) -> Option<(PathBuf, PathBuf)> {
     // Rebuilt from components: "a.zip/" with its trailing slash fails `metadata` (ENOTDIR).
     let p: PathBuf = p.components().collect();
     let p = p.as_path();
     for a in p.ancestors() {
-        let Ok(m) = fs::metadata(a) else { continue };
-        if m.is_dir() {
-            return None;
+        if !a
+            .file_name()
+            .is_some_and(|n| is_tree_name(&n.to_string_lossy()))
+        {
+            continue;
         }
-        let name = a.file_name()?.to_string_lossy();
-        return Format::detect(&name)
-            .filter(|f| m.is_file() && f.is_tree())
-            .and_then(|_| Some((a.to_path_buf(), p.strip_prefix(a).ok()?.to_path_buf())));
+        // A real dir can not be inside a file: the first archive-named one that is there decides.
+        let Ok(m) = fs::metadata(a) else { continue };
+        return m
+            .is_file()
+            .then(|| Some((a.to_path_buf(), p.strip_prefix(a).ok()?.to_path_buf())))
+            .flatten();
     }
     None
 }
