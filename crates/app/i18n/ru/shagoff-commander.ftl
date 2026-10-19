@@ -73,6 +73,7 @@ drives = Диск
 size-units = Б КБ МБ ГБ ТБ ПБ
 decimal-sep = ,
 broken-link = { $name }: ссылка никуда не ведёт
+file-unreadable = { $name }: не открыть — { $err }
 list-failed = Не удалось прочитать { $path }: { $err }
 mkdir-failed = Не удалось создать { $path }: { $err }
 search-label = Поиск:
