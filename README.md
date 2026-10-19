@@ -58,6 +58,10 @@ Total Commander's layout, so the hands already know it:
 | ![Find files](res/screenshots/find.png) | ![Settings](res/screenshots/settings.png) |
 | Find files: masks, regex, text, inside archives | Settings, applied as you change them |
 
+![Built-in terminal](res/screenshots/terminal.png)
+
+Built-in terminal under the panels (Ctrl+`): its shell follows the active panel's folder, Ctrl+O over the whole window
+
 ## Toolbar buttons
 
 Right click on the toolbar (Classic look) or *Configuration → Toolbar…* opens the button editor: add, remove, move, pick an icon. A button runs an internal command (`cm_*`, picked from the list) or a program with parameters:
