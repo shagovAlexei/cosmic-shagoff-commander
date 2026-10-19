@@ -17,6 +17,7 @@ mod menu;
 mod thumbs;
 mod toolbar;
 mod view;
+mod term;
 mod watcher;
 
 fn main() -> cosmic::iced::Result {

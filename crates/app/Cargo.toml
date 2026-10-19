@@ -24,6 +24,12 @@ pollster = "0.4"
 # Codecs for the viewer (F3), on top of png/jpeg/ico that libcosmic enables.
 image = { version = "0.25", default-features = false, features = ["gif", "webp", "bmp"] }
 
+# Built-in terminal (phase 149), adapted from cosmic-term: the emulator and the text it draws with
+# (the version libcosmic uses).
+alacritty_terminal = "0.25.1"
+cosmic-text = { version = "0.19", features = ["monospace_fallback", "shape-run-cache"] }
+indexmap = "2"
+
 [dev-dependencies]
 tempfile = "3"
 zip = { version = "8", default-features = false, features = ["deflate"] }
