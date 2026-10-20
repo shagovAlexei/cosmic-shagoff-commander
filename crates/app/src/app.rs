@@ -5613,8 +5613,11 @@ impl App {
                     if let Some(old) = f.stop.take() {
                         old.store(true, Ordering::Relaxed);
                     }
-                    (f.cursor, f.total) = (0, 0);
+                    // A new id: what the stopped search still sends is not this one's.
+                    (f.id, f.cursor, f.total) = (id, 0, 0);
                     f.results.clear();
+                    f.current.clear();
+                    f.root = None;
                     f.error = Some(e);
                 }
                 return Task::none();
@@ -7538,10 +7541,12 @@ impl App {
             }
             return;
         }
-        if let Some(dir) = self.term_dir()
-            && let Some(pane) = &mut self.term
-        {
-            crate::term::follow(pane, &dir);
+        let dir = self.term_dir();
+        if let Some(pane) = &mut self.term {
+            match dir {
+                Some(dir) => crate::term::follow(pane, &dir),
+                None => crate::term::stop_waiting(pane),
+            }
         }
     }
 

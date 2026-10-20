@@ -31,6 +31,8 @@ pub struct Pane {
 }
 
 const RETRY: std::time::Duration = std::time::Duration::from_millis(300);
+/// While a `cd` waits (`waiting_tick`): slow, a long program (vim, a build) may hold the shell.
+const WAIT_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Start `shell` in `dir` (none: inside an archive, the shell's own). `dark`: the COSMIC theme's
 /// colors; `bg`: the window's background (0xAARRGGBB), the terminal's own.
@@ -133,12 +135,17 @@ pub fn follow(pane: &mut Pane, dir: &Path) {
     }
 }
 
-/// A `cd` waits for the shell's prompt: asked again every `RETRY` (`waiting_tick`). The prompt's
-/// own output comes before the shell takes the tty, and nothing may come after it.
+/// A `cd` waits for the shell's prompt: asked again every `WAIT_TICK`. The prompt's own output
+/// comes before the shell takes the tty, and nothing may come after it.
 pub fn waiting_tick(pane: &Pane) -> Option<Subscription<()>> {
     pane.busy_at
         .is_some()
-        .then(|| cosmic::iced::time::every(RETRY).map(|_| ()))
+        .then(|| cosmic::iced::time::every(WAIT_TICK).map(|_| ()))
+}
+
+/// The panel has no dir for the shell (an archive, a dir still being read): nothing to wait for.
+pub fn stop_waiting(pane: &mut Pane) {
+    pane.busy_at = None;
 }
 
 /// The channel terminals send their events through: its sender comes first (`TermTx`), then the
