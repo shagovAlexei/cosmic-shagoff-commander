@@ -351,7 +351,9 @@ pub fn symlinks(pairs: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, io::Error)> {
 }
 
 pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handler) -> Report {
-    let total = pairs.iter().map(|(s, _)| tree_size(s)).sum();
+    // Walked once: the total, and each source's own share (a move's rename needs no second walk).
+    let sizes: Vec<u64> = pairs.iter().map(|(s, _)| tree_size(s)).collect();
+    let total = sizes.iter().sum();
     let mut t = Transfer {
         method,
         h,
@@ -362,8 +364,8 @@ pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handle
         aside: None,
     };
     let mut report = Report::default();
-    for (src, dst) in pairs {
-        match t.entry(src, dst) {
+    for ((src, dst), size) in pairs.iter().zip(sizes) {
+        match t.entry(src, dst, Some(size)) {
             Step::Done => report.completed.push(src.clone()),
             Step::Skipped => {}
             Step::Cancel => {
@@ -405,7 +407,8 @@ struct Transfer<'a> {
 }
 
 impl Transfer<'_> {
-    fn entry(&mut self, src: &Path, dst: &Path) -> Step {
+    /// `size`: `src`'s tree size when known (a top-level source), else walked when needed.
+    fn entry(&mut self, src: &Path, dst: &Path, size: Option<u64>) -> Step {
         if self.h.cancelled() {
             return Step::Cancel;
         }
@@ -420,13 +423,13 @@ impl Transfer<'_> {
         }
         let mut dst = dst.to_path_buf();
         if self.method == Method::Move
-            && let Some(step) = self.rename(src, &mut dst, &meta)
+            && let Some(step) = self.rename(src, &mut dst, &meta, size)
         {
             return step;
         }
         let dst = dst.as_path();
         if self.method == Method::Rename {
-            let size = tree_size(src);
+            let size = size.unwrap_or_else(|| tree_size(src));
             return match self.retry(src, || rename_noreplace(src, dst)) {
                 Ok(()) => {
                     self.done += size;
@@ -451,7 +454,13 @@ impl Transfer<'_> {
 
     /// Move fast path. `None` = fall back to copy + delete (other device, or merging dirs) into
     /// `dst`, which a conflict answer may have changed to a new name.
-    fn rename(&mut self, src: &Path, dst: &mut PathBuf, meta: &Metadata) -> Option<Step> {
+    fn rename(
+        &mut self,
+        src: &Path,
+        dst: &mut PathBuf,
+        meta: &Metadata,
+        size: Option<u64>,
+    ) -> Option<Step> {
         let mut replacing = false;
         if let Ok(dm) = fs::symlink_metadata(&*dst) {
             if meta.is_dir() || dm.is_dir() {
@@ -466,11 +475,12 @@ impl Transfer<'_> {
             }
         }
         let dst = dst.as_path();
-        if let Err(s) = self.put_aside(dst) {
-            return Some(s);
-        }
+        let moved = match self.put_aside(dst) {
+            Ok(m) => m,
+            Err(s) => return Some(s),
+        };
         replacing &= fs::symlink_metadata(dst).is_ok(); // not after «Rename old»
-        let size = tree_size(src);
+        let size = size.unwrap_or_else(|| tree_size(src));
         loop {
             match fs::rename(src, dst) {
                 Ok(()) => {
@@ -481,6 +491,13 @@ impl Transfer<'_> {
                 Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
                     if replacing {
                         self.approved = Some(dst.to_path_buf());
+                    }
+                    // «Rename old»: back in place until the copy is ready (the copy path puts it
+                    // aside then).
+                    if let Some(m) = moved
+                        && rename_noreplace(&m, dst).is_ok()
+                    {
+                        self.aside = Some(dst.to_path_buf());
                     }
                     return None;
                 }
@@ -523,7 +540,7 @@ impl Transfer<'_> {
         };
         let mut complete = true;
         for name in names {
-            match self.entry(&src.join(&name), &dst.join(&name)) {
+            match self.entry(&src.join(&name), &dst.join(&name), None) {
                 Step::Done => {}
                 Step::Skipped => complete = false,
                 Step::Cancel => return Step::Cancel,
@@ -573,7 +590,7 @@ impl Transfer<'_> {
         };
         if let Err(s) = self
             .put_aside(dst)
-            .and_then(|()| self.retry(dst, || fs::rename(&part, dst)))
+            .and_then(|_| self.retry(dst, || fs::rename(&part, dst)))
         {
             let _ = fs::remove_file(&part);
             return s;
@@ -617,7 +634,7 @@ impl Transfer<'_> {
         };
         if let Err(s) = self
             .put_aside(dst)
-            .and_then(|()| self.retry(dst, || fs::rename(&part, dst)))
+            .and_then(|_| self.retry(dst, || fs::rename(&part, dst)))
         {
             let _ = fs::remove_file(&part);
             return s;
@@ -648,7 +665,9 @@ impl Transfer<'_> {
             if dm.is_dir() {
                 return Err(self.clash(&dst, size));
             }
-            if self.approved.take_if(|p| *p == dst).is_some() {
+            // Answered already: Replace (`approved`), or «Rename old» still pending (`aside`,
+            // a move falling back to a copy across filesystems).
+            if self.approved.take_if(|p| *p == dst).is_some() || self.aside.as_ref() == Some(&dst) {
                 return Ok(dst);
             }
             match self.decide(src, meta, &dst, &dm) {
@@ -669,11 +688,17 @@ impl Transfer<'_> {
 
     /// Right before the new one takes `dst`: a skip or failure until then leaves the old one as is.
     /// Not replacing: a name taken meanwhile is an error (Retry picks a new one).
-    fn put_aside(&mut self, dst: &Path) -> Result<(), Step> {
-        if self.aside.take_if(|p| p == dst).is_some() {
-            self.retry(dst, || rename_noreplace(dst, &unique_name(dst)))?;
+    /// `Some`: the name the old one went to.
+    fn put_aside(&mut self, dst: &Path) -> Result<Option<PathBuf>, Step> {
+        if self.aside.take_if(|p| p == dst).is_none() {
+            return Ok(None);
         }
-        Ok(())
+        let mut moved = PathBuf::new();
+        self.retry(dst, || {
+            moved = unique_name(dst);
+            rename_noreplace(dst, &moved)
+        })?;
+        Ok(Some(moved))
     }
 
     /// Copy bytes, then mtime and permissions, into `part`. `Ok(false)` = cancelled.
@@ -858,7 +883,7 @@ fn tree_size(p: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::time::Duration;
 
     /// Scripted answers; records what the engine asked.
@@ -1140,6 +1165,45 @@ mod tests {
         assert!(r.cancelled);
         assert_eq!(read(&d.path().join("to/a")), "old");
         assert!(!d.path().join("to/a (1)").exists());
+    }
+
+    #[test]
+    fn regression_rename_old_across_filesystems_waits_for_the_copy() {
+        // /dev/shm (tmpfs) and the temp dir: a move between them is a copy (EXDEV).
+        let d = tempfile::tempdir().unwrap();
+        let Ok(shm) = tempfile::tempdir_in("/dev/shm") else {
+            return;
+        };
+        let dev = |p: &Path| fs::metadata(p).unwrap().dev();
+        if dev(d.path()) == dev(shm.path()) {
+            return;
+        }
+        write(&shm.path().join("a"), "new");
+        write(&d.path().join("to/a"), "old");
+        let mut h = Script {
+            conflicts: vec![Resolution::RenameOld],
+            cancel_after_progress: true,
+            ..Default::default()
+        };
+        let p = plan(&[shm.path().join("a")], &d.path().join("to")).unwrap();
+        let r = transfer(Method::Move, &p, &mut h);
+        // Cancelled while copying: the old one keeps its name, the source stays.
+        assert!(r.cancelled);
+        assert_eq!(read(&d.path().join("to/a")), "old");
+        assert!(!d.path().join("to/a (1)").exists());
+        assert_eq!(read(&shm.path().join("a")), "new");
+        assert_eq!(h.asked, 1);
+        // Not cancelled: moved, the old one aside, asked once.
+        let mut h = Script {
+            conflicts: vec![Resolution::RenameOld],
+            ..Default::default()
+        };
+        let r = transfer(Method::Move, &p, &mut h);
+        assert!(!r.cancelled, "{:?}", h.errored);
+        assert_eq!(read(&d.path().join("to/a")), "new");
+        assert_eq!(read(&d.path().join("to/a (1)")), "old");
+        assert!(!shm.path().join("a").exists());
+        assert_eq!(h.asked, 1);
     }
 
     #[test]

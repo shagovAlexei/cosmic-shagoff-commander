@@ -175,19 +175,6 @@ pub fn previous(list: &[String], line: &str) -> Option<String> {
     list.get(next).cloned()
 }
 
-/// The flag after which a terminal runs a command: `--` for gnome-terminal / kgx, `-e` for the
-/// rest (cosmic-term, xterm, konsole, alacritty, foot -e is fine too).
-fn exec_flag(prog: &str) -> &'static str {
-    let name = Path::new(prog)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(prog);
-    match name {
-        "gnome-terminal" | "kgx" | "ptyxis" => "--",
-        _ => "-e",
-    }
-}
-
 /// What runs `line`: `sh -c` (no window), or in `terminal` (empty → `cosmic-term -e`) with a shell
 /// left open after it (Shift+Enter, TC `cmd /k`). The terminal is told the dir too: its profile
 /// may have its own.
@@ -199,7 +186,9 @@ pub fn argv(line: &str, dir: &Path, terminal: Option<&[String]>) -> Vec<String> 
         [] => vec!["cosmic-term".into(), "-e".into()],
         // Just the program (`["cosmic-term"]`): without its "run this" flag it ignores the
         // command and opens a plain shell.
-        [prog] => vec![prog.clone(), exec_flag(prog).into()],
+        [prog] => std::iter::once(prog.clone())
+            .chain(crate::terminals::run_flag(prog).map(String::from))
+            .collect(),
         _ => term.to_vec(),
     };
     let dir = quote(&dir.display().to_string());
@@ -398,6 +387,10 @@ mod tests {
             only("/usr/bin/gnome-terminal"),
             ["/usr/bin/gnome-terminal", "--", "sh"]
         );
+        // regression: the flag as `terminals::run_flag` has it — xfce4-terminal's `-e` takes one
+        // string, kitty / foot take the command as is (their `run_prefix` adds none).
+        assert_eq!(only("xfce4-terminal"), ["xfce4-terminal", "-x", "sh"]);
+        assert_eq!(only("kitty"), ["kitty", "sh", "-c"]);
     }
 
     #[test]

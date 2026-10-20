@@ -131,8 +131,9 @@ mod tests {
         assert!(k.skips_dir(".git") && k.skips_dir("Target") && !k.skips_dir("src"));
         assert!(k.matches(".git") && k.matches("target")); // as file names: not excluded
         assert!(!k.matches("a.bak"));
-        // Before `|` a dir pattern stays as it was: no file is named so.
-        assert!(!m("src\\", "a.rs"));
+        // Before `|` a dir pattern stays as it was: not a dir exclusion, not the file `src`.
+        assert!(!m("src\\", "src"));
+        assert!(!Mask::parse("src\\").skips_dir("src"));
         assert!(!Mask::parse("*.rs").skips_dir(".git"));
     }
 

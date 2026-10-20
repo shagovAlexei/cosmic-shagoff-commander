@@ -30,7 +30,9 @@ impl History {
 
     /// Step back; the dir to open, or None at the oldest entry.
     pub fn back(&mut self) -> Option<PathBuf> {
-        if self.pos == 0 || self.items.is_empty() {
+        // Read back from the state file: `pos` may be past the end (a hand edit, a cut write).
+        self.pos = self.pos.min(self.items.len().saturating_sub(1));
+        if self.pos == 0 {
             return None;
         }
         self.pos -= 1;
@@ -190,5 +192,15 @@ mod tests {
             [PathBuf::from("/b/sub"), "/b".into(), "/a".into()]
         );
         assert_eq!(h.back(), Some("/b".into()));
+    }
+
+    #[test]
+    fn regression_a_saved_pos_past_the_end_does_not_panic() {
+        let mut h = History {
+            items: vec!["/a".into(), "/b".into()],
+            pos: 5,
+        };
+        assert_eq!(h.back(), Some(PathBuf::from("/a")));
+        assert_eq!(h.back(), None);
     }
 }

@@ -96,10 +96,11 @@ struct Ctx<'a> {
     date: Option<jiff::Zoned>,
 }
 
-/// `a.tar.gz` → (`a.tar`, `gz`); `.bashrc` and `Makefile` have no extension.
+/// `a.tar.gz` → (`a.tar`, `gz`); `.bashrc`, `Makefile` and `notes.` have no extension (else
+/// `[N].[E]` would drop the trailing dot).
 fn split(name: &str) -> (&str, &str) {
     match name.rfind('.') {
-        Some(i) if i > 0 => (&name[..i], &name[i + 1..]),
+        Some(i) if i > 0 && i + 1 < name.len() => (&name[..i], &name[i + 1..]),
         _ => (name, ""),
     }
 }
@@ -334,6 +335,12 @@ mod tests {
         for n in ["a.txt", "Makefile", ".bashrc", "a.tar.gz", "фото.JPG"] {
             assert_eq!(nn(&Rule::default(), n), n);
         }
+    }
+
+    #[test]
+    fn regression_a_trailing_dot_stays() {
+        assert_eq!(nn(&Rule::default(), "notes."), "notes.");
+        assert_eq!(nn(&rule("[N]x", "[E]"), "notes."), "notes.x");
     }
 
     #[test]
