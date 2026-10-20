@@ -1,6 +1,6 @@
 //! Network passwords in the Secret Service keyring (gnome-keyring, KWallet…), saved the way gvfs
-//! saves them (`gvfskeyring.c`, schema `org.gnome.keyring.NetworkPassword`): sftp, smb and ftp
-//! look there before asking, so a saved password is not asked for again — by us, nor by any other
+//! saves them (`gvfskeyring.c`, schema `org.gnome.keyring.NetworkPassword`): sftp, smb, ftp and
+//! WebDAV look there before asking, so a saved password is not asked for again — by us, nor by any other
 //! gvfs program. Over D-Bus (zbus), no libsecret / glib in the build.
 
 use percent_encoding::percent_decode_str;
@@ -9,12 +9,16 @@ use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 /// The attributes gvfs looks the password for `url` up by (its `build_network_attributes`), `None`
-/// for a scheme whose lookup we cannot match: WebDAV adds the server's realm, known only once it
-/// answers. Port: as typed (ftp: not the default 21, as gvfs).
-pub fn gvfs_attrs(url: &str) -> Option<Vec<(&'static str, String)>> {
+/// for a scheme it does not keep. WebDAV (`gvfsbackenddav.c`): protocol `http` for davs too,
+/// authtype `basic` whatever the server asks, the server's `realm` as object (`None`: not known,
+/// not kept) and the port of the request, the default filled in. Others: the port as typed (ftp:
+/// not the default 21, as gvfs).
+pub fn gvfs_attrs(url: &str, realm: Option<&str>) -> Option<Vec<(&'static str, String)>> {
     let u = url::Url::parse(url.trim()).ok()?;
+    let dav = matches!(u.scheme(), "dav" | "davs");
     let protocol = match u.scheme() {
         p @ ("sftp" | "smb" | "ftp") => p,
+        _ if dav => "http",
         _ => return None,
     };
     let user = percent_decode_str(u.username()).decode_utf8().ok()?;
@@ -33,6 +37,13 @@ pub fn gvfs_attrs(url: &str) -> Option<Vec<(&'static str, String)>> {
     if protocol == "sftp" {
         attrs.push(("authtype", "password".to_string()));
     }
+    if dav {
+        attrs.push(("object", realm?.to_string()));
+        attrs.push(("authtype", "basic".to_string()));
+        let default = if u.scheme() == "davs" { 443 } else { 80 };
+        attrs.push(("port", u.port().unwrap_or(default).to_string()));
+        return Some(attrs);
+    }
     attrs.extend(
         u.port()
             .filter(|&p| p != 0)
@@ -45,10 +56,10 @@ pub fn gvfs_attrs(url: &str) -> Option<Vec<(&'static str, String)>> {
 pub fn keeps(url: &str) -> bool {
     url.trim()
         .split_once("://")
-        .is_some_and(|(s, _)| matches!(s, "sftp" | "smb" | "ftp"))
+        .is_some_and(|(s, _)| matches!(s, "sftp" | "smb" | "ftp" | "dav" | "davs"))
 }
 
-/// The item's name, as gvfs names it: `user@server:port`.
+/// The item's name, as gvfs names it: `user@server:port/object`.
 fn label(attrs: &[(&str, String)]) -> String {
     let get = |k| attrs.iter().find(|(a, _)| *a == k).map(|(_, v)| v.as_str());
     let mut s = get("user").map(|u| format!("{u}@")).unwrap_or_default();
@@ -56,13 +67,75 @@ fn label(attrs: &[(&str, String)]) -> String {
     if let Some(p) = get("port") {
         s += &format!(":{p}");
     }
+    if let Some(o) = get("object") {
+        s += &format!("/{o}");
+    }
     s
+}
+
+/// The realm of the first `WWW-Authenticate` header that names one (`Basic realm="…"`).
+pub fn realm(headers: &str) -> Option<String> {
+    headers.lines().find_map(|l| {
+        let (name, value) = l.split_once(':')?;
+        if !name.trim().eq_ignore_ascii_case("www-authenticate") {
+            return None;
+        }
+        let at = value.to_ascii_lowercase().find("realm=\"")? + "realm=\"".len();
+        let (mut out, mut escaped) = (String::new(), false);
+        for c in value[at..].chars() {
+            match c {
+                _ if escaped => {
+                    out.push(c);
+                    escaped = false;
+                }
+                '\\' => escaped = true,
+                '"' => return Some(out),
+                _ => out.push(c),
+            }
+        }
+        None
+    })
+}
+
+/// Ask a WebDAV server its realm (gvfs keys the password by it): `curl` OPTIONS, as gvfs mounts,
+/// without the user (no credentials sent), 10 s. Blocking.
+fn fetch_realm(url: &str) -> Option<String> {
+    let mut u = url::Url::parse(url.trim()).ok()?;
+    let http = if u.scheme() == "davs" {
+        "https"
+    } else {
+        "http"
+    };
+    u.set_username("").ok()?;
+    u.set_password(None).ok()?;
+    let rest = u.as_str().split_once("://")?.1.to_string();
+    let out = std::process::Command::new("curl")
+        .args([
+            "-sk",
+            "-m",
+            "10",
+            "-X",
+            "OPTIONS",
+            "-o",
+            "/dev/null",
+            "-D",
+            "-",
+        ])
+        .arg(format!("{http}://{rest}"))
+        .output()
+        .ok()?;
+    realm(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// Keep `password` for `url` in the default keyring (replacing one kept before). Blocking: the
 /// keyring may ask to be unlocked first.
 pub fn save(url: &str, password: &str) -> Result<(), String> {
-    let attrs = gvfs_attrs(url).ok_or_else(|| url.to_string())?;
+    let dav = url.trim().starts_with("dav");
+    let realm = if dav { fetch_realm(url) } else { None };
+    if dav && realm.is_none() {
+        return Err(format!("{url}: the server names no realm"));
+    }
+    let attrs = gvfs_attrs(url, realm.as_deref()).ok_or_else(|| url.to_string())?;
     store(&label(&attrs), &attrs, password).map_err(|e| e.to_string())
 }
 
@@ -125,7 +198,7 @@ mod tests {
     use super::*;
 
     fn a(url: &str) -> Vec<(&'static str, String)> {
-        gvfs_attrs(url).unwrap()
+        gvfs_attrs(url, None).unwrap()
     }
 
     fn v(pairs: &[(&'static str, &str)]) -> Vec<(&'static str, String)> {
@@ -178,16 +251,47 @@ mod tests {
     }
 
     #[test]
-    fn webdav_and_the_rest_are_not_kept() {
-        assert_eq!(gvfs_attrs("davs://u@cloud/remote.php"), None);
-        assert_eq!(gvfs_attrs("nfs://h/x"), None);
-        assert_eq!(gvfs_attrs("not a url"), None);
-        assert!(keeps("sftp://") && keeps(" smb://n") && !keeps("davs://x") && !keeps("nas"));
+    fn webdav_with_its_realm_the_rest_not_kept() {
+        // gvfsbackenddav.c: protocol "http" (davs too), authtype "basic", the realm as object,
+        // the port as the request has it (the default filled in).
+        assert_eq!(
+            gvfs_attrs("dav://tester@localhost:8088/", Some("WebDAV")).unwrap(),
+            v(&[
+                ("user", "tester"),
+                ("server", "localhost"),
+                ("protocol", "http"),
+                ("object", "WebDAV"),
+                ("authtype", "basic"),
+                ("port", "8088")
+            ])
+        );
+        let davs = gvfs_attrs("davs://u@cloud/remote.php", Some("Nextcloud")).unwrap();
+        assert_eq!(davs.last(), Some(&("port", "443".to_string())));
+        assert_eq!(
+            gvfs_attrs("dav://h/", Some("r")).unwrap().last().unwrap().1,
+            "80"
+        );
+        assert_eq!(gvfs_attrs("davs://u@cloud/remote.php", None), None); // realm unknown
+        assert_eq!(gvfs_attrs("nfs://h/x", None), None);
+        assert_eq!(gvfs_attrs("not a url", None), None);
+        assert!(keeps("sftp://") && keeps(" smb://n") && keeps("davs://x") && !keeps("nas"));
+    }
+
+    #[test]
+    fn realm_from_the_answer() {
+        let headers = "HTTP/1.1 401 Unauthorized\r\nServer: x\r\n\
+                       www-authenticate: Basic realm=\"My \\\"Cloud\\\"\", charset=\"UTF-8\"\r\n";
+        assert_eq!(realm(headers).as_deref(), Some("My \"Cloud\""));
+        let digest = "WWW-Authenticate: Digest qop=\"auth\", realm=\"dav\", nonce=\"1\"\n";
+        assert_eq!(realm(digest).as_deref(), Some("dav"));
+        assert_eq!(realm("HTTP/1.1 200 OK\r\n"), None);
     }
 
     #[test]
     fn labels_as_gvfs() {
         assert_eq!(label(&a("sftp://bob@h:22")), "bob@h:22");
         assert_eq!(label(&a("smb://nas/s")), "nas");
+        let dav = gvfs_attrs("dav://t@h:8088/", Some("WebDAV")).unwrap();
+        assert_eq!(label(&dav), "t@h:8088/WebDAV");
     }
 }
