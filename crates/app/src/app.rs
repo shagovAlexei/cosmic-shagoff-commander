@@ -712,6 +712,8 @@ pub enum Message {
     ToolFailed(String),
     ToolEdit(crate::toolbar::ToolMsg),
     KeyEdit(crate::hotkeys::KeyMsg),
+    /// Settings → «Find a font» typed.
+    FontFilter(String),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
     /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
@@ -2741,6 +2743,11 @@ impl App {
                     c.update(m);
                 }
             }
+            Message::FontFilter(s) => {
+                if let Some(Drawer::Settings(f)) = &mut self.drawer {
+                    f.font_filter = s;
+                }
+            }
             Message::KeyEdit(m) => {
                 if let Some(Dialog::Keys(k)) = &mut self.dialog {
                     k.update(m);
@@ -2912,9 +2919,11 @@ impl App {
             Message::ColDrag(x) => {
                 if let Some((_, edge, start)) = &mut self.col_drag {
                     let col = viewport::drag_target(*edge);
-                    let &mut (x0, w0) = start.get_or_insert((x, self.cols[col]));
+                    // On screen the widths are scaled with the text (`col_widths`); kept unscaled.
+                    let scale = self.config.text_scale();
+                    let &mut (x0, w0) = start.get_or_insert((x, self.cols[col] * scale));
                     let (col, w) = viewport::drag_col(*edge, w0, x0, x);
-                    self.cols[col] = w;
+                    self.cols[col] = w / scale;
                 }
             }
             // The main window's only (a context menu popup has its own coordinates).
@@ -3427,6 +3436,12 @@ impl App {
         }
         self.volumes_at = Some(now);
         blocking(mount::list, |r| Message::AllVolumes(r.unwrap_or_default()))
+    }
+
+    /// The columns' widths on screen: as kept (for the default text size) grown or shrunk with
+    /// the panel's text, so a bigger font does not cut the dates (162).
+    pub fn col_widths(&self) -> [f32; 4] {
+        self.cols.map(|w| w * self.config.text_scale())
     }
 
     /// A tab locked with dir changes allowed that is no longer the shown one is read in its dir
@@ -6585,6 +6600,7 @@ impl App {
                     .map(|p| p.display().to_string())
                     .unwrap_or_default(),
                 fonts: drawer::font_families(),
+                font_filter: String::new(),
             })
         });
         self.set_drawer(Some(d));
@@ -10452,6 +10468,21 @@ mod tests {
         // `terminal` changed by hand (before the menu existed): it still wins.
         app.config.terminal = vec!["xterm".into(), "-e".into()];
         assert_eq!(app.terminal_prefix(), ["xterm", "-e"]);
+    }
+
+    #[test]
+    fn columns_grow_with_the_text_and_are_kept_for_the_default_size() {
+        let mut app = app_with(Config::default(), State::default());
+        let base = app.cols;
+        app.config.panel_size = 20;
+        let k = app.config.text_scale();
+        assert!(k > 1.0);
+        assert_eq!(app.col_widths(), base.map(|w| w * k));
+        // A drag of 20 px on screen at the bigger size: 20 / k kept.
+        let _ = app.update(Message::ColDragStart(0, 3));
+        let _ = app.update(Message::ColDrag(100.0));
+        let _ = app.update(Message::ColDrag(120.0));
+        assert!((app.cols[1] - (base[1] + 20.0 / k)).abs() < 0.01);
     }
 
     #[test]
