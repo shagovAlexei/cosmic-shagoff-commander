@@ -596,8 +596,6 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
         .into()
 }
 
-/// Theme icon by type, then the name (cut with "…").
-/// `paint`: the name's colour by type (`None` on the cursor / a marked row: its own colour wins).
 /// The theme's icon for `e` (its type's, else the generic one).
 pub(crate) fn entry_icon(e: &Entry, size: u16) -> widget::Icon {
     let (name, generic) = format::icon_name(e);
@@ -609,6 +607,8 @@ pub(crate) fn entry_icon(e: &Entry, size: u16) -> widget::Icon {
         .icon()
 }
 
+/// Theme icon by type, then the name (cut with "…").
+/// `paint`: the name's colour by type (`None` on the cursor / a marked row: its own colour wins).
 fn name_cell(
     e: &Entry,
     label: String,

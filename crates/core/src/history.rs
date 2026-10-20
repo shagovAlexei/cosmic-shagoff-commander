@@ -7,9 +7,27 @@ pub const LIMIT: usize = 50;
 
 /// Saved with the tabs (`PaneState.history`), so Alt+↓ survives a restart as in TC.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "Saved")]
 pub struct History {
     items: Vec<PathBuf>,
     pos: usize,
+}
+
+/// `History` as read back from the state file, `pos` not trusted (a hand edit, a cut write).
+#[derive(Deserialize)]
+struct Saved {
+    items: Vec<PathBuf>,
+    pos: usize,
+}
+
+impl From<Saved> for History {
+    fn from(s: Saved) -> Self {
+        let pos = s.pos.min(s.items.len().saturating_sub(1));
+        History {
+            items: s.items,
+            pos,
+        }
+    }
 }
 
 impl History {
@@ -190,5 +208,23 @@ mod tests {
             [PathBuf::from("/b/sub"), "/b".into(), "/a".into()]
         );
         assert_eq!(h.back(), Some("/b".into()));
+    }
+
+    #[test]
+    fn regression_a_saved_pos_past_the_end_does_not_panic() {
+        let saved = Saved {
+            items: vec!["/a".into(), "/b".into()],
+            pos: 5,
+        };
+        let mut h = History::from(saved);
+        assert_eq!(h.recent()[0], PathBuf::from("/b")); // at the newest
+        assert_eq!(h.back(), Some(PathBuf::from("/a")));
+        assert_eq!(h.back(), None);
+        let mut h = History::from(Saved {
+            items: vec!["/a".into(), "/b".into()],
+            pos: 5,
+        });
+        h.clear();
+        assert_eq!(h.recent(), [PathBuf::from("/b")]); // the current one kept
     }
 }

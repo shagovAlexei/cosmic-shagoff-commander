@@ -213,7 +213,12 @@ pub fn key_name(physical: Physical) -> Option<String> {
     })
 }
 
+/// `None` with Super held: those keys are the compositor's, and a `Bind` has no Super (it would
+/// be saved as the plain key).
 pub fn bind_of(physical: Physical, mods: Modifiers) -> Option<Bind> {
+    if mods.logo() {
+        return None;
+    }
     Some(Bind {
         ctrl: mods.control(),
         alt: mods.alt(),
@@ -378,6 +383,9 @@ pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<List
         (Key::Character(c), _) if (mods - Modifiers::SHIFT).is_empty() => match c.as_str() {
             "+" | "=" => return Some(ListerKey::Zoom(true)),
             "-" => return Some(ListerKey::Zoom(false)),
+            // Shift+Q, Shift+N…: not the viewer's letters. A digit typed with Shift is still one
+            // (AZERTY types 1 / 3 / 4 / 8 so).
+            _ if !mods.is_empty() && c.chars().any(char::is_alphabetic) => return None,
             _ => {}
         },
         _ if !mods.is_empty() => return None,
@@ -806,5 +814,33 @@ mod tests {
             zoom("+", Code::BracketRight, NONE),
             Some(ListerKey::Zoom(true))
         ); // German
+    }
+
+    #[test]
+    fn regression_super_is_never_captured_as_a_plain_key() {
+        let k = Physical::Code(Code::KeyK);
+        assert_eq!(bind_of(k, Modifiers::LOGO), None);
+        assert_eq!(bind_of(k, Modifiers::CTRL).map(|b| b.key), Some("K".into()));
+    }
+
+    #[test]
+    fn regression_shift_letters_are_not_the_viewer_keys() {
+        let q = (Key::Character("Q".into()), Physical::Code(Code::KeyQ));
+        assert_eq!(lister_key(&q.0, q.1, Modifiers::SHIFT), None);
+        let q = (Key::Character("q".into()), Physical::Code(Code::KeyQ));
+        assert_eq!(
+            lister_key(&q.0, q.1, Modifiers::empty()),
+            Some(ListerKey::Close)
+        );
+        let plus = Key::Character("+".into());
+        let eq = Physical::Code(Code::Equal);
+        assert_eq!(
+            lister_key(&plus, eq, Modifiers::SHIFT),
+            Some(ListerKey::Zoom(true))
+        );
+        // AZERTY: the digit row types digits with Shift.
+        let one = (Key::Character("1".into()), Physical::Code(Code::Digit1));
+        let text = Some(ListerKey::Mode(Mode::Text));
+        assert_eq!(lister_key(&one.0, one.1, Modifiers::SHIFT), text);
     }
 }

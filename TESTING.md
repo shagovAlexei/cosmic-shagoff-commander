@@ -1347,3 +1347,18 @@
 | `regression_tmux_as_the_shell_is_never_typed_into` | `tmux` в `term_shell`: `cd` панели набирался в его окно (хоть в vim) | 149 |
 | `regression_browse_attrs_space_separated` | «Обзор сети» никогда ничего не находил: `gio list` разделяет атрибуты пробелом, а разбор ждал табуляцию | 26 |
 | `regression_a_bad_regex_clears_the_last_results` | Alt+F7: под ошибкой регулярного выражения оставались результаты прошлого поиска | 22 |
+| `regression_skip_while_packing_skips_one_entry` | Alt+F5: «Пропустить» на нечитаемой записи отменял всю упаковку | 21 |
+| `regression_a_trailing_dot_stays` | Ctrl+M с правилами по умолчанию переименовывал `notes.` в `notes` | 32 |
+| `argv_runs_through_sh_or_a_terminal_that_stays_open` | Shift+Enter: xfce4-terminal / kitty получали чужой флаг запуска (`-e`) | 151 |
+| `regression_rename_old_across_filesystems_waits_for_the_copy` | F6 на другую ФС, «Переименовать старый»: старый уходил в сторону до копирования (при отмене место пустело), вопрос задавался дважды | 70 |
+| `regression_a_saved_pos_past_the_end_does_not_panic` | История каталогов из испорченного состояния: Alt+← падал | — |
+| `regression_a_dir_keeps_its_own_date_and_mode` | Каталог в архиве: дата зависела от порядка записей, неявный каталог получал права файла | 12 |
+| `regression_a_dotted_dir_keeps_its_whole_name` | Alt+F5 на каталоге `v1.2` предлагал `v1.zip` | 21 |
+| `regression_a_finished_job_does_not_cancel_navigation` | Конец фоновой операции возвращал панель из каталога, который ещё читался | 68 |
+| `regression_a_size_counted_lands_in_a_tab_moved_meanwhile` | Размер по Space / ветвь Ctrl+B терялись, если вкладку перенесли в другую панель | 38 |
+| `regression_a_viewer_window_covers_no_pane` | F3 в своём окне: эскизы в панелях переставали грузиться | 104 |
+| `regression_a_viewer_window_does_not_stop_a_tab_drop` | F3 в своём окне: вкладку нельзя было перетащить в другую панель | 88 |
+| `regression_a_failed_diff_save_keeps_undo_and_the_close_warning` | Сравнение: неудачное «Сохранить» стирало отмену и предупреждение при закрытии | 113 |
+| `regression_super_is_never_captured_as_a_plain_key` | Свои клавиши: Super+K записывалось как K | 154 |
+| `regression_shift_letters_are_not_the_viewer_keys` | F3: Shift+Q / Shift+N действовали как Q / N | 20 |
+| `regression_rename_old_then_a_failed_move_puts_it_back` | F6 с «Переименовать старый», перенос не удался, «Пропустить»: старый оставался под именем `a (1)` | 70 |

@@ -93,9 +93,17 @@ pub fn stem(name: &str) -> &str {
     split(name).map_or(name, |(s, _)| s)
 }
 
-/// Pack dialog default: one target → its name without the last extension; several → the dir's name.
-pub fn archive_name(targets: &[PathBuf], cwd: &Path, f: Format) -> String {
+/// Pack dialog default: one file → its name without the last extension, one dir → its whole name
+/// (`v1.2` is not `v1`); several → the dir's name. `is_dir`: from the panel's rows (no `stat` on
+/// the UI thread; inside an archive there is nothing to stat).
+pub fn archive_name(
+    targets: &[PathBuf],
+    cwd: &Path,
+    f: Format,
+    is_dir: &dyn Fn(&Path) -> bool,
+) -> String {
     let base = match targets {
+        [one] if is_dir(one) => one.file_name().map(|s| s.to_string_lossy().into_owned()),
         [one] => one.file_stem().map(|s| s.to_string_lossy().into_owned()),
         _ => cwd.file_name().map(|s| s.to_string_lossy().into_owned()),
     };
@@ -119,9 +127,10 @@ pub fn groups(
     path: &Path,
     f: Format,
     separate: bool,
+    is_dir: &dyn Fn(&Path) -> bool,
 ) -> Vec<(Vec<PathBuf>, PathBuf)> {
-    let is_dir = path.as_os_str().as_encoded_bytes().ends_with(b"/");
-    let dir = if is_dir {
+    let into_dir = path.as_os_str().as_encoded_bytes().ends_with(b"/");
+    let dir = if into_dir {
         path
     } else {
         path.parent().unwrap_or(path)
@@ -131,13 +140,13 @@ pub fn groups(
             .iter()
             .map(|t| {
                 let one = vec![t.clone()];
-                let name = archive_name(&one, cwd, f);
+                let name = archive_name(&one, cwd, f, is_dir);
                 (one, dir.join(name))
             })
             .collect();
     }
-    let dest = if is_dir {
-        path.join(archive_name(targets, cwd, f))
+    let dest = if into_dir {
+        path.join(archive_name(targets, cwd, f, is_dir))
     } else {
         path.to_path_buf()
     };
@@ -975,7 +984,9 @@ pub fn split_path(p: &Path) -> Option<(PathBuf, PathBuf)> {
 pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
     let items = index(archive)?;
     let mut found = inner.as_os_str().is_empty();
-    let mut kids: std::collections::BTreeMap<std::ffi::OsString, Entry> = Default::default();
+    // (entry, from its own item): an implicit dir (only its contents listed) is not "own".
+    let mut kids: std::collections::BTreeMap<std::ffi::OsString, (Entry, bool)> =
+        Default::default();
     for it in items.iter() {
         if it.path == inner {
             if !it.dir {
@@ -996,20 +1007,25 @@ pub fn list(archive: &Path, inner: &Path, show_hidden: bool) -> io::Result<Vec<E
             continue;
         }
         let own = parts.next().is_none();
-        let entry = to_entry(it, os_name.clone(), name, !own || it.dir, own && it.link);
+        let mut entry = to_entry(it, os_name.clone(), name, !own || it.dir, own && it.link);
+        if !own {
+            entry.mode = 0o755; // not the mode of the file inside it
+        }
         match kids.get_mut(&os_name) {
-            // An implicit dir takes the newest mtime inside; an own entry replaces it.
-            Some(old) if !own => old.mtime = old.mtime.max(it.mtime),
-            Some(old) => *old = entry,
+            // An implicit dir takes the newest mtime inside; its own entry, whenever it comes,
+            // replaces it and keeps its own date and mode.
+            Some((old, false)) if !own => old.mtime = old.mtime.max(it.mtime),
+            Some(_) if !own => {}
+            Some(old) => *old = (entry, true),
             None => {
-                kids.insert(os_name, entry);
+                kids.insert(os_name, (entry, own));
             }
         }
     }
     if !found {
         return Err(io::ErrorKind::NotFound.into());
     }
-    Ok(kids.into_values().collect())
+    Ok(kids.into_values().map(|(e, _)| e).collect())
 }
 
 fn to_entry(it: &Item, os_name: std::ffi::OsString, name: String, dir: bool, link: bool) -> Entry {
@@ -1710,7 +1726,12 @@ fn walk(
     out: &mut Vec<(PathBuf, Metadata)>,
     h: &mut dyn Handler,
 ) -> Result<bool, bool> {
-    let m = attempt(h, p, || fs::symlink_metadata(p))?;
+    // Skip: this entry left out (not completed); only Cancel stops the packing.
+    let m = match attempt(h, p, || fs::symlink_metadata(p)) {
+        Ok(m) => m,
+        Err(false) => return Ok(false),
+        Err(true) => return Err(true),
+    };
     if skip.contains(&(m.dev(), m.ino())) {
         return Ok(true);
     }
@@ -2117,18 +2138,35 @@ mod tests {
     }
 
     #[test]
+    fn regression_a_dotted_dir_keeps_its_whole_name() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("v1.2"); // a row the panel marks as a dir
+        assert_eq!(
+            archive_name(std::slice::from_ref(&dir), d.path(), Format::Zip, &|p| p
+                == dir),
+            "v1.2.zip"
+        );
+    }
+
+    #[test]
     fn default_archive_name() {
         let cwd = Path::new("/home/u/photos");
         let one = [cwd.join("readme.txt")];
-        assert_eq!(archive_name(&one, cwd, Format::Zip), "readme.zip");
         assert_eq!(
-            archive_name(&[cwd.join(".bashrc")], cwd, Format::Tar),
+            archive_name(&one, cwd, Format::Zip, &|_| false),
+            "readme.zip"
+        );
+        assert_eq!(
+            archive_name(&[cwd.join(".bashrc")], cwd, Format::Tar, &|_| false),
             ".bashrc.tar"
         );
         let two = [cwd.join("a"), cwd.join("b")];
-        assert_eq!(archive_name(&two, cwd, Format::TarGz), "photos.tar.gz");
         assert_eq!(
-            archive_name(&two, Path::new("/"), Format::SevenZ),
+            archive_name(&two, cwd, Format::TarGz, &|_| false),
+            "photos.tar.gz"
+        );
+        assert_eq!(
+            archive_name(&two, Path::new("/"), Format::SevenZ, &|_| false),
             "archive.7z"
         );
     }
@@ -2146,11 +2184,20 @@ mod tests {
         let cwd = Path::new("/src");
         let t = vec![cwd.join("a.txt"), cwd.join("dir")];
         assert_eq!(
-            groups(&t, cwd, Path::new("/dst/x.zip"), Format::Zip, false),
+            groups(
+                &t,
+                cwd,
+                Path::new("/dst/x.zip"),
+                Format::Zip,
+                false,
+                &|_| false
+            ),
             [(t.clone(), PathBuf::from("/dst/x.zip"))]
         );
         assert_eq!(
-            groups(&t, cwd, Path::new("/dst/x.zip"), Format::Zip, true),
+            groups(&t, cwd, Path::new("/dst/x.zip"), Format::Zip, true, &|_| {
+                false
+            }),
             [
                 (vec![t[0].clone()], PathBuf::from("/dst/a.zip")),
                 (vec![t[1].clone()], PathBuf::from("/dst/dir.zip")),
@@ -2158,7 +2205,7 @@ mod tests {
         );
         // Trailing slash: a dir, default name inside it.
         assert_eq!(
-            groups(&t, cwd, Path::new("/dst/"), Format::Tar, false),
+            groups(&t, cwd, Path::new("/dst/"), Format::Tar, false, &|_| false),
             [(t.clone(), PathBuf::from("/dst/src.tar"))]
         );
     }
@@ -3209,6 +3256,70 @@ mod tests {
         let slashed = PathBuf::from(format!("{}/", a.display()));
         assert_eq!(split_path(&slashed), Some((a.clone(), PathBuf::new())));
         assert_eq!(crate::listing::scan(&slashed, true).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn regression_a_dir_keeps_its_own_date_and_mode() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("t.tar");
+        let mut b = tar::Builder::new(fs::File::create(&a).unwrap());
+        let mut add = |name: &str, kind: tar::EntryType, mtime: u64, mode: u32| {
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(kind);
+            h.set_mtime(mtime);
+            h.set_mode(mode);
+            h.set_size(0);
+            h.set_path(name).unwrap();
+            h.set_cksum();
+            b.append(&h, &[][..]).unwrap();
+        };
+        // `docs` before its file (its own date stays); `impl` only through its file.
+        add("docs/", tar::EntryType::Directory, 1000, 0o700);
+        add("docs/a.txt", tar::EntryType::Regular, 5000, 0o644);
+        add("impl/b.txt", tar::EntryType::Regular, 3000, 0o600);
+        b.finish().unwrap();
+        drop(b);
+        let secs = |e: &Entry| {
+            e.mtime
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        };
+        let l = list(&a, Path::new(""), true).unwrap();
+        let get = |n: &str| l.iter().find(|e| e.name == n).unwrap();
+        assert_eq!((secs(get("docs")), get("docs").mode), (1000, 0o700));
+        assert_eq!((secs(get("impl")), get("impl").mode), (3000, 0o755));
+    }
+
+    #[test]
+    fn regression_skip_while_packing_skips_one_entry() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir_all(src.join("nox")).unwrap();
+        fs::write(src.join("nox/f"), "x").unwrap();
+        fs::write(src.join("ok.txt"), "ok").unwrap();
+        // Readable, not searchable: its names list, their stat fails.
+        fs::set_permissions(src.join("nox"), fs::Permissions::from_mode(0o444)).unwrap();
+        let a = d.path().join("a.zip");
+        let mut h = Script {
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        let r = pack(
+            Format::Zip,
+            d.path(),
+            &[(vec![src.clone()], a.clone())],
+            &mut h,
+        );
+        fs::set_permissions(src.join("nox"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(h.errored, [src.join("nox/f")]);
+        assert!(!r.cancelled && r.completed.is_empty()); // skipped: not completed
+        let names: Vec<String> = list(&a, Path::new("src"), true)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert!(names.contains(&"ok.txt".to_string()), "{names:?}");
     }
 
     #[test]

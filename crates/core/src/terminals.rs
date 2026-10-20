@@ -17,18 +17,24 @@ impl Terminal {
     /// What runs a command in it: `argv`, then its "run this" flag (none for kitty / foot, which
     /// take the command as their arguments).
     pub fn run_prefix(&self) -> Vec<String> {
-        let prog = self.argv.first().map_or("", |p| program(p));
-        let flag = match prog {
-            "gnome-terminal" | "kgx" | "ptyxis" | "wezterm" => Some("--"),
-            "xfce4-terminal" | "terminator" => Some("-x"),
-            "kitty" | "foot" | "footclient" => None,
-            _ => Some("-e"),
-        };
+        let flag = run_flag(self.argv.first().map_or("", String::as_str));
         self.argv
             .iter()
             .cloned()
             .chain(flag.map(String::from))
             .collect()
+    }
+}
+
+/// The flag after which terminal `prog` (a path or a name) runs a command: `--` for
+/// gnome-terminal and the like, `-x` for xfce4-terminal / terminator (their `-e` takes one
+/// string), none for kitty / foot (the command is their arguments), else `-e`.
+pub fn run_flag(prog: &str) -> Option<&'static str> {
+    match program(prog) {
+        "gnome-terminal" | "kgx" | "ptyxis" | "wezterm" => Some("--"),
+        "xfce4-terminal" | "terminator" => Some("-x"),
+        "kitty" | "foot" | "footclient" => None,
+        _ => Some("-e"),
     }
 }
 
