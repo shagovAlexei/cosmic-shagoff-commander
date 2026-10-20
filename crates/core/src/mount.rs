@@ -83,11 +83,52 @@ pub fn network(gio_list: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Browse the local network (gvfs `network:///`); `cancel` kills `gio` (`Error::Cancelled`).
-pub fn browse(cancel: &Arc<AtomicBool>) -> Result<Vec<(String, String)>, Error> {
+/// The network place browsed first.
+pub const NETWORK: &str = "network:///";
+
+/// An SMB place above a share — the Windows network (`smb:///`), a workgroup or a server —
+/// whose listing goes one level deeper; a share itself is where one connects.
+pub fn deeper(uri: &str) -> bool {
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return false;
+    };
+    let share = rest
+        .split_once('/')
+        .map_or("", |(_, s)| s.trim_matches('/'));
+    scheme.eq_ignore_ascii_case("smb") && share.is_empty()
+}
+
+/// The host of `uri` (`smb://bob@NAS:445/x` → `nas`), lowercased; `""` for none.
+pub fn host(uri: &str) -> String {
+    let rest = uri.split_once("://").map_or(uri, |(_, r)| r);
+    let auth = rest.split('/').next().unwrap_or_default();
+    let host = auth.rsplit('@').next().unwrap_or_default();
+    host.split(':').next().unwrap_or_default().to_lowercase()
+}
+
+/// Browse `at` (`NETWORK`, or a `deeper` place); `cancel` kills `gio` (`Error::Cancelled`).
+/// gvfs lists an `smb:` place only once mounted, so it is mounted first, `password` answering
+/// its prompt (the caller gives it only to the host it was typed for).
+pub fn browse(
+    at: &str,
+    password: &str,
+    cancel: &Arc<AtomicBool>,
+) -> Result<Vec<(String, String)>, Error> {
+    // "Already mounted" is an error to gio but fine for us: the listing decides, as in `connect`.
+    let mounted = if deeper(at) {
+        talk_until(gio(["mount", at]), password, Some(cancel))
+    } else {
+        Ok(String::new())
+    };
+    if mounted == Err(Error::Cancelled) {
+        return Err(Error::Cancelled);
+    }
     let attrs = "standard::display-name,standard::target-uri";
-    let cmd = gio(["list", "-a", attrs, "network:///"]);
-    talk_until(cmd, "", Some(cancel)).map(|s| network(&s))
+    match talk_until(gio(["list", "-a", attrs, at]), "", Some(cancel)) {
+        Ok(s) => Ok(network(&s)),
+        Err(Error::Cancelled) => Err(Error::Cancelled),
+        Err(e) => Err(mounted.err().unwrap_or(e)),
+    }
 }
 
 /// Volumes with a unix device and `can_mount=1`, from `gio mount -li`.
@@ -616,6 +657,35 @@ Mount(0): nas -> sftp://nas/
                 ("nas".to_string(), "sftp://nas.local:22/".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn deeper_is_smb_above_a_share() {
+        for (uri, deep) in [
+            ("smb:///", true),
+            ("smb://WORKGROUP/", true),
+            ("smb://nas", true),
+            ("SMB://nas/", true),
+            ("smb://nas/share", false),
+            ("smb://nas/share/", false),
+            ("sftp://nas.local:22/", false),
+            ("network:///", false),
+        ] {
+            assert_eq!(deeper(uri), deep, "{uri}");
+        }
+    }
+
+    #[test]
+    fn host_of_an_address() {
+        for (uri, h) in [
+            ("smb://bob@NAS:445/share", "nas"),
+            ("smb://nas/", "nas"),
+            ("sftp://a:p@w@host/x", "host"),
+            ("smb:///", ""),
+            ("nas", "nas"),
+        ] {
+            assert_eq!(host(uri), h, "{uri}");
+        }
     }
 
     #[test]

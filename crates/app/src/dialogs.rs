@@ -9,6 +9,7 @@ use cosmic::{Element, widget};
 use shagoff_core::archive::Format;
 use shagoff_core::diff;
 use shagoff_core::format::{self, TimeZone};
+use shagoff_core::mount;
 use shagoff_core::multirename::{self, Case, Counter, Problem, Row, Rule};
 use shagoff_core::ops::{self, ErrorChoice, FileInfo, Resolution};
 use shagoff_core::sync;
@@ -143,6 +144,8 @@ pub enum Dialog {
         found: Vec<(String, String)>,
         /// A browse under way: setting it stops `gio` (the button again, or the dialog closed).
         browsing: Option<Arc<AtomicBool>>,
+        /// The place browsed last (`mount::NETWORK` at first): a result for another is dropped.
+        at: String,
         /// Shown in the dialog (as in TC, not in the status line): "Connecting…", or the
         /// last error (`true`) / browse result. The dialog stays open until connected.
         note: Option<(bool, String)>,
@@ -1544,6 +1547,7 @@ pub fn view<'a>(
             saved,
             found,
             browsing,
+            at,
             note,
             ..
         } => {
@@ -1586,10 +1590,28 @@ pub fn view<'a>(
             } else {
                 fl!("connect-browse")
             })
-            .on_press(Message::ConnectBrowse);
+            .on_press(Message::ConnectBrowse(None));
             col = col.push(browse);
+            if at != mount::NETWORK {
+                col = col.push(widget::text::caption(fl!(
+                    "connect-in",
+                    place = at.as_str()
+                )));
+            }
             for (name, u) in found {
-                col = col.push(pick(format!("{name}   {u}"), u));
+                let entry = pick(format!("{name}   {u}"), u);
+                col = col.push(if mount::deeper(u) {
+                    row![
+                        entry,
+                        widget::button::icon(widget::icon::from_name("go-next-symbolic"))
+                            .tooltip(fl!("connect-deeper"))
+                            .on_press(Message::ConnectBrowse(Some(u.clone()))),
+                    ]
+                    .align_y(cosmic::iced::Alignment::Center)
+                    .into()
+                } else {
+                    Element::from(entry)
+                });
             }
             if let Some((error, text)) = note {
                 let t = widget::text::body(text.clone()).wrapping(Wrapping::WordOrGlyph);
