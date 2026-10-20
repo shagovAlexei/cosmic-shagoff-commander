@@ -523,6 +523,11 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
+    /// Alt+F10: a click on row i (on the row under the cursor: open / close it).
+    TreePick(usize),
+    /// Alt+F10: for the tree dialog with this id, dirs read — each with its subdirs — and the one
+    /// to put the cursor on.
+    TreeFilled(u64, Vec<(PathBuf, Vec<OsString>)>, Option<PathBuf>),
     /// Alt+Shift+F9 done: each archive and the files read from it, or what is wrong with it.
     Tested(Vec<(PathBuf, Result<u64, String>)>),
     /// Ctrl+L counted: the targets' occupied space (`None`: could not / stopped).
@@ -1323,6 +1328,30 @@ impl App {
                         }
                         _ => {}
                     }
+                }
+                if let Some(Dialog::Tree {
+                    tree, hidden, id, ..
+                }) = &mut self.dialog
+                {
+                    const PAGE: isize = 10;
+                    match action {
+                        Action::Up => tree.move_cursor(-1),
+                        Action::Down => tree.move_cursor(1),
+                        Action::PageUp => tree.move_cursor(-PAGE),
+                        Action::PageDown => tree.move_cursor(PAGE),
+                        Action::Home => tree.move_cursor(-isize::MAX / 2),
+                        Action::End => tree.move_cursor(isize::MAX / 2),
+                        // → opens it (read in the background), then steps in; ← back out.
+                        Action::Right => {
+                            if let Some(dir) = tree.step_in() {
+                                return tree_read(*id, vec![dir], *hidden, None);
+                            }
+                        }
+                        Action::Left | Action::Parent => tree.step_out(),
+                        Action::Enter => return self.submit_dialog(),
+                        _ => return Task::none(),
+                    }
+                    return list_snap(tree.cursor, tree.rows.len());
                 }
                 if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
                     // Separators are skipped, as in a menu.
@@ -2384,6 +2413,34 @@ impl App {
                 };
                 return Task::batch([reload(self, 0), reload(self, 1)]);
             }
+            Message::TreePick(i) => {
+                if let Some(Dialog::Tree {
+                    tree, hidden, id, ..
+                }) = &mut self.dialog
+                {
+                    // On the row under the cursor: open / close it (Enter or «Go» goes there).
+                    if tree.cursor == i {
+                        if let Some(dir) = tree.toggle() {
+                            return tree_read(*id, vec![dir], *hidden, None);
+                        }
+                        return Task::none();
+                    }
+                    tree.cursor = i.min(tree.rows.len().saturating_sub(1));
+                }
+            }
+            Message::TreeFilled(from, read, select) => {
+                if let Some(Dialog::Tree { tree, id, .. }) = &mut self.dialog
+                    && *id == from
+                {
+                    for (dir, names) in read {
+                        tree.fill(&dir, names);
+                    }
+                    if let Some(p) = select {
+                        tree.select(&p);
+                    }
+                    return list_snap(tree.cursor, tree.rows.len());
+                }
+            }
             Message::Tested(results) => {
                 self.testing = false;
                 if (self.status.as_ref()).is_some_and(|s| s.text == fl!("testing-archives")) {
@@ -2947,6 +3004,15 @@ impl App {
                     let op = (dialogs::drop_ops(sources).iter().copied())
                         .find(|&op| hotkey(&dialogs::drop_label(op)).1.map(|(_, k)| k) == key);
                     return op.map_or_else(Task::none, |op| self.handle(Message::DropAs(op)));
+                }
+                // The tree: the next dir with that letter, as in a list.
+                if let Some(Dialog::Tree { tree, .. }) = &mut self.dialog {
+                    let names = tree.rows.iter().map(|n| n.name.as_str());
+                    if let Some(i) = shagoff_core::quicksearch::next_with(names, tree.cursor, c) {
+                        tree.cursor = i;
+                        return list_snap(i, tree.rows.len());
+                    }
+                    return Task::none();
                 }
                 // A list dialog's letter key, as in TC's menus: the next item with that letter.
                 if let Some(Dialog::List {
@@ -4134,6 +4200,27 @@ impl App {
                     |r| cosmic::Action::App(Message::Tested(r)),
                 );
             }
+            Action::TreeDialog => {
+                let hidden = panel.show_hidden();
+                let cwd = panel.cwd().to_path_buf();
+                // A dir on disk: inside an archive, the archive's own (a nested one: where the
+                // outer archive lies, not its temp copy).
+                let cwd = self.shown(&cwd);
+                let here = match archive::split_path(&cwd) {
+                    Some((a, _)) => a.parent().map_or(cwd.clone(), Path::to_path_buf),
+                    None => cwd,
+                };
+                let root = PathBuf::from("/");
+                let id = self.next_id();
+                self.dialog = Some(Dialog::Tree {
+                    side,
+                    id,
+                    tree: shagoff_core::tree::Tree::new(&root),
+                    hidden,
+                });
+                let dirs = shagoff_core::tree::chain(&root, &here);
+                return tree_read(id, dirs, hidden, Some(here));
+            }
             Action::ContextMenu => {
                 let ctx = match panel.current() {
                     Some(e) if e.name != PARENT => crate::menu::Ctx::Entry {
@@ -4788,6 +4875,13 @@ impl App {
             return Task::none();
         };
         match d {
+            Dialog::Tree { side, tree, .. } => match tree.current() {
+                Some(n) => {
+                    self.active = side;
+                    self.load(side, n.path.clone(), None)
+                }
+                None => Task::none(),
+            },
             Dialog::Props(p) => {
                 // Only the touched bits, as shown now: entries keep the rest of their own modes.
                 let (set, clear) = (p.mode & p.touched, !p.mode & p.touched & 0o7777);
@@ -8206,6 +8300,22 @@ fn link_all(sources: &[PathBuf], target: &Path) -> Result<(Vec<PathBuf>, Option<
     Ok((done, msg))
 }
 
+/// Alt+F10: `dirs`' subdirs read off the UI thread (a dead mount must not hang it), then shown in
+/// tree dialog `id`; the cursor on `select` if given (the way there shown even if hidden).
+fn tree_read(id: u64, dirs: Vec<PathBuf>, hidden: bool, select: Option<PathBuf>) -> Task<Message> {
+    let toward = select.clone();
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || {
+                shagoff_core::tree::read(dirs, hidden, toward.as_deref())
+            })
+            .await
+            .unwrap_or_default()
+        },
+        move |read| cosmic::Action::App(Message::TreeFilled(id, read, select.clone())),
+    )
+}
+
 /// Count dirs `names` in `cwd` in the background; each sends its own `Message::DirSize`.
 /// `stop`: the tab left `cwd` (a stopped count sends nothing).
 // ponytail: one blocking task per dir; a queue if thousands of dirs ever matter.
@@ -9992,6 +10102,46 @@ mod tests {
         let bad = (PathBuf::from("/x/b.7z"), Err("checksum".to_string()));
         let _ = app.update(Message::Tested(vec![ok, bad]));
         assert!(app.msg().is_some_and(|m| m.contains("b.7z: checksum")));
+    }
+
+    #[test]
+    fn alt_f10_tree_opens_the_way_to_here_and_goes_where_chosen() {
+        use shagoff_core::tree::{chain, read};
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("inner")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::TreeDialog));
+        let id = match &app.dialog {
+            Some(Dialog::Tree { id, .. }) => *id,
+            _ => panic!("no tree"),
+        };
+        // What its background read brings: the way down from `/`, the cursor on the dir here.
+        let got = read(chain(Path::new("/"), tmp.path()), false, Some(tmp.path()));
+        let _ = app.update(Message::TreeFilled(id, got, Some(tmp.path().into())));
+        let cur = |app: &App| match &app.dialog {
+            Some(Dialog::Tree { tree, .. }) => tree.current().unwrap().path.clone(),
+            _ => panic!("no tree"),
+        };
+        assert_eq!(cur(&app), tmp.path());
+        // → reads it (here: what that read brings), → again steps in.
+        let _ = app.update(Message::Key(Action::Right));
+        let inner = vec![(tmp.path().to_path_buf(), vec![OsString::from("inner")])];
+        let _ = app.update(Message::TreeFilled(id + 1, inner.clone(), None)); // another dialog's
+        let _ = app.update(Message::Key(Action::Right));
+        assert_eq!(cur(&app), tmp.path()); // not read yet: nothing to step into
+        let _ = app.update(Message::TreeFilled(id, inner, None));
+        let _ = app.update(Message::Key(Action::Right));
+        assert_eq!(cur(&app), tmp.path().join("inner"));
+        let _ = app.update(Message::Key(Action::Left)); // closed: to its parent
+        assert_eq!(cur(&app), tmp.path());
+        let _ = app.update(Message::Key(Action::Left)); // open: closed
+        let _ = app.update(Message::Key(Action::Left)); // to its parent
+        assert_eq!(cur(&app), tmp.path().parent().unwrap());
+        let _ = app.update(Message::Key(Action::Enter));
+        assert!(app.dialog.is_none());
+        let pending = app.panes[0].active().pending.clone().map(|(_, p)| p);
+        assert_eq!(pending.as_deref(), tmp.path().parent());
     }
 
     #[test]

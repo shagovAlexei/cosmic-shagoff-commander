@@ -703,3 +703,6 @@ tested-ok = { $n ->
    *[other] { $files } files
 } read)
 tested-bad = { $bad } of { $n } archives damaged:
+menu-tree = Folder tree…
+tree = Folder tree
+tree-go = Go

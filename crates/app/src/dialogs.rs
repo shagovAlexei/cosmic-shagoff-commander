@@ -37,6 +37,15 @@ pub enum InputOp {
 }
 
 pub enum Dialog {
+    /// Alt+F10 (TC «Change directory via tree»): the dirs as an outline; Enter goes there.
+    Tree {
+        side: usize,
+        /// Reads for another (an earlier) tree dialog are dropped.
+        id: u64,
+        tree: shagoff_core::tree::Tree,
+        /// Hidden dirs listed (as the panel shows them).
+        hidden: bool,
+    },
     /// Num+ / Num−.
     Mask {
         side: usize,
@@ -1269,6 +1278,41 @@ pub fn view<'a>(
                     ),
             }
             .into()
+        }
+        Dialog::Tree { tree, .. } => {
+            // ponytail: every row built each frame, as the other list dialogs; a dir of thousands
+            // of subdirs (/usr/share/doc) is slower to step through — window it as the panels do
+            // (`core::viewport`) if that matters.
+            let mut list = column![].spacing(1);
+            for (i, n) in tree.rows.iter().enumerate() {
+                let mark = if n.open { "▾ " } else { "▸ " };
+                let label = format!("{}{mark}{}", "    ".repeat(n.depth), n.name);
+                list = list.push(menu_row_with(
+                    None,
+                    None,
+                    label,
+                    String::new(),
+                    i == tree.cursor,
+                    Message::TreePick(i),
+                    font,
+                ));
+            }
+            let list = widget::scrollable(list)
+                .id(list_scroll_id())
+                .height(Length::Shrink);
+            let list = widget::container(list).max_height(if list_h > 0.0 {
+                list_h
+            } else {
+                f32::INFINITY
+            });
+            widget::dialog()
+                .title(fl!("tree"))
+                .control(list)
+                .primary_action(
+                    widget::button::suggested(fl!("tree-go")).on_press(Message::DialogSubmit),
+                )
+                .secondary_action(cancel)
+                .into()
         }
         Dialog::List {
             kind,
