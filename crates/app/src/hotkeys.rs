@@ -183,7 +183,7 @@ pub fn view<'a>(
     let sel = k.sel.filter(|&i| i < k.list.len());
     let btn = |label: String, m: KeyMsg, on: bool| {
         widget::button::standard(label)
-            .width(Length::Fixed(170.0))
+            .width(Length::Fixed(190.0))
             .on_press_maybe(on.then(|| msg(m)))
     };
     let buttons = column![

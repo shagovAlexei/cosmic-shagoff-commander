@@ -505,6 +505,18 @@ pub fn copy_block(t: &Text, block: usize, to_right: bool) -> Option<String> {
     Some(lines.iter().flat_map(|(t, e)| [*t, *e]).collect())
 }
 
+/// The line (from 0) of `side` (0 left) where an editor of that side opens for row `row`: its own,
+/// or the next one there (a block that only the other side has: where it would go).
+pub fn line_at(rows: &[Row], row: usize, side: usize) -> usize {
+    let line = |r: &Row| match side {
+        0 => r.left.as_ref().map(|(n, _)| *n),
+        _ => r.right.as_ref().map(|(n, _)| *n),
+    };
+    (rows.iter().skip(row).find_map(line))
+        .or_else(|| rows.iter().rev().find_map(line))
+        .map_or(0, |n| n.saturating_sub(1))
+}
+
 /// The texts with `side` (0 left, 1 right) edited to `new` (159); `None` when nothing changed.
 pub fn edited(src: &(String, String), side: usize, new: &str) -> Option<(String, String)> {
     let (l, r) = src.clone();
@@ -857,5 +869,13 @@ mod tests {
         let src = ("a\n".to_string(), "b\r\n".to_string());
         assert_eq!(edited(&src, 0, "A\n"), Some(("A\n".into(), "b\r\n".into())));
         assert_eq!(edited(&src, 1, "b\r\n"), None);
+    }
+
+    #[test]
+    fn the_editor_opens_at_the_rows_line() {
+        let t = rows("a\nb\nc\n", "a\nX\nb\nc\n", 100);
+        let at = t.blocks[0]; // "X", right only
+        assert_eq!((line_at(&t.rows, at, 1), line_at(&t.rows, at, 0)), (1, 1));
+        assert_eq!(line_at(&t.rows, 99, 0), 2); // past the end: the last line
     }
 }
