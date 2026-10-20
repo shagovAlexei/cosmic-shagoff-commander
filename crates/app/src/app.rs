@@ -802,8 +802,8 @@ pub enum Message {
     /// Browse a network place (`None`: `network:///` again; pressed while looking: stop).
     ConnectBrowse(Option<String>),
     /// What "Browse network" found.
-    /// The place listed and what was found there.
-    Browsed(String, Result<Vec<(String, String)>, mount::Error>),
+    /// What was found by the browse with this stop flag (a stopped or replaced one is dropped).
+    Browsed(Arc<AtomicBool>, Result<Vec<(String, String)>, mount::Error>),
     /// File read for the viewer with this id.
     ListerLoaded(u64, Arc<Result<lister::Loaded, String>>),
     /// Another window of a big file for the viewer with this id (`Lister::slide`).
@@ -3176,9 +3176,12 @@ impl App {
             }
             Message::ConnectBrowse(place) => {
                 if let Some(Dialog::Connect {
+                    url,
+                    password,
+                    found,
                     browsing,
                     at,
-                    password,
+                    note,
                     ..
                 }) = &mut self.dialog
                 {
@@ -3190,32 +3193,36 @@ impl App {
                         }
                     }
                     *at = place.unwrap_or_else(|| mount::NETWORK.to_string());
+                    found.clear();
+                    *note = None;
                     let stop = Arc::new(AtomicBool::new(false));
                     *browsing = Some(stop.clone());
-                    let (place, password, listed) = (at.clone(), password.clone(), at.clone());
+                    // The password was typed for the address's host: no one else gets it.
+                    let password = if mount::host(url) == mount::host(at) {
+                        password.clone()
+                    } else {
+                        String::new()
+                    };
+                    let (place, mine) = (at.clone(), stop.clone());
                     return blocking(
                         move || mount::browse(&place, &password, &stop),
-                        move |r| Message::Browsed(listed, r),
+                        move |r| Message::Browsed(mine, r),
                     );
                 }
             }
-            Message::Browsed(place, r) => {
+            Message::Browsed(stop, r) => {
                 if let Some(Dialog::Connect {
                     found,
                     browsing,
-                    at,
                     note,
                     ..
                 }) = &mut self.dialog
                 {
-                    // Stopped, or not the place asked last: not wanted.
-                    if r == Err(mount::Error::Cancelled)
-                        || place != *at
-                        || browsing.take().is_none()
-                    {
+                    // Stopped or replaced by another: not wanted.
+                    if !browsing.as_ref().is_some_and(|b| Arc::ptr_eq(b, &stop)) {
                         return Task::none();
                     }
-                    found.clear();
+                    *browsing = None;
                     *note = match r {
                         Ok(list) if list.is_empty() => Some((false, fl!("connect-none-found"))),
                         Ok(list) => {
@@ -13369,7 +13376,14 @@ mod tests {
             assert_eq!(app.config.connections, ["smb://b/"]);
             let found = vec![("nas".to_string(), "sftp://nas.local/".to_string())];
             let _ = app.update(Message::ConnectBrowse(None));
-            let _ = app.update(Message::Browsed("network:///".into(), Ok(found.clone())));
+            let Some(Dialog::Connect {
+                browsing: Some(stop),
+                ..
+            }) = &app.dialog
+            else {
+                panic!("not browsing")
+            };
+            let _ = app.update(Message::Browsed(stop.clone(), Ok(found.clone())));
             let Some(Dialog::Connect {
                 saved, found: f, ..
             }) = &app.dialog
@@ -13395,10 +13409,7 @@ mod tests {
             let _ = app.update(Message::ConnectBrowse(None)); // pressed again: stop
             assert!(first.load(Ordering::Relaxed) && stop(&app).is_none());
             // Its "cancelled" lands later: no error shown.
-            let _ = app.update(Message::Browsed(
-                "network:///".into(),
-                Err(MountError::Cancelled),
-            ));
+            let _ = app.update(Message::Browsed(first, Err(MountError::Cancelled)));
             assert!(matches!(
                 &app.dialog,
                 Some(Dialog::Connect { note: None, .. })
@@ -13418,24 +13429,30 @@ mod tests {
                     found,
                     browsing,
                     ..
-                }) => (at.clone(), found.clone(), browsing.is_some()),
+                }) => (at.clone(), found.clone(), browsing.clone()),
                 _ => panic!("no dialog"),
             };
             let _ = app.update(Message::Key(Action::Connect));
             let _ = app.update(Message::ConnectBrowse(None));
             let net = vec![("Windows Network".to_string(), "smb:///".to_string())];
-            let _ = app.update(Message::Browsed("network:///".into(), Ok(net.clone())));
-            // Deeper while nothing is looked for; then deeper again before it answers.
+            let stop = place(&app).2.expect("browsing");
+            let _ = app.update(Message::Browsed(stop, Ok(net.clone())));
+            assert_eq!(place(&app).1, net);
+            // Deeper: the old list goes at once; deeper again before it answers.
             let _ = app.update(Message::ConnectBrowse(Some("smb:///".into())));
+            let first = place(&app).2.expect("browsing");
             let _ = app.update(Message::ConnectBrowse(Some("smb://WG/".into())));
-            assert_eq!(place(&app), ("smb://WG/".into(), net, true));
-            // The first one finishing late is not shown.
+            let (at, found, second) = place(&app);
+            assert_eq!((at.as_str(), found.len()), ("smb://WG/", 0));
+            assert!(first.load(Ordering::Relaxed));
+            // The first one finishing late anyway is not shown, the second still stoppable.
             let wg = vec![("WG".to_string(), "smb://WG/".to_string())];
-            let _ = app.update(Message::Browsed("smb:///".into(), Ok(wg)));
-            assert!(place(&app).2);
+            let _ = app.update(Message::Browsed(first, Ok(wg)));
+            assert!(place(&app).1.is_empty() && place(&app).2.is_some());
             let nas = vec![("NAS".to_string(), "smb://nas/".to_string())];
-            let _ = app.update(Message::Browsed("smb://WG/".into(), Ok(nas.clone())));
-            assert_eq!(place(&app), ("smb://WG/".into(), nas, false));
+            let _ = app.update(Message::Browsed(second.expect("browsing"), Ok(nas.clone())));
+            let (_, found, browsing) = place(&app);
+            assert_eq!((found, browsing.is_none()), (nas, true));
         }
 
         #[test]

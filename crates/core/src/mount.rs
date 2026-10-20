@@ -98,28 +98,36 @@ pub fn deeper(uri: &str) -> bool {
     scheme.eq_ignore_ascii_case("smb") && share.is_empty()
 }
 
-/// gvfs lists an `smb:` place only once it is mounted.
-fn not_mounted(e: &Error) -> bool {
-    matches!(e, Error::Failed(m) if m.contains("is not mounted"))
+/// The host of `uri` (`smb://bob@NAS:445/x` → `nas`), lowercased; `""` for none.
+pub fn host(uri: &str) -> String {
+    let rest = uri.split_once("://").map_or(uri, |(_, r)| r);
+    let auth = rest.split('/').next().unwrap_or_default();
+    let host = auth.rsplit('@').next().unwrap_or_default();
+    host.split(':').next().unwrap_or_default().to_lowercase()
 }
 
-/// Browse `at` (`NETWORK`, or a `deeper` place: mounted first if gvfs wants it, `password`
-/// answering its prompt); `cancel` kills `gio` (`Error::Cancelled`).
+/// Browse `at` (`NETWORK`, or a `deeper` place); `cancel` kills `gio` (`Error::Cancelled`).
+/// gvfs lists an `smb:` place only once mounted, so it is mounted first, `password` answering
+/// its prompt (the caller gives it only to the host it was typed for).
 pub fn browse(
     at: &str,
     password: &str,
     cancel: &Arc<AtomicBool>,
 ) -> Result<Vec<(String, String)>, Error> {
-    let list = || {
-        let attrs = "standard::display-name,standard::target-uri";
-        talk_until(gio(["list", "-a", attrs, at]), "", Some(cancel)).map(|s| network(&s))
+    // "Already mounted" is an error to gio but fine for us: the listing decides, as in `connect`.
+    let mounted = if deeper(at) {
+        talk_until(gio(["mount", at]), password, Some(cancel))
+    } else {
+        Ok(String::new())
     };
-    match list() {
-        Err(e) if not_mounted(&e) => {
-            talk_until(gio(["mount", at]), password, Some(cancel))?;
-            list()
-        }
-        r => r,
+    if mounted == Err(Error::Cancelled) {
+        return Err(Error::Cancelled);
+    }
+    let attrs = "standard::display-name,standard::target-uri";
+    match talk_until(gio(["list", "-a", attrs, at]), "", Some(cancel)) {
+        Ok(s) => Ok(network(&s)),
+        Err(Error::Cancelled) => Err(Error::Cancelled),
+        Err(e) => Err(mounted.err().unwrap_or(e)),
     }
 }
 
@@ -668,13 +676,16 @@ Mount(0): nas -> sftp://nas/
     }
 
     #[test]
-    fn not_mounted_is_told_apart() {
-        let e = Error::Failed("gio: smb:///: The specified location is not mounted".into());
-        assert!(not_mounted(&e));
-        assert!(!not_mounted(&Error::Failed(
-            "gio: smb:///: No such file".into()
-        )));
-        assert!(!not_mounted(&Error::Cancelled));
+    fn host_of_an_address() {
+        for (uri, h) in [
+            ("smb://bob@NAS:445/share", "nas"),
+            ("smb://nas/", "nas"),
+            ("sftp://a:p@w@host/x", "host"),
+            ("smb:///", ""),
+            ("nas", "nas"),
+        ] {
+            assert_eq!(host(uri), h, "{uri}");
+        }
     }
 
     #[test]
