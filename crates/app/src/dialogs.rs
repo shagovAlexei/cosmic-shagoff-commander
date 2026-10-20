@@ -40,6 +40,8 @@ pub enum Dialog {
     /// Alt+F10 (TC «Change directory via tree»): the dirs as an outline; Enter goes there.
     Tree {
         side: usize,
+        /// Reads for another (an earlier) tree dialog are dropped.
+        id: u64,
         tree: shagoff_core::tree::Tree,
         /// Hidden dirs listed (as the panel shows them).
         hidden: bool,
@@ -1278,6 +1280,9 @@ pub fn view<'a>(
             .into()
         }
         Dialog::Tree { tree, .. } => {
+            // ponytail: every row built each frame, as the other list dialogs; a dir of thousands
+            // of subdirs (/usr/share/doc) is slower to step through — window it as the panels do
+            // (`core::viewport`) if that matters.
             let mut list = column![].spacing(1);
             for (i, n) in tree.rows.iter().enumerate() {
                 let mark = if n.open { "▾ " } else { "▸ " };

@@ -2,13 +2,15 @@
 //! screen — a node's children right after it, one level deeper — opened lazily: the UI reads a
 //! dir's subdirs off its thread (`subdirs`) and hands them to `fill`.
 
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
+    /// Built from the names as read (`OsString`): a name not in UTF-8 still leads there.
     pub path: PathBuf,
-    /// The last component (`/` for the root).
+    /// The last component as shown (`/` for the root).
     pub name: String,
     pub depth: usize,
     /// Its children are the rows after it.
@@ -44,17 +46,19 @@ impl Tree {
     }
 
     /// `dir`'s subdirs read: shown under it, sorted (case aside), `dir` open. A dir not on screen
-    /// (closed meanwhile, or never shown): nothing.
-    pub fn fill(&mut self, dir: &Path, mut names: Vec<String>) {
+    /// (closed meanwhile, or never shown), or open already (a late read): nothing.
+    pub fn fill(&mut self, dir: &Path, mut names: Vec<OsString>) {
         let Some(i) = self.rows.iter().position(|n| n.path == dir) else {
             return;
         };
-        self.close(i);
-        names.sort_by_key(|n| n.to_lowercase());
+        if self.rows[i].open {
+            return;
+        }
+        names.sort_by_key(|n| n.to_string_lossy().to_lowercase());
         let depth = self.rows[i].depth + 1;
-        let kids = names.into_iter().map(|name| Node {
-            path: dir.join(&name),
-            name,
+        let kids = names.into_iter().map(|os| Node {
+            path: dir.join(&os),
+            name: os.to_string_lossy().into_owned(),
             depth,
             open: false,
         });
@@ -91,6 +95,46 @@ impl Tree {
         }
     }
 
+    /// → (TC): on a closed dir — its path, to be read and `fill`ed; on an open one — into its first
+    /// child, if it has any (an empty one keeps the cursor).
+    pub fn step_in(&mut self) -> Option<PathBuf> {
+        let n = self.current()?;
+        if !n.open {
+            return Some(n.path.clone());
+        }
+        let depth = n.depth;
+        if self
+            .rows
+            .get(self.cursor + 1)
+            .is_some_and(|c| c.depth > depth)
+        {
+            self.cursor += 1;
+        }
+        None
+    }
+
+    /// ← (TC): an open dir closed, else the cursor on the parent.
+    pub fn step_out(&mut self) {
+        let i = self.cursor;
+        match self.rows.get(i) {
+            Some(n) if n.open => self.close(i),
+            Some(_) => self.cursor = self.parent(i).unwrap_or(i),
+            None => {}
+        }
+    }
+
+    /// A click on the row under the cursor (the mouse's →/←): an open one closed, a closed one —
+    /// its path, to be read.
+    pub fn toggle(&mut self) -> Option<PathBuf> {
+        let n = self.current()?;
+        if n.open {
+            self.close(self.cursor);
+            None
+        } else {
+            Some(n.path.clone())
+        }
+    }
+
     pub fn move_cursor(&mut self, delta: isize) {
         let last = self.rows.len().saturating_sub(1) as isize;
         self.cursor = (self.cursor as isize + delta).clamp(0, last) as usize;
@@ -115,26 +159,46 @@ pub fn chain(root: &Path, target: &Path) -> Vec<PathBuf> {
 
 /// The subdirs of `dir` by name (links to dirs too); hidden ones only with `hidden`. Unreadable
 /// entries are left out.
-pub fn subdirs(dir: &Path, hidden: bool) -> io::Result<Vec<String>> {
+pub fn subdirs(dir: &Path, hidden: bool) -> io::Result<Vec<OsString>> {
+    use std::os::unix::ffi::OsStrExt;
     Ok(std::fs::read_dir(dir)?
         .flatten()
         .filter(|e| {
             e.file_type().is_ok_and(|t| t.is_dir())
                 || e.file_type().is_ok_and(|t| t.is_symlink()) && e.path().is_dir()
         })
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| hidden || !n.starts_with('.'))
+        .map(|e| e.file_name())
+        .filter(|n| hidden || !n.as_bytes().starts_with(b"."))
         .collect())
+}
+
+/// Each of `dirs` with its subdirs (`subdirs_toward`; an unreadable one: none). Blocking: the UI
+/// runs it off its thread.
+pub fn read(
+    dirs: Vec<PathBuf>,
+    hidden: bool,
+    toward: Option<&Path>,
+) -> Vec<(PathBuf, Vec<OsString>)> {
+    (dirs.into_iter())
+        .map(|d| {
+            let names = subdirs_toward(&d, hidden, toward).unwrap_or_default();
+            (d, names)
+        })
+        .collect()
 }
 
 /// `subdirs`, and the one on the way to `toward` even if hidden (the tree must reach the dir it
 /// was opened in, say `~/.config/x`).
-pub fn subdirs_toward(dir: &Path, hidden: bool, toward: Option<&Path>) -> io::Result<Vec<String>> {
+pub fn subdirs_toward(
+    dir: &Path,
+    hidden: bool,
+    toward: Option<&Path>,
+) -> io::Result<Vec<OsString>> {
     let mut names = subdirs(dir, hidden)?;
     let next = toward
         .and_then(|t| t.strip_prefix(dir).ok())
         .and_then(|rest| rest.components().next())
-        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+        .map(|c| c.as_os_str().to_os_string());
     if let Some(n) = next.filter(|n| !names.contains(n)) {
         names.push(n);
     }
@@ -156,12 +220,10 @@ mod tests {
     fn opens_the_way_down_and_closes() {
         let mut t = Tree::new(Path::new("/"));
         assert_eq!(names(&t), ["/"]);
-        t.fill(
-            Path::new("/"),
-            vec!["usr".into(), "Home".into(), "etc".into()],
-        );
+        let os = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
+        t.fill(Path::new("/"), os(&["usr", "Home", "etc"]));
         assert_eq!(names(&t), ["/", " etc", " Home", " usr"]); // case aside
-        t.fill(Path::new("/usr"), vec!["lib".into(), "bin".into()]);
+        t.fill(Path::new("/usr"), os(&["lib", "bin"]));
         assert_eq!(names(&t), ["/", " etc", " Home", " usr", "  bin", "  lib"]);
         t.select(Path::new("/usr/lib"));
         assert_eq!((t.cursor, t.parent(t.cursor)), (5, Some(3)));
@@ -169,17 +231,46 @@ mod tests {
         assert_eq!((names(&t).len(), t.cursor), (4, 3));
         assert!(!t.rows[3].open);
         // Closing above the cursor keeps it on its row.
-        t.fill(Path::new("/etc"), vec!["x".into()]);
+        t.fill(Path::new("/etc"), os(&["x"]));
         t.select(Path::new("/usr"));
         t.close(1);
         assert_eq!(t.current().unwrap().path, Path::new("/usr"));
         // A dir not shown: nothing.
-        t.fill(Path::new("/nope"), vec!["y".into()]);
+        t.fill(Path::new("/nope"), os(&["y"]));
         assert_eq!(names(&t).len(), 4);
         t.move_cursor(-10);
         assert_eq!(t.cursor, 0);
         t.move_cursor(10);
         assert_eq!(t.cursor, 3);
+    }
+
+    #[test]
+    fn arrows_step_in_and_out_as_tc() {
+        let os = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
+        let mut t = Tree::new(Path::new("/"));
+        assert_eq!(t.step_in(), Some(PathBuf::from("/"))); // closed: read it
+        t.fill(Path::new("/"), os(&["a", "b"]));
+        assert_eq!((t.step_in(), t.cursor), (None, 1)); // open: into "a"
+        t.fill(Path::new("/a"), Vec::new()); // read: empty
+        assert_eq!((t.step_in(), t.cursor), (None, 1)); // open, no child: stays (not onto "b")
+        t.fill(Path::new("/a"), os(&["late"])); // a late read of an open dir: nothing
+        assert_eq!(t.rows.len(), 3);
+        t.step_out(); // open: closed
+        assert!(!t.rows[1].open && t.cursor == 1);
+        t.step_out(); // closed: to the parent
+        assert_eq!(t.cursor, 0);
+        assert_eq!(t.toggle(), None); // open: closed by a click
+        assert_eq!(t.rows.len(), 1);
+        assert_eq!(t.toggle(), Some(PathBuf::from("/")));
+    }
+
+    #[test]
+    fn a_name_not_in_utf8_still_leads_there() {
+        use std::os::unix::ffi::OsStrExt;
+        let bad = OsString::from(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+        let mut t = Tree::new(Path::new("/x"));
+        t.fill(Path::new("/x"), vec![bad.clone()]);
+        assert_eq!(t.rows[1].path, Path::new("/x").join(&bad));
     }
 
     #[test]
@@ -199,11 +290,11 @@ mod tests {
         std::os::unix::fs::symlink(d.path().join("a"), d.path().join("ln")).unwrap();
         let mut got = subdirs(d.path(), false).unwrap();
         got.sort();
-        assert_eq!(got, ["a", "b", "ln"]);
+        assert_eq!(got, ["a", "b", "ln"].map(OsString::from));
         assert_eq!(subdirs(d.path(), true).unwrap().len(), 4);
         // The way to a hidden dir is shown all the same.
         let toward = d.path().join(".hid/deeper");
         let got = subdirs_toward(d.path(), false, Some(&toward)).unwrap();
-        assert!(got.contains(&".hid".to_string()) && got.len() == 4);
+        assert!(got.contains(&OsString::from(".hid")) && got.len() == 4);
     }
 }

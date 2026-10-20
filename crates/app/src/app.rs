@@ -523,10 +523,11 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
-    /// Alt+F10: a click on row i (on the row under the cursor: go there).
+    /// Alt+F10: a click on row i (on the row under the cursor: open / close it).
     TreePick(usize),
-    /// Alt+F10: dirs read for the tree — each with its subdirs — and the one to put the cursor on.
-    TreeFilled(Vec<(PathBuf, Vec<String>)>, Option<PathBuf>),
+    /// Alt+F10: for the tree dialog with this id, dirs read — each with its subdirs — and the one
+    /// to put the cursor on.
+    TreeFilled(u64, Vec<(PathBuf, Vec<OsString>)>, Option<PathBuf>),
     /// Alt+Shift+F9 done: each archive and the files read from it, or what is wrong with it.
     Tested(Vec<(PathBuf, Result<u64, String>)>),
     /// Ctrl+L counted: the targets' occupied space (`None`: could not / stopped).
@@ -1328,10 +1329,11 @@ impl App {
                         _ => {}
                     }
                 }
-                if let Some(Dialog::Tree { tree, hidden, .. }) = &mut self.dialog {
+                if let Some(Dialog::Tree {
+                    tree, hidden, id, ..
+                }) = &mut self.dialog
+                {
                     const PAGE: isize = 10;
-                    let i = tree.cursor;
-                    let open = tree.current().is_some_and(|n| n.open);
                     match action {
                         Action::Up => tree.move_cursor(-1),
                         Action::Down => tree.move_cursor(1),
@@ -1339,19 +1341,13 @@ impl App {
                         Action::PageDown => tree.move_cursor(PAGE),
                         Action::Home => tree.move_cursor(-isize::MAX / 2),
                         Action::End => tree.move_cursor(isize::MAX / 2),
-                        // → opens it (read in the background), then steps in.
-                        Action::Right if open => tree.move_cursor(1),
+                        // → opens it (read in the background), then steps in; ← back out.
                         Action::Right => {
-                            let dir = tree.rows[i].path.clone();
-                            return tree_read(vec![dir], *hidden, None);
-                        }
-                        // ← closes it, then steps out.
-                        Action::Left if open => tree.close(i),
-                        Action::Left | Action::Parent => {
-                            if let Some(p) = tree.parent(i) {
-                                tree.cursor = p;
+                            if let Some(dir) = tree.step_in() {
+                                return tree_read(*id, vec![dir], *hidden, None);
                             }
                         }
+                        Action::Left | Action::Parent => tree.step_out(),
                         Action::Enter => return self.submit_dialog(),
                         _ => return Task::none(),
                     }
@@ -2418,15 +2414,24 @@ impl App {
                 return Task::batch([reload(self, 0), reload(self, 1)]);
             }
             Message::TreePick(i) => {
-                if let Some(Dialog::Tree { tree, .. }) = &mut self.dialog {
+                if let Some(Dialog::Tree {
+                    tree, hidden, id, ..
+                }) = &mut self.dialog
+                {
+                    // On the row under the cursor: open / close it (Enter or «Go» goes there).
                     if tree.cursor == i {
-                        return self.submit_dialog();
+                        if let Some(dir) = tree.toggle() {
+                            return tree_read(*id, vec![dir], *hidden, None);
+                        }
+                        return Task::none();
                     }
                     tree.cursor = i.min(tree.rows.len().saturating_sub(1));
                 }
             }
-            Message::TreeFilled(read, select) => {
-                if let Some(Dialog::Tree { tree, .. }) = &mut self.dialog {
+            Message::TreeFilled(from, read, select) => {
+                if let Some(Dialog::Tree { tree, id, .. }) = &mut self.dialog
+                    && *id == from
+                {
                     for (dir, names) in read {
                         tree.fill(&dir, names);
                     }
@@ -4196,21 +4201,25 @@ impl App {
                 );
             }
             Action::TreeDialog => {
-                // A dir on disk: inside an archive, the archive's own.
+                let hidden = panel.show_hidden();
                 let cwd = panel.cwd().to_path_buf();
+                // A dir on disk: inside an archive, the archive's own (a nested one: where the
+                // outer archive lies, not its temp copy).
+                let cwd = self.shown(&cwd);
                 let here = match archive::split_path(&cwd) {
                     Some((a, _)) => a.parent().map_or(cwd.clone(), Path::to_path_buf),
                     None => cwd,
                 };
-                let hidden = panel.show_hidden();
                 let root = PathBuf::from("/");
+                let id = self.next_id();
                 self.dialog = Some(Dialog::Tree {
                     side,
+                    id,
                     tree: shagoff_core::tree::Tree::new(&root),
                     hidden,
                 });
                 let dirs = shagoff_core::tree::chain(&root, &here);
-                return tree_read(dirs, hidden, Some(here));
+                return tree_read(id, dirs, hidden, Some(here));
             }
             Action::ContextMenu => {
                 let ctx = match panel.current() {
@@ -8291,26 +8300,19 @@ fn link_all(sources: &[PathBuf], target: &Path) -> Result<(Vec<PathBuf>, Option<
     Ok((done, msg))
 }
 
-/// Alt+F10: `dirs`' subdirs read off the UI thread (a dead mount must not hang it), then shown;
-/// the cursor on `select` if given. An unreadable dir opens empty.
-fn tree_read(dirs: Vec<PathBuf>, hidden: bool, select: Option<PathBuf>) -> Task<Message> {
+/// Alt+F10: `dirs`' subdirs read off the UI thread (a dead mount must not hang it), then shown in
+/// tree dialog `id`; the cursor on `select` if given (the way there shown even if hidden).
+fn tree_read(id: u64, dirs: Vec<PathBuf>, hidden: bool, select: Option<PathBuf>) -> Task<Message> {
     let toward = select.clone();
     Task::perform(
         async move {
             tokio::task::spawn_blocking(move || {
-                (dirs.into_iter())
-                    .map(|d| {
-                        let names =
-                            shagoff_core::tree::subdirs_toward(&d, hidden, toward.as_deref())
-                                .unwrap_or_default();
-                        (d, names)
-                    })
-                    .collect()
+                shagoff_core::tree::read(dirs, hidden, toward.as_deref())
             })
             .await
             .unwrap_or_default()
         },
-        move |read| cosmic::Action::App(Message::TreeFilled(read, select.clone())),
+        move |read| cosmic::Action::App(Message::TreeFilled(id, read, select.clone())),
     )
 }
 
@@ -10104,20 +10106,19 @@ mod tests {
 
     #[test]
     fn alt_f10_tree_opens_the_way_to_here_and_goes_where_chosen() {
-        use shagoff_core::tree::{chain, subdirs_toward};
+        use shagoff_core::tree::{chain, read};
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join("inner")).unwrap();
         let mut app = app_with(Config::default(), State::default());
         listed_at(&mut app, 0, tmp.path());
         let _ = app.update(Message::Key(Action::TreeDialog));
+        let id = match &app.dialog {
+            Some(Dialog::Tree { id, .. }) => *id,
+            _ => panic!("no tree"),
+        };
         // What its background read brings: the way down from `/`, the cursor on the dir here.
-        let read = (chain(Path::new("/"), tmp.path()).into_iter())
-            .map(|d| {
-                let names = subdirs_toward(&d, false, Some(tmp.path())).unwrap_or_default();
-                (d, names)
-            })
-            .collect();
-        let _ = app.update(Message::TreeFilled(read, Some(tmp.path().into())));
+        let got = read(chain(Path::new("/"), tmp.path()), false, Some(tmp.path()));
+        let _ = app.update(Message::TreeFilled(id, got, Some(tmp.path().into())));
         let cur = |app: &App| match &app.dialog {
             Some(Dialog::Tree { tree, .. }) => tree.current().unwrap().path.clone(),
             _ => panic!("no tree"),
@@ -10125,8 +10126,11 @@ mod tests {
         assert_eq!(cur(&app), tmp.path());
         // → reads it (here: what that read brings), → again steps in.
         let _ = app.update(Message::Key(Action::Right));
-        let inner = vec![(tmp.path().to_path_buf(), vec!["inner".to_string()])];
-        let _ = app.update(Message::TreeFilled(inner, None));
+        let inner = vec![(tmp.path().to_path_buf(), vec![OsString::from("inner")])];
+        let _ = app.update(Message::TreeFilled(id + 1, inner.clone(), None)); // another dialog's
+        let _ = app.update(Message::Key(Action::Right));
+        assert_eq!(cur(&app), tmp.path()); // not read yet: nothing to step into
+        let _ = app.update(Message::TreeFilled(id, inner, None));
         let _ = app.update(Message::Key(Action::Right));
         assert_eq!(cur(&app), tmp.path().join("inner"));
         let _ = app.update(Message::Key(Action::Left)); // closed: to its parent
