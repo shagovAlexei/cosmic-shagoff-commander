@@ -682,3 +682,4 @@ help-term-edge = Its top edge dragged: taller / shorter (kept)
 help-term-follow = The shell follows the active panel's folder (cd) while it waits at its prompt; a running program is never typed into
 help-term-shell = Commands → Shell…: bash, zsh… ($SHELL by default)
 cmd-name-ambiguous = The name is not UTF-8 and its pattern fits another name too: not inserted
+keyring-no-realm = the server asks for no password (names no realm)

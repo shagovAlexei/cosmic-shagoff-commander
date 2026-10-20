@@ -405,10 +405,25 @@ pub fn connect(url: &str, password: &str, cancel: &Arc<AtomicBool>) -> Result<Pa
     if mounted == Err(Error::Cancelled) {
         return Err(Error::Cancelled);
     }
-    match talk(gio(["info", url]), "")
-        .ok()
-        .and_then(|s| local_path(&s))
-    {
+    // `gio mount` returns before gvfsd-fuse has the new mount: its local path shows a moment
+    // later (WebDAV on localhost: a `gio info` at once has none). Waited for only once mounted.
+    let tries = if mounted.is_ok() { 20 } else { 1 };
+    let mut path = None;
+    for i in 0..tries {
+        if i > 0 {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Cancelled);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        path = talk(gio(["info", url]), "")
+            .ok()
+            .and_then(|s| local_path(&s));
+        if path.is_some() {
+            break;
+        }
+    }
+    match path {
         Some(p) => Ok(p),
         None => Err(mounted.err().unwrap_or_else(|| {
             Error::Failed(format!("{url}: no local path (gvfs-fuse not running?)"))

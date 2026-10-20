@@ -3150,10 +3150,16 @@ impl App {
                         }
                         if *on && !password.is_empty() {
                             let (url, password) = (url.clone(), password.clone());
+                            let no_realm = fl!("keyring-no-realm");
                             keep = blocking(
                                 move || {
-                                    shagoff_core::keyring::save(&url, &password)
-                                        .map_err(mount::Error::Failed)
+                                    use shagoff_core::keyring::{self, KeepError};
+                                    keyring::save(&url, &password).map_err(|e| {
+                                        mount::Error::Failed(match e {
+                                            KeepError::NoRealm => no_realm,
+                                            KeepError::Failed(e) => e,
+                                        })
+                                    })
                                 },
                                 Message::Kept,
                             );
