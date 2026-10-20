@@ -211,12 +211,12 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         (Skin::Classic, None) => container(path_parts(side, &cwd))
             .padding([2, 6])
             .width(Length::Fill)
-            .class(bar_style(active))
+            .class(bar_style(active, app.scheme.paint()))
             .into(),
         _ => container(text(title).size(TEXT))
             .padding([2, 6])
             .width(Length::Fill)
-            .class(bar_style(active))
+            .class(bar_style(active, app.scheme.paint()))
             .into(),
     };
 
@@ -286,7 +286,13 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
     let mut col = column![drives];
     if tabs.items().len() > 1 {
-        col = col.push(tab_bar(side, tabs, active, app.window_id()));
+        col = col.push(tab_bar(
+            side,
+            tabs,
+            active,
+            app.window_id(),
+            app.scheme.paint(),
+        ));
     }
     let col = col
         .push(path)
@@ -739,20 +745,22 @@ fn tab_bar(
     tabs: &Tabs<Tab>,
     pane_active: bool,
     window: cosmic::iced::window::Id,
+    paint: colors::PanelPaint,
 ) -> Element<'_, Message> {
     let mut bar = row![].spacing(2);
     for (i, t) in tabs.items().iter().enumerate() {
         let label = container(cell(t.title()))
             .padding([2, 8])
             .max_width(160.0)
+            // In a palette's colours as the rows: the shown tab as the cursor, the rest the list's.
             .class(cursor_style(
                 i == tabs.active_index(),
                 pane_active,
                 false,
                 Skin::Classic,
-                None,
+                paint.back,
                 false,
-                Default::default(),
+                paint,
             ));
         let tab = mouse_area(label)
             .on_press(Message::TabPress(side, i))
@@ -1120,7 +1128,7 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         col = col.push(command_line(app));
     }
     if app.config.show_fkeys {
-        col = col.push(fkey_bar(&app.config.f12));
+        col = col.push(fkey_bar(&app.config.f12, app.scheme.paint()));
     }
     col.into()
 }
@@ -1225,7 +1233,15 @@ fn destructive(t: &cosmic::Theme) -> cosmic::iced::widget::text::Style {
     }
 }
 
-pub fn fkey_bar(f12: &crate::config::ToolButton) -> Element<'static, Message> {
+pub fn fkey_bar(
+    f12: &crate::config::ToolButton,
+    paint: colors::PanelPaint,
+) -> Element<'static, Message> {
+    // A palette of the list's own: the keys in its cursor colour (NC's cyan keys).
+    let class = move || match paint.back.and(paint.cursor) {
+        Some(bg) => fkey_class(bg),
+        None => theme::Button::Standard,
+    };
     let f12 = match f12.cmd.trim() {
         "" => fl!("fkey-f12-none"),
         _ => format!("F12 {}", crate::toolbar::tip(f12)),
@@ -1238,7 +1254,7 @@ pub fn fkey_bar(f12: &crate::config::ToolButton) -> Element<'static, Message> {
                 .width(Length::Fill)
                 .align_x(cosmic::iced::alignment::Horizontal::Center),
         )
-        .class(theme::Button::Standard)
+        .class(class())
         .padding([6, 4])
         .on_press(Message::Key(action))
         .width(Length::Fill)
@@ -1262,7 +1278,7 @@ pub fn fkey_bar(f12: &crate::config::ToolButton) -> Element<'static, Message> {
                 .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
                 .width(Length::Fill),
         )
-        .class(theme::Button::Standard)
+        .class(class())
         .padding([6, 4])
         .on_press(Message::Key(Action::F12))
         .width(Length::Fill),
@@ -1272,9 +1288,57 @@ pub fn fkey_bar(f12: &crate::config::ToolButton) -> Element<'static, Message> {
     .into()
 }
 
-fn bar_style(active: bool) -> theme::Container<'static> {
+/// An F-key in a palette's cursor colour, black or white text on it; lighter while hovered.
+fn fkey_class(bg: [u8; 3]) -> theme::Button {
+    let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);
+    let ink = match colors::dark_text_on(bg) {
+        true => Color::BLACK,
+        false => Color::WHITE,
+    };
+    let style = move |hover: bool| {
+        let mut b = cosmic::widget::button::Style::new();
+        let c = rgb(bg);
+        b.background = Some(
+            match hover {
+                true => Color { a: 0.8, ..c },
+                false => c,
+            }
+            .into(),
+        );
+        b.text_color = Some(ink);
+        b.border_radius = 4.0.into();
+        b
+    };
+    theme::Button::Custom {
+        active: Box::new(move |_, _| style(false)),
+        disabled: Box::new(move |_| style(false)),
+        hovered: Box::new(move |_, _| style(true)),
+        pressed: Box::new(move |_, _| style(true)),
+    }
+}
+
+/// The path line: the accent when active. With a palette of the list's own (TC Colors, the
+/// «Blue» one) it is in the panel's colours, the active one in the cursor's (as NC / Far).
+fn bar_style(active: bool, paint: colors::PanelPaint) -> theme::Container<'static> {
     theme::Container::custom(move |t| {
         let c = t.cosmic();
+        let rgb = |[r, g, b]: [u8; 3]| Color::from_rgb8(r, g, b);
+        if let Some(back) = paint.back {
+            let bg = match active {
+                true => paint.cursor.unwrap_or(back),
+                false => back,
+            };
+            let ink = match (active, paint.text) {
+                (false, Some(t)) => rgb(t),
+                _ if colors::dark_text_on(bg) => Color::BLACK,
+                _ => Color::WHITE,
+            };
+            return container::Style {
+                background: Some(rgb(bg).into()),
+                text_color: Some(ink),
+                ..Default::default()
+            };
+        }
         if active {
             container::Style {
                 background: Some(Color::from(c.accent_color()).into()),

@@ -300,6 +300,25 @@ pub fn blue_panel() -> PanelColors {
     }
 }
 
+/// Ready palettes for the list, marks and cursor (Colors → «Palette»), the «Blue» one first:
+/// Far Manager's cyan on navy, a dark and a light one (161).
+pub fn presets() -> [PanelColors; 4] {
+    let p = |color: &str, cursor: &str, text: &str, back: &str, back2: &str| PanelColors {
+        color: color.into(),
+        bg: String::new(),
+        cursor: cursor.into(),
+        text: text.into(),
+        back: back.into(),
+        back2: back2.into(),
+    };
+    [
+        blue_panel(),
+        p("#ffff55", "#008080", "#55ffff", "#000080", ""),
+        p("#ffcc00", "#264f78", "#d4d4d4", "#1e1e1e", "#252526"),
+        p("#d00000", "#cce4f7", "#000000", "#ffffff", "#f3f3f3"),
+    ]
+}
+
 /// The out-of-the-box list: links cyan, executables orange.
 pub fn defaults() -> Vec<Rule> {
     let rule = |what, color: &str| Rule {
