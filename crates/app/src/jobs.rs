@@ -125,7 +125,7 @@ impl Handler for ChannelHandler {
         let (reply, rx) = mpsc::channel();
         let _ = self.tx.unbounded_send(Event::Error {
             path: path.to_path_buf(),
-            error: err.to_string(),
+            error: crate::why::text(err),
             reply,
         });
         rx.recv().unwrap_or(ErrorChoice::Cancel)

@@ -48,7 +48,7 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
         }
     };
     let Some(format) = Format::detect(&name).filter(|f| f.is_tree()) else {
-        return refuse(h, "not an archive that can be changed");
+        return refuse(h, crate::why::NOT_CHANGEABLE);
     };
     // A symlinked archive: rewrite the real file, keep the link.
     let real = match retry(h, archive, || fs::canonicalize(archive)) {
@@ -60,10 +60,7 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
     };
     if format == Format::Zip && legacy_zip_names(&real).unwrap_or(false) {
         // Read as CP437 and written back as UTF-8, they would turn into garbage for good.
-        return refuse(
-            h,
-            "file names in a legacy encoding; changing the archive would garble them",
-        );
+        return refuse(h, crate::why::LEGACY_NAMES);
     }
     let dir = real.parent().unwrap_or(Path::new("."));
     let staging = match retry(h, archive, || archive::make_staging(dir)) {
@@ -481,7 +478,7 @@ fn give_up(h: &mut dyn Handler, archive: &Path, why: &str) -> Result<(), bool> {
 /// be a link either.
 fn inside(root: &Path, rel: &Path, last: bool) -> io::Result<PathBuf> {
     let bad = |why: &str| io::Error::new(io::ErrorKind::InvalidInput, why.to_string());
-    let rel = archive::safe_path(rel).ok_or_else(|| bad("bad path inside the archive"))?;
+    let rel = archive::safe_path(rel).ok_or_else(|| bad(crate::why::BAD_INNER_PATH))?;
     let parts: Vec<_> = rel.components().collect();
     let mut p = root.to_path_buf();
     for (i, c) in parts.iter().enumerate() {
@@ -489,7 +486,7 @@ fn inside(root: &Path, rel: &Path, last: bool) -> io::Result<PathBuf> {
         if (i + 1 < parts.len() || last)
             && fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink())
         {
-            return Err(bad("the path goes through a link inside the archive"));
+            return Err(bad(crate::why::INNER_LINK));
         }
     }
     Ok(p)

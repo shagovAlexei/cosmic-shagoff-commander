@@ -4366,7 +4366,7 @@ impl App {
                             (archives.into_iter())
                                 .map_while(|a| match archive::test(&a, &stop) {
                                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => None,
-                                    r => Some((a, r.map_err(|e| e.to_string()))),
+                                    r => Some((a, r.map_err(|e| crate::why::text(&e)))),
                                 })
                                 .collect()
                         })
@@ -5472,7 +5472,7 @@ impl App {
                 let made = tokio::task::spawn_blocking(move || std::fs::create_dir_all(dir))
                     .await
                     .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| e.to_string()));
+                    .and_then(|r| r.map_err(|e| crate::why::text(&e)));
                 Message::Made {
                     side,
                     cwd,
@@ -8463,13 +8463,13 @@ fn link_all(sources: &[PathBuf], target: &Path) -> Result<(Vec<PathBuf>, Option<
             fl!(
                 "link-failed",
                 path = path.display().to_string(),
-                err = e.to_string()
+                err = crate::why::text(&e)
             )
         }
         ops::LinkError::Plan(e) => plan_error(&e),
     })?;
     let msg = failed.first().map(|(path, e)| {
-        let (path, err) = (path.display().to_string(), e.to_string());
+        let (path, err) = (path.display().to_string(), crate::why::text(e));
         match failed.len() {
             1 => fl!("link-failed", path = path, err = err),
             n => fl!("links-failed", n = n, path = path, err = err),
