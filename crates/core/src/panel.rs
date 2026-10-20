@@ -41,6 +41,9 @@ pub struct Panel {
     marked_sums: OnceLock<Totals>,
     /// Longest shown name in chars (Brief column width); dropped when the rows change.
     longest: OnceLock<usize>,
+    /// The marks before they last went in bulk (an operation's `unmark`, «unmark all»), with
+    /// their dir: Num / brings them back (TC «Restore selection»).
+    saved: Option<(PathBuf, HashSet<OsString>)>,
 }
 
 impl Panel {
@@ -58,6 +61,7 @@ impl Panel {
             all_sums: OnceLock::new(),
             marked_sums: OnceLock::new(),
             longest: OnceLock::new(),
+            saved: None,
         }
     }
 
@@ -307,6 +311,9 @@ impl Panel {
 
     /// Ctrl+A / Ctrl+Num−: everything except `..`.
     pub fn mark_all(&mut self, on: bool) {
+        if !on {
+            self.keep_marks();
+        }
         self.marked.clear();
         if on {
             let start = usize::from(self.parent_row());
@@ -367,8 +374,60 @@ impl Panel {
         }
     }
 
+    /// The marks as they are, for Num / (`restore_marks`).
+    fn keep_marks(&mut self) {
+        if !self.marked.is_empty() {
+            self.saved = Some((self.cwd.clone(), self.marked.clone()));
+        }
+    }
+
+    /// Num /: the marks kept before they last went in bulk, if in this dir; names not listed
+    /// any more are left out.
+    pub fn restore_marks(&mut self) {
+        let Some((dir, names)) = &self.saved else {
+            return;
+        };
+        if *dir != self.cwd {
+            return;
+        }
+        let back: Vec<OsString> = (self.entries.iter())
+            .filter(|e| names.contains(&e.os_name))
+            .map(|e| e.os_name.clone())
+            .collect();
+        self.marked.extend(back);
+        self.touched();
+    }
+
+    /// Alt+Num + / Alt+Num −: the files with the extension of the one under the cursor (any case;
+    /// none: the ones without one). On a dir or `..`: nothing.
+    pub fn mark_ext(&mut self, on: bool) {
+        let Some(ext) = self
+            .current()
+            .filter(|e| !e.is_dir())
+            .map(|e| e.ext.clone())
+        else {
+            return;
+        };
+        for e in (self.entries.iter()).filter(|e| !e.is_dir() && e.ext.eq_ignore_ascii_case(&ext)) {
+            if on {
+                self.marked.insert(e.os_name.clone());
+            } else {
+                self.marked.remove(&e.os_name);
+            }
+        }
+        self.touched();
+    }
+
     /// Drop marks of processed entries (by file name; search results are marked by whole path).
     pub fn unmark(&mut self, paths: &[PathBuf]) {
+        // Kept for Num / only when this actually unmarks something (a job may report none).
+        let hits = |p: &PathBuf| {
+            self.marked.contains(p.as_os_str())
+                || p.file_name().is_some_and(|n| self.marked.contains(n))
+        };
+        if paths.iter().any(hits) {
+            self.keep_marks();
+        }
         for p in paths {
             self.marked.remove(p.as_os_str());
             if let Some(name) = p.file_name() {
@@ -515,6 +574,63 @@ mod tests {
         let mut p = Panel::new(PathBuf::from(cwd));
         p.set_listing(PathBuf::from(cwd), entries, None);
         p
+    }
+
+    fn fx(name: &str) -> Entry {
+        Entry {
+            ext: crate::listing::ext_of(name),
+            ..f(name, 1)
+        }
+    }
+
+    #[test]
+    fn num_slash_brings_back_the_marks_dropped_in_bulk() {
+        let mut p = loaded("/d", vec![f("a", 1), f("b", 1), f("c", 1)]);
+        p.restore_marks(); // nothing kept yet
+        assert!(!p.has_marks());
+        p.mark_names(&["a".into(), "c".into()]);
+        p.unmark(&[PathBuf::from("/d/a"), PathBuf::from("/d/c")]); // after an operation
+        assert!(!p.has_marks());
+        p.unmark(&[]); // a job that reports nothing: what is kept stays
+        p.restore_marks();
+        assert_eq!(p.targets(), [PathBuf::from("/d/a"), PathBuf::from("/d/c")]);
+        p.mark_all(false); // Ctrl+Num−
+        // `c` gone meanwhile: only what is still listed comes back.
+        p.set_listing(PathBuf::from("/d"), vec![f("a", 1), f("b", 1)], None);
+        p.restore_marks();
+        assert_eq!(p.targets(), [PathBuf::from("/d/a")]);
+        // Another dir: not its marks.
+        p.mark_all(false);
+        p.set_listing(PathBuf::from("/e"), vec![f("a", 1)], None);
+        p.restore_marks();
+        assert!(!p.has_marks());
+    }
+
+    #[test]
+    fn alt_num_plus_marks_the_extension_under_the_cursor() {
+        let mut p = loaded(
+            "/d",
+            vec![fx("a.txt"), fx("b.TXT"), fx("c.rs"), fx("noext"), d("sub")],
+        );
+        // sorted: "..", "sub", "a.txt", "b.TXT", "c.rs", "noext"
+        p.set_cursor(2);
+        p.mark_ext(true);
+        let marked = |p: &Panel| -> Vec<String> {
+            (p.entries().iter())
+                .filter(|e| p.is_marked(e))
+                .map(|e| e.name.clone())
+                .collect()
+        };
+        assert_eq!(marked(&p), ["a.txt", "b.TXT"]); // the case of the extension does not matter
+        p.set_cursor(5);
+        p.mark_ext(true); // no extension: the others without one
+        assert_eq!(marked(&p), ["a.txt", "b.TXT", "noext"]);
+        p.set_cursor(2);
+        p.mark_ext(false);
+        assert_eq!(marked(&p), ["noext"]);
+        p.set_cursor(1); // a dir: nothing
+        p.mark_ext(true);
+        assert_eq!(marked(&p), ["noext"]);
     }
 
     #[test]

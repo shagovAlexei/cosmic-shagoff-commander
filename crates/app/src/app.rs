@@ -521,6 +521,8 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
+    /// Ctrl+L counted: the targets' occupied space (`None`: could not / stopped).
+    Occupied(Option<shagoff_core::props::Usage>),
     /// Ctrl+Shift+F5 done (`App::make_links`) for tab id: the sources linked, and the error to
     /// show (one line for every link that failed), or the error that stopped it all.
     Linked(u64, Result<(Vec<PathBuf>, Option<String>), String>),
@@ -2377,6 +2379,21 @@ impl App {
                 };
                 return Task::batch([reload(self, 0), reload(self, 1)]);
             }
+            Message::Occupied(u) => {
+                // Only its own "counting…": another job's Busy line stays.
+                if (self.status.as_ref()).is_some_and(|s| s.text == fl!("counting")) {
+                    self.status = None;
+                }
+                if let Some(u) = u {
+                    let text = fl!(
+                        "occupied",
+                        size = crate::view::size_text(&self.config, u.bytes),
+                        files = u.files,
+                        dirs = u.dirs
+                    );
+                    self.say(StatusKind::Info, text);
+                }
+            }
             Message::TermWait => {} // `term_follow` runs after it
             Message::EditTick => {
                 if self.dialog.is_some() || self.job.is_some() {
@@ -4007,6 +4024,70 @@ impl App {
             Action::MarkDown => panel.toggle_mark_and_move(1),
             Action::MarkUp => panel.toggle_mark_and_move(-1),
             Action::Invert => panel.invert(),
+            Action::RestoreMarks => panel.restore_marks(),
+            Action::MarkExt => panel.mark_ext(true),
+            Action::UnmarkExt => panel.mark_ext(false),
+            // TC: the dir / archive under the cursor (`..`: the parent) in that panel; on a file,
+            // this panel's dir.
+            Action::OpenLeft | Action::OpenRight => {
+                let to = usize::from(action == Action::OpenRight);
+                let path = match panel.drop_target(panel.cursor()) {
+                    Some(p) => p,
+                    // On a file in this very panel: nothing (reading its dir again would drop
+                    // search results / a branch).
+                    None if to == side => return Task::none(),
+                    None => panel.cwd().to_path_buf(),
+                };
+                return self.load(to, path, None);
+            }
+            Action::Occupied => {
+                // Nothing marked, on `..`: the dir itself (TC).
+                let mut targets = panel.targets();
+                if targets.is_empty() {
+                    targets.push(panel.cwd().to_path_buf());
+                }
+                if loading || targets.iter().any(|p| inside_archive(p)) {
+                    return Task::none();
+                }
+                self.say(StatusKind::Busy, fl!("counting"));
+                // The tab's: leaving the dir stops it, as Space's counts.
+                let stop = self.panes[side].active().counting.clone();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            shagoff_core::props::usage(&targets, &stop)
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                    },
+                    |u| cosmic::Action::App(Message::Occupied(u)),
+                );
+            }
+            Action::ContextMenu => {
+                let ctx = match panel.current() {
+                    Some(e) if e.name != PARENT => crate::menu::Ctx::Entry {
+                        dir: e.is_dir(),
+                        archive: archive::Format::detect(&e.name).is_some_and(|f| f.is_tree()),
+                    },
+                    _ => crate::menu::Ctx::Dir,
+                };
+                let items = (crate::menu::context_rows(ctx).into_iter())
+                    .map(|(label, act)| ListItem {
+                        label,
+                        path: PathBuf::new(),
+                        kind: act.map_or(Item::Sep, Item::Act),
+                        icon: String::new(),
+                    })
+                    .collect();
+                self.dialog = Some(Dialog::List {
+                    kind: ListKind::Context,
+                    side,
+                    cursor: 0,
+                    items,
+                });
+                return Task::none();
+            }
             Action::SelectAll => panel.mark_all(true),
             Action::UnselectAll => panel.mark_all(false),
             Action::ToggleHidden => {
@@ -7085,6 +7166,13 @@ impl App {
             }
             return Task::none();
         }
+        if kind == ListKind::Context {
+            use cosmic::widget::menu::Action as _;
+            return match items.get(i).map(|it| it.kind) {
+                Some(Item::Act(act)) => self.handle(act.message()),
+                _ => Task::none(),
+            };
+        }
         if kind == ListKind::Shells {
             let path = items
                 .get(i)
@@ -9783,6 +9871,60 @@ mod tests {
     }
 
     /// Pane 0 shows `names` (files) in temp_dir.
+    #[test]
+    fn ctrl_arrows_open_in_that_panel_and_shift_f10_is_the_row_menu() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "x").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::Down)); // "sub"
+        let _ = app.update(Message::Key(Action::OpenRight));
+        let pending = |app: &App, s: usize| app.panes[s].active().pending.clone().map(|(_, p)| p);
+        assert_eq!(pending(&app, 1), Some(tmp.path().join("sub")));
+        let _ = app.update(Message::Key(Action::Down)); // "f.txt": this panel's dir
+        let _ = app.update(Message::Key(Action::OpenRight));
+        assert_eq!(pending(&app, 1).as_deref(), Some(tmp.path()));
+        // On a file, Ctrl+← in its own (left) panel: nothing read again.
+        let before = pending(&app, 0);
+        let _ = app.update(Message::Key(Action::OpenLeft));
+        assert_eq!(pending(&app, 0), before);
+        // Shift+F10 on the file: its menu as a list; a pick does what the item does.
+        let _ = app.update(Message::Key(Action::ContextMenu));
+        let Some(Dialog::List {
+            kind: ListKind::Context,
+            items,
+            ..
+        }) = &app.dialog
+        else {
+            panic!("no menu");
+        };
+        let mkdir_free = !items
+            .iter()
+            .any(|it| it.kind == Item::Act(crate::menu::MenuAct::Key(Action::Mkdir)));
+        let props = (items.iter())
+            .position(|it| it.kind == Item::Act(crate::menu::MenuAct::Key(Action::Properties)))
+            .unwrap();
+        assert!(mkdir_free && items.iter().any(|it| it.kind == Item::Sep));
+        let _ = app.update(Message::ListPick(props));
+        assert!(matches!(app.dialog, Some(Dialog::Props(_))));
+    }
+
+    #[test]
+    fn ctrl_l_says_the_occupied_space() {
+        let mut app = app_with(Config::default(), State::default());
+        let u = shagoff_core::props::Usage {
+            bytes: 2048,
+            files: 3,
+            dirs: 1,
+        };
+        let _ = app.update(Message::Occupied(Some(u)));
+        assert!(
+            app.msg()
+                .is_some_and(|m| m.contains('3') && m.contains('1'))
+        );
+    }
+
     fn files_app(names: &[&str]) -> App {
         let mut app = app_with(Config::default(), State::default());
         let t = app.panes[0].active();
@@ -13772,7 +13914,7 @@ mod tests {
                 typed("L", Code::KeyL, Modifiers::SHIFT),
                 Some(Message::CmdType('L'))
             ));
-            assert!(typed("l", Code::KeyL, Modifiers::CTRL).is_none());
+            assert!(typed("y", Code::KeyY, Modifiers::CTRL).is_none());
             let tmp = tempfile::tempdir().unwrap();
             let mut app = at(tmp.path());
             let _ = app.update(Message::Key(Action::Mark)); // empty: Space marks

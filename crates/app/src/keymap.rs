@@ -7,6 +7,18 @@ use shagoff_core::sort::SortKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    /// Num /: the marks from before they last went in bulk (TC «Restore selection»).
+    RestoreMarks,
+    /// Alt+Num + / Alt+Num −: the files with the extension under the cursor.
+    MarkExt,
+    UnmarkExt,
+    /// Shift+F10 / the Menu key: the row's context menu as a list (keyboard).
+    ContextMenu,
+    /// Ctrl+← / Ctrl+→: what is under the cursor opened in the left / right panel (TC).
+    OpenLeft,
+    OpenRight,
+    /// Ctrl+L: occupied space of the targets, in the status line.
+    Occupied,
     SwitchPane,
     Up,
     Down,
@@ -250,6 +262,13 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Action::HistoryBack),
             Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
             Key::Named(Named::ArrowDown) if mods == Modifiers::ALT => Some(Action::HistoryList),
+            // Before Alt+symbol: Alt+Num + / − type + / −, which would start a quick search.
+            _ if mods == Modifiers::ALT && physical == Physical::Code(Code::NumpadAdd) => {
+                Some(Action::MarkExt)
+            }
+            _ if mods == Modifiers::ALT && physical == Physical::Code(Code::NumpadSubtract) => {
+                Some(Action::UnmarkExt)
+            }
             Key::Named(Named::Enter) if mods == Modifiers::ALT => Some(Action::Properties),
             Key::Named(Named::Enter) if mods == Modifiers::ALT | Modifiers::SHIFT => {
                 Some(Action::CountDirs)
@@ -276,6 +295,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::ArrowDown, false, false) => Action::Down,
             (Named::ArrowLeft, false, false) => Action::Left,
             (Named::ArrowRight, false, false) => Action::Right,
+            (Named::ArrowLeft, true, false) => Action::OpenLeft,
+            (Named::ArrowRight, true, false) => Action::OpenRight,
+            (Named::F10, false, true) | (Named::ContextMenu, false, false) => Action::ContextMenu,
             (Named::F1, true, false) => Action::ViewBrief,
             (Named::F1, true, true) => Action::ViewThumbs,
             (Named::F2, true, false) => Action::ViewFull,
@@ -349,6 +371,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::NumpadAdd), false, false) => Some(Action::SelectGroup),
         (Physical::Code(Code::NumpadSubtract), false, false) => Some(Action::UnselectGroup),
         (Physical::Code(Code::NumpadMultiply), false, false) => Some(Action::Invert),
+        (Physical::Code(Code::NumpadDivide), false, false) => Some(Action::RestoreMarks),
+        (Physical::Code(Code::KeyL), true, false) => Some(Action::Occupied),
         (Physical::Code(Code::NumpadAdd | Code::KeyA), true, false) => Some(Action::SelectAll),
         (Physical::Code(Code::NumpadSubtract), true, false) => Some(Action::UnselectAll),
         _ => None,
@@ -842,5 +866,26 @@ mod tests {
         let one = (Key::Character("1".into()), Physical::Code(Code::Digit1));
         let text = Some(ListerKey::Mode(Mode::Text));
         assert_eq!(lister_key(&one.0, one.1, Modifiers::SHIFT), text);
+    }
+
+    #[test]
+    fn tc_keys_of_167() {
+        assert_eq!(
+            chr("/", Code::NumpadDivide, NONE),
+            Some(Action::RestoreMarks)
+        );
+        // Alt+Num + types "+": not a quick search.
+        assert_eq!(chr("+", Code::NumpadAdd, ALT), Some(Action::MarkExt));
+        assert_eq!(chr("-", Code::NumpadSubtract, ALT), Some(Action::UnmarkExt));
+        assert_eq!(chr("+", Code::Equal, ALT), Some(Action::QuickSearch('+')));
+        assert_eq!(
+            named(Named::F10, Modifiers::SHIFT),
+            Some(Action::ContextMenu)
+        );
+        assert_eq!(named(Named::ContextMenu, NONE), Some(Action::ContextMenu));
+        assert_eq!(named(Named::ArrowLeft, CTRL), Some(Action::OpenLeft));
+        assert_eq!(named(Named::ArrowRight, CTRL), Some(Action::OpenRight));
+        assert_eq!(chr("l", Code::KeyL, CTRL), Some(Action::Occupied));
+        assert_eq!(chr("д", Code::KeyL, CTRL), Some(Action::Occupied));
     }
 }
