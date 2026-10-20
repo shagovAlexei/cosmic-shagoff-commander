@@ -184,6 +184,8 @@ pub struct DiffDlg {
     /// «Edit left / right» (TC's edit mode): that side's whole text in an editor, in place of its
     /// half; «Done» compares again (159).
     pub editing: Option<(usize, cosmic::iced::widget::text_editor::Content)>,
+    /// The editor's: focused when it opens, its cursor on the current block's line.
+    pub edit_id: widget::Id,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1929,7 +1931,10 @@ pub fn view<'a>(
             let edited = d.editing.as_ref().map(|(s, _)| *s);
             let editor = |side: usize| -> Option<Element<'a, Message>> {
                 let (_, content) = d.editing.as_ref().filter(|(s, _)| *s == side)?;
+                // Unwrapped, as the other half: a line is one row, the cursor lands on it.
                 let e = cosmic::iced::widget::text_editor(content)
+                    .id(d.edit_id.clone())
+                    .wrapping(Wrapping::None)
                     .font(cosmic::font::mono())
                     .on_action(Message::DiffEditAct)
                     .height(Length::Fixed(DIFF_LIST_H));

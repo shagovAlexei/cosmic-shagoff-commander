@@ -2037,8 +2037,20 @@ impl App {
                     && let Some(src) = d.text().map(|t| t.src.clone())
                 {
                     let text = if side == 0 { &src.0 } else { &src.1 };
-                    d.editing = Some((side, text_editor::Content::with_text(text)));
+                    let mut content = text_editor::Content::with_text(text);
+                    // On the current block's line, where the change is.
+                    let row = d.blocks().get(d.block).copied().unwrap_or(0);
+                    let line = d
+                        .text()
+                        .map_or(0, |t| shagoff_core::diff::line_at(&t.rows, row, side));
+                    // ponytail: the view follows the cursor when drawn, so the line shows at the
+                    // bottom edge; centring it would need the editor's own scroll.
+                    for _ in 0..line {
+                        content.perform(text_editor::Action::Move(text_editor::Motion::Down));
+                    }
+                    d.editing = Some((side, content));
                     d.confirm_close = false;
+                    return cosmic::iced::widget::operation::focus(d.edit_id.clone());
                 }
             }
             Message::DiffEditAct(a) => {
@@ -4448,6 +4460,7 @@ impl App {
                     copying: None,
                     undo: Vec::new(),
                     editing: None,
+                    edit_id: widget::Id::unique(),
                 })))
             }
             Action::SyncDirs => Some(Dialog::Sync(Box::new(dialogs::SyncDlg {
