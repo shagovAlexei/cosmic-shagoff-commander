@@ -74,9 +74,10 @@ pub fn quote(word: &str) -> String {
 
 /// `path` as one shell word, for a name not in UTF-8 too: the line is text, so each byte that is
 /// not UTF-8 becomes a glob `?` outside the quotes (`'caf'?'.txt'`; dash has no `$'\xNN'`).
-/// `None` when such a pattern fits another name in its dir too (`siblings(dir)`: the names there),
-/// as bytes (dash) or as characters (bash, zsh): it would pick the wrong file.
-pub fn word(path: &Path, siblings: impl Fn(&Path) -> Vec<OsString>) -> Option<String> {
+/// `None` when such a pattern fits another name in its dir too (`siblings(dir)`: the names there;
+/// `None`: unreadable, so not known), as bytes (dash) or as characters (bash, zsh): it would pick
+/// the wrong file.
+pub fn word(path: &Path, siblings: impl Fn(&Path) -> Option<Vec<OsString>>) -> Option<String> {
     let bytes = path.as_os_str().as_bytes();
     if let Ok(s) = std::str::from_utf8(bytes) {
         return Some(quote(s));
@@ -87,7 +88,7 @@ pub fn word(path: &Path, siblings: impl Fn(&Path) -> Vec<OsString>) -> Option<St
             continue;
         }
         let dir: PathBuf = path.components().take(i).collect();
-        let others = siblings(&dir);
+        let others = siblings(&dir)?;
         if others
             .iter()
             .any(|o| o.as_bytes() != name && glob_fits(name, o.as_bytes()))
@@ -403,13 +404,13 @@ mod tests {
     fn word_globs_bytes_not_utf8() {
         use std::os::unix::ffi::OsStringExt;
         let os = |b: &[u8]| OsString::from_vec(b.to_vec());
-        let none = |_: &Path| Vec::new();
+        let none = |_: &Path| Some(Vec::new());
         assert_eq!(word(Path::new("/a b/c"), none).as_deref(), Some("'/a b/c'"));
         // cp1251 "caf\xe9.txt" and a dir "\xcf\xf0" above it.
         let p = PathBuf::from(os(b"/x/\xcf\xf0/caf\xe9 1.txt"));
         assert_eq!(word(&p, none).as_deref(), Some("/x/??/caf?' 1.txt'"));
         // A sibling the same pattern fits: by bytes (dash) or by characters (bash).
-        let with = |names: Vec<OsString>| move |_: &Path| names.clone();
+        let with = |names: Vec<OsString>| move |_: &Path| Some(names.clone());
         let name = PathBuf::from(os(b"caf\xe9"));
         assert!(word(&name, with(vec![os(b"caf\xe9"), os(b"cafe")])).is_none());
         assert!(word(&name, with(vec![os("café".as_bytes())])).is_none());
@@ -418,5 +419,6 @@ mod tests {
             word(&name, with(vec![os(b"caf\xe9"), os(b"cafe2"), os(b"ca")])).as_deref(),
             Some("caf?")
         );
+        assert!(word(&name, |_: &Path| None).is_none()); // dir not readable
     }
 }

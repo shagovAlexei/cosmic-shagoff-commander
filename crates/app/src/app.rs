@@ -2804,11 +2804,16 @@ impl App {
             {
                 return self.handle(Message::DialogQueue);
             }
-            // Ctrl+X passed on by a field: only the command line's (next command), never a
-            // cut of the files from a search field.
+            // Ctrl+X passed on by a field. In the command line, on a line from the history
+            // (Ctrl+E): the next command (TC). A typed line stays (the field cut its selection);
+            // the other fields, the menu's «Cut» and the panel's Ctrl+X never step the history.
             Message::FieldKey(Action::ClipCut) => {
-                if self.dialog.is_none() && self.drawer.is_none() && !self.cmdline.is_empty() {
-                    return self.handle(Message::Key(Action::ClipCut));
+                if self.cmd_ready()
+                    && self.commands.contains(&self.cmdline)
+                    && let Some(next) = cmdline::next(&self.commands, &self.cmdline)
+                {
+                    self.cmdline = next;
+                    return widget::text_input::move_cursor_to_end(self.cmd_id.clone());
                 }
             }
             Message::FieldKey(action) => {
@@ -7332,15 +7337,12 @@ impl App {
             .then(Task::none);
         }
         let panel = &self.panes[side].active().panel;
-        // The names in `dir`, for a name not in UTF-8 (`cmdline::word`): the panel's own, or read.
-        let siblings = |dir: &Path| -> Vec<OsString> {
-            if dir.as_os_str().is_empty() || dir == panel.cwd() {
-                panel.entries().iter().map(|e| e.os_name.clone()).collect()
-            } else {
-                std::fs::read_dir(dir)
-                    .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
-                    .unwrap_or_default()
-            }
+        // The names in `dir` (relative: under the panel's dir), for a name not in UTF-8
+        // (`cmdline::word`). Read, not the panel's list: a filter hides some, search results hold
+        // paths. Only for such names, so rarely.
+        let siblings = |dir: &Path| -> Option<Vec<OsString>> {
+            let rd = std::fs::read_dir(panel.cwd().join(dir)).ok()?;
+            Some(rd.flatten().map(|e| e.file_name()).collect())
         };
         let word = match action {
             Action::Mark if !self.cmdline.is_empty() => {
@@ -7354,7 +7356,11 @@ impl App {
                         let e = panel.current().filter(|e| e.name != PARENT)?;
                         match action {
                             Action::CmdPath => panel.cwd().join(&e.os_name),
-                            _ => PathBuf::from(&e.os_name),
+                            // Search results / branch: the path below the root, as shown.
+                            _ => Path::new(&e.os_name)
+                                .strip_prefix(panel.cwd())
+                                .unwrap_or(Path::new(&e.os_name))
+                                .to_path_buf(),
                         }
                     }
                 };
@@ -7366,14 +7372,6 @@ impl App {
             }
             Action::CmdPrevious => {
                 self.cmdline = cmdline::previous(&self.commands, &self.cmdline)?;
-                None
-            }
-            // TC: Ctrl+X with a line typed is the next command; with none, "cut" (the files).
-            Action::ClipCut if !self.cmdline.is_empty() => {
-                // At the newest: stays (and never falls through to cutting the files).
-                if let Some(next) = cmdline::next(&self.commands, &self.cmdline) {
-                    self.cmdline = next;
-                }
                 None
             }
             Action::CmdHistory => {
@@ -13686,11 +13684,18 @@ mod tests {
             assert_eq!(app.cmdline, "make");
             let _ = app.update(Message::FieldKey(Action::CmdPrevious));
             assert_eq!(app.cmdline, "ls");
-            // Ctrl+X with a line: the next command, at the newest it stays, files never cut.
+            // Ctrl+X in the line: the next command, at the newest it stays.
             let _ = app.update(Message::FieldKey(Action::ClipCut));
             assert_eq!(app.cmdline, "make");
-            let _ = app.update(Message::Key(Action::ClipCut));
+            let _ = app.update(Message::FieldKey(Action::ClipCut));
             assert_eq!(app.cmdline, "make");
+            // A typed line stays; the panel's Ctrl+X / menu «Cut» never step the history.
+            app.cmdline = "mak".into();
+            let _ = app.update(Message::FieldKey(Action::ClipCut));
+            assert_eq!(app.cmdline, "mak");
+            app.cmdline = "ls".into();
+            let _ = app.update(Message::Key(Action::ClipCut));
+            assert_eq!(app.cmdline, "ls");
             let _ = app.update(Message::FieldKey(Action::CmdHistory));
             let _ = app.update(Message::Key(Action::Down));
             let _ = app.update(Message::Key(Action::Enter));
