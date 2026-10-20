@@ -475,7 +475,7 @@ impl Transfer<'_> {
         }
         if !meta.is_dir() && !meta.is_file() && !meta.file_type().is_symlink() {
             // A FIFO would block `open` forever and a device would stream endlessly.
-            return self.refuse(src, 0, "special file (pipe, socket or device): not copied");
+            return self.refuse(src, 0, crate::why::SPECIAL);
         }
         if meta.is_dir() {
             self.dir(src, dst, &meta)
@@ -565,7 +565,7 @@ impl Transfer<'_> {
         if let (Ok(s), Ok(d)) = (src.canonicalize(), dst.canonicalize())
             && d.starts_with(&s)
         {
-            return self.refuse(dst, tree_size(src), "cannot copy a folder into itself");
+            return self.refuse(dst, tree_size(src), crate::why::INTO_ITSELF);
         }
         let names = match self.retry(src, || {
             fs::read_dir(src)?
@@ -798,7 +798,7 @@ impl Transfer<'_> {
 
     /// A file/link meets a directory of the same name (or the reverse).
     fn clash(&mut self, dst: &Path, size: u64) -> Step {
-        self.refuse(dst, size, "an entry of another type has this name")
+        self.refuse(dst, size, crate::why::OTHER_TYPE)
     }
 
     /// Report something we will not do; Retry acts as Skip (retrying cannot change it).

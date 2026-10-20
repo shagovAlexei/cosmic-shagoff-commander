@@ -537,13 +537,13 @@ pub fn save(path: &Path, text: &str, read: Option<Stamp>) -> io::Result<()> {
     let path = fs::canonicalize(path)?;
     let m = fs::metadata(&path)?;
     if m.permissions().readonly() {
-        return refuse("the file is read-only");
+        return refuse(crate::why::READ_ONLY);
     }
     if m.nlink() > 1 {
-        return refuse("the file has other hard links");
+        return refuse(crate::why::HARD_LINKS);
     }
     if read.is_some_and(|r| r != stamp_of(&m)) {
-        return refuse("the file changed on disk since it was compared; compare again");
+        return refuse(crate::why::CHANGED);
     }
     let (part, mut f) = crate::ops::create_part(&path)?;
     let done = f

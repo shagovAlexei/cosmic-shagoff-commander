@@ -35,3 +35,4 @@ pub mod terminals;
 pub mod tree;
 pub mod update;
 pub mod viewport;
+pub mod why;

@@ -86,7 +86,7 @@ pub type Shape = (Encoding, Option<usize>);
 
 impl Loaded {
     pub fn read(path: &Path, name: &str) -> Result<Self, String> {
-        let doc = lister::load(path).map_err(|e| e.to_string())?;
+        let doc = lister::load(path).map_err(|e| crate::why::text(&e))?;
         let text = Text::new(&doc, Encoding::Auto, None);
         // Over `LIMIT` only a window is read: cut bytes do not decode (it opens as hex instead).
         let whole = doc.start == 0 && doc.end() == doc.total;
@@ -108,7 +108,8 @@ impl Loaded {
     /// Another window of a file too big to hold whole (`lister::load_at`), its text built here
     /// as the viewer shows it: not on the UI thread.
     pub fn window(path: &Path, w: Window) -> Result<Self, String> {
-        let doc = lister::load_at(path, w.from, w.to, w.line, w.bom).map_err(|e| e.to_string())?;
+        let doc =
+            lister::load_at(path, w.from, w.to, w.line, w.bom).map_err(|e| crate::why::text(&e))?;
         let text = Text::new(&doc, w.shape.0, w.shape.1);
         Ok(Self {
             doc,

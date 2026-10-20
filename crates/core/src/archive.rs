@@ -293,7 +293,7 @@ impl Stage<'_> {
             if root_only && !name.as_os_str().is_empty() {
                 return Ok(());
             }
-            return self.refuse(name, "unsafe path in archive");
+            return self.refuse(name, crate::why::UNSAFE_PATH);
         };
         let rel = match self.select {
             None => rel,
@@ -303,7 +303,7 @@ impl Stage<'_> {
             },
         };
         if !self.parents(&rel)? {
-            return self.refuse(name, "path goes through a link in the archive");
+            return self.refuse(name, crate::why::THROUGH_LINK);
         }
         let dst = self.root.join(&rel);
         let old = fs::symlink_metadata(&dst).ok();
@@ -321,7 +321,7 @@ impl Stage<'_> {
         }
         match old {
             Some(m) if m.is_dir() => {
-                return self.refuse(name, "a folder with this name is already in the archive");
+                return self.refuse(name, crate::why::DIR_TAKEN);
             }
             Some(_) => fs::remove_file(&dst)?, // the last entry with a name wins, like tar
             None => {}
@@ -345,7 +345,7 @@ impl Stage<'_> {
                     Some(s) => {
                         fs::copy(s, &dst)?;
                     }
-                    None => return self.refuse(name, "hard link to a file outside the archive"),
+                    None => return self.refuse(name, crate::why::HARDLINK_OUT),
                 }
             }
             Kind::File(size) => {
@@ -469,7 +469,7 @@ fn read_tar(r: impl Read, st: &mut Stage) -> Result<(), Stop> {
 
 /// The text of the error for an encrypted archive opened without its password, or with a wrong
 /// one: the app asks for it (`needs_password`) and retries.
-pub const PASSWORD_ERROR: &str = "the archive's password is needed (or the one given is wrong)";
+pub const PASSWORD_ERROR: &str = crate::why::PASSWORD;
 
 pub fn needs_password(error: &str) -> bool {
     error == PASSWORD_ERROR
@@ -773,7 +773,7 @@ fn files(archive: &Path, stop: &AtomicBool, strict: bool, f: &mut OnFile) -> io:
             if t.last.len() < TAIL || t.last.iter().any(|&b| b != 0) {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "the tar ends without its end marker",
+                    crate::why::NO_END_MARKER,
                 ));
             }
         }
@@ -1622,11 +1622,17 @@ impl Packer {
                 bzip2::Compression::default(),
             ))),
             Format::TarXz => tar(Enc::Xz(liblzma::write::XzEncoder::new(w, 6))),
-            Format::TarZst => tar(Enc::Zst(zstd::stream::write::Encoder::new(w, 0)?)),
+            Format::TarZst => {
+                // With its content checksum (as the zstd CLI): damage inside a raw block would
+                // otherwise decode without an error (Alt+Shift+F9 would call it fine).
+                let mut z = zstd::stream::write::Encoder::new(w, 0)?;
+                z.include_checksum(true)?;
+                tar(Enc::Zst(z))
+            }
             Format::Gz | Format::Bz2 | Format::Xz | Format::Zst => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "not a packing format",
+                    crate::why::NOT_PACK_FORMAT,
                 ));
             }
         })
@@ -1709,7 +1715,7 @@ impl Packer {
 
 fn utf8(rel: &Path) -> io::Result<&str> {
     rel.to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "name is not UTF-8"))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, crate::why::NOT_UTF8))
 }
 
 fn tar_header(m: &Metadata) -> tar::Header {
@@ -1916,10 +1922,7 @@ fn pack_one(
     h: &mut dyn Handler,
 ) -> Packed {
     if is_a_source(dest, sources) {
-        let e = io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the archive would replace a file being packed",
-        );
+        let e = io::Error::new(io::ErrorKind::InvalidInput, crate::why::REPLACES_SOURCE);
         return match h.error(dest, &e) {
             ErrorChoice::Cancel => Packed::Cancel,
             _ => Packed::Dropped,
@@ -2045,7 +2048,7 @@ fn write_archive(
         }
         let rel = path.strip_prefix(base).unwrap_or(path);
         if p.needs_utf8() && rel.to_str().is_none() {
-            let e = io::Error::new(io::ErrorKind::InvalidData, "name is not UTF-8");
+            let e = io::Error::new(io::ErrorKind::InvalidData, crate::why::NOT_UTF8);
             match h.error(path, &e) {
                 ErrorChoice::Cancel => return Ok(None),
                 _ => {

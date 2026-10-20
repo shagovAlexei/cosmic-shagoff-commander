@@ -20,6 +20,7 @@ mod thumbs;
 mod toolbar;
 mod view;
 mod watcher;
+mod why;
 
 fn main() -> cosmic::iced::Result {
     // Run as root by pkexec for Alt+Enter's owner / group / bits (163): no window.
