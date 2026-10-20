@@ -1622,7 +1622,13 @@ impl Packer {
                 bzip2::Compression::default(),
             ))),
             Format::TarXz => tar(Enc::Xz(liblzma::write::XzEncoder::new(w, 6))),
-            Format::TarZst => tar(Enc::Zst(zstd::stream::write::Encoder::new(w, 0)?)),
+            Format::TarZst => {
+                // With its content checksum (as the zstd CLI): damage inside a raw block would
+                // otherwise decode without an error (Alt+Shift+F9 would call it fine).
+                let mut z = zstd::stream::write::Encoder::new(w, 0)?;
+                z.include_checksum(true)?;
+                tar(Enc::Zst(z))
+            }
             Format::Gz | Format::Bz2 | Format::Xz | Format::Zst => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,

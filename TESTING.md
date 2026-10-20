@@ -1408,3 +1408,4 @@
 | `regression_shift_letters_are_not_the_viewer_keys` | F3: Shift+Q / Shift+N действовали как Q / N | 20 |
 | `regression_rename_old_then_a_failed_move_puts_it_back` | F6 с «Переименовать старый», перенос не удался, «Пропустить»: старый оставался под именем `a (1)` | 70 |
 | `regression_job_errors_in_the_ui_language` | Ошибки операций показывались по-английски (тексты core и системные «… (os error N)») | 0.84.1 |
+| `test_reads_every_member_and_finds_damage` | tar.zst писался без контрольной суммы: порча внутри несжатого блока проходила Alt+Shift+F9 как «в порядке» (тест падал не каждый раз) | 168 |
