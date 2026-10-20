@@ -10,7 +10,10 @@ the files of the dir under the tree's cursor. Ctrl+F8 again — the files back.
   `viewport::visible_range`), no column header; the cursor kept in view (`reveal`).
 - Keys (`App::tree_act`): ↑ ↓ PgUp PgDn Home End, → open / step in, ← close / step out, Alt+letter
   — the next dir with it; each move takes the other panel there (`tree_follow`). Enter — focus to
-  the other panel (the files are there). Tab, F1, Ctrl+, and Alt+F10 work as usual; file operations
-  do nothing (the files under the tree are not on screen).
+  the other panel (the files are there). Keys about the panel's files (`on_files`: marks, F3–F8,
+  the clipboard, sorting…) do nothing — those files are not on screen; the rest (tabs, menus,
+  views, the terminal, Alt+F10…) as usual. The tab sent to another dir (Alt+F10, Ctrl+D…): the
+  tree opened again there. A locked tab in the other panel does not follow (it would open a tab
+  at every step). The file list's scroll is kept while the tree is shown.
 - Mouse: a click picks a row (the other panel follows), a double click opens / closes it.
 - A new tab (Ctrl+T) shows the files.

@@ -220,8 +220,8 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             .into(),
     };
 
-    let list = if let Some((_, tree)) = &p.tree {
-        tree_list(app, side, p, tree, active)
+    let list = if let Some(pt) = &p.tree {
+        tree_list(app, side, p, &pt.tree, active)
     } else if p.thumbs {
         thumb_list(app, side, p, active)
     } else if p.brief {
