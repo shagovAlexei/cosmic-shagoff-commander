@@ -711,6 +711,14 @@ fn drive_bar(app: &App, side: usize) -> Element<'_, Message> {
 }
 
 /// `12,3 ГБ`: units and decimal separator come from the locale's ftl.
+/// A size as the totals under the panels show it (Show → sizes in KB / MB, or bytes).
+pub fn size_text(config: &crate::config::Config, n: u64) -> String {
+    match config.human_sizes() {
+        true => human(n),
+        false => format!("{} {}", format::size(n), fl!("byte-unit")),
+    }
+}
+
 pub fn human(n: u64) -> String {
     let units = fl!("size-units");
     let units: [&str; 6] = units
@@ -1050,10 +1058,7 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
         // A read error is a card of its own (`status_popup`): the totals stay.
         _ => {
             let (t, m) = (p.panel.totals(), p.panel.marked_totals());
-            let size = |n| match app.config.human_sizes() {
-                true => human(n),
-                false => format!("{} {}", format::size(n), fl!("byte-unit")),
-            };
+            let size = |n| size_text(&app.config, n);
             let totals = fl!(
                 "status",
                 sel_bytes = size(m.bytes),

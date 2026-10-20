@@ -2380,21 +2380,14 @@ impl App {
                 return Task::batch([reload(self, 0), reload(self, 1)]);
             }
             Message::Occupied(u) => {
-                if (self.status.as_ref()).is_some_and(|s| s.kind == StatusKind::Busy) {
+                // Only its own "counting…": another job's Busy line stays.
+                if (self.status.as_ref()).is_some_and(|s| s.text == fl!("counting")) {
                     self.status = None;
                 }
                 if let Some(u) = u {
                     let text = fl!(
                         "occupied",
-                        // As the totals under the panels show sizes.
-                        size = match self.config.human_sizes() {
-                            true => crate::view::human(u.bytes),
-                            false => format!(
-                                "{} {}",
-                                shagoff_core::format::size(u.bytes),
-                                fl!("byte-unit")
-                            ),
-                        },
+                        size = crate::view::size_text(&self.config, u.bytes),
                         files = u.files,
                         dirs = u.dirs
                     );
@@ -4031,26 +4024,34 @@ impl App {
             Action::MarkDown => panel.toggle_mark_and_move(1),
             Action::MarkUp => panel.toggle_mark_and_move(-1),
             Action::Invert => panel.invert(),
-            Action::RestoreMarks => {
-                panel.restore_marks();
-            }
+            Action::RestoreMarks => panel.restore_marks(),
             Action::MarkExt => panel.mark_ext(true),
             Action::UnmarkExt => panel.mark_ext(false),
             // TC: the dir / archive under the cursor (`..`: the parent) in that panel; on a file,
             // this panel's dir.
             Action::OpenLeft | Action::OpenRight => {
-                let path = (panel.drop_target(panel.cursor()))
-                    .unwrap_or_else(|| panel.cwd().to_path_buf());
                 let to = usize::from(action == Action::OpenRight);
+                let path = match panel.drop_target(panel.cursor()) {
+                    Some(p) => p,
+                    // On a file in this very panel: nothing (reading its dir again would drop
+                    // search results / a branch).
+                    None if to == side => return Task::none(),
+                    None => panel.cwd().to_path_buf(),
+                };
                 return self.load(to, path, None);
             }
             Action::Occupied => {
-                let targets = panel.targets();
-                if targets.is_empty() || targets.iter().any(|p| inside_archive(p)) {
+                // Nothing marked, on `..`: the dir itself (TC).
+                let mut targets = panel.targets();
+                if targets.is_empty() {
+                    targets.push(panel.cwd().to_path_buf());
+                }
+                if loading || targets.iter().any(|p| inside_archive(p)) {
                     return Task::none();
                 }
                 self.say(StatusKind::Busy, fl!("counting"));
-                let stop = Arc::new(AtomicBool::new(false));
+                // The tab's: leaving the dir stops it, as Space's counts.
+                let stop = self.panes[side].active().counting.clone();
                 return Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
@@ -9884,6 +9885,10 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down)); // "f.txt": this panel's dir
         let _ = app.update(Message::Key(Action::OpenRight));
         assert_eq!(pending(&app, 1).as_deref(), Some(tmp.path()));
+        // On a file, Ctrl+← in its own (left) panel: nothing read again.
+        let before = pending(&app, 0);
+        let _ = app.update(Message::Key(Action::OpenLeft));
+        assert_eq!(pending(&app, 0), before);
         // Shift+F10 on the file: its menu as a list; a pick does what the item does.
         let _ = app.update(Message::Key(Action::ContextMenu));
         let Some(Dialog::List {

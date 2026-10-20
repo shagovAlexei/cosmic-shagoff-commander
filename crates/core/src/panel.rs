@@ -382,24 +382,20 @@ impl Panel {
     }
 
     /// Num /: the marks kept before they last went in bulk, if in this dir; names not listed
-    /// any more are left out. `false`: nothing to bring back.
-    pub fn restore_marks(&mut self) -> bool {
+    /// any more are left out.
+    pub fn restore_marks(&mut self) {
         let Some((dir, names)) = &self.saved else {
-            return false;
+            return;
         };
         if *dir != self.cwd {
-            return false;
+            return;
         }
         let back: Vec<OsString> = (self.entries.iter())
             .filter(|e| names.contains(&e.os_name))
             .map(|e| e.os_name.clone())
             .collect();
-        if back.is_empty() {
-            return false;
-        }
         self.marked.extend(back);
         self.touched();
-        true
     }
 
     /// Alt+Num + / Alt+Num −: the files with the extension of the one under the cursor (any case;
@@ -424,7 +420,14 @@ impl Panel {
 
     /// Drop marks of processed entries (by file name; search results are marked by whole path).
     pub fn unmark(&mut self, paths: &[PathBuf]) {
-        self.keep_marks();
+        // Kept for Num / only when this actually unmarks something (a job may report none).
+        let hits = |p: &PathBuf| {
+            self.marked.contains(p.as_os_str())
+                || p.file_name().is_some_and(|n| self.marked.contains(n))
+        };
+        if paths.iter().any(hits) {
+            self.keep_marks();
+        }
         for p in paths {
             self.marked.remove(p.as_os_str());
             if let Some(name) = p.file_name() {
@@ -583,21 +586,24 @@ mod tests {
     #[test]
     fn num_slash_brings_back_the_marks_dropped_in_bulk() {
         let mut p = loaded("/d", vec![f("a", 1), f("b", 1), f("c", 1)]);
-        assert!(!p.restore_marks()); // nothing kept yet
+        p.restore_marks(); // nothing kept yet
+        assert!(!p.has_marks());
         p.mark_names(&["a".into(), "c".into()]);
         p.unmark(&[PathBuf::from("/d/a"), PathBuf::from("/d/c")]); // after an operation
         assert!(!p.has_marks());
-        assert!(p.restore_marks());
+        p.unmark(&[]); // a job that reports nothing: what is kept stays
+        p.restore_marks();
         assert_eq!(p.targets(), [PathBuf::from("/d/a"), PathBuf::from("/d/c")]);
         p.mark_all(false); // Ctrl+Num−
         // `c` gone meanwhile: only what is still listed comes back.
         p.set_listing(PathBuf::from("/d"), vec![f("a", 1), f("b", 1)], None);
-        assert!(p.restore_marks());
+        p.restore_marks();
         assert_eq!(p.targets(), [PathBuf::from("/d/a")]);
         // Another dir: not its marks.
         p.mark_all(false);
         p.set_listing(PathBuf::from("/e"), vec![f("a", 1)], None);
-        assert!(!p.restore_marks());
+        p.restore_marks();
+        assert!(!p.has_marks());
     }
 
     #[test]
