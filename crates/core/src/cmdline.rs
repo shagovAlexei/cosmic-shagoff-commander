@@ -1,5 +1,7 @@
 //! Command line under the panels (TC `path>`): what a typed line means, history, inserted names.
 
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 /// History length (Ctrl+E, Alt+F8).
@@ -68,6 +70,69 @@ pub fn quote(word: &str) -> String {
     } else {
         format!("'{}'", word.replace('\'', "'\\''"))
     }
+}
+
+/// `path` as one shell word, for a name not in UTF-8 too: the line is text, so each byte that is
+/// not UTF-8 becomes a glob `?` outside the quotes (`'caf'?'.txt'`; dash has no `$'\xNN'`).
+/// `None` when such a pattern fits another name in its dir too (`siblings(dir)`: the names there),
+/// as bytes (dash) or as characters (bash, zsh): it would pick the wrong file.
+pub fn word(path: &Path, siblings: impl Fn(&Path) -> Vec<OsString>) -> Option<String> {
+    let bytes = path.as_os_str().as_bytes();
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return Some(quote(s));
+    }
+    for (i, c) in path.components().enumerate() {
+        let name = c.as_os_str().as_bytes();
+        if std::str::from_utf8(name).is_ok() {
+            continue;
+        }
+        let dir: PathBuf = path.components().take(i).collect();
+        let others = siblings(&dir);
+        if others
+            .iter()
+            .any(|o| o.as_bytes() != name && glob_fits(name, o.as_bytes()))
+        {
+            return None;
+        }
+    }
+    let mut out = String::new();
+    for chunk in bytes.utf8_chunks() {
+        if !chunk.valid().is_empty() {
+            out.push_str(&quote(chunk.valid()));
+        }
+        out.extend(std::iter::repeat_n('?', chunk.invalid().len()));
+    }
+    Some(out)
+}
+
+/// Does `other` fit the pattern `word` makes of `name` (a `?` for each byte that is not UTF-8),
+/// matched by bytes or by characters?
+fn glob_fits(name: &[u8], other: &[u8]) -> bool {
+    // Units: a character, or `None` for a byte that is not UTF-8 (`?` in a pattern).
+    let units = |b: &[u8]| -> Vec<Option<char>> {
+        let mut v = Vec::new();
+        for chunk in b.utf8_chunks() {
+            v.extend(chunk.valid().chars().map(Some));
+            v.extend(chunk.invalid().iter().map(|_| None));
+        }
+        v
+    };
+    let bad: Vec<bool> = {
+        let mut v = Vec::new();
+        for chunk in name.utf8_chunks() {
+            v.extend(chunk.valid().bytes().map(|_| false));
+            v.extend(chunk.invalid().iter().map(|_| true));
+        }
+        v
+    };
+    let by_bytes = other.len() == name.len()
+        && (name.iter().zip(other))
+            .zip(&bad)
+            .all(|((a, b), any)| *any || a == b);
+    let (pat, oth) = (units(name), units(other));
+    let by_chars =
+        pat.len() == oth.len() && pat.iter().zip(&oth).all(|(p, o)| p.is_none() || p == o);
+    by_bytes || by_chars
 }
 
 /// `word` at the end of `line`, one space between.
@@ -331,6 +396,27 @@ mod tests {
         assert_eq!(
             only("/usr/bin/gnome-terminal"),
             ["/usr/bin/gnome-terminal", "--", "sh"]
+        );
+    }
+
+    #[test]
+    fn word_globs_bytes_not_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let os = |b: &[u8]| OsString::from_vec(b.to_vec());
+        let none = |_: &Path| Vec::new();
+        assert_eq!(word(Path::new("/a b/c"), none).as_deref(), Some("'/a b/c'"));
+        // cp1251 "caf\xe9.txt" and a dir "\xcf\xf0" above it.
+        let p = PathBuf::from(os(b"/x/\xcf\xf0/caf\xe9 1.txt"));
+        assert_eq!(word(&p, none).as_deref(), Some("/x/??/caf?' 1.txt'"));
+        // A sibling the same pattern fits: by bytes (dash) or by characters (bash).
+        let with = |names: Vec<OsString>| move |_: &Path| names.clone();
+        let name = PathBuf::from(os(b"caf\xe9"));
+        assert!(word(&name, with(vec![os(b"caf\xe9"), os(b"cafe")])).is_none());
+        assert!(word(&name, with(vec![os("café".as_bytes())])).is_none());
+        assert!(word(&name, with(vec![os(b"caf\xe8")])).is_none());
+        assert_eq!(
+            word(&name, with(vec![os(b"caf\xe9"), os(b"cafe2"), os(b"ca")])).as_deref(),
+            Some("caf?")
         );
     }
 }
