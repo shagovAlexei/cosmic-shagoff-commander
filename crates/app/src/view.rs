@@ -301,8 +301,8 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
                 side,
                 p.panel.sort(),
                 skin,
-                app.cols,
-                viewport::visible_cols(p.width, app.cols),
+                app.col_widths(),
+                viewport::visible_cols(p.width, app.col_widths()),
             ))
             .class(panel_style()),
         )
@@ -892,7 +892,8 @@ fn file_row<'a>(
     let font = app.panel_font();
     let cell = |s| panel_cell(s, font);
     // A narrow pane keeps Name readable: fixed columns that don't fit go, rightmost first.
-    let shown = viewport::visible_cols(app.panes[side].active().width, app.cols);
+    let cols = app.col_widths();
+    let shown = viewport::visible_cols(app.panes[side].active().width, cols);
     let cells = row![
         // Empty style: the default (Transparent) sets its own text colour over the cursor's.
         container(name_cell(
@@ -906,14 +907,14 @@ fn file_row<'a>(
         .width(Length::Fill)
         .class(theme::Container::custom(|_| container::Style::default())),
     ]
-    .push_maybe((shown > 0).then(|| cell(e.ext.clone()).width(Length::Fixed(app.cols[0]))))
+    .push_maybe((shown > 0).then(|| cell(e.ext.clone()).width(Length::Fixed(cols[0]))))
     .push_maybe((shown > 1).then(|| {
         cell(size)
-            .width(Length::Fixed(app.cols[1]))
+            .width(Length::Fixed(cols[1]))
             .align_x(Alignment::End)
     }))
-    .push_maybe((shown > 2).then(|| cell(date).width(Length::Fixed(app.cols[2]))))
-    .push_maybe((shown > 3).then(|| cell(attrs).width(Length::Fixed(app.cols[3]))))
+    .push_maybe((shown > 2).then(|| cell(date).width(Length::Fixed(cols[2]))))
+    .push_maybe((shown > 3).then(|| cell(attrs).width(Length::Fixed(cols[3]))))
     .spacing(6)
     .align_y(Alignment::Center);
     let row = container(cells)

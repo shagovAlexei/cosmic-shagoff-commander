@@ -32,6 +32,20 @@ pub struct SettingsForm {
     pub home: String,
     /// Installed font families, read when the settings open (not on every frame).
     pub fonts: Vec<String>,
+    /// «Find a font»: the families listed are those holding every word (any case).
+    pub font_filter: String,
+}
+
+/// Indices of the `fonts` holding every word of `filter`, any case.
+pub fn fonts_found(fonts: &[String], filter: &str) -> Vec<usize> {
+    let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
+    (fonts.iter().enumerate())
+        .filter(|(_, f)| {
+            let f = f.to_lowercase();
+            words.iter().all(|w| f.contains(w.as_str()))
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// The installed font families, sorted, each once.
@@ -360,16 +374,33 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .into(),
         settings::section()
             .title(fl!("settings-fonts"))
+            .add(settings::item(
+                fl!("settings-font-find"),
+                widget::text_input(fl!("settings-font-find-hint"), &form.font_filter)
+                    .on_input(Message::FontFilter)
+                    .on_tab(Message::FocusNext)
+                    .width(Length::Fixed(200.0)),
+            ))
             .add(settings::item(fl!("settings-panel-font"), {
+                // Only the families the search finds; the index sent is into all of them.
+                let found = fonts_found(&form.fonts, &form.font_filter);
                 let names: Vec<String> = std::iter::once(fl!("settings-system"))
-                    .chain(form.fonts.iter().cloned())
+                    .chain(found.iter().map(|&i| form.fonts[i].clone()))
                     .collect();
-                let at = form
-                    .fonts
-                    .iter()
-                    .position(|f| *f == c.panel_font)
-                    .map_or(0, |i| i + 1);
-                widget::dropdown(names, Some(at), |i| Message::Setting(Setting::PanelFont(i)))
+                let at = match c.panel_font.as_str() {
+                    "" => Some(0),
+                    f => found
+                        .iter()
+                        .position(|&i| form.fonts[i] == f)
+                        .map(|k| k + 1),
+                };
+                widget::dropdown(names, at, move |k| {
+                    let i = k
+                        .checked_sub(1)
+                        .and_then(|k| found.get(k))
+                        .map_or(0, |i| i + 1);
+                    Message::Setting(Setting::PanelFont(i))
+                })
             }))
             .add(settings::item(
                 fl!("settings-panel-size"),
@@ -435,4 +466,19 @@ fn f12_section(c: &crate::config::Config) -> Element<'_, Message> {
             ));
     }
     section.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fonts_found_by_every_word_any_case() {
+        let f: Vec<String> = ["DejaVu Sans Mono", "Fira Mono", "Noto Sans"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(fonts_found(&f, "mono"), [0, 1]);
+        assert_eq!(fonts_found(&f, " SANS  dejavu"), [0]);
+        assert_eq!(fonts_found(&f, ""), [0, 1, 2]);
+    }
 }
