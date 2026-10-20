@@ -23,6 +23,8 @@ pub struct ColorEdit {
     pub palette: bool,
     /// The colour field's text: the selected rule's colour (or background), as a name or a code.
     pub field: String,
+    /// The ready palettes' names, as `colors::presets()`.
+    presets: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,8 +74,8 @@ pub enum ColorMsg {
     Down,
     /// Back to `colors::defaults()`.
     Reset,
-    /// The «Blue» palette for the list, marks and cursor; the rules stay.
-    Blue,
+    /// A ready palette (`colors::presets()[i]`) for the list, marks and cursor; the rules stay.
+    Preset(usize),
 }
 
 impl ColorEdit {
@@ -88,6 +90,12 @@ impl ColorEdit {
             bg: false,
             palette: false,
             field: String::new(),
+            presets: vec![
+                fl!("colors-blue"),
+                fl!("colors-far"),
+                fl!("colors-dark"),
+                fl!("colors-light"),
+            ],
         };
         c.show();
         c
@@ -234,7 +242,11 @@ impl ColorEdit {
                 self.list.swap(i, i + 1);
                 self.sel = Some(i + 1);
             }
-            (ColorMsg::Blue, _) => self.panel = colors::blue_panel(),
+            (ColorMsg::Preset(i), _) => {
+                if let Some(p) = colors::presets().into_iter().nth(i) {
+                    self.panel = p;
+                }
+            }
             (ColorMsg::Reset, _) => {
                 self.leave_special();
                 let (names, bg, palette) = (self.names, self.bg, self.palette);
@@ -392,6 +404,8 @@ pub fn view<'a>(
     font: crate::dialogs::ListFont,
 ) -> Element<'a, Message> {
     let msg = Message::Colors;
+    // The ready palette the panel's colours are now, if one.
+    let preset = colors::presets().iter().position(|p| *p == c.panel);
     let mut list = column![].spacing(1);
     for (i, r) in c.list.iter().enumerate() {
         let mut mask = if r.mask.trim().is_empty() {
@@ -629,10 +643,15 @@ pub fn view<'a>(
         )
         .primary_action(widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit))
         .secondary_action(cancel)
-        .tertiary_action(row![
-            widget::button::text(fl!("colors-reset")).on_press(msg(ColorMsg::Reset)),
-            widget::button::text(fl!("colors-blue")).on_press(msg(ColorMsg::Blue)),
-        ])
+        .tertiary_action(
+            row![
+                widget::button::text(fl!("colors-reset")).on_press(msg(ColorMsg::Reset)),
+                widget::text::body(fl!("colors-preset")),
+                widget::dropdown(&c.presets, preset, move |i| msg(ColorMsg::Preset(i))),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
         .into()
 }
 
@@ -745,8 +764,10 @@ mod tests {
         c.update(ColorMsg::Special(Special::Panel));
         c.update(ColorMsg::Pick("#000080")); // text
         assert_eq!(c.panel.text, "#000080");
-        c.update(ColorMsg::Blue);
+        c.update(ColorMsg::Preset(0));
         assert_eq!(c.panel, colors::blue_panel());
+        c.update(ColorMsg::Preset(3));
+        assert_eq!(c.panel, colors::presets()[3]);
         c.update(ColorMsg::Reset);
         assert_eq!(c.panel, colors::default_panel());
     }
