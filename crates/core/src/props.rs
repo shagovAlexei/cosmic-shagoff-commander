@@ -162,6 +162,62 @@ pub fn chgrp(paths: &[PathBuf], gid: u32, recursive: bool) -> Vec<(PathBuf, io::
     failed
 }
 
+/// `chown` arguments giving `paths` the owner `uid` and / or the group `gid`: numbers with `+`
+/// (never read as names), links themselves (`-h`), `-R` into dirs (GNU chown doesn't follow
+/// links there).
+pub fn chown_args(
+    paths: &[PathBuf],
+    uid: Option<u32>,
+    gid: Option<u32>,
+    recursive: bool,
+) -> Vec<std::ffi::OsString> {
+    let id = |i: Option<u32>| i.map(|i| format!("+{i}")).unwrap_or_default();
+    let who = match gid {
+        Some(_) => format!("{}:{}", id(uid), id(gid)),
+        None => id(uid),
+    };
+    let mut v: Vec<std::ffi::OsString> = vec!["-h".into()];
+    if recursive {
+        v.push("-R".into());
+    }
+    v.extend([who.into(), "--".into()]);
+    v.extend(paths.iter().map(|p| p.as_os_str().to_owned()));
+    v
+}
+
+/// Run `chown` with `chown_args` behind `prefix` (`["pkexec"]` without root, `[]` as root).
+/// Err: its own message (polkit's refusal, a file it could not change) or why it didn't start.
+pub fn chown_with(
+    prefix: &[&str],
+    paths: &[PathBuf],
+    uid: Option<u32>,
+    gid: Option<u32>,
+    recursive: bool,
+) -> Result<(), String> {
+    let (prog, rest) = match prefix {
+        [p, rest @ ..] => (*p, rest),
+        [] => ("chown", &[][..]),
+    };
+    let mut cmd = std::process::Command::new(prog);
+    cmd.args(rest);
+    if !prefix.is_empty() {
+        cmd.arg("chown");
+    }
+    let out = (cmd.args(chown_args(paths, uid, gid, recursive)))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{prog}: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(if err.is_empty() {
+        format!("{prog}: {}", out.status)
+    } else {
+        err
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,5 +388,48 @@ mod tests {
         assert_eq!(mode_of(&top.join("sub/f")), 0o644);
         assert_eq!(mode_of(&outside), 0o600); // the link's target untouched
         assert_eq!(mode(&top.join("link")), None);
+    }
+
+    #[test]
+    fn chown_args_are_numbers_links_themselves() {
+        let p = [PathBuf::from("/a"), PathBuf::from("-b")];
+        let s = |v: Vec<std::ffi::OsString>| {
+            v.into_iter()
+                .map(|a| a.into_string().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            s(chown_args(&p, Some(0), None, false)),
+            ["-h", "+0", "--", "/a", "-b"]
+        );
+        assert_eq!(
+            s(chown_args(&p[..1], Some(5), Some(7), true)),
+            ["-h", "-R", "+5:+7", "--", "/a"]
+        );
+        assert_eq!(
+            s(chown_args(&p[..1], None, Some(7), false)),
+            ["-h", ":+7", "--", "/a"]
+        );
+    }
+
+    #[test]
+    fn chown_with_runs_chown_and_reports_its_error() {
+        use std::os::unix::fs::MetadataExt;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("f");
+        fs::write(&f, "x").unwrap();
+        let m = fs::metadata(&f).unwrap();
+        // Giving the file its own owner and group: no root needed.
+        chown_with(
+            &[],
+            std::slice::from_ref(&f),
+            Some(m.uid()),
+            Some(m.gid()),
+            false,
+        )
+        .unwrap();
+        let err = chown_with(&[], &[d.path().join("none")], Some(m.uid()), None, false);
+        assert!(err.unwrap_err().contains("none"));
+        assert!(chown_with(&["no-such-prog-163"], &[f], None, Some(m.gid()), false).is_err());
     }
 }

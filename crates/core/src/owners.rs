@@ -50,24 +50,34 @@ impl Owners {
     }
 }
 
+/// Names of these ids, sorted by name, numbers where unknown.
+fn named(names: &HashMap<u32, String>, ids: &[u32]) -> Vec<(u32, String)> {
+    // Each id once first: a selection of many files repeats them.
+    let ids: std::collections::BTreeSet<u32> = ids.iter().copied().collect();
+    let mut v: Vec<(u32, String)> = (ids.into_iter())
+        .map(|i| (i, names.get(&i).cloned().unwrap_or_else(|| i.to_string())))
+        .collect();
+    v.sort_by(|a, b| a.1.cmp(&b.1));
+    v
+}
+
 impl Owners {
     /// Names of these groups, sorted by name, numbers where unknown.
     pub fn groups(&self, gids: &[u32]) -> Vec<(u32, String)> {
-        // Each gid once first: a selection of many files repeats them.
-        let gids: std::collections::BTreeSet<u32> = gids.iter().copied().collect();
-        let mut v: Vec<(u32, String)> = (gids.into_iter())
-            .map(|g| {
-                (
-                    g,
-                    self.groups
-                        .get(&g)
-                        .cloned()
-                        .unwrap_or_else(|| g.to_string()),
-                )
-            })
-            .collect();
-        v.sort_by(|a, b| a.1.cmp(&b.1));
-        v
+        named(&self.groups, gids)
+    }
+
+    /// Names of these users, sorted by name, numbers where unknown.
+    pub fn users(&self, uids: &[u32]) -> Vec<(u32, String)> {
+        named(&self.users, uids)
+    }
+
+    pub fn all_uids(&self) -> Vec<u32> {
+        self.users.keys().copied().collect()
+    }
+
+    pub fn all_gids(&self) -> Vec<u32> {
+        self.groups.keys().copied().collect()
     }
 }
 
@@ -110,5 +120,10 @@ mod tests {
         };
         assert_eq!(o.name(1000, 1000), "shag:shag");
         assert_eq!(o.name(1001, 5), "1001:5");
+        assert_eq!(
+            o.users(&[1001, 1000, 1000]),
+            [(1001, "1001".into()), (1000, "shag".into())]
+        );
+        assert_eq!(o.all_gids(), [1000]);
     }
 }
