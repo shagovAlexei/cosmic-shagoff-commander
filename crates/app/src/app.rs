@@ -521,6 +521,9 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
+    /// Ctrl+Shift+F5 done (`App::make_links`): the sources linked, and the error to show (one
+    /// line for every link that failed), or the error that stopped it all.
+    Linked(usize, Result<(Vec<PathBuf>, Option<String>), String>),
     /// F7 done (`App::mkdir`): the dir it was typed in, the name as typed and its first part.
     Made {
         side: usize,
@@ -658,8 +661,8 @@ pub enum Message {
     PropsRecursive,
     /// id, usage counted in the background (`None` = stopped).
     PropsUsage(u64, Option<shagoff_core::props::Usage>),
-    /// Space on a dir counted it: (side, tab id, its parent, its name, bytes).
-    DirSize(usize, u64, PathBuf, OsString, u64),
+    /// Space on a dir counted it: (tab id, its parent, its name, bytes).
+    DirSize(u64, PathBuf, OsString, u64),
     /// chmod finished: (side, what failed).
     PropsDone(usize, Vec<String>),
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
@@ -690,7 +693,6 @@ pub enum Message {
     OpenWithApps(usize, Vec<PathBuf>, Result<openwith::Found, String>),
     /// Ctrl+B read: shown if that tab is still in `root`, as it was.
     BranchListed {
-        side: usize,
         tab: u64,
         /// The request: dropped unless the tab still waits for this one.
         id: u64,
@@ -1434,9 +1436,7 @@ impl App {
                 space,
             } => {
                 // The tab may have moved (Ctrl+U): find it by id; `side` is only where it started.
-                let Some(side) =
-                    (0..2).find(|&s| self.panes[s].items().iter().any(|t| t.id == tab))
-                else {
+                let Some(side) = self.side_of(tab) else {
                     return Task::none(); // tab was closed
                 };
                 let Some(t) = self.panes[side]
@@ -1850,11 +1850,13 @@ impl App {
                     p.mixed = if p.recursive { 0o7777 } else { p.own_mixed };
                 }
             }
-            Message::DirSize(side, tab, cwd, name, bytes) => {
-                if let Some(t) = self.panes[side]
-                    .items_mut()
-                    .iter_mut()
-                    .find(|t| t.id == tab)
+            Message::DirSize(tab, cwd, name, bytes) => {
+                // By id: the tab may have moved to the other panel meanwhile (Ctrl+U, a drag).
+                if let Some(side) = self.side_of(tab)
+                    && let Some(t) = self.panes[side]
+                        .items_mut()
+                        .iter_mut()
+                        .find(|t| t.id == tab)
                 {
                     t.panel.set_dir_size(&cwd, name, bytes);
                 }
@@ -2134,12 +2136,15 @@ impl App {
                         }
                     }
                     d.stamps = new;
-                    d.confirm_close = false;
-                    // The disk now holds what undoing would have changed.
-                    d.undo.clear();
                     match failed {
+                        // A side still unsaved: its undo history and the close warning stay.
                         Some(e) => self.say(StatusKind::Error, e),
-                        None => self.say(StatusKind::Info, fl!("diff-saved")),
+                        None => {
+                            d.confirm_close = false;
+                            // The disk now holds what undoing would have changed.
+                            d.undo.clear();
+                            self.say(StatusKind::Info, fl!("diff-saved"));
+                        }
                     }
                 }
             }
@@ -2346,6 +2351,27 @@ impl App {
                 if self.lister.as_ref().is_some_and(|l| l.window == Some(id)) {
                     self.lister = None;
                 }
+            }
+            Message::Linked(side, made) => {
+                let done = match made {
+                    Ok((done, failed)) => {
+                        if let Some(msg) = failed {
+                            self.say(StatusKind::Error, msg);
+                        }
+                        done
+                    }
+                    Err(msg) => {
+                        self.say(StatusKind::Error, msg);
+                        return Task::none();
+                    }
+                };
+                // Marks stay on the ones not linked, to try again.
+                self.panes[side].active_mut().panel.unmark(&done);
+                let reload = |app: &mut Self, s: usize| {
+                    let to = app.panes[s].active().target();
+                    app.reload(s, to, None)
+                };
+                return Task::batch([reload(self, 0), reload(self, 1)]);
             }
             Message::TermWait => {} // `term_follow` runs after it
             Message::EditTick => {
@@ -2690,12 +2716,15 @@ impl App {
                 }
             }
             Message::BranchListed {
-                side,
                 tab,
                 id,
                 root,
                 paths,
             } => {
+                // By id: the tab may have moved to the other panel meanwhile (Ctrl+U, a drag).
+                let Some(side) = self.side_of(tab) else {
+                    return Task::none();
+                };
                 let Some(i) = (self.panes[side].items().iter()).position(|t| t.id == tab) else {
                     return Task::none();
                 };
@@ -2977,9 +3006,15 @@ impl App {
                 // A tab held over the other pane: it goes there (TC), with Ctrl a copy. Not
                 // while the Ctrl+Q viewer covers that pane.
                 let over = self.pane_hover.take();
+                let shown = self.viewer_shown();
+                let covered = |to: usize| match shown {
+                    None => false,
+                    Some(None) => true,
+                    Some(Some(s)) => s == to,
+                };
                 if let Some((from, _)) = self.tab_drag.take()
                     && over == Some(1 - from)
-                    && self.lister.is_none()
+                    && !covered(1 - from)
                 {
                     let action = match self.mods.control() {
                         true => Action::TabCopyOther,
@@ -3451,8 +3486,6 @@ impl App {
         self.next_id
     }
 
-    /// Scan `path` for the active tab of `side` in the background; the result lands in `Message::Listed`.
-    /// Go to `path` in the active tab (leaves search results).
     /// A path inside a nested archive's temp copy as where that archive lies (`outer.zip/inner.zip/…`).
     pub fn shown(&self, p: &Path) -> PathBuf {
         for (tmp, back) in &self.nested {
@@ -3477,6 +3510,7 @@ impl App {
             .map_or_else(|| p.to_path_buf(), |(_, real)| real)
     }
 
+    /// Go to `path` in the active tab (leaves search results).
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
         let path = self.real(&path);
         // A locked tab keeps its dir: going elsewhere happens in a new tab next to it (TC).
@@ -3537,6 +3571,12 @@ impl App {
     }
 
     /// Read the active tab's dir again (search results stay: they are re-checked).
+    /// The panel holding tab `tab` now (tabs move: Ctrl+U, a drag), `None` once it is closed.
+    fn side_of(&self, tab: u64) -> Option<usize> {
+        (0..2).find(|&s| self.panes[s].items().iter().any(|t| t.id == tab))
+    }
+
+    /// Scan `path` for the active tab of `side` in the background; the result lands in `Message::Listed`.
     fn reload(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
         let i = self.panes[side].active_index();
         self.load_tab(side, i, path, focus)
@@ -3941,7 +3981,7 @@ impl App {
                     dir.filter(|(cwd, n)| !loading && !inside_archive(&cwd.join(n)))
                 {
                     let stop = self.panes[side].active().counting.clone();
-                    let count = count_dirs(side, tab, cwd, vec![name], stop);
+                    let count = count_dirs(tab, cwd, vec![name], stop);
                     return Task::batch([count, self.reveal(side, tab)]);
                 }
             }
@@ -3958,7 +3998,7 @@ impl App {
                     .map(|e| e.os_name.clone())
                     .collect();
                 let stop = self.panes[side].active().counting.clone();
-                return count_dirs(side, tab, cwd, names, stop);
+                return count_dirs(tab, cwd, names, stop);
             }
             Action::MarkDown => panel.toggle_mark_and_move(1),
             Action::MarkUp => panel.toggle_mark_and_move(-1),
@@ -4941,7 +4981,6 @@ impl App {
         }
     }
 
-    /// F7: create (possibly nested) dirs, then put the cursor on the first created component.
     /// Shift+F4: create `name` in the panel's dir if it is not there, open it in the editor,
     /// put the cursor on it.
     fn new_file(&mut self, side: usize, name: &str) -> Task<Message> {
@@ -4968,6 +5007,7 @@ impl App {
         self.reload(side, cwd, Some(name.to_string()))
     }
 
+    /// F7: create (possibly nested) dirs, then put the cursor on the first created component.
     fn mkdir(&mut self, side: usize, name: &str) -> Task<Message> {
         if name.is_empty() {
             return Task::none();
@@ -5009,7 +5049,8 @@ impl App {
         )
     }
 
-    /// Ctrl+Shift+F5: links placed by F5's rules; instant, so no job. Both panes reread.
+    /// Ctrl+Shift+F5: links placed by F5's rules (`link_all`, in the background); no job, no
+    /// dialog. Both panes reread.
     fn make_links(&mut self, side: usize, sources: &[PathBuf], target: &Path) -> Task<Message> {
         if [sources.first().map(PathBuf::as_path), Some(target)]
             .into_iter()
@@ -5019,45 +5060,17 @@ impl App {
             self.say(StatusKind::Error, fl!("archive-read-only"));
             return Task::none();
         }
-        // As F5: a trailing `/` names a dir to put them in, made if missing.
-        if target.as_os_str().as_encoded_bytes().ends_with(b"/")
-            && let Err(e) = std::fs::create_dir_all(target)
-        {
-            let path = target.display().to_string();
-            self.say(
-                StatusKind::Error,
-                fl!("link-failed", path = path, err = e.to_string()),
-            );
-            return Task::none();
-        }
-        let pairs = match ops::plan(sources, target) {
-            Ok(p) => p,
-            Err(e) => {
-                self.say(StatusKind::Error, plan_error(&e));
-                return Task::none();
-            }
-        };
-        let failed = ops::symlinks(&pairs);
-        if let Some((path, e)) = failed.first() {
-            let (path, err) = (path.display().to_string(), e.to_string());
-            let msg = match failed.len() {
-                1 => fl!("link-failed", path = path, err = err),
-                n => fl!("links-failed", n = n, path = path, err = err),
-            };
-            self.say(StatusKind::Error, msg);
-        }
-        // Marks stay on the ones not linked, to try again.
-        let done: Vec<PathBuf> = pairs
-            .iter()
-            .filter(|(_, d)| !failed.iter().any(|(f, _)| f == d))
-            .map(|(s, _)| s.clone())
-            .collect();
-        self.panes[side].active_mut().panel.unmark(&done);
-        let reload = |app: &mut Self, s: usize| {
-            let cwd = app.panes[s].active().panel.cwd().to_path_buf();
-            app.reload(s, cwd, None)
-        };
-        Task::batch([reload(self, 0), reload(self, 1)])
+        // In the background: on a dead network mount a `stat` or `symlink` never returns.
+        let (sources, target) = (sources.to_vec(), target.to_path_buf());
+        Task::perform(
+            async move {
+                let made = tokio::task::spawn_blocking(move || link_all(&sources, &target))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()));
+                Message::Linked(side, made)
+            },
+            cosmic::Action::App,
+        )
     }
 
     /// F5 / F6 / rename: resolve the target, then run the transfer on a worker thread.
@@ -5777,7 +5790,6 @@ impl App {
         task
     }
 
-    /// F3 with the built-in viewer: the file under the cursor (extracted first inside an archive).
     /// Ctrl+B / Ctrl+Shift+B (TC "branch"): every file below the dir (or the marked dirs) in one
     /// list, read in the background; again — the dir as usual.
     fn branch(&mut self, side: usize, action: Action) -> Task<Message> {
@@ -5836,7 +5848,6 @@ impl App {
             },
             move |paths| {
                 cosmic::Action::App(Message::BranchListed {
-                    side,
                     tab,
                     id,
                     root: cwd.clone(),
@@ -6007,6 +6018,7 @@ impl App {
         Task::batch([read, lister_scroll(l, 0.0, 0.0)])
     }
 
+    /// F3 with the built-in viewer: the file under the cursor (extracted first inside an archive).
     fn view_current(&mut self, side: usize) -> Task<Message> {
         let panel = &self.panes[side].active().panel;
         let cwd = panel.cwd().to_path_buf();
@@ -6238,7 +6250,6 @@ impl App {
         Task::batch([self.reveal(side, tab), view])
     }
 
-    /// Actions that would change an archive (this panel inside one, or the other one as target).
     /// `action` would change an archive opened from inside another (155): a temp copy.
     fn nested_change(&self, side: usize, action: Action) -> bool {
         let nested = |s: usize| {
@@ -6264,6 +6275,7 @@ impl App {
         (here && nested(side)) || (matches!(action, A::Copy | A::Move) && nested(1 - side))
     }
 
+    /// Actions that would change an archive (this panel inside one, or the other one as target).
     fn read_only(&self, side: usize, action: Action) -> bool {
         let inside = |s: usize| archive::split_path(&self.panes[s].active().target()).is_some();
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
@@ -6495,8 +6507,9 @@ impl App {
             .active_mut()
             .panel
             .unmark(&report.completed);
-        let here = self.panes[side].active().panel.cwd().to_path_buf();
-        let there = self.panes[1 - side].active().panel.cwd().to_path_buf();
+        // Where each tab is going: a navigation still loading is not cancelled.
+        let here = self.panes[side].active().target();
+        let there = self.panes[1 - side].active().target();
         let reload = Task::batch([
             match browse {
                 Some(arc) => self.load(side, arc, None),
@@ -7671,9 +7684,10 @@ impl App {
         ])
     }
 
-    /// What the viewer covers: none, both panes (F3) or the pane opposite the active one (Ctrl+Q).
+    /// What the viewer covers: none (also in a window of its own), both panes (F3 in place) or
+    /// the pane opposite the active one (Ctrl+Q).
     fn viewer_shown(&self) -> Option<Option<usize>> {
-        let l = self.lister.as_deref()?;
+        let l = (self.lister.as_deref()).filter(|l| l.quick.is_some() || l.in_place())?;
         Some(l.quick.is_some().then_some(1 - self.active))
     }
 
@@ -7721,7 +7735,6 @@ fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
     )
 }
 
-/// Window events → messages. Panel keys only when no widget took the event (`Ignored`).
 /// An archive opened from inside another (155) is a copy in the temp dir: a change to it would
 /// reach nothing the user keeps — refused, by the one place every archive change goes through.
 fn changes_nested(job: &Job) -> bool {
@@ -7738,6 +7751,7 @@ fn changes_nested(job: &Job) -> bool {
     }
 }
 
+/// Window events → messages. Panel keys only when no widget took the event (`Ignored`).
 fn route_event(
     event: cosmic::iced::Event,
     status: event::Status,
@@ -7919,7 +7933,6 @@ fn plan_error(e: &PlanError) -> String {
     }
 }
 
-/// Run a gio call off the UI thread.
 /// Why F3 / F4 can't open `file` (shown as `name`), if they can't: a link to nothing says so,
 /// anything else (deleted meanwhile, in a dir r-- without x) gives the system's reason.
 fn unopenable(file: &Path, name: &str) -> Option<String> {
@@ -7932,6 +7945,7 @@ fn unopenable(file: &Path, name: &str) -> Option<String> {
     })
 }
 
+/// Run a gio call off the UI thread.
 fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, mount::Error> + Send + 'static,
     msg: impl FnOnce(Result<T, mount::Error>) -> Message + Send + 'static,
@@ -7987,11 +8001,36 @@ fn read_listing(
     }
 }
 
+/// Ctrl+Shift+F5's work, off the UI thread: links placed by F5's rules. `Ok`: the sources linked
+/// and the error line for the ones that failed; `Err`: nothing done, why.
+fn link_all(sources: &[PathBuf], target: &Path) -> Result<(Vec<PathBuf>, Option<String>), String> {
+    // As F5: a trailing `/` names a dir to put them in, made if missing.
+    if target.as_os_str().as_encoded_bytes().ends_with(b"/")
+        && let Err(e) = std::fs::create_dir_all(target)
+    {
+        let path = target.display().to_string();
+        return Err(fl!("link-failed", path = path, err = e.to_string()));
+    }
+    let pairs = ops::plan(sources, target).map_err(|e| plan_error(&e))?;
+    let failed = ops::symlinks(&pairs);
+    let msg = failed.first().map(|(path, e)| {
+        let (path, err) = (path.display().to_string(), e.to_string());
+        match failed.len() {
+            1 => fl!("link-failed", path = path, err = err),
+            n => fl!("links-failed", n = n, path = path, err = err),
+        }
+    });
+    let done = (pairs.iter())
+        .filter(|(_, d)| !failed.iter().any(|(f, _)| f == d))
+        .map(|(s, _)| s.clone())
+        .collect();
+    Ok((done, msg))
+}
+
 /// Count dirs `names` in `cwd` in the background; each sends its own `Message::DirSize`.
 /// `stop`: the tab left `cwd` (a stopped count sends nothing).
 // ponytail: one blocking task per dir; a queue if thousands of dirs ever matter.
 fn count_dirs(
-    side: usize,
     tab: u64,
     cwd: PathBuf,
     names: Vec<OsString>,
@@ -8009,7 +8048,6 @@ fn count_dirs(
         })
         .and_then(move |u| {
             Task::done(cosmic::Action::App(Message::DirSize(
-                side,
                 tab,
                 cwd.clone(),
                 name.clone(),
@@ -8064,8 +8102,6 @@ fn open_with_items(apps: Vec<openwith::App>, all: bool) -> Vec<ListItem> {
     items
 }
 
-/// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
-/// name only — a stat per result would stall on a million of them.
 /// Where a row's file lies: its dir and its own name — not `cwd` for search results fed to the
 /// panel, whose rows carry whole paths (157: some inside archives).
 fn located(cwd: &Path, os_name: &std::ffi::OsStr) -> (PathBuf, OsString) {
@@ -8076,6 +8112,8 @@ fn located(cwd: &Path, os_name: &std::ffi::OsStr) -> (PathBuf, OsString) {
     }
 }
 
+/// A found path through an archive (`/x/a.zip/docs/f`): an ancestor has an archive's name. By
+/// name only — a stat per result would stall on a million of them.
 fn inside_archive(p: &Path) -> bool {
     p.parent().is_some_and(shagoff_core::archive::within)
 }
@@ -8518,6 +8556,27 @@ mod tests {
         let mut app = app_with(Config::default(), State::default());
         let (tmp, id, generation) = navigating(&mut app);
         let _ = app.update(Message::Changed(0)); // old dir changed while the new one loads
+        let _ = app.update(listed_ok(id, generation, tmp.path()));
+        assert_eq!(app.panes[0].active().panel.cwd(), tmp.path());
+    }
+
+    #[test]
+    fn regression_a_finished_job_does_not_cancel_navigation() {
+        let mut app = app_with(Config::default(), State::default());
+        let gone = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+        let paths = vec![gone.to_path_buf()];
+        let job = Job::Delete {
+            paths,
+            permanent: true,
+        };
+        let _ = app.start_job(0, OpKind::Delete, job, None);
+        let _ = app.update(Message::JobHide); // in the background
+        let (tmp, id, _) = navigating(&mut app);
+        let _ = app.finish_job(&Report::default()); // it ends while the new dir loads
+        assert!(app.job.is_none());
+        // Still going there (read again), not back to the dir it left.
+        assert_eq!(pending_path(&app).as_deref(), Some(tmp.path()));
+        let generation = app.panes[0].active().pending.as_ref().unwrap().0;
         let _ = app.update(listed_ok(id, generation, tmp.path()));
         assert_eq!(app.panes[0].active().panel.cwd(), tmp.path());
     }
@@ -8977,6 +9036,21 @@ mod tests {
     }
 
     #[test]
+    fn regression_a_viewer_window_covers_no_pane() {
+        // F3 in a window of its own: the panels stay on screen (their thumbnails still load).
+        let (mut app, _tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        assert!(app.lister.as_ref().is_some_and(|l| l.window.is_some()));
+        assert_eq!(app.viewer_shown(), None);
+        let (mut app, _tmp) = lister_app(Config {
+            lister_window: false,
+            ..Config::default()
+        });
+        let _ = app.update(Message::Key(Action::View));
+        assert_eq!(app.viewer_shown(), Some(None)); // in place: both covered
+    }
+
+    #[test]
     fn ctrl_q_follows_the_cursor_and_leaves_keys_to_the_panels() {
         let (mut app, tmp) = lister_app(Config::default());
         let _ = app.update(Message::Key(Action::QuickView));
@@ -9104,7 +9178,6 @@ mod tests {
                 listing::branch(std::slice::from_ref(&root), false, &AtomicBool::new(false));
             let id = app.panes[0].active().branching.unwrap_or(0);
             let _ = app.update(Message::BranchListed {
-                side: 0,
                 tab,
                 id,
                 root,
@@ -9130,7 +9203,6 @@ mod tests {
         let _ = app.load(0, root.clone(), None);
         let paths = listing::branch(std::slice::from_ref(&root), false, &AtomicBool::new(false));
         let _ = app.update(Message::BranchListed {
-            side: 0,
             tab,
             id,
             root: root.clone(),
@@ -9156,7 +9228,6 @@ mod tests {
             let paths =
                 listing::branch(std::slice::from_ref(&root), false, &AtomicBool::new(false));
             let _ = app.update(Message::BranchListed {
-                side: 0,
                 tab,
                 id,
                 root: root.clone(),
@@ -9209,7 +9280,6 @@ mod tests {
         assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Info));
         // What the worker sends back afterwards (stopped, or done just before) is dropped.
         let _ = app.update(Message::BranchListed {
-            side: 0,
             tab,
             id,
             root: tmp.path().to_path_buf(),
@@ -9635,6 +9705,23 @@ mod tests {
     }
 
     #[test]
+    fn regression_a_viewer_window_does_not_stop_a_tab_drop() {
+        let (mut app, _tmp) = lister_app(Config::default());
+        app.active = 0;
+        let _ = app.update(Message::Key(Action::NewTab)); // pane 0: two tabs
+        let _ = app.update(Message::Key(Action::View)); // F3 in its own window
+        assert!(app.lister.as_ref().is_some_and(|l| l.window.is_some()));
+        for t in app.panes[0].items_mut() {
+            t.width = 500.0;
+        }
+        let before = app.panes[1].items().len();
+        let _ = app.update(Message::TabPress(0, 1));
+        let _ = app.update(Message::TabDragAt(app.window_id(), 700.0));
+        let _ = app.update(Message::ColDragEnd);
+        assert_eq!(app.panes[1].items().len(), before + 1);
+    }
+
+    #[test]
     fn tabs_move_by_drag_and_keys() {
         let mut app = app_with(Config::default(), State::default());
         for _ in 0..2 {
@@ -9731,10 +9818,20 @@ mod tests {
             panic!("no link dialog");
         };
         assert_eq!(input, &dir_input(&dst));
+        let target = PathBuf::from(input);
         let _ = app.update(Message::DialogSubmit);
+        assert!(app.dialog.is_none());
+        // What its background task does, then its message.
+        let _ = app.update(Message::Linked(
+            0,
+            link_all(std::slice::from_ref(&a), &target),
+        ));
         assert_eq!(std::fs::read_link(dst.join("a")).unwrap(), a);
-        let _ = app.update(Message::Key(Action::Link)); // again: the name is taken
-        let _ = app.update(Message::DialogSubmit);
+        // Again: the name is taken.
+        let _ = app.update(Message::Linked(
+            0,
+            link_all(std::slice::from_ref(&a), &target),
+        ));
         assert!(app.msg().is_some_and(|m| m.contains("dst/a")));
     }
 
@@ -11588,7 +11685,6 @@ mod tests {
             .expect("not refused inside an archive");
         let paths = shagoff_core::archive::branch(&a, Path::new(""), false).ok();
         let _ = app.update(Message::BranchListed {
-            side: 0,
             tab,
             id,
             root: a.clone(),
@@ -11891,11 +11987,26 @@ mod tests {
         let _ = app.update(Message::Key(Action::Down)); // sub
         let _ = app.update(Message::Key(Action::Mark));
         let id = app.panes[0].active().id;
-        let msg = Message::DirSize(0, id, tmp.path().into(), "sub".into(), 4096);
+        let msg = Message::DirSize(id, tmp.path().into(), "sub".into(), 4096);
         let _ = app.update(msg);
         let p = &app.panes[0].active().panel;
         assert_eq!(p.marked_totals().bytes, 4096);
         assert_eq!(p.dir_size(&p.entries()[1]), Some(4096));
+    }
+
+    #[test]
+    fn regression_a_size_counted_lands_in_a_tab_moved_meanwhile() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let id = app.panes[0].active().id;
+        let _ = app.update(Message::Key(Action::SwapPanes)); // Ctrl+U while it counts
+        assert_eq!(app.side_of(id), Some(1));
+        let _ = app.update(Message::DirSize(id, tmp.path().into(), "sub".into(), 4096));
+        let p = &app.panes[1].active().panel;
+        let sub = p.entries().iter().find(|e| e.name == "sub").unwrap();
+        assert_eq!(p.dir_size(sub), Some(4096));
     }
 
     #[test]
@@ -13049,6 +13160,39 @@ mod tests {
     }
 
     #[test]
+    fn regression_a_failed_diff_save_keeps_undo_and_the_close_warning() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, mut app) = sync_setup();
+        let (l, r) = (tmp.path().join("l/a"), tmp.path().join("r/a"));
+        std::fs::write(&l, "x\nNEW\ny\n").unwrap();
+        std::fs::write(&r, "x\nold\ny\n").unwrap();
+        let _ = app.update(Message::Key(Action::Down));
+        app.active = 1;
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::CompareFiles));
+        let id = diff_dlg(&mut app).id;
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nold\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let _ = app.update(Message::DiffCopy(true));
+        let id = diff_dlg(&mut app).id;
+        let t = shagoff_core::diff::rows("x\nNEW\ny\n", "x\nNEW\ny\n", 100);
+        let _ = app.update(Message::DiffReady(id, Arc::new(Ok(Outcome::Text(t)))));
+        let ro = |mode| {
+            let p = std::fs::Permissions::from_mode(mode);
+            std::fs::set_permissions(tmp.path().join("r"), p.clone()).unwrap();
+            std::fs::set_permissions(&r, p).unwrap();
+        };
+        ro(0o555);
+        let _ = app.update(Message::DiffSave); // the right side cannot be written
+        ro(0o755);
+        assert_eq!(std::fs::read_to_string(&r).unwrap(), "x\nold\ny\n");
+        let d = diff_dlg(&mut app);
+        assert_eq!((d.dirty, d.undo.len()), ((false, true), 1)); // still undoable
+        let _ = app.update(Message::DialogCancel);
+        assert!(app.dialog.is_some()); // and Esc still warns first
+    }
+
+    #[test]
     fn regression_diff_with_three_marked_does_not_fall_back_to_cursors() {
         let (_tmp, mut app) = sync_setup();
         let _ = app.update(Message::Key(Action::Down));
@@ -13076,12 +13220,19 @@ mod tests {
         use cosmic::widget::menu::Action as _;
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(crate::menu::MenuAct::Key(Action::Mkdir).message());
-        assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Mkdir,
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn window_close_cleans_up_like_exit() {
-        // Alt+F4 / the title bar's ×: same temp cleanup as the Exit button and menu item.
+    fn window_close_goes_the_exit_way() {
+        // Alt+F4 / the title bar's ×: through `Message::Exit`, as the Exit button and menu item
+        // (its temp cleanup is there).
         let app = app_with(Config::default(), State::default());
         assert!(matches!(
             app.on_close_requested(app.window_id()),

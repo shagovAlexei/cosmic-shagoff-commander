@@ -428,10 +428,27 @@ mod tests {
 
     #[test]
     fn old_config_gets_new_defaults() {
-        let c = Config::default();
+        // An old install: one field saved, one with a value this version cannot read, the rest
+        // (fields added since) missing.
+        let tmp = tempfile::tempdir().unwrap();
+        let h = cosmic_config::Config::with_custom_path(
+            crate::app::APP_ID,
+            Config::VERSION,
+            tmp.path().into(),
+        )
+        .unwrap();
+        let dir = tmp.path().join(format!(
+            "cosmic/{}/v{}",
+            crate::app::APP_ID,
+            Config::VERSION
+        ));
+        std::fs::write(dir.join("show_hidden"), "true").unwrap();
+        std::fs::write(dir.join("app_theme"), "\"Bogus\"").unwrap();
+        let c: Config = read(Some(&h));
+        assert!(c.show_hidden); // kept
         assert_eq!(
             (c.language.as_str(), c.app_theme, c.show_fkeys),
-            ("", AppTheme::System, true)
+            ("", AppTheme::System, true) // defaults
         );
     }
 }

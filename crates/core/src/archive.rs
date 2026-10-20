@@ -3241,7 +3241,9 @@ mod tests {
         let mut add = |name: &str, kind: tar::EntryType, mtime: u64, mode: u32| {
             let mut h = tar::Header::new_gnu();
             h.set_entry_type(kind);
-            (h.set_mtime(mtime), h.set_mode(mode), h.set_size(0));
+            h.set_mtime(mtime);
+            h.set_mode(mode);
+            h.set_size(0);
             h.set_path(name).unwrap();
             h.set_cksum();
             b.append(&h, &[][..]).unwrap();
