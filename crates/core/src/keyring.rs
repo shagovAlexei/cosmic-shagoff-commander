@@ -54,9 +54,12 @@ pub fn gvfs_attrs(url: &str, realm: Option<&str>) -> Option<Vec<(&'static str, S
 
 /// Whether `url`'s scheme is one whose password can be kept (the host may be still being typed).
 pub fn keeps(url: &str) -> bool {
-    url.trim()
-        .split_once("://")
-        .is_some_and(|(s, _)| matches!(s, "sftp" | "smb" | "ftp" | "dav" | "davs"))
+    url.trim().split_once("://").is_some_and(|(s, _)| {
+        matches!(
+            s.to_ascii_lowercase().as_str(),
+            "sftp" | "smb" | "ftp" | "dav" | "davs"
+        )
+    })
 }
 
 /// The item's name, as gvfs names it: `user@server:port/object`.
@@ -73,70 +76,141 @@ fn label(attrs: &[(&str, String)]) -> String {
     s
 }
 
-/// The realm of the first `WWW-Authenticate` header that names one (`Basic realm="…"`).
+/// The realm gvfs keys a WebDAV password by, from the server's answer headers: libsoup uses the
+/// strongest challenge, so a Digest one's realm before a Basic one's. Quoted or a bare token.
 pub fn realm(headers: &str) -> Option<String> {
-    headers.lines().find_map(|l| {
-        let (name, value) = l.split_once(':')?;
+    let mut found: Option<(bool, String)> = None; // (Digest, realm)
+    for l in headers.lines() {
+        let Some((name, value)) = l.split_once(':') else {
+            continue;
+        };
         if !name.trim().eq_ignore_ascii_case("www-authenticate") {
-            return None;
+            continue;
         }
-        let at = value.to_ascii_lowercase().find("realm=\"")? + "realm=\"".len();
-        let (mut out, mut escaped) = (String::new(), false);
-        for c in value[at..].chars() {
-            match c {
-                _ if escaped => {
-                    out.push(c);
-                    escaped = false;
-                }
-                '\\' => escaped = true,
-                '"' => return Some(out),
-                _ => out.push(c),
-            }
+        let value = value.trim();
+        let (scheme, params) = value.split_once(' ').unwrap_or((value, ""));
+        let digest = scheme.eq_ignore_ascii_case("digest");
+        let Some(r) = param(params, "realm") else {
+            continue;
+        };
+        if found.as_ref().is_none_or(|(d, _)| digest && !d) {
+            found = Some((digest, r));
         }
-        None
-    })
+    }
+    found.map(|(_, r)| r)
 }
 
-/// Ask a WebDAV server its realm (gvfs keys the password by it): `curl` OPTIONS, as gvfs mounts,
-/// without the user (no credentials sent), 10 s. Blocking.
-fn fetch_realm(url: &str) -> Option<String> {
-    let mut u = url::Url::parse(url.trim()).ok()?;
+/// The value of `key` in `a=b, c="d \"e\""` auth params, read in order (a `realm=` inside another
+/// one's quoted value is not it).
+fn param(params: &str, key: &str) -> Option<String> {
+    let mut rest = params;
+    loop {
+        rest = rest.trim_start_matches([' ', '\t', ',']);
+        let (name, after) = rest.split_once('=')?;
+        let mut value = String::new();
+        let mut it = after.char_indices().peekable();
+        let mut end = after.len();
+        if after.starts_with('"') {
+            it.next();
+            while let Some((i, c)) = it.next() {
+                match c {
+                    '\\' => value.extend(it.next().map(|(_, c)| c)),
+                    '"' => {
+                        end = i + 1;
+                        break;
+                    }
+                    _ => value.push(c),
+                }
+            }
+        } else {
+            for (i, c) in it {
+                if matches!(c, ',' | ' ' | '\t') {
+                    end = i;
+                    break;
+                }
+                value.push(c);
+            }
+        }
+        if name.trim().eq_ignore_ascii_case(key) {
+            return Some(value);
+        }
+        rest = &after[end..];
+    }
+}
+
+/// Ask a WebDAV server its realm (gvfs keys the password by it), as gvfs mounts: OPTIONS, then a
+/// PROPFIND if that one is let through without a password; redirects followed, no credentials
+/// sent, 10 s each. `Ok(None)`: the server asks for none. Blocking.
+fn fetch_realm(u: &url::Url) -> Result<Option<String>, String> {
+    let mut u = u.clone();
     let http = if u.scheme() == "davs" {
         "https"
     } else {
         "http"
     };
-    u.set_username("").ok()?;
-    u.set_password(None).ok()?;
-    let rest = u.as_str().split_once("://")?.1.to_string();
-    let out = std::process::Command::new("curl")
-        .args([
-            "-sk",
+    let _ = u.set_username("");
+    let _ = u.set_password(None);
+    let rest = u.as_str().split_once("://").map_or("", |(_, r)| r);
+    let address = format!("{http}://{rest}");
+    for (method, depth) in [("OPTIONS", None), ("PROPFIND", Some("Depth: 0"))] {
+        let mut curl = std::process::Command::new("curl");
+        curl.args([
+            "-sSkL",
             "-m",
             "10",
             "-X",
-            "OPTIONS",
+            method,
             "-o",
             "/dev/null",
             "-D",
             "-",
-        ])
-        .arg(format!("{http}://{rest}"))
-        .output()
-        .ok()?;
-    realm(&String::from_utf8_lossy(&out.stdout))
+        ]);
+        if let Some(h) = depth {
+            curl.args(["-H", h]);
+        }
+        let out = curl
+            .arg(&address)
+            .output()
+            .map_err(|e| format!("curl: {e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            return Err(if err.is_empty() {
+                format!("curl: {}", out.status)
+            } else {
+                err
+            });
+        }
+        if let Some(r) = realm(&String::from_utf8_lossy(&out.stdout)) {
+            return Ok(Some(r));
+        }
+    }
+    Ok(None)
+}
+
+/// Why a password was not kept.
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeepError {
+    /// A WebDAV server that names no realm (asks for no password).
+    NoRealm,
+    Failed(String),
 }
 
 /// Keep `password` for `url` in the default keyring (replacing one kept before). Blocking: the
-/// keyring may ask to be unlocked first.
-pub fn save(url: &str, password: &str) -> Result<(), String> {
-    let dav = url.trim().starts_with("dav");
-    let realm = if dav { fetch_realm(url) } else { None };
-    if dav && realm.is_none() {
-        return Err(format!("{url}: the server names no realm"));
-    }
-    let attrs = gvfs_attrs(url, realm.as_deref()).ok_or_else(|| url.to_string())?;
-    store(&label(&attrs), &attrs, password).map_err(|e| e.to_string())
+/// keyring may ask to be unlocked first; a WebDAV server is asked its realm.
+pub fn save(url: &str, password: &str) -> Result<(), KeepError> {
+    let u = url::Url::parse(url.trim()).map_err(|e| KeepError::Failed(e.to_string()))?;
+    let realm = match u.scheme() {
+        "dav" | "davs" => Some(
+            fetch_realm(&u)
+                .map_err(KeepError::Failed)?
+                .ok_or(KeepError::NoRealm)?,
+        ),
+        _ => None,
+    };
+    // Never the address itself in an error: a password may be typed in it.
+    let attrs = gvfs_attrs(url, realm.as_deref())
+        .ok_or_else(|| KeepError::Failed(u.scheme().to_string()))?;
+    store(&label(&attrs), &attrs, password).map_err(|e| KeepError::Failed(e.to_string()))
 }
 
 const DEST: &str = "org.freedesktop.secrets";
@@ -274,7 +348,13 @@ mod tests {
         assert_eq!(gvfs_attrs("davs://u@cloud/remote.php", None), None); // realm unknown
         assert_eq!(gvfs_attrs("nfs://h/x", None), None);
         assert_eq!(gvfs_attrs("not a url", None), None);
-        assert!(keeps("sftp://") && keeps(" smb://n") && keeps("davs://x") && !keeps("nas"));
+        assert!(
+            keeps("sftp://")
+                && keeps(" smb://n")
+                && keeps("davs://x")
+                && keeps("DAV://x")
+                && !keeps("nas")
+        );
     }
 
     #[test]
@@ -285,6 +365,19 @@ mod tests {
         let digest = "WWW-Authenticate: Digest qop=\"auth\", realm=\"dav\", nonce=\"1\"\n";
         assert_eq!(realm(digest).as_deref(), Some("dav"));
         assert_eq!(realm("HTTP/1.1 200 OK\r\n"), None);
+        // A bare token; `realm=` inside another parameter's value or name is not it.
+        assert_eq!(
+            realm("WWW-Authenticate: Basic realm=WebDAV").as_deref(),
+            Some("WebDAV")
+        );
+        let tricky = "WWW-Authenticate: Digest opaque=\"realm=x\", xrealm=\"y\", realm=\"dav\"";
+        assert_eq!(realm(tricky).as_deref(), Some("dav"));
+        // libsoup takes the strongest: Digest's realm over Basic's, whatever the order.
+        let both = "WWW-Authenticate: Basic realm=\"A\"\nWWW-Authenticate: Digest realm=\"B\"\n";
+        assert_eq!(realm(both).as_deref(), Some("B"));
+        // After a redirect (curl -L): the 401's block.
+        let moved = "HTTP/1.1 301 Moved\nLocation: /dav/\n\nHTTP/1.1 401 No\nWWW-Authenticate: Basic realm=\"R\"\n";
+        assert_eq!(realm(moved).as_deref(), Some("R"));
     }
 
     #[test]
