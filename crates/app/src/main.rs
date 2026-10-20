@@ -22,6 +22,24 @@ mod view;
 mod watcher;
 
 fn main() -> cosmic::iced::Result {
+    // Run as root by pkexec for Alt+Enter's owner / group / bits (163): no window.
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args
+        .first()
+        .is_some_and(|a| a == shagoff_core::props::HELPER)
+    {
+        let code = match shagoff_core::props::run_helper(&args) {
+            Ok(failed) => {
+                failed.iter().for_each(|l| eprintln!("{l}"));
+                i32::from(!failed.is_empty())
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                2
+            }
+        };
+        std::process::exit(code);
+    }
     simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Warn)
         .env()

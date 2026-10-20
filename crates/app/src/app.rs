@@ -4536,39 +4536,51 @@ impl App {
                     return Task::none();
                 }
                 let me = shagoff_core::owners::euid();
-                // A new owner, or a group not the user's, needs root: polkit asks (163).
-                let as_root = uid.is_some()
-                    || gid.is_some_and(|g| {
-                        me != 0 && !shagoff_core::owners::my_groups().contains(&g)
-                    });
+                // A new owner, a group not the user's, or files not his need root: polkit asks
+                // (163), the program itself runs as root to do it.
+                let as_root = me != 0
+                    && (uid.is_some()
+                        || p.foreign
+                        || gid.is_some_and(|g| !shagoff_core::owners::my_groups().contains(&g)));
                 let (side, paths, recursive) = (p.side, p.paths.clone(), p.recursive);
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            let mut failed = Vec::new();
-                            // The group first: a new group drops setuid / setgid, the bits after
-                            // put back what was asked. With root the bits go first instead,
-                            // while the user still owns the files.
-                            if let (Some(g), false) = (gid, as_root) {
-                                failed = shagoff_core::props::chgrp(&paths, g, recursive);
+                            use shagoff_core::props;
+                            if !as_root {
+                                let failed =
+                                    props::apply(&paths, uid, gid, (set, clear), recursive);
+                                return (failed.into_iter())
+                                    .map(|(p, e)| format!("{}: {e}", p.display()))
+                                    .collect();
                             }
-                            if set | clear != 0 {
-                                failed.extend(shagoff_core::props::chmod(
-                                    &paths, set, clear, recursive,
-                                ));
-                            }
-                            let mut failed: Vec<String> = (failed.into_iter())
-                                .map(|(p, e)| format!("{}: {e}", p.display()))
-                                .collect();
-                            if as_root {
-                                let prefix: &[&str] = if me == 0 { &[] } else { &["pkexec"] };
-                                if let Err(e) = shagoff_core::props::chown_with(
-                                    prefix, &paths, uid, gid, recursive,
-                                ) {
-                                    failed.push(e);
+                            let out = std::env::current_exe().and_then(|exe| {
+                                std::process::Command::new("pkexec")
+                                    .arg(exe)
+                                    .args(props::helper_args(
+                                        &paths,
+                                        uid,
+                                        gid,
+                                        (set, clear),
+                                        recursive,
+                                    ))
+                                    .stdin(std::process::Stdio::null())
+                                    .output()
+                            });
+                            match out {
+                                Err(e) => vec![format!("pkexec: {e}")],
+                                Ok(o) if o.status.success() => Vec::new(),
+                                Ok(o) => {
+                                    // The helper's failures, or pkexec's refusal.
+                                    let err = String::from_utf8_lossy(&o.stderr);
+                                    let mut v: Vec<String> =
+                                        err.lines().map(str::to_string).collect();
+                                    if v.is_empty() {
+                                        v.push(format!("pkexec: {}", o.status));
+                                    }
+                                    v
                                 }
                             }
-                            failed
                         })
                         .await
                         .unwrap_or_default()
@@ -5415,6 +5427,10 @@ impl App {
             user_names: users.into_iter().map(|(_, n)| n).collect(),
             user,
             user0: user,
+            foreign: {
+                let me = shagoff_core::owners::euid();
+                file_uids.iter().any(|u| *u != me)
+            },
             usage: None,
             id: 0, // set by `start_usage`
             stop: Arc::new(AtomicBool::new(false)),
@@ -5465,6 +5481,7 @@ impl App {
             user_names: Vec::new(),
             user: None,
             user0: None,
+            foreign: false,
             usage: None,
             id: 0,
             stop: Arc::new(AtomicBool::new(false)),

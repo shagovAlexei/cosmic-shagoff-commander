@@ -402,6 +402,8 @@ pub struct Props {
     pub user_names: Vec<String>,
     pub user: Option<usize>,
     pub user0: Option<usize>,
+    /// Some of the files are not the user's: any change to them needs root.
+    pub foreign: bool,
     /// Counted in the background; `None` while counting.
     pub usage: Option<shagoff_core::props::Usage>,
     pub id: u64,
