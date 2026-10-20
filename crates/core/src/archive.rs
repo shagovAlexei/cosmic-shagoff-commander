@@ -94,10 +94,16 @@ pub fn stem(name: &str) -> &str {
 }
 
 /// Pack dialog default: one file → its name without the last extension, one dir → its whole name
-/// (`v1.2` is not `v1`); several → the dir's name.
-pub fn archive_name(targets: &[PathBuf], cwd: &Path, f: Format) -> String {
+/// (`v1.2` is not `v1`); several → the dir's name. `is_dir`: from the panel's rows (no `stat` on
+/// the UI thread; inside an archive there is nothing to stat).
+pub fn archive_name(
+    targets: &[PathBuf],
+    cwd: &Path,
+    f: Format,
+    is_dir: &dyn Fn(&Path) -> bool,
+) -> String {
     let base = match targets {
-        [one] if one.is_dir() => one.file_name().map(|s| s.to_string_lossy().into_owned()),
+        [one] if is_dir(one) => one.file_name().map(|s| s.to_string_lossy().into_owned()),
         [one] => one.file_stem().map(|s| s.to_string_lossy().into_owned()),
         _ => cwd.file_name().map(|s| s.to_string_lossy().into_owned()),
     };
@@ -121,9 +127,10 @@ pub fn groups(
     path: &Path,
     f: Format,
     separate: bool,
+    is_dir: &dyn Fn(&Path) -> bool,
 ) -> Vec<(Vec<PathBuf>, PathBuf)> {
-    let is_dir = path.as_os_str().as_encoded_bytes().ends_with(b"/");
-    let dir = if is_dir {
+    let into_dir = path.as_os_str().as_encoded_bytes().ends_with(b"/");
+    let dir = if into_dir {
         path
     } else {
         path.parent().unwrap_or(path)
@@ -133,13 +140,13 @@ pub fn groups(
             .iter()
             .map(|t| {
                 let one = vec![t.clone()];
-                let name = archive_name(&one, cwd, f);
+                let name = archive_name(&one, cwd, f, is_dir);
                 (one, dir.join(name))
             })
             .collect();
     }
-    let dest = if is_dir {
-        path.join(archive_name(targets, cwd, f))
+    let dest = if into_dir {
+        path.join(archive_name(targets, cwd, f, is_dir))
     } else {
         path.to_path_buf()
     };
@@ -2133,24 +2140,33 @@ mod tests {
     #[test]
     fn regression_a_dotted_dir_keeps_its_whole_name() {
         let d = tempfile::tempdir().unwrap();
-        let dir = d.path().join("v1.2");
-        fs::create_dir(&dir).unwrap();
-        assert_eq!(archive_name(&[dir], d.path(), Format::Zip), "v1.2.zip");
+        let dir = d.path().join("v1.2"); // a row the panel marks as a dir
+        assert_eq!(
+            archive_name(std::slice::from_ref(&dir), d.path(), Format::Zip, &|p| p
+                == dir),
+            "v1.2.zip"
+        );
     }
 
     #[test]
     fn default_archive_name() {
         let cwd = Path::new("/home/u/photos");
         let one = [cwd.join("readme.txt")];
-        assert_eq!(archive_name(&one, cwd, Format::Zip), "readme.zip");
         assert_eq!(
-            archive_name(&[cwd.join(".bashrc")], cwd, Format::Tar),
+            archive_name(&one, cwd, Format::Zip, &|_| false),
+            "readme.zip"
+        );
+        assert_eq!(
+            archive_name(&[cwd.join(".bashrc")], cwd, Format::Tar, &|_| false),
             ".bashrc.tar"
         );
         let two = [cwd.join("a"), cwd.join("b")];
-        assert_eq!(archive_name(&two, cwd, Format::TarGz), "photos.tar.gz");
         assert_eq!(
-            archive_name(&two, Path::new("/"), Format::SevenZ),
+            archive_name(&two, cwd, Format::TarGz, &|_| false),
+            "photos.tar.gz"
+        );
+        assert_eq!(
+            archive_name(&two, Path::new("/"), Format::SevenZ, &|_| false),
             "archive.7z"
         );
     }
@@ -2168,11 +2184,20 @@ mod tests {
         let cwd = Path::new("/src");
         let t = vec![cwd.join("a.txt"), cwd.join("dir")];
         assert_eq!(
-            groups(&t, cwd, Path::new("/dst/x.zip"), Format::Zip, false),
+            groups(
+                &t,
+                cwd,
+                Path::new("/dst/x.zip"),
+                Format::Zip,
+                false,
+                &|_| false
+            ),
             [(t.clone(), PathBuf::from("/dst/x.zip"))]
         );
         assert_eq!(
-            groups(&t, cwd, Path::new("/dst/x.zip"), Format::Zip, true),
+            groups(&t, cwd, Path::new("/dst/x.zip"), Format::Zip, true, &|_| {
+                false
+            }),
             [
                 (vec![t[0].clone()], PathBuf::from("/dst/a.zip")),
                 (vec![t[1].clone()], PathBuf::from("/dst/dir.zip")),
@@ -2180,7 +2205,7 @@ mod tests {
         );
         // Trailing slash: a dir, default name inside it.
         assert_eq!(
-            groups(&t, cwd, Path::new("/dst/"), Format::Tar, false),
+            groups(&t, cwd, Path::new("/dst/"), Format::Tar, false, &|_| false),
             [(t.clone(), PathBuf::from("/dst/src.tar"))]
         );
     }

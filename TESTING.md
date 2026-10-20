@@ -1361,3 +1361,4 @@
 | `regression_a_failed_diff_save_keeps_undo_and_the_close_warning` | Сравнение: неудачное «Сохранить» стирало отмену и предупреждение при закрытии | 113 |
 | `regression_super_is_never_captured_as_a_plain_key` | Свои клавиши: Super+K записывалось как K | 154 |
 | `regression_shift_letters_are_not_the_viewer_keys` | F3: Shift+Q / Shift+N действовали как Q / N | 20 |
+| `regression_rename_old_then_a_failed_move_puts_it_back` | F6 с «Переименовать старый», перенос не удался, «Пропустить»: старый оставался под именем `a (1)` | 70 |

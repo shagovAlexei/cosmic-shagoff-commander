@@ -459,6 +459,8 @@ pub enum FindField {
 pub struct Pack {
     pub side: usize,
     pub sources: Vec<PathBuf>,
+    /// The sources that are dirs, from the panel's rows (`archive::archive_name`'s default).
+    pub dirs: Vec<PathBuf>,
     /// The panel dir: names inside the archive are relative to it.
     pub base: PathBuf,
     pub path: String,

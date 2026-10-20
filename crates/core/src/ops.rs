@@ -336,6 +336,38 @@ pub fn plan(sources: &[PathBuf], dest: &Path) -> Result<Vec<(PathBuf, PathBuf)>,
     Ok(pairs)
 }
 
+/// `moved` (where «Rename old» put the old one) back at `dst`; `false` when nothing was moved or
+/// the name is taken meanwhile (then it keeps its new name).
+fn put_back(moved: Option<&Path>, dst: &Path) -> bool {
+    moved.is_some_and(|m| rename_noreplace(m, dst).is_ok())
+}
+
+/// `link`'s result: the sources linked, and the failures by destination.
+pub type Linked = (Vec<PathBuf>, Vec<(PathBuf, io::Error)>);
+
+/// Why Ctrl+Shift+F5 made no link at all.
+#[derive(Debug)]
+pub enum LinkError {
+    /// The dir named with a trailing `/` could not be made.
+    Mkdir(PathBuf, io::Error),
+    Plan(PlanError),
+}
+
+/// Ctrl+Shift+F5 placed by F5's rules: `target` ending in `/` is a dir, made if missing; then
+/// `symlinks`. The sources linked and the failures, by destination.
+pub fn link(sources: &[PathBuf], target: &Path) -> Result<Linked, LinkError> {
+    if target.as_os_str().as_encoded_bytes().ends_with(b"/") {
+        fs::create_dir_all(target).map_err(|e| LinkError::Mkdir(target.to_path_buf(), e))?;
+    }
+    let pairs = plan(sources, target).map_err(LinkError::Plan)?;
+    let failed = symlinks(&pairs);
+    let done = (pairs.iter())
+        .filter(|(_, d)| !failed.iter().any(|(f, _)| f == d))
+        .map(|(s, _)| s.clone())
+        .collect();
+    Ok((done, failed))
+}
+
 /// Ctrl+Shift+F5: a symbolic link at each destination to its source (absolute, as resolved by
 /// `plan`). An existing name is never replaced. The failures, by destination.
 pub fn symlinks(pairs: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, io::Error)> {
@@ -409,6 +441,8 @@ struct Transfer<'a> {
 impl Transfer<'_> {
     /// `size`: `src`'s tree size when known (a top-level source), else walked when needed.
     fn entry(&mut self, src: &Path, dst: &Path, size: Option<u64>) -> Step {
+        // «Rename old» belongs to the entry it was answered for (a skipped one leaves it set).
+        self.aside = None;
         if self.h.cancelled() {
             return Step::Cancel;
         }
@@ -494,20 +528,23 @@ impl Transfer<'_> {
                     }
                     // «Rename old»: back in place until the copy is ready (the copy path puts it
                     // aside then).
-                    if let Some(m) = moved
-                        && rename_noreplace(&m, dst).is_ok()
-                    {
+                    if put_back(moved.as_deref(), dst) {
                         self.aside = Some(dst.to_path_buf());
                     }
                     return None;
                 }
                 Err(e) => match self.h.error(src, &e) {
                     ErrorChoice::Retry => {}
+                    // Nothing moved: «Rename old»'s old one gets its name back.
                     ErrorChoice::Skip => {
+                        put_back(moved.as_deref(), dst);
                         self.done += size;
                         return Some(Step::Skipped);
                     }
-                    ErrorChoice::Cancel => return Some(Step::Cancel),
+                    ErrorChoice::Cancel => {
+                        put_back(moved.as_deref(), dst);
+                        return Some(Step::Cancel);
+                    }
                 },
             }
         }
@@ -1204,6 +1241,39 @@ mod tests {
         assert_eq!(read(&d.path().join("to/a (1)")), "old");
         assert!(!shm.path().join("a").exists());
         assert_eq!(h.asked, 1);
+    }
+
+    #[test]
+    fn regression_rename_old_then_a_failed_move_puts_it_back() {
+        let d = tempfile::tempdir().unwrap();
+        write(&d.path().join("src/a"), "new");
+        write(&d.path().join("to/a"), "old");
+        // The source dir read-only: the rename fails (EACCES), the user skips it.
+        fs::set_permissions(d.path().join("src"), fs::Permissions::from_mode(0o555)).unwrap();
+        let mut h = Script {
+            conflicts: vec![Resolution::RenameOld],
+            errors: vec![ErrorChoice::Skip],
+            ..Default::default()
+        };
+        let p = plan(&[d.path().join("src/a")], &d.path().join("to")).unwrap();
+        let r = transfer(Method::Move, &p, &mut h);
+        fs::set_permissions(d.path().join("src"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!r.cancelled && r.completed.is_empty());
+        assert_eq!(read(&d.path().join("to/a")), "old");
+        assert!(!d.path().join("to/a (1)").exists());
+    }
+
+    #[test]
+    fn link_makes_a_dir_named_with_a_slash_and_reports_taken_names() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        write(&a, "x");
+        let target = PathBuf::from(format!("{}/new/", d.path().display()));
+        let (done, failed) = link(std::slice::from_ref(&a), &target).unwrap();
+        assert_eq!((done, failed.len()), (vec![a.clone()], 0));
+        assert_eq!(fs::read_link(d.path().join("new/a")).unwrap(), a);
+        let (done, failed) = link(std::slice::from_ref(&a), &target).unwrap(); // taken now
+        assert!(done.is_empty() && failed[0].0 == d.path().join("new/a"));
     }
 
     #[test]

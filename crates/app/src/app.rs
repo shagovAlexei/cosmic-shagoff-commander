@@ -521,9 +521,9 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
-    /// Ctrl+Shift+F5 done (`App::make_links`): the sources linked, and the error to show (one
-    /// line for every link that failed), or the error that stopped it all.
-    Linked(usize, Result<(Vec<PathBuf>, Option<String>), String>),
+    /// Ctrl+Shift+F5 done (`App::make_links`) for tab id: the sources linked, and the error to
+    /// show (one line for every link that failed), or the error that stopped it all.
+    Linked(u64, Result<(Vec<PathBuf>, Option<String>), String>),
     /// F7 done (`App::mkdir`): the dir it was typed in, the name as typed and its first part.
     Made {
         side: usize,
@@ -2352,7 +2352,7 @@ impl App {
                     self.lister = None;
                 }
             }
-            Message::Linked(side, made) => {
+            Message::Linked(tab, made) => {
                 let done = match made {
                     Ok((done, failed)) => {
                         if let Some(msg) = failed {
@@ -2365,8 +2365,12 @@ impl App {
                         return Task::none();
                     }
                 };
-                // Marks stay on the ones not linked, to try again.
-                self.panes[side].active_mut().panel.unmark(&done);
+                // Marks stay on the ones not linked, to try again. By id: the tab may have moved.
+                if let Some(side) = self.side_of(tab)
+                    && let Some(t) = (self.panes[side].items_mut().iter_mut()).find(|t| t.id == tab)
+                {
+                    t.panel.unmark(&done);
+                }
                 let reload = |app: &mut Self, s: usize| {
                     let to = app.panes[s].active().target();
                     app.reload(s, to, None)
@@ -4514,11 +4518,19 @@ impl App {
                 }
                 let format = Format::from_ext(&self.config.pack_format).unwrap_or(Format::Zip);
                 let base = panel.cwd().to_path_buf();
-                let name = archive::archive_name(&sources, &base, format);
+                let dirs: Vec<PathBuf> = (panel.entries().iter())
+                    .filter(|e| e.is_dir())
+                    .map(|e| base.join(&e.os_name))
+                    .filter(|p| sources.contains(p))
+                    .collect();
+                let name = archive::archive_name(&sources, &base, format, &|p| {
+                    dirs.iter().any(|d| d == p)
+                });
                 let path = self.panes[1 - side].active().panel.cwd().join(name);
                 Some(Dialog::Pack(Box::new(dialogs::Pack {
                     side,
                     sources,
+                    dirs,
                     base,
                     path: path.display().to_string(),
                     format,
@@ -4795,7 +4807,9 @@ impl App {
                     self.say(StatusKind::Error, fl!("archive-read-only"));
                     return Task::none();
                 }
-                let groups = archive::groups(&p.sources, &p.base, &path, p.format, p.separate);
+                let is_dir = |s: &Path| p.dirs.iter().any(|d| d == s);
+                let groups =
+                    archive::groups(&p.sources, &p.base, &path, p.format, p.separate, &is_dir);
                 // Cursor on the new archive when it lands in this panel.
                 let focus = match groups.as_slice() {
                     [(_, a)] if a.parent() == Some(cwd.as_path()) => {
@@ -5062,12 +5076,13 @@ impl App {
         }
         // In the background: on a dead network mount a `stat` or `symlink` never returns.
         let (sources, target) = (sources.to_vec(), target.to_path_buf());
+        let tab = self.panes[side].active().id;
         Task::perform(
             async move {
                 let made = tokio::task::spawn_blocking(move || link_all(&sources, &target))
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()));
-                Message::Linked(side, made)
+                Message::Linked(tab, made)
             },
             cosmic::Action::App,
         )
@@ -6507,15 +6522,24 @@ impl App {
             .active_mut()
             .panel
             .unmark(&report.completed);
-        // Where each tab is going: a navigation still loading is not cancelled.
-        let here = self.panes[side].active().target();
-        let there = self.panes[1 - side].active().target();
+        // A tab still loading a dir is left to that read (reading it again would drop the cursor
+        // Backspace asked for); the others are read again.
+        let again = |app: &mut Self, s: usize, focus: Option<String>| {
+            let t = app.panes[s].active();
+            match t.pending {
+                Some(_) => Task::none(),
+                None => {
+                    let cwd = t.panel.cwd().to_path_buf();
+                    app.reload(s, cwd, focus)
+                }
+            }
+        };
         let reload = Task::batch([
             match browse {
                 Some(arc) => self.load(side, arc, None),
-                None => self.reload(side, here, focus),
+                None => again(self, side, focus),
             },
-            self.reload(1 - side, there, None),
+            again(self, 1 - side, None),
             view,
         ]);
         // The next one in the background, as TC's queue.
@@ -8001,18 +8025,19 @@ fn read_listing(
     }
 }
 
-/// Ctrl+Shift+F5's work, off the UI thread: links placed by F5's rules. `Ok`: the sources linked
-/// and the error line for the ones that failed; `Err`: nothing done, why.
+/// Ctrl+Shift+F5's work, off the UI thread (`ops::link`), its errors as the status line says
+/// them. `Ok`: the sources linked and the line for the ones that failed; `Err`: nothing done.
 fn link_all(sources: &[PathBuf], target: &Path) -> Result<(Vec<PathBuf>, Option<String>), String> {
-    // As F5: a trailing `/` names a dir to put them in, made if missing.
-    if target.as_os_str().as_encoded_bytes().ends_with(b"/")
-        && let Err(e) = std::fs::create_dir_all(target)
-    {
-        let path = target.display().to_string();
-        return Err(fl!("link-failed", path = path, err = e.to_string()));
-    }
-    let pairs = ops::plan(sources, target).map_err(|e| plan_error(&e))?;
-    let failed = ops::symlinks(&pairs);
+    let (done, failed) = ops::link(sources, target).map_err(|e| match e {
+        ops::LinkError::Mkdir(path, e) => {
+            fl!(
+                "link-failed",
+                path = path.display().to_string(),
+                err = e.to_string()
+            )
+        }
+        ops::LinkError::Plan(e) => plan_error(&e),
+    })?;
     let msg = failed.first().map(|(path, e)| {
         let (path, err) = (path.display().to_string(), e.to_string());
         match failed.len() {
@@ -8020,10 +8045,6 @@ fn link_all(sources: &[PathBuf], target: &Path) -> Result<(Vec<PathBuf>, Option<
             n => fl!("links-failed", n = n, path = path, err = err),
         }
     });
-    let done = (pairs.iter())
-        .filter(|(_, d)| !failed.iter().any(|(f, _)| f == d))
-        .map(|(s, _)| s.clone())
-        .collect();
     Ok((done, msg))
 }
 
