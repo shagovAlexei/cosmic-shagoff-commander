@@ -191,11 +191,7 @@ fn rewrite(
     }
     // Something was skipped: packing again would silently drop it.
     if r.completed.is_empty() {
-        give_up(
-            h,
-            archive,
-            "some entries can't be unpacked; the archive is left as it was",
-        )?;
+        give_up(h, archive, crate::why::CANT_UNPACK)?;
     }
     let mut copies = Vec::new();
     let done = apply(
@@ -223,11 +219,7 @@ fn rewrite(
         return Err(true);
     }
     if p.completed.len() != children.len() || !new.exists() {
-        give_up(
-            h,
-            archive,
-            "some entries can't be packed again; the archive is left as it was",
-        )?;
+        give_up(h, archive, crate::why::CANT_REPACK)?;
     }
     finish(archive, &new, change, done, &copies, h)
 }
@@ -407,11 +399,7 @@ fn rewrite_zip(
     let new = staging.join(name);
     let written = match archive::zip_rewrite(archive, &new, &*keep, &root, h) {
         Ok(Some(false)) => Ok(()),
-        Ok(Some(true)) => give_up(
-            h,
-            archive,
-            "some entries can't be packed again; the archive is left as it was",
-        ),
+        Ok(Some(true)) => give_up(h, archive, crate::why::CANT_REPACK),
         Ok(None) => Err(true),
         Err(e) => Err(h.error(archive, &e) == ErrorChoice::Cancel),
     };
@@ -478,7 +466,7 @@ fn give_up(h: &mut dyn Handler, archive: &Path, why: &str) -> Result<(), bool> {
 /// be a link either.
 fn inside(root: &Path, rel: &Path, last: bool) -> io::Result<PathBuf> {
     let bad = |why: &str| io::Error::new(io::ErrorKind::InvalidInput, why.to_string());
-    let rel = archive::safe_path(rel).ok_or_else(|| bad(crate::why::BAD_INNER_PATH))?;
+    let rel = archive::safe_path(rel).ok_or_else(|| bad(crate::why::UNSAFE_PATH))?;
     let parts: Vec<_> = rel.components().collect();
     let mut p = root.to_path_buf();
     for (i, c) in parts.iter().enumerate() {
@@ -486,7 +474,7 @@ fn inside(root: &Path, rel: &Path, last: bool) -> io::Result<PathBuf> {
         if (i + 1 < parts.len() || last)
             && fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink())
         {
-            return Err(bad(crate::why::INNER_LINK));
+            return Err(bad(crate::why::THROUGH_LINK));
         }
     }
     Ok(p)

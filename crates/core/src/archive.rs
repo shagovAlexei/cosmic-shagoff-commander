@@ -469,7 +469,7 @@ fn read_tar(r: impl Read, st: &mut Stage) -> Result<(), Stop> {
 
 /// The text of the error for an encrypted archive opened without its password, or with a wrong
 /// one: the app asks for it (`needs_password`) and retries.
-pub const PASSWORD_ERROR: &str = "the archive's password is needed (or the one given is wrong)";
+pub const PASSWORD_ERROR: &str = crate::why::PASSWORD;
 
 pub fn needs_password(error: &str) -> bool {
     error == PASSWORD_ERROR

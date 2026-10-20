@@ -1549,7 +1549,7 @@ impl App {
                         t.error = Some(fl!(
                             "list-failed",
                             path = path.display().to_string(),
-                            err = e
+                            err = crate::why::message(&e)
                         ));
                         // A 7z with encrypted names: ask, then open it again.
                         if let Some((arc, _)) = ask
@@ -2522,7 +2522,8 @@ impl App {
                 let bad: Vec<String> = (results.iter())
                     .filter_map(|(a, r)| {
                         let name = a.file_name().unwrap_or_default().to_string_lossy();
-                        r.as_ref().err().map(|e| format!("{name}: {e}"))
+                        let e = r.as_ref().err()?;
+                        Some(format!("{name}: {}", crate::why::message(e)))
                     })
                     .collect();
                 if bad.is_empty() {
@@ -4246,7 +4247,10 @@ impl App {
                 if let Some(file) = file
                     && let Err(err) = spawn_detached(&launch::command(&[], &["xdg-open"], &file))
                 {
-                    self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
+                    self.say(
+                        StatusKind::Error,
+                        fl!("open-failed", err = crate::why::text(&err)),
+                    );
                 }
             }
             // From where the tab is going, so quick Backspaces on a slow fs are not lost.
@@ -4477,7 +4481,10 @@ impl App {
                         launch::command(&self.config.editor, &["cosmic-edit"], &file)
                     };
                     if let Err(err) = spawn_detached(&argv) {
-                        self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
+                        self.say(
+                            StatusKind::Error,
+                            fl!("open-failed", err = crate::why::text(&err)),
+                        );
                     }
                 }
             }
@@ -5429,7 +5436,7 @@ impl App {
         let cwd = self.panes[side].active().panel.cwd().to_path_buf();
         let file = cwd.join(name);
         if let Err(e) = ops::new_file(&file) {
-            let err = e.to_string();
+            let err = crate::why::text(&e);
             self.say(
                 StatusKind::Error,
                 fl!("new-file-failed", path = name, err = err),
@@ -5438,7 +5445,10 @@ impl App {
         }
         let argv = launch::command(&self.config.editor, &["cosmic-edit"], &file);
         if let Err(err) = spawn_detached(&argv) {
-            self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
+            self.say(
+                StatusKind::Error,
+                fl!("open-failed", err = crate::why::text(&err)),
+            );
         }
         self.reload(side, cwd, Some(name.to_string()))
     }
@@ -5717,7 +5727,7 @@ impl App {
                         )));
                     }
                     let Some(Ok(diff::Outcome::Text(t))) = shown.as_deref() else {
-                        return diff::compare_with(&a, &b, o).map_err(|e| e.to_string());
+                        return diff::compare_with(&a, &b, o).map_err(|e| crate::why::text(&e));
                     };
                     let (mut l, mut r) = (t.src.0.clone(), t.src.1.clone());
                     if let Some((block, to_right)) = copy
@@ -6199,7 +6209,10 @@ impl App {
         let dir = match archive::fresh_temp_dir(&archive::temp_root()) {
             Ok(d) => d,
             Err(e) => {
-                self.say(StatusKind::Error, fl!("open-failed", err = e.to_string()));
+                self.say(
+                    StatusKind::Error,
+                    fl!("open-failed", err = crate::why::text(&e)),
+                );
                 return Task::none();
             }
         };
@@ -6436,7 +6449,7 @@ impl App {
                     // Inside an archive: taken out into a temp dir, read, the copy dropped.
                     Some((arc, inner)) => {
                         let tmp = archive::fresh_temp_dir(&archive::temp_root())
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| crate::why::text(&e))?;
                         let entry = file.file_name().map(PathBuf::from).unwrap_or_default();
                         let r = match archive::extract_one(&arc, &inner, &entry, &tmp, &stop) {
                             Some(f) => lister::Loaded::read(&f, &name),
@@ -6910,7 +6923,10 @@ impl App {
             match open {
                 Open::Run(argv) => {
                     if let Err(err) = spawn_detached(&argv) {
-                        self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()));
+                        self.say(
+                            StatusKind::Error,
+                            fl!("open-failed", err = crate::why::text(&err)),
+                        );
                     }
                 }
                 Open::Edit {
@@ -6929,9 +6945,10 @@ impl App {
                             mtime,
                         });
                     }
-                    Err(err) => {
-                        self.say(StatusKind::Error, fl!("open-failed", err = err.to_string()))
-                    }
+                    Err(err) => self.say(
+                        StatusKind::Error,
+                        fl!("open-failed", err = crate::why::text(&err)),
+                    ),
                 },
                 Open::Lister(name) => view = self.open_lister(side, file, name),
                 Open::Browse(back) => {
@@ -7504,7 +7521,10 @@ impl App {
             if let Some(item) = items.get(i)
                 && let Err(e) = spawn_detached(&openwith::launch_argv(&item.path, &files))
             {
-                self.say(StatusKind::Error, fl!("open-failed", err = e.to_string()));
+                self.say(
+                    StatusKind::Error,
+                    fl!("open-failed", err = crate::why::text(&e)),
+                );
             }
             return Task::none();
         }
@@ -7964,7 +7984,10 @@ impl App {
             // Not again on every message: Ctrl+O or a click on its line tries again.
             Err(e) => {
                 self.term_ended = true;
-                self.say(StatusKind::Error, fl!("term-failed", err = e.to_string()));
+                self.say(
+                    StatusKind::Error,
+                    fl!("term-failed", err = crate::why::text(&e)),
+                );
             }
         }
     }
@@ -8395,7 +8418,7 @@ fn unopenable(file: &Path, name: &str) -> Option<String> {
     Some(if link && e.kind() == std::io::ErrorKind::NotFound {
         fl!("broken-link", name = name)
     } else {
-        fl!("file-unreadable", name = name, err = e.to_string())
+        fl!("file-unreadable", name = name, err = crate::why::text(&e))
     })
 }
 
@@ -8451,7 +8474,7 @@ fn read_listing(
             Ok(v)
         }
         Some(r) => Ok(listing::entries(r, path, stop)),
-        None => listing::scan(path, show_hidden).map_err(|e| e.to_string()),
+        None => listing::scan(path, show_hidden).map_err(|e| crate::why::text(&e)),
     }
 }
 
