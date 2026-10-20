@@ -122,6 +122,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             a(Action::TestArchives),
         ),
         (vec![Alt], K::Named(Named::F10), a(Action::TreeDialog)),
+        (vec![Ctrl], K::Named(Named::F8), a(Action::TreePanel)),
         (
             vec![Ctrl],
             K::Shown(Named::ArrowLeft, "←"),
@@ -416,6 +417,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-hotlist"), Action::Hotlist),
                 b(fl!("menu-tree"), Action::TreeDialog),
+                b(fl!("menu-tree-panel"), Action::TreePanel),
                 b(fl!("menu-history"), Action::HistoryList),
                 b(fl!("menu-swap"), Action::SwapPanes),
                 menu::Item::Divider,

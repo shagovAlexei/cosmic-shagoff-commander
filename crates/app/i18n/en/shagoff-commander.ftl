@@ -706,3 +706,4 @@ tested-bad = { $bad } of { $n } archives damaged:
 menu-tree = Folder tree…
 tree = Folder tree
 tree-go = Go
+menu-tree-panel = Tree in the panel
