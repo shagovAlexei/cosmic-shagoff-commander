@@ -71,10 +71,12 @@ pub fn network(gio_list: &str) -> Vec<(String, String)> {
     gio_list
         .lines()
         .filter_map(|l| {
+            // After the type a tab, then `key=value` separated by spaces; a value (a display
+            // name) may hold spaces too, so it runs to the next ` standard::`.
+            let attrs = l.splitn(4, '\t').nth(3)?;
             let attr = |key: &str| {
-                l.split('\t')
-                    .find_map(|f| f.strip_prefix(key))
-                    .map(str::to_string)
+                let v = attrs.split_once(key)?.1;
+                Some(v.split(" standard::").next().unwrap_or(v).to_string())
             };
             let uri = attr("standard::target-uri=")?;
             let name = attr("standard::display-name=").unwrap_or_else(|| uri.clone());
@@ -647,14 +649,34 @@ Mount(0): nas -> sftp://nas/
     #[test]
     fn network_listing() {
         // Shape of `gio list -a standard::display-name,standard::target-uri network:///`.
-        let out = "smb-root\t0\t(directory)\tstandard::display-name=Windows Network\tstandard::target-uri=smb:///\n\
-                   dnssd-domain-nas\t0\t(shortcut)\tstandard::display-name=nas\tstandard::target-uri=sftp://nas.local:22/\n\
+        let out = "smb-root\t0\t(directory)\tstandard::display-name=Windows Network standard::target-uri=smb:///\n\
+                   dnssd-domain-nas\t0\t(shortcut)\tstandard::display-name=nas standard::target-uri=sftp://nas.local:22/\n\
                    nothing\t0\t(directory)\tstandard::display-name=No target\n";
         assert_eq!(
             network(out),
             [
                 ("Windows Network".to_string(), "smb:///".to_string()),
                 ("nas".to_string(), "sftp://nas.local:22/".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn regression_browse_attrs_space_separated() {
+        // Real `gio list -a …` output: a tab after the type, a space between attributes; a
+        // display name may hold spaces itself.
+        let out = "dnssd-server-LINUX._smb._tcp\t0\t(shortcut)\tstandard::display-name=LINUX standard::target-uri=smb://lite.local:445/\n\
+                   smb-root\t0\t(directory)\tstandard::display-name=Windows Network standard::target-uri=smb:///\n\
+                   print$\t0\t(mountable)\tstandard::target-uri=smb://pop-os.local/print%24 standard::display-name=print$\n";
+        assert_eq!(
+            network(out),
+            [
+                ("LINUX".to_string(), "smb://lite.local:445/".to_string()),
+                ("Windows Network".to_string(), "smb:///".to_string()),
+                (
+                    "print$".to_string(),
+                    "smb://pop-os.local/print%24".to_string()
+                ),
             ]
         );
     }
