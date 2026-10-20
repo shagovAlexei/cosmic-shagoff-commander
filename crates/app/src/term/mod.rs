@@ -31,6 +31,8 @@ pub struct Pane {
 }
 
 const RETRY: std::time::Duration = std::time::Duration::from_millis(300);
+/// While a `cd` waits (`waiting_tick`): slow, a long program (vim, a build) may hold the shell.
+const WAIT_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Start `shell` in `dir` (none: inside an archive, the shell's own). `dark`: the COSMIC theme's
 /// colors; `bg`: the window's background (0xAARRGGBB), the terminal's own.
@@ -110,7 +112,11 @@ pub fn on_event(pane: &Pane, event: Event) -> Outcome {
 /// The panel moved to `dir`: the shell follows, if it waits at its prompt (a running program is
 /// never typed into) and the dir is not where it already is.
 pub fn follow(pane: &mut Pane, dir: &Path) {
-    if pane.dir.as_deref() == Some(dir) || pane.busy_at.is_some_and(|t| t.elapsed() < RETRY) {
+    if pane.dir.as_deref() == Some(dir) {
+        pane.busy_at = None; // back where it is: nothing to wait for
+        return;
+    }
+    if pane.busy_at.is_some_and(|t| t.elapsed() < RETRY) {
         return;
     }
     let t = pane.terminal.lock().unwrap_or_else(|e| e.into_inner());
@@ -127,6 +133,19 @@ pub fn follow(pane: &mut Pane, dir: &Path) {
         drop(t);
         pane.busy_at = Some(std::time::Instant::now());
     }
+}
+
+/// A `cd` waits for the shell's prompt: asked again every `WAIT_TICK`. The prompt's own output
+/// comes before the shell takes the tty, and nothing may come after it.
+pub fn waiting_tick(pane: &Pane) -> Option<Subscription<()>> {
+    pane.busy_at
+        .is_some()
+        .then(|| cosmic::iced::time::every(WAIT_TICK).map(|_| ()))
+}
+
+/// The panel has no dir for the shell (an archive, a dir still being read): nothing to wait for.
+pub fn stop_waiting(pane: &mut Pane) {
+    pane.busy_at = None;
 }
 
 /// The channel terminals send their events through: its sender comes first (`TermTx`), then the

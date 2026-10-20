@@ -619,7 +619,7 @@ pub fn bar(checks: Checks, lock: Lock) -> Element<'static, Message> {
         .collect();
     menu::bar(roots)
         .item_height(ItemHeight::Dynamic(40))
-        .item_width(ItemWidth::Uniform(320))
+        .item_width(ItemWidth::Uniform(380))
         .spacing(4.0)
         .into()
 }
