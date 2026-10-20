@@ -220,7 +220,9 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             .into(),
     };
 
-    let list = if p.thumbs {
+    let list = if let Some((_, tree)) = &p.tree {
+        tree_list(app, side, p, tree, active)
+    } else if p.thumbs {
         thumb_list(app, side, p, active)
     } else if p.brief {
         brief_list(app, side, p, active)
@@ -296,7 +298,8 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     }
     let col = col
         .push(path)
-        .push(
+        // The tree (Ctrl+F8) has no columns.
+        .push_maybe(p.tree.is_none().then(|| {
             container(header(
                 side,
                 p.panel.sort(),
@@ -304,8 +307,8 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
                 app.col_widths(),
                 viewport::visible_cols(p.width, app.col_widths()),
             ))
-            .class(panel_style()),
-        )
+            .class(panel_style())
+        }))
         .push(list)
         .width(Length::Fill);
     let pane: Element<'_, Message> = match skin {
@@ -471,6 +474,51 @@ fn full_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element
         });
     }
     list = list.push(widget::Space::new().height((entries.len() - range.end) as f32 * row_h));
+    scrollable(list)
+        .id(app.scroll_ids[side].clone())
+        .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))
+        .height(Length::Fill)
+        .into()
+}
+
+/// Ctrl+F8: the dirs as an outline, rows as the file list draws them (only those in view).
+fn tree_list<'a>(
+    app: &'a App,
+    side: usize,
+    p: &'a Tab,
+    tree: &'a shagoff_core::tree::Tree,
+    active: bool,
+) -> Element<'a, Message> {
+    let row_h = app.row_h();
+    let range = viewport::visible_range(tree.rows.len(), row_h, p.offset, p.height);
+    let mut list = column![widget::Space::new().height(range.start as f32 * row_h)];
+    let font = app.panel_font();
+    for i in range.clone() {
+        let n = &tree.rows[i];
+        let mark = if n.open { "▾" } else { "▸" };
+        let label = format!("{}{mark} {}", "    ".repeat(n.depth), n.name);
+        let row = container(panel_cell(label, font))
+            .padding([0, 6])
+            .height(Length::Fixed(row_h))
+            .width(Length::Fill)
+            .clip(true)
+            .align_y(Alignment::Center)
+            .class(cursor_style(
+                i == tree.cursor,
+                active,
+                false,
+                app.config.skin,
+                None,
+                i % 2 == 1,
+                app.scheme.paint(),
+            ));
+        list = list.push(
+            mouse_area(row)
+                .on_press(Message::TreeRow(side, i))
+                .on_double_click(Message::TreeRowToggle(side, i)),
+        );
+    }
+    list = list.push(widget::Space::new().height((tree.rows.len() - range.end) as f32 * row_h));
     scrollable(list)
         .id(app.scroll_ids[side].clone())
         .on_scroll(move |v| Message::Scrolled(side, v.absolute_offset().y, v.bounds().height))

@@ -91,6 +91,9 @@ pub struct Tab {
     pub brief: bool,
     /// Ctrl+Shift+F1 Thumbnails view (cells with pictures); never together with `brief`.
     pub thumbs: bool,
+    /// Ctrl+F8 (TC): the dirs as a tree instead of the files — (id of its reads, the tree); the
+    /// other panel shows the dir under its cursor.
+    pub tree: Option<(u64, shagoff_core::tree::Tree)>,
     /// Brief view: first column on screen.
     pub col: usize,
     /// Brief view: touchpad scroll not yet worth a column, px.
@@ -145,6 +148,7 @@ impl Tab {
             width: FALLBACK_LIST_W,
             brief: false,
             thumbs: false,
+            tree: None,
             col: 0,
             wheel: 0.0,
             pending: None,
@@ -225,6 +229,7 @@ impl Tab {
             width: self.width,
             brief: self.brief,
             thumbs: self.thumbs,
+            tree: None, // a new tab shows the files
             col: self.col,
             wheel: 0.0,
             pending: None,
@@ -523,6 +528,10 @@ pub enum Message {
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
     },
+    /// Ctrl+F8: a click on row i of side's tree (the other panel follows) / a double click
+    /// (open / close it).
+    TreeRow(usize, usize),
+    TreeRowToggle(usize, usize),
     /// Alt+F10: a click on row i (on the row under the cursor: open / close it).
     TreePick(usize),
     /// Alt+F10: for the tree dialog with this id, dirs read — each with its subdirs — and the one
@@ -2413,6 +2422,23 @@ impl App {
                 };
                 return Task::batch([reload(self, 0), reload(self, 1)]);
             }
+            Message::TreeRow(side, i) => {
+                self.active = side;
+                let tab = self.panes[side].active().id;
+                if let Some((_, tree)) = &mut self.panes[side].active_mut().tree {
+                    tree.cursor = i.min(tree.rows.len().saturating_sub(1));
+                    return Task::batch([self.reveal(side, tab), self.tree_follow(side)]);
+                }
+            }
+            Message::TreeRowToggle(side, i) => {
+                let hidden = self.panes[side].active().panel.show_hidden();
+                if let Some((id, tree)) = &mut self.panes[side].active_mut().tree {
+                    tree.cursor = i.min(tree.rows.len().saturating_sub(1));
+                    if let Some(dir) = tree.toggle() {
+                        return tree_read(*id, vec![dir], hidden, None);
+                    }
+                }
+            }
             Message::TreePick(i) => {
                 if let Some(Dialog::Tree {
                     tree, hidden, id, ..
@@ -2429,6 +2455,30 @@ impl App {
                 }
             }
             Message::TreeFilled(from, read, select) => {
+                // A panel's tree (Ctrl+F8): filled, its cursor kept in view, the other panel
+                // following it.
+                let at = (0..2).find_map(|s| {
+                    (self.panes[s].items().iter())
+                        .position(|t| t.tree.as_ref().is_some_and(|(id, _)| *id == from))
+                        .map(|i| (s, i))
+                });
+                if let Some((side, i)) = at {
+                    let t = &mut self.panes[side].items_mut()[i];
+                    let tab = t.id;
+                    if let Some((_, tree)) = &mut t.tree {
+                        for (dir, names) in read {
+                            tree.fill(&dir, names);
+                        }
+                        if let Some(p) = &select {
+                            tree.select(p);
+                        }
+                    }
+                    let shown = self.panes[side].active().id == tab;
+                    return match shown {
+                        true => Task::batch([self.reveal(side, tab), self.tree_follow(side)]),
+                        false => Task::none(),
+                    };
+                }
                 if let Some(Dialog::Tree { tree, id, .. }) = &mut self.dialog
                     && *id == from
                 {
@@ -3686,6 +3736,83 @@ impl App {
     }
 
     /// Read the active tab's dir again (search results stay: they are re-checked).
+    /// Ctrl+F8 on, off, and the keys of a tab showing the tree. `None`: not a tree (the action goes
+    /// on as usual). File operations do nothing there: the files under it are not on screen.
+    fn tree_act(&mut self, side: usize, action: Action) -> Option<Task<Message>> {
+        use shagoff_core::tree::Tree;
+        if action == Action::TreePanel {
+            let hidden = self.panes[side].active().panel.show_hidden();
+            let t = self.panes[side].active_mut();
+            if t.tree.take().is_some() {
+                return Some(Task::none());
+            }
+            let cwd = t.panel.cwd().to_path_buf();
+            let cwd = self.shown(&cwd);
+            let here = match archive::split_path(&cwd) {
+                Some((a, _)) => a.parent().map_or(cwd.clone(), Path::to_path_buf),
+                None => cwd,
+            };
+            let root = PathBuf::from("/");
+            let id = self.next_id();
+            let t = self.panes[side].active_mut();
+            (t.tree, t.offset) = (Some((id, Tree::new(&root))), 0.0);
+            let dirs = shagoff_core::tree::chain(&root, &here);
+            return Some(tree_read(id, dirs, hidden, Some(here)));
+        }
+        let hidden = self.panes[side].active().panel.show_hidden();
+        let tab = self.panes[side].active().id;
+        let (id, tree) = self.panes[side].active_mut().tree.as_mut()?;
+        const PAGE: isize = 10;
+        match action {
+            Action::Up => tree.move_cursor(-1),
+            Action::Down => tree.move_cursor(1),
+            Action::PageUp => tree.move_cursor(-PAGE),
+            Action::PageDown => tree.move_cursor(PAGE),
+            Action::Home => tree.move_cursor(-isize::MAX / 2),
+            Action::End => tree.move_cursor(isize::MAX / 2),
+            Action::Right => {
+                if let Some(dir) = tree.step_in() {
+                    return Some(tree_read(*id, vec![dir], hidden, None));
+                }
+            }
+            Action::Left | Action::Parent => tree.step_out(),
+            Action::QuickSearch(c) => {
+                let names = tree.rows.iter().map(|n| n.name.as_str());
+                if let Some(i) = shagoff_core::quicksearch::next_with(names, tree.cursor, c) {
+                    tree.cursor = i;
+                }
+            }
+            // The files of the dir chosen: in the other panel already.
+            Action::Enter => {
+                self.active = 1 - side;
+                return Some(Task::none());
+            }
+            // Not about the files under the tree.
+            Action::SwitchPane | Action::Help | Action::Settings | Action::TreeDialog => {
+                return None;
+            }
+            _ => return Some(Task::none()),
+        }
+        Some(Task::batch([
+            self.reveal(side, tab),
+            self.tree_follow(side),
+        ]))
+    }
+
+    /// The other panel to the dir under tab `side`'s tree cursor (TC), unless it is there.
+    fn tree_follow(&mut self, side: usize) -> Task<Message> {
+        let Some(dir) = (self.panes[side].active().tree.as_ref())
+            .and_then(|(_, t)| t.current())
+            .map(|n| n.path.clone())
+        else {
+            return Task::none();
+        };
+        if self.panes[1 - side].active().target() == dir {
+            return Task::none();
+        }
+        self.load(1 - side, dir, None)
+    }
+
     /// The panel holding tab `tab` now (tabs move: Ctrl+U, a drag), `None` once it is closed.
     fn side_of(&self, tab: u64) -> Option<usize> {
         (0..2).find(|&s| self.panes[s].items().iter().any(|t| t.id == tab))
@@ -3779,6 +3906,9 @@ impl App {
             .is_some_and(|s| s.kind != StatusKind::Busy)
         {
             self.status = None;
+        }
+        if let Some(task) = self.tree_act(side, action) {
+            return task;
         }
         // Names there are paths: Ctrl+M would move files between dirs, Shift+F2 compares by name.
         if matches!(action, Action::MultiRename | Action::CompareLists)
@@ -4200,6 +4330,7 @@ impl App {
                     |r| cosmic::Action::App(Message::Tested(r)),
                 );
             }
+            Action::TreePanel => {} // `tree_act`
             Action::TreeDialog => {
                 let hidden = panel.show_hidden();
                 let cwd = panel.cwd().to_path_buf();
@@ -6880,12 +7011,13 @@ impl App {
             t.col = viewport::brief_first_col(len, t.panel.cursor(), rows, cols, t.col);
             return Task::none();
         }
-        let (row, row_h) = match t.thumbs {
-            true => (
+        let (row, row_h) = match (&t.tree, t.thumbs) {
+            (Some((_, tree)), _) => (tree.cursor, row_h),
+            (None, true) => (
                 t.panel.cursor() / t.thumb_cols(),
                 crate::thumbs::cell_h(row_h),
             ),
-            false => (t.panel.cursor(), row_h),
+            (None, false) => (t.panel.cursor(), row_h),
         };
         match viewport::scroll_to_cursor(row, row_h, t.offset, t.height) {
             Some(y) => {
@@ -10142,6 +10274,45 @@ mod tests {
         assert!(app.dialog.is_none());
         let pending = app.panes[0].active().pending.clone().map(|(_, p)| p);
         assert_eq!(pending.as_deref(), tmp.path().parent());
+    }
+
+    #[test]
+    fn ctrl_f8_tree_in_the_panel_leads_the_other_one() {
+        use shagoff_core::tree::{chain, read};
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("a")).unwrap();
+        std::fs::create_dir(tmp.path().join("b")).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        listed_at(&mut app, 0, tmp.path());
+        let _ = app.update(Message::Key(Action::TreePanel));
+        let id = app.panes[0]
+            .active()
+            .tree
+            .as_ref()
+            .map(|(id, _)| *id)
+            .unwrap();
+        let mut got = read(chain(Path::new("/"), tmp.path()), false, Some(tmp.path()));
+        got.extend(read(vec![tmp.path().into()], false, None)); // and its own subdirs
+        let _ = app.update(Message::TreeFilled(id, got, Some(tmp.path().into())));
+        let cur = |app: &App| {
+            let (_, t) = app.panes[0].active().tree.as_ref().unwrap();
+            t.current().unwrap().path.clone()
+        };
+        assert_eq!(cur(&app), tmp.path());
+        // ↓: onto "a"; the other panel goes there.
+        let _ = app.update(Message::Key(Action::Down));
+        assert_eq!(cur(&app), tmp.path().join("a"));
+        let pending = |app: &App| app.panes[1].active().pending.clone().map(|(_, p)| p);
+        assert_eq!(pending(&app), Some(tmp.path().join("a")));
+        // F8 under the tree: no files there to delete.
+        let _ = app.update(Message::Key(Action::Delete));
+        assert!(app.dialog.is_none());
+        // Enter: on to the files.
+        let _ = app.update(Message::Key(Action::Enter));
+        assert_eq!(app.active, 1);
+        app.active = 0;
+        let _ = app.update(Message::Key(Action::TreePanel)); // off
+        assert!(app.panes[0].active().tree.is_none());
     }
 
     #[test]

@@ -23,6 +23,8 @@ pub enum Action {
     TestArchives,
     /// Alt+F10: go to a dir chosen in a tree (TC «Change directory via tree»).
     TreeDialog,
+    /// Ctrl+F8: the dirs as a tree in this panel, the other one showing the files (TC).
+    TreePanel,
     SwitchPane,
     Up,
     Down,
@@ -327,6 +329,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F5, true, false) => Action::Sort(SortKey::Date),
             (Named::F5, true, true) => Action::Link,
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
+            (Named::F8, true, false) => Action::TreePanel,
             (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
             (Named::ArrowUp, false, true) => Action::MarkUp,
             (Named::F1, false, false) => Action::Help,
@@ -898,5 +901,6 @@ mod tests {
         let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
         assert_eq!(named(Named::F9, alt_shift), Some(Action::TestArchives));
         assert_eq!(named(Named::F10, ALT), Some(Action::TreeDialog));
+        assert_eq!(named(Named::F8, CTRL), Some(Action::TreePanel));
     }
 }
