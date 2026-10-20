@@ -124,11 +124,17 @@ pub fn chmod(
     failed
 }
 
-/// Give `paths` (and with `recursive` everything under the dirs) the group `gid`. Links get it
-/// themselves, never their targets (`lchown`). Entries already in it are left alone. The kernel
-/// drops setuid / setgid on a chown by a non-root user: put back (same owner, his own group).
-/// Returns what failed (not the owner, not one of the user's groups, unreadable dirs).
-pub fn chgrp(paths: &[PathBuf], gid: u32, recursive: bool) -> Vec<(PathBuf, io::Error)> {
+/// Give `paths` (and with `recursive` everything under the dirs) the owner `uid` and / or the
+/// group `gid`. Links get them themselves, never their targets (`lchown`). Entries that already
+/// have them are left alone. The kernel drops setuid / setgid on a chown: put back (root may, and
+/// a non-root user changes only the group of his own files). Returns what failed (without root:
+/// not the owner, not one of the user's groups; unreadable dirs).
+pub fn chown(
+    paths: &[PathBuf],
+    uid: Option<u32>,
+    gid: Option<u32>,
+    recursive: bool,
+) -> Vec<(PathBuf, io::Error)> {
     use std::os::unix::fs::MetadataExt;
     let mut failed = Vec::new();
     let mut todo: Vec<PathBuf> = paths.iter().rev().cloned().collect();
@@ -140,8 +146,8 @@ pub fn chgrp(paths: &[PathBuf], gid: u32, recursive: bool) -> Vec<(PathBuf, io::
                 continue;
             }
         };
-        if m.gid() != gid {
-            match std::os::unix::fs::lchown(&p, None, Some(gid)) {
+        if uid.is_some_and(|u| u != m.uid()) || gid.is_some_and(|g| g != m.gid()) {
+            match std::os::unix::fs::lchown(&p, uid, gid) {
                 Err(e) => failed.push((p.clone(), e)),
                 Ok(()) if !m.file_type().is_symlink() && m.mode() & 0o6000 != 0 => {
                     let back = fs::Permissions::from_mode(m.mode() & 0o7777);
@@ -160,6 +166,84 @@ pub fn chgrp(paths: &[PathBuf], gid: u32, recursive: bool) -> Vec<(PathBuf, io::
         }
     }
     failed
+}
+
+/// What Alt+Enter's OK does: the owner / group first (a chown drops setuid / setgid), then the
+/// toggled bits, which put back what was asked.
+pub fn apply(
+    paths: &[PathBuf],
+    uid: Option<u32>,
+    gid: Option<u32>,
+    (set, clear): (u32, u32),
+    recursive: bool,
+) -> Vec<(PathBuf, io::Error)> {
+    let mut failed = Vec::new();
+    if uid.is_some() || gid.is_some() {
+        failed = chown(paths, uid, gid, recursive);
+    }
+    if set | clear != 0 {
+        failed.extend(chmod(paths, set, clear, recursive));
+    }
+    failed
+}
+
+/// The first argument of the program run as root by pkexec to do `apply` (163).
+pub const HELPER: &str = "--props-apply";
+
+/// Arguments after the program for `HELPER`: `uid gid set clear recursive -- paths`, `-` for
+/// no owner / group, the bits in octal.
+pub fn helper_args(
+    paths: &[PathBuf],
+    uid: Option<u32>,
+    gid: Option<u32>,
+    (set, clear): (u32, u32),
+    recursive: bool,
+) -> Vec<std::ffi::OsString> {
+    let id = |i: Option<u32>| i.map_or("-".to_string(), |i| i.to_string());
+    let mut v: Vec<std::ffi::OsString> = [
+        HELPER.to_string(),
+        id(uid),
+        id(gid),
+        format!("{set:o}"),
+        format!("{clear:o}"),
+        u8::from(recursive).to_string(),
+        "--".into(),
+    ]
+    .map(Into::into)
+    .into();
+    v.extend(paths.iter().map(|p| p.as_os_str().to_owned()));
+    v
+}
+
+/// `HELPER`'s side: parse `helper_args` (`args[0]` = `HELPER`) and `apply`. Returns the
+/// failures as lines, or why the arguments are wrong.
+pub fn run_helper(args: &[std::ffi::OsString]) -> Result<Vec<String>, String> {
+    let bad = || "bad arguments".to_string();
+    let [_, uid, gid, set, clear, rec, dashes, paths @ ..] = args else {
+        return Err(bad());
+    };
+    let s = |a: &std::ffi::OsString| a.to_str().map(str::to_string).ok_or_else(bad);
+    let id = |a| -> Result<Option<u32>, String> {
+        match s(a)?.as_str() {
+            "-" => Ok(None),
+            n => n.parse().map(Some).map_err(|_| bad()),
+        }
+    };
+    let bits = |a| u32::from_str_radix(&s(a)?, 8).map_err(|_| bad());
+    if dashes != "--" || paths.is_empty() {
+        return Err(bad());
+    }
+    let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let failed = apply(
+        &paths,
+        id(uid)?,
+        id(gid)?,
+        (bits(set)? & 0o7777, bits(clear)? & 0o7777),
+        s(rec)? == "1",
+    );
+    Ok((failed.into_iter())
+        .map(|(p, e)| format!("{}: {e}", p.display()))
+        .collect())
 }
 
 #[cfg(test)]
@@ -288,7 +372,7 @@ mod tests {
         // Another of the user's groups, so the change really happens (one group: as it is).
         let g = mine.iter().copied().find(|g| *g != now).unwrap_or(now);
         set(&top.join("sub/f"), 0o6755); // kept through the change
-        assert!(chgrp(std::slice::from_ref(&top), g, true).is_empty());
+        assert!(chown(std::slice::from_ref(&top), None, Some(g), true).is_empty());
         assert_eq!(mode_of(&top.join("sub/f")), 0o6755);
         for p in [top.clone(), top.join("sub/f"), top.join("ln")] {
             assert_eq!(fs::symlink_metadata(&p).unwrap().gid(), g, "{p:?}");
@@ -298,7 +382,7 @@ mod tests {
         if rustix::process::geteuid().as_raw() != 0
             && let Some(other) = (0..65534).find(|g| !mine.contains(g))
         {
-            let failed = chgrp(std::slice::from_ref(&top), other, false);
+            let failed = chown(std::slice::from_ref(&top), None, Some(other), false);
             assert_eq!(failed.len(), 1);
         }
     }
@@ -332,5 +416,28 @@ mod tests {
         assert_eq!(mode_of(&top.join("sub/f")), 0o644);
         assert_eq!(mode_of(&outside), 0o600); // the link's target untouched
         assert_eq!(mode(&top.join("link")), None);
+    }
+
+    #[test]
+    fn helper_round_trip_applies_owner_group_and_bits() {
+        use std::os::unix::fs::MetadataExt;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("-f");
+        fs::write(&f, "x").unwrap();
+        set(&f, 0o600);
+        let m = fs::metadata(&f).unwrap();
+        // Its own owner and group: no root needed, the bits still applied.
+        let args = helper_args(
+            std::slice::from_ref(&f),
+            Some(m.uid()),
+            Some(m.gid()),
+            (0o044, 0o200),
+            true,
+        );
+        assert_eq!(run_helper(&args), Ok(vec![]));
+        assert_eq!(mode_of(&f), 0o444);
+        let args = helper_args(&[d.path().join("none")], None, Some(m.gid()), (0, 0), false);
+        assert_eq!(run_helper(&args).unwrap().len(), 1);
+        assert!(run_helper(&args[..5]).is_err());
     }
 }

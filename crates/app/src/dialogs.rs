@@ -390,15 +390,20 @@ pub struct Props {
     /// A dir is selected: offer to change what is inside too.
     pub has_dir: bool,
     pub recursive: bool,
-    /// Groups the files may be given (the user's own and the files' current one), names for the
-    /// drop-down; `group`: the one shown (`None`: the files' groups differ).
+    /// Every group (and the files' current one), names for the drop-down; `group`: the one
+    /// shown (`None`: the files' groups differ). One not the user's needs root (pkexec).
     pub gids: Vec<u32>,
     pub group_names: Vec<String>,
     pub group: Option<usize>,
     /// `group` as opened: picking it again changes nothing.
     pub group0: Option<usize>,
-    /// The user owns one of the files (or is root): else no group can be given, shown as text.
-    pub can_chgrp: bool,
+    /// The same for the owner: every user; a new one needs root (pkexec).
+    pub uids: Vec<u32>,
+    pub user_names: Vec<String>,
+    pub user: Option<usize>,
+    pub user0: Option<usize>,
+    /// Some of the files are not the user's: any change to them needs root.
+    pub foreign: bool,
     /// Counted in the background; `None` while counting.
     pub usage: Option<shagoff_core::props::Usage>,
     pub id: u64,
@@ -412,6 +417,13 @@ impl Props {
     pub fn new_group(&self) -> Option<u32> {
         (self.group != self.group0)
             .then(|| self.group.and_then(|i| self.gids.get(i).copied()))
+            .flatten()
+    }
+
+    /// The owner to give on OK: picked, and not the one the files had.
+    pub fn new_user(&self) -> Option<u32> {
+        (self.user != self.user0)
+            .then(|| self.user.and_then(|i| self.uids.get(i).copied()))
             .flatten()
     }
 }
@@ -1109,25 +1121,28 @@ pub fn view<'a>(
                 ),
             };
             body = body.push(line(fl!("props-size"), size));
-            // As chgrp: the user's own groups (another needs root). An archive keeps none.
+            // Owner and group (another than the user's own groups asks polkit). An archive keeps none.
             if p.archive.is_none() {
-                body = body.push(
+                let pick = |label: String, names: &'a [String], at, msg: fn(usize) -> Message| {
                     row![
-                        widget::text::body(fl!("props-group-line")).width(Length::Fixed(LABEL)),
-                        if p.can_chgrp {
-                            Element::from(widget::dropdown(
-                                &p.group_names,
-                                p.group,
-                                Message::PropsGroup,
-                            ))
-                        } else {
-                            let name = p.group.and_then(|i| p.group_names.get(i));
-                            widget::text::body(name.cloned().unwrap_or_else(|| "—".into())).into()
-                        },
+                        widget::text::body(label).width(Length::Fixed(LABEL)),
+                        widget::dropdown(names, at, msg),
                     ]
                     .spacing(8)
-                    .align_y(cosmic::iced::Alignment::Center),
-                );
+                    .align_y(cosmic::iced::Alignment::Center)
+                };
+                body = body.push(pick(
+                    fl!("props-owner-line"),
+                    &p.user_names,
+                    p.user,
+                    Message::PropsUser,
+                ));
+                body = body.push(pick(
+                    fl!("props-group-line"),
+                    &p.group_names,
+                    p.group,
+                    Message::PropsGroup,
+                ));
             }
             let bit = |b: u32| {
                 let unknown = p.mixed & !p.touched & b != 0;

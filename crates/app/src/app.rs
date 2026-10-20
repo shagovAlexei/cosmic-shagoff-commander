@@ -653,6 +653,8 @@ pub enum Message {
     PropsBit(u32),
     /// Alt+Enter's group drop-down: index into `Props::gids`.
     PropsGroup(usize),
+    /// Its owner drop-down: index into `Props::uids`.
+    PropsUser(usize),
     PropsRecursive,
     /// id, usage counted in the background (`None` = stopped).
     PropsUsage(u64, Option<shagoff_core::props::Usage>),
@@ -1808,6 +1810,13 @@ impl App {
                     && i < p.gids.len()
                 {
                     p.group = Some(i);
+                }
+            }
+            Message::PropsUser(i) => {
+                if let Some(Dialog::Props(p)) = &mut self.dialog
+                    && i < p.uids.len()
+                {
+                    p.user = Some(i);
                 }
             }
             Message::PropsBit(b) => {
@@ -4522,28 +4531,56 @@ impl App {
             Dialog::Props(p) => {
                 // Only the touched bits, as shown now: entries keep the rest of their own modes.
                 let (set, clear) = (p.mode & p.touched, !p.mode & p.touched & 0o7777);
-                let gid = p.new_group();
-                if p.touched == 0 && gid.is_none() {
+                let (uid, gid) = (p.new_user(), p.new_group());
+                if p.touched == 0 && uid.is_none() && gid.is_none() {
                     return Task::none();
                 }
+                let me = shagoff_core::owners::euid();
+                // A new owner, a group not the user's, or files not his need root: polkit asks
+                // (163), the program itself runs as root to do it.
+                let as_root = me != 0
+                    && (uid.is_some()
+                        || p.foreign
+                        || gid.is_some_and(|g| !shagoff_core::owners::my_groups().contains(&g)));
                 let (side, paths, recursive) = (p.side, p.paths.clone(), p.recursive);
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            // The group first: a new group drops setuid / setgid, the bits after
-                            // put back what was asked.
-                            let mut failed = (gid
-                                .map(|g| shagoff_core::props::chgrp(&paths, g, recursive)))
-                            .unwrap_or_default();
-                            if set | clear != 0 {
-                                failed.extend(shagoff_core::props::chmod(
-                                    &paths, set, clear, recursive,
-                                ));
+                            use shagoff_core::props;
+                            if !as_root {
+                                let failed =
+                                    props::apply(&paths, uid, gid, (set, clear), recursive);
+                                return (failed.into_iter())
+                                    .map(|(p, e)| format!("{}: {e}", p.display()))
+                                    .collect();
                             }
-                            failed
-                                .into_iter()
-                                .map(|(p, e)| format!("{}: {e}", p.display()))
-                                .collect()
+                            let out = std::env::current_exe().and_then(|exe| {
+                                std::process::Command::new("pkexec")
+                                    .arg(exe)
+                                    .args(props::helper_args(
+                                        &paths,
+                                        uid,
+                                        gid,
+                                        (set, clear),
+                                        recursive,
+                                    ))
+                                    .stdin(std::process::Stdio::null())
+                                    .output()
+                            });
+                            match out {
+                                Err(e) => vec![format!("pkexec: {e}")],
+                                Ok(o) if o.status.success() => Vec::new(),
+                                Ok(o) => {
+                                    // The helper's failures, or pkexec's refusal.
+                                    let err = String::from_utf8_lossy(&o.stderr);
+                                    let mut v: Vec<String> =
+                                        err.lines().map(str::to_string).collect();
+                                    if v.is_empty() {
+                                        v.push(format!("pkexec: {}", o.status));
+                                    }
+                                    v
+                                }
+                            }
                         })
                         .await
                         .unwrap_or_default()
@@ -5345,8 +5382,6 @@ impl App {
                 facts.push((fl!("props-type"), kind));
                 let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
                 facts.push((fl!("props-modified"), format::date(mtime, &self.tz)));
-                let owner = self.owners.name(m.uid(), m.gid());
-                facts.push((fl!("props-owner-line"), owner));
             }
         } else {
             facts.push((fl!("props-selected"), fl!("props-items", n = paths.len())));
@@ -5358,15 +5393,22 @@ impl App {
         let all = modes.iter().fold(0o7777, |a, m| a & m);
         let any = modes.iter().fold(0, |a, m| a | m);
         let has_dir = metas.iter().flatten().any(|m| m.is_dir());
-        // The drop-down: the user's groups and the files' own (shown even if not the user's).
+        // The drop-downs: every group / user and the files' own (a number when not in /etc).
+        let common = |ids: &[u32], all: &[(u32, String)]| {
+            (ids.first())
+                .filter(|g| ids.iter().all(|x| x == *g))
+                .and_then(|g| all.iter().position(|(id, _)| id == g))
+        };
         let file_gids: Vec<u32> = metas.iter().flatten().map(|m| m.gid()).collect();
-        let mut gids = shagoff_core::owners::my_groups();
+        let mut gids = self.owners.all_gids();
         gids.extend(&file_gids);
         let groups = self.owners.groups(&gids);
-        let common = file_gids
-            .first()
-            .filter(|g| file_gids.iter().all(|x| x == *g));
-        let group = common.and_then(|g| groups.iter().position(|(id, _)| id == g));
+        let group = common(&file_gids, &groups);
+        let file_uids: Vec<u32> = metas.iter().flatten().map(|m| m.uid()).collect();
+        let mut uids = self.owners.all_uids();
+        uids.extend(&file_uids);
+        let users = self.owners.users(&uids);
+        let user = common(&file_uids, &users);
         Dialog::Props(Box::new(dialogs::Props {
             side,
             paths,
@@ -5381,9 +5423,13 @@ impl App {
             group_names: groups.into_iter().map(|(_, n)| n).collect(),
             group,
             group0: group,
-            can_chgrp: {
+            uids: users.iter().map(|(u, _)| *u).collect(),
+            user_names: users.into_iter().map(|(_, n)| n).collect(),
+            user,
+            user0: user,
+            foreign: {
                 let me = shagoff_core::owners::euid();
-                me == 0 || metas.iter().flatten().any(|m| m.uid() == me)
+                file_uids.iter().any(|u| *u != me)
             },
             usage: None,
             id: 0, // set by `start_usage`
@@ -5431,7 +5477,11 @@ impl App {
             group_names: Vec::new(),
             group: None,
             group0: None,
-            can_chgrp: false,
+            uids: Vec::new(),
+            user_names: Vec::new(),
+            user: None,
+            user0: None,
+            foreign: false,
             usage: None,
             id: 0,
             stop: Arc::new(AtomicBool::new(false)),
@@ -11932,7 +11982,9 @@ mod tests {
         let other = (p.gids.iter()).position(|g| *g != now && mine.contains(g));
         let Some(i) = other else { return }; // a user with one group: nothing to pick
         let g = p.gids[i];
-        assert!(p.can_chgrp && p.new_group().is_none());
+        assert!(p.new_group().is_none() && p.new_user().is_none());
+        let me = std::fs::metadata(&f).unwrap().uid();
+        assert_eq!(p.user.map(|i| p.uids[i]), Some(me)); // the file's owner shown
         let back = p.group;
         let _ = app.update(Message::PropsGroup(i));
         let Some(Dialog::Props(p)) = &mut app.dialog else {
