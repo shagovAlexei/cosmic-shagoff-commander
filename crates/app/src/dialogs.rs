@@ -555,6 +555,8 @@ pub enum ListKind {
     Terminals,
     /// Commands → "Shell…": `path` is the shell (empty: `$SHELL`).
     Shells,
+    /// Shift+F10 / the Menu key: the row's context menu (`menu::context_rows`).
+    Context,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -591,6 +593,8 @@ pub enum Item {
     Other,
     /// "Open with…": show every installed program.
     All,
+    /// Shift+F10's menu: what the item does.
+    Act(crate::menu::MenuAct),
 }
 
 impl Dialog {
@@ -1324,6 +1328,7 @@ pub fn view<'a>(
                 ListKind::OpenWith => fl!("open-with"),
                 ListKind::Terminals => fl!("menu-terminal"),
                 ListKind::Shells => fl!("menu-shell"),
+                ListKind::Context => fl!("context-menu"),
             };
             let dialog = widget::dialog()
                 .title(title)

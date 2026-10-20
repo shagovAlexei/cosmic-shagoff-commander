@@ -100,6 +100,32 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             K::Num(Code::NumpadMultiply, "Num *"),
             a(Action::Invert),
         ),
+        (
+            vec![],
+            K::Num(Code::NumpadDivide, "Num /"),
+            a(Action::RestoreMarks),
+        ),
+        (
+            vec![Alt],
+            K::Num(Code::NumpadAdd, "Num +"),
+            a(Action::MarkExt),
+        ),
+        (
+            vec![Alt],
+            K::Num(Code::NumpadSubtract, "Num −"),
+            a(Action::UnmarkExt),
+        ),
+        (vec![Ctrl], K::Letter(Code::KeyL, "l"), a(Action::Occupied)),
+        (
+            vec![Ctrl],
+            K::Shown(Named::ArrowLeft, "←"),
+            a(Action::OpenLeft),
+        ),
+        (
+            vec![Ctrl],
+            K::Shown(Named::ArrowRight, "→"),
+            a(Action::OpenRight),
+        ),
         (vec![Shift], K::Named(Named::F2), a(Action::CompareLists)),
         (vec![Alt], K::Named(Named::F7), a(Action::FindFiles)),
         (
@@ -342,6 +368,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-rename"), Action::Rename),
                 b(fl!("menu-properties"), Action::Properties),
                 b(fl!("menu-count-dirs"), Action::CountDirs),
+                b(fl!("menu-occupied"), Action::Occupied),
                 b(fl!("menu-mkdir"), Action::Mkdir),
                 b(fl!("menu-new-file"), Action::NewFile),
                 b(fl!("menu-delete"), Action::Delete),
@@ -364,6 +391,9 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-select-all"), Action::SelectAll),
                 b(fl!("menu-unselect-all"), Action::UnselectAll),
                 b(fl!("menu-invert"), Action::Invert),
+                b(fl!("menu-restore-marks"), Action::RestoreMarks),
+                b(fl!("menu-mark-ext"), Action::MarkExt),
+                b(fl!("menu-unmark-ext"), Action::UnmarkExt),
                 menu::Item::Divider,
                 b(fl!("menu-compare-lists"), Action::CompareLists),
                 menu::Item::Divider,
@@ -602,6 +632,21 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             b(fl!("ctx-close-other-tabs"), Action::CloseOtherTabs),
         ],
     }
+}
+
+/// Shift+F10 / the Menu key: `ctx`'s menu as rows of a list dialog — (label, what it does), `None`
+/// for a divider. libcosmic opens its context menu only on a right-button release.
+pub fn context_rows(ctx: Ctx) -> Vec<(String, Option<MenuAct>)> {
+    context_items(ctx)
+        .into_iter()
+        .filter_map(|it| match it {
+            menu::Item::Button(label, _, act) | menu::Item::CheckBox(label, _, _, act) => {
+                Some((label, Some(act)))
+            }
+            menu::Item::Divider => Some((String::new(), None)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Right-click menu for `ctx`, keys shown from the same table as the main menu.
