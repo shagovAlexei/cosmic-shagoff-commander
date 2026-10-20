@@ -842,6 +842,8 @@ pub enum Message {
     ListerWindow(ListerWin),
     /// A window is gone (the viewer's: the viewer closes).
     WindowClosed(cosmic::iced::window::Id),
+    /// The built-in terminal's pending `cd`: ask the shell again (`term::waiting_tick`).
+    TermWait,
     /// Every 2 s while files from archives are in the editor: look for saved changes.
     EditTick,
     /// Window ×, Alt+F4, menu «Exit»: asks first while a job runs or waits.
@@ -1010,6 +1012,14 @@ impl Application for App {
         }
         if self.config.term_builtin {
             subs.push(crate::term::subscription());
+        }
+        // A `cd` waiting for the shell's prompt: `term_follow` (after every update) asks again.
+        if let Some(tick) = self
+            .term
+            .as_ref()
+            .and_then(|t| crate::term::waiting_tick(t))
+        {
+            subs.push(tick.map(|()| Message::TermWait));
         }
         // The terminal's top edge held: the pointer anywhere, and where the button comes up.
         if self.term_drag.is_some() {
@@ -2337,6 +2347,7 @@ impl App {
                     self.lister = None;
                 }
             }
+            Message::TermWait => {} // `term_follow` runs after it
             Message::EditTick => {
                 if self.dialog.is_some() || self.job.is_some() {
                     return Task::none(); // asked on a later tick
@@ -5597,7 +5608,13 @@ impl App {
                 ..q
             },
             Err(e) => {
+                // The last search's results would read as this one's under the error.
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    if let Some(old) = f.stop.take() {
+                        old.store(true, Ordering::Relaxed);
+                    }
+                    (f.cursor, f.total) = (0, 0);
+                    f.results.clear();
                     f.error = Some(e);
                 }
                 return Task::none();
@@ -11956,6 +11973,22 @@ mod tests {
         };
         assert!(s.content && !s.recursive && !s.mirror && s.mask == "*.rs");
         assert_eq!(s.hide, HashSet::from([Kind::ToLeft]));
+    }
+
+    #[test]
+    fn regression_a_bad_regex_clears_the_last_results() {
+        let (_tmp, mut app) = results_app();
+        let _ = app.update(Message::Key(Action::FindFiles));
+        let _ = app.update(Message::FindNameRegex);
+        let _ = app.update(Message::FindInput(FindField::Mask, "(".into()));
+        if let Some(Dialog::Find(f)) = &mut app.dialog {
+            f.results.push(PathBuf::from("/a search before"));
+        }
+        let _ = app.update(Message::FindStart);
+        let Some(Dialog::Find(f)) = &app.dialog else {
+            panic!("no dialog");
+        };
+        assert!(f.error.is_some() && f.results.is_empty());
     }
 
     #[test]

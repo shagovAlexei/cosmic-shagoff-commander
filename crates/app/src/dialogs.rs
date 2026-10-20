@@ -1243,9 +1243,11 @@ pub fn view<'a>(
                         .on_toggle(|_| Message::PropsRecursive),
                 );
             }
-            let dialog = widget::dialog()
-                .title(fl!("props-title"))
-                .control(widget::scrollable(control).height(Length::Shrink));
+            // At most the panel's rows high (as the list dialogs): the owner / group rows (163)
+            // pushed Apply / Cancel off a 530 px window.
+            let control = widget::container(widget::scrollable(control).height(Length::Shrink))
+                .max_height(if list_h > 0.0 { list_h } else { f32::INFINITY });
+            let dialog = widget::dialog().title(fl!("props-title")).control(control);
             match p.archive {
                 // Nothing to apply: Close alone.
                 Some(_) => dialog.primary_action(
