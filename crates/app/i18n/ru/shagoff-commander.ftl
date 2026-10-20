@@ -459,6 +459,8 @@ connect-saved = Сохранённые
 connect-browse = Обзор сети
 connect-browsing = Поиск… (остановить)
 connect-none-found = В сети ничего не найдено
+connect-in = В { $place }:
+connect-deeper = Заглянуть внутрь
 connect-cancelled = Подключение отменено
 
 ## Command line (phase 27)

@@ -83,11 +83,44 @@ pub fn network(gio_list: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Browse the local network (gvfs `network:///`); `cancel` kills `gio` (`Error::Cancelled`).
-pub fn browse(cancel: &Arc<AtomicBool>) -> Result<Vec<(String, String)>, Error> {
-    let attrs = "standard::display-name,standard::target-uri";
-    let cmd = gio(["list", "-a", attrs, "network:///"]);
-    talk_until(cmd, "", Some(cancel)).map(|s| network(&s))
+/// The network place browsed first.
+pub const NETWORK: &str = "network:///";
+
+/// An SMB place above a share — the Windows network (`smb:///`), a workgroup or a server —
+/// whose listing goes one level deeper; a share itself is where one connects.
+pub fn deeper(uri: &str) -> bool {
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return false;
+    };
+    let share = rest
+        .split_once('/')
+        .map_or("", |(_, s)| s.trim_matches('/'));
+    scheme.eq_ignore_ascii_case("smb") && share.is_empty()
+}
+
+/// gvfs lists an `smb:` place only once it is mounted.
+fn not_mounted(e: &Error) -> bool {
+    matches!(e, Error::Failed(m) if m.contains("is not mounted"))
+}
+
+/// Browse `at` (`NETWORK`, or a `deeper` place: mounted first if gvfs wants it, `password`
+/// answering its prompt); `cancel` kills `gio` (`Error::Cancelled`).
+pub fn browse(
+    at: &str,
+    password: &str,
+    cancel: &Arc<AtomicBool>,
+) -> Result<Vec<(String, String)>, Error> {
+    let list = || {
+        let attrs = "standard::display-name,standard::target-uri";
+        talk_until(gio(["list", "-a", attrs, at]), "", Some(cancel)).map(|s| network(&s))
+    };
+    match list() {
+        Err(e) if not_mounted(&e) => {
+            talk_until(gio(["mount", at]), password, Some(cancel))?;
+            list()
+        }
+        r => r,
+    }
 }
 
 /// Volumes with a unix device and `can_mount=1`, from `gio mount -li`.
@@ -616,6 +649,32 @@ Mount(0): nas -> sftp://nas/
                 ("nas".to_string(), "sftp://nas.local:22/".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn deeper_is_smb_above_a_share() {
+        for (uri, deep) in [
+            ("smb:///", true),
+            ("smb://WORKGROUP/", true),
+            ("smb://nas", true),
+            ("SMB://nas/", true),
+            ("smb://nas/share", false),
+            ("smb://nas/share/", false),
+            ("sftp://nas.local:22/", false),
+            ("network:///", false),
+        ] {
+            assert_eq!(deeper(uri), deep, "{uri}");
+        }
+    }
+
+    #[test]
+    fn not_mounted_is_told_apart() {
+        let e = Error::Failed("gio: smb:///: The specified location is not mounted".into());
+        assert!(not_mounted(&e));
+        assert!(!not_mounted(&Error::Failed(
+            "gio: smb:///: No such file".into()
+        )));
+        assert!(!not_mounted(&Error::Cancelled));
     }
 
     #[test]

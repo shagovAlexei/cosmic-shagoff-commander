@@ -458,6 +458,8 @@ connect-saved = Saved
 connect-browse = Browse network
 connect-browsing = Looking… (stop)
 connect-none-found = Nothing found on the network
+connect-in = In { $place }:
+connect-deeper = Look inside
 connect-cancelled = Connecting cancelled
 
 ## Command line (phase 27)
