@@ -2804,6 +2804,18 @@ impl App {
             {
                 return self.handle(Message::DialogQueue);
             }
+            // Ctrl+X passed on by a field. In the command line, on a line from the history
+            // (Ctrl+E): the next command (TC). A typed line stays (the field cut its selection);
+            // the other fields, the menu's «Cut» and the panel's Ctrl+X never step the history.
+            Message::FieldKey(Action::ClipCut) => {
+                if self.cmd_ready()
+                    && self.commands.contains(&self.cmdline)
+                    && let Some(next) = cmdline::next(&self.commands, &self.cmdline)
+                {
+                    self.cmdline = next;
+                    return widget::text_input::move_cursor_to_end(self.cmd_id.clone());
+                }
+            }
             Message::FieldKey(action) => {
                 if let Some(task) = self.mask_history(action) {
                     return task;
@@ -7325,20 +7337,39 @@ impl App {
             .then(Task::none);
         }
         let panel = &self.panes[side].active().panel;
+        // The names in `dir` (relative: under the panel's dir), for a name not in UTF-8
+        // (`cmdline::word`). Read, not the panel's list: a filter hides some, search results hold
+        // paths. Only for such names, so rarely.
+        let siblings = |dir: &Path| -> Option<Vec<OsString>> {
+            let rd = std::fs::read_dir(panel.cwd().join(dir)).ok()?;
+            Some(rd.flatten().map(|e| e.file_name()).collect())
+        };
         let word = match action {
             Action::Mark if !self.cmdline.is_empty() => {
                 self.cmdline.push(' ');
                 None
             }
-            Action::CmdName | Action::CmdPath => {
-                let e = panel.current().filter(|e| e.name != PARENT)?;
-                Some(cmdline::quote(&if action == Action::CmdPath {
-                    panel.cwd().join(&e.os_name).display().to_string()
-                } else {
-                    e.name.clone()
-                }))
+            Action::CmdName | Action::CmdPath | Action::CmdCwd => {
+                let path = match action {
+                    Action::CmdCwd => panel.cwd().to_path_buf(),
+                    _ => {
+                        let e = panel.current().filter(|e| e.name != PARENT)?;
+                        match action {
+                            Action::CmdPath => panel.cwd().join(&e.os_name),
+                            // Search results / branch: the path below the root, as shown.
+                            _ => Path::new(&e.os_name)
+                                .strip_prefix(panel.cwd())
+                                .unwrap_or(Path::new(&e.os_name))
+                                .to_path_buf(),
+                        }
+                    }
+                };
+                let Some(w) = cmdline::word(&path, siblings) else {
+                    self.say(StatusKind::Error, fl!("cmd-name-ambiguous"));
+                    return Some(Task::none());
+                };
+                Some(w)
             }
-            Action::CmdCwd => Some(cmdline::quote(&panel.cwd().display().to_string())),
             Action::CmdPrevious => {
                 self.cmdline = cmdline::previous(&self.commands, &self.cmdline)?;
                 None
@@ -7781,7 +7812,8 @@ fn route_event(
 }
 
 /// Keys a text field captures but does not edit with: F-keys, PgUp/PgDn, Insert and Ctrl combos
-/// other than text editing and the clipboard (Ctrl+A/C/V/X/Z, Ctrl+arrows/Backspace/Delete/Home/End).
+/// other than text editing and the clipboard (Ctrl+A/C/V/Z, Ctrl+arrows/Backspace/Delete/Home/End);
+/// Ctrl+X goes on too: in the command line it is the next command (TC).
 fn not_for_text(key: &keyboard::Key, physical: keyboard::key::Physical, mods: Modifiers) -> bool {
     use keyboard::key::{Code, Named, Physical};
     match key {
@@ -7819,7 +7851,7 @@ fn not_for_text(key: &keyboard::Key, physical: keyboard::key::Physical, mods: Mo
         _ => {
             let clipboard = matches!(
                 physical,
-                Physical::Code(Code::KeyA | Code::KeyC | Code::KeyV | Code::KeyX | Code::KeyZ)
+                Physical::Code(Code::KeyA | Code::KeyC | Code::KeyV | Code::KeyZ)
             );
             mods.control() && !clipboard
         }
@@ -13611,6 +13643,35 @@ mod tests {
         }
 
         #[test]
+        fn names_not_in_utf8_go_in_as_a_glob() {
+            use std::os::unix::ffi::OsStrExt;
+            let tmp = tempfile::tempdir().unwrap();
+            let bad = std::ffi::OsStr::from_bytes(b"caf\xe9");
+            std::fs::write(tmp.path().join(bad), "").unwrap();
+            let mut app = app_with(Config::default(), State::default());
+            listed_at(&mut app, 0, tmp.path());
+            let panel = &mut app.panes[0].active_mut().panel;
+            let i = (panel.entries().iter())
+                .position(|e| e.os_name == bad)
+                .unwrap();
+            panel.set_cursor(i);
+            let _ = app.update(Message::Key(Action::CmdName));
+            assert_eq!(app.cmdline, "caf?");
+            // The same pattern fits "cafe" too (by characters): not inserted.
+            app.cmdline.clear();
+            std::fs::write(tmp.path().join("café"), "").unwrap();
+            listed_at(&mut app, 0, tmp.path());
+            let panel = &mut app.panes[0].active_mut().panel;
+            let i = (panel.entries().iter())
+                .position(|e| e.os_name == bad)
+                .unwrap();
+            panel.set_cursor(i);
+            let _ = app.update(Message::Key(Action::CmdName));
+            assert_eq!(app.cmdline, "");
+            assert_eq!(app.msg(), Some(fl!("cmd-name-ambiguous").as_str()));
+        }
+
+        #[test]
         fn ctrl_e_and_alt_f8_bring_back_commands() {
             let tmp = tempfile::tempdir().unwrap();
             let state = State {
@@ -13622,6 +13683,18 @@ mod tests {
             let _ = app.update(Message::Key(Action::CmdPrevious));
             assert_eq!(app.cmdline, "make");
             let _ = app.update(Message::FieldKey(Action::CmdPrevious));
+            assert_eq!(app.cmdline, "ls");
+            // Ctrl+X in the line: the next command, at the newest it stays.
+            let _ = app.update(Message::FieldKey(Action::ClipCut));
+            assert_eq!(app.cmdline, "make");
+            let _ = app.update(Message::FieldKey(Action::ClipCut));
+            assert_eq!(app.cmdline, "make");
+            // A typed line stays; the panel's Ctrl+X / menu «Cut» never step the history.
+            app.cmdline = "mak".into();
+            let _ = app.update(Message::FieldKey(Action::ClipCut));
+            assert_eq!(app.cmdline, "mak");
+            app.cmdline = "ls".into();
+            let _ = app.update(Message::Key(Action::ClipCut));
             assert_eq!(app.cmdline, "ls");
             let _ = app.update(Message::FieldKey(Action::CmdHistory));
             let _ = app.update(Message::Key(Action::Down));

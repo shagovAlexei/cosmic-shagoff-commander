@@ -211,6 +211,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+Shift+Enter", fl!("help-cmd-path"), Action::CmdPath),
                 r("Ctrl+P", fl!("help-cmd-cwd"), Action::CmdCwd),
                 r("Ctrl+E", fl!("help-cmd-previous"), Action::CmdPrevious),
+                o("Ctrl+X", fl!("help-cmd-next")),
                 r("Alt+F8", fl!("cmd-history"), Action::CmdHistory),
             ],
         ),

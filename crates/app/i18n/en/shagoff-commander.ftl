@@ -473,6 +473,7 @@ help-cmd-name = Insert the name under the cursor
 help-cmd-path = Insert the full path under the cursor
 help-cmd-cwd = Insert the panel's path
 help-cmd-previous = Previous command
+help-cmd-next = Next command (with a line typed; else cut the files)
 
 ## Tabs (phase 28)
 menu-tabs = Tabs
@@ -680,3 +681,4 @@ help-term-scroll = Scroll back through the output (the wheel too)
 help-term-edge = Its top edge dragged: taller / shorter (kept)
 help-term-follow = The shell follows the active panel's folder (cd) while it waits at its prompt; a running program is never typed into
 help-term-shell = Commands → Shell…: bash, zsh… ($SHELL by default)
+cmd-name-ambiguous = The name is not UTF-8 and its pattern fits another name too: not inserted
