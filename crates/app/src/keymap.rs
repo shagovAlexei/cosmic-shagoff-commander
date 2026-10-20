@@ -19,6 +19,8 @@ pub enum Action {
     OpenRight,
     /// Ctrl+L: occupied space of the targets, in the status line.
     Occupied,
+    /// Alt+Shift+F9: the archives among the targets read through (TC «Test archives»).
+    TestArchives,
     SwitchPane,
     Up,
     Down,
@@ -259,6 +261,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             Key::Named(Named::F7) if mods == Modifiers::ALT => Some(Action::FindFiles),
             Key::Named(Named::F8) if mods == Modifiers::ALT => Some(Action::CmdHistory),
             Key::Named(Named::F9) if mods == Modifiers::ALT => Some(Action::Unpack),
+            Key::Named(Named::F9) if mods == Modifiers::ALT | Modifiers::SHIFT => {
+                Some(Action::TestArchives)
+            }
             Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Action::HistoryBack),
             Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Action::HistoryForward),
             Key::Named(Named::ArrowDown) if mods == Modifiers::ALT => Some(Action::HistoryList),
@@ -887,5 +892,7 @@ mod tests {
         assert_eq!(named(Named::ArrowRight, CTRL), Some(Action::OpenRight));
         assert_eq!(chr("l", Code::KeyL, CTRL), Some(Action::Occupied));
         assert_eq!(chr("д", Code::KeyL, CTRL), Some(Action::Occupied));
+        let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
+        assert_eq!(named(Named::F9, alt_shift), Some(Action::TestArchives));
     }
 }

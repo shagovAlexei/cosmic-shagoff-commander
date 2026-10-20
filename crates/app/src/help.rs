@@ -65,6 +65,11 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Alt+Enter", fl!("menu-properties"), Action::Properties),
                 r("Alt+Shift+Enter", fl!("menu-count-dirs"), Action::CountDirs),
                 r("Ctrl+L", fl!("menu-occupied"), Action::Occupied),
+                r(
+                    "Alt+Shift+F9",
+                    fl!("menu-test-archives"),
+                    Action::TestArchives,
+                ),
                 r("Shift+F10", fl!("context-menu"), Action::ContextMenu),
                 r("Ctrl+←", fl!("help-open-left"), Action::OpenLeft),
                 r("Ctrl+→", fl!("help-open-right"), Action::OpenRight),

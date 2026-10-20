@@ -692,3 +692,11 @@ context-menu = Menu
 counting = Counting…
 help-open-left = Open the dir under the cursor in the left panel (on a file: this one)
 help-open-right = Open the dir under the cursor in the right panel (on a file: this one)
+menu-test-archives = Test archives
+testing-archives = Testing archives…
+test-no-archives = No archives among the selected files
+tested-ok = { $n ->
+    [one] The archive is fine
+   *[other] All { $n } archives are fine
+} ({ $files } files read)
+tested-bad = { $bad } of { $n } archives damaged:
