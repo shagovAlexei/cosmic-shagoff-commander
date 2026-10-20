@@ -610,6 +610,52 @@ fn read_7z(r: Counted, st: &mut Stage, password: Option<&str>) -> Result<(), Sto
 }
 
 /// One archive into `st.root`. A single-stream file becomes `stem(archive)` there.
+/// The plain stream of a compressed format (`a.tar.gz` → its tar, `a.gz` → its file); `Tar` as is.
+fn decoder<R: Read + 'static>(f: Format, r: R) -> io::Result<Box<dyn Read>> {
+    Ok(match f {
+        Format::Tar => Box::new(r),
+        Format::TarGz | Format::Gz => Box::new(flate2::read::MultiGzDecoder::new(r)),
+        Format::TarBz2 | Format::Bz2 => Box::new(bzip2::read::MultiBzDecoder::new(r)),
+        Format::TarXz | Format::Xz => Box::new(liblzma::read::XzDecoder::new_multi_decoder(r)),
+        Format::TarZst | Format::Zst => Box::new(zstd::stream::read::Decoder::new(r)?),
+        Format::Zip | Format::SevenZ => return Err(io::ErrorKind::InvalidInput.into()),
+    })
+}
+
+/// A reader that keeps the last `TAIL` bytes read: a tar's end marker (two zero blocks) is there.
+struct Tail<R> {
+    r: R,
+    last: Vec<u8>,
+}
+
+const TAIL: usize = 1024;
+
+impl<R: Read> Read for Tail<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.r.read(buf)?;
+        self.last.extend_from_slice(&buf[..n]);
+        if self.last.len() > TAIL {
+            let cut = self.last.len() - TAIL;
+            self.last.drain(..cut);
+        }
+        Ok(n)
+    }
+}
+
+/// `r` read to its end — a compressed stream's trailer (its checksum) is checked so; `stop` ends
+/// it with `Interrupted`.
+fn drain(r: &mut dyn Read, stop: &AtomicBool) -> io::Result<()> {
+    let mut buf = vec![0; 1 << 16];
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        if r.read(&mut buf)? == 0 {
+            return Ok(());
+        }
+    }
+}
+
 fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result<(), Stop> {
     let single = |mut r: Box<dyn Read>, st: &mut Stage| -> Result<(), Stop> {
         let name = archive
@@ -628,15 +674,8 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
     match f {
         Format::Zip => read_zip(r, st, password(archive).as_deref()),
         Format::SevenZ => read_7z(r, st, password(archive).as_deref()),
-        Format::Tar => read_tar(r, st),
-        Format::TarGz => read_tar(flate2::read::MultiGzDecoder::new(r), st),
-        Format::TarBz2 => read_tar(bzip2::read::MultiBzDecoder::new(r), st),
-        Format::TarXz => read_tar(liblzma::read::XzDecoder::new_multi_decoder(r), st),
-        Format::TarZst => read_tar(zstd::stream::read::Decoder::new(r)?, st),
-        Format::Gz => single(Box::new(flate2::read::MultiGzDecoder::new(r)), st),
-        Format::Bz2 => single(Box::new(bzip2::read::MultiBzDecoder::new(r)), st),
-        Format::Xz => single(Box::new(liblzma::read::XzDecoder::new_multi_decoder(r)), st),
-        Format::Zst => single(Box::new(zstd::stream::read::Decoder::new(r)?), st),
+        f if f.is_tree() => read_tar(decoder(f, r)?, st),
+        f => single(decoder(f, r)?, st),
     }
 }
 
@@ -665,19 +704,12 @@ pub fn test(archive: &Path, stop: &AtomicBool) -> io::Result<u64> {
         .unwrap_or_default();
     let fmt = Format::detect(&name).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
     if !fmt.is_tree() {
-        let file = File::open(archive)?;
-        let mut r: Box<dyn Read> = match fmt {
-            Format::Gz => Box::new(flate2::read::MultiGzDecoder::new(file)),
-            Format::Bz2 => Box::new(bzip2::read::MultiBzDecoder::new(file)),
-            Format::Xz => Box::new(liblzma::read::XzDecoder::new_multi_decoder(file)),
-            _ => Box::new(zstd::stream::read::Decoder::new(file)?),
-        };
-        io::copy(&mut r, &mut io::sink())?;
+        drain(&mut decoder(fmt, File::open(archive)?)?, stop)?;
         return Ok(1);
     }
     let mut n = 0;
     files(archive, stop, true, &mut |_, _, _, r| {
-        io::copy(r, &mut io::sink())?;
+        drain(r, stop)?;
         n += 1;
         Ok(())
     })?;
@@ -714,8 +746,11 @@ fn files(archive: &Path, stop: &AtomicBool, strict: bool, f: &mut OnFile) -> io:
     };
     let file = File::open(archive)?;
     let pw = password(archive);
-    let tar = |r: Box<dyn Read>, f: &mut OnFile| {
-        let mut a = tar::Archive::new(r);
+    let tar = |r: Box<dyn Read>, f: &mut OnFile| -> io::Result<()> {
+        let mut a = tar::Archive::new(Tail {
+            r,
+            last: Vec::new(),
+        });
         for e in a.entries()? {
             stopped()?;
             let mut e = e?;
@@ -729,6 +764,18 @@ fn files(archive: &Path, stop: &AtomicBool, strict: bool, f: &mut OnFile) -> io:
                 .mtime()
                 .map_or(UNIX_EPOCH, |s| UNIX_EPOCH + Duration::from_secs(s));
             f(&path, e.size(), mtime, &mut e)?;
+        }
+        if strict {
+            // The rest of the stream read too: a compressed one checks its trailer only at its
+            // end. And a tar cut at a block boundary ends without its two zero blocks.
+            let mut t = a.into_inner();
+            drain(&mut t, stop)?;
+            if t.last.len() < TAIL || t.last.iter().any(|&b| b != 0) {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "the tar ends without its end marker",
+                ));
+            }
         }
         Ok(())
     };
@@ -788,15 +835,7 @@ fn files(archive: &Path, stop: &AtomicBool, strict: bool, f: &mut OnFile) -> io:
             stopped()?;
             r.map_err(sz_password_error)
         }
-        Format::Tar => tar(Box::new(file), f),
-        Format::TarGz => tar(Box::new(flate2::read::MultiGzDecoder::new(file)), f),
-        Format::TarBz2 => tar(Box::new(bzip2::read::MultiBzDecoder::new(file)), f),
-        Format::TarXz => tar(
-            Box::new(liblzma::read::XzDecoder::new_multi_decoder(file)),
-            f,
-        ),
-        Format::TarZst => tar(Box::new(zstd::stream::read::Decoder::new(file)?), f),
-        Format::Gz | Format::Bz2 | Format::Xz | Format::Zst => unreachable!("not a tree"),
+        f_ => tar(decoder(f_, file)?, f),
     }
 }
 
@@ -3339,6 +3378,26 @@ mod tests {
         w.finish().unwrap();
         assert_eq!(test(&gz, &stop).unwrap(), 1);
         assert!(test(&src.join("a.txt"), &stop).is_err()); // not an archive
+        // A tar cut right after a member, at a block boundary: no end marker.
+        let tar = d.path().join("cut.tar");
+        let mut b = tar::Builder::new(fs::File::create(&tar).unwrap());
+        for name in ["one", "two", "three"] {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(512);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, name, &[b'x'; 512][..]).unwrap();
+        }
+        b.finish().unwrap();
+        drop(b);
+        assert_eq!(test(&tar, &stop).unwrap(), 3);
+        let whole = fs::read(&tar).unwrap();
+        fs::write(&tar, &whole[..1024]).unwrap(); // header + data of "one"
+        assert!(test(&tar, &stop).is_err());
+        // Stopped: Interrupted, which the app does not show as damage.
+        let stopped = AtomicBool::new(true);
+        let e = test(&gz, &stopped).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::Interrupted);
     }
 
     #[test]

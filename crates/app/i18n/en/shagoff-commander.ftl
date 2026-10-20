@@ -698,5 +698,8 @@ test-no-archives = No archives among the selected files
 tested-ok = { $n ->
     [one] The archive is fine
    *[other] All { $n } archives are fine
-} ({ $files } files read)
+} ({ $files ->
+    [one] 1 file
+   *[other] { $files } files
+} read)
 tested-bad = { $bad } of { $n } archives damaged:

@@ -493,6 +493,8 @@ pub struct App {
     pub masks: Vec<String>,
     /// "Open with…" → "Other program…" commands, last first; ↑ / ↓ as for masks.
     pub other_cmds: Vec<String>,
+    /// Alt+Shift+F9 under way: another waits for it.
+    testing: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1181,6 +1183,7 @@ impl App {
             term_drag: None,
             term_rows: 0,
             term_blur: false,
+            testing: false,
             term_focused: false,
             term_want_focus: false,
             gvfs: Vec::new(),
@@ -2382,6 +2385,7 @@ impl App {
                 return Task::batch([reload(self, 0), reload(self, 1)]);
             }
             Message::Tested(results) => {
+                self.testing = false;
                 if (self.status.as_ref()).is_some_and(|s| s.text == fl!("testing-archives")) {
                     self.status = None;
                 }
@@ -4089,8 +4093,12 @@ impl App {
                 );
             }
             Action::TestArchives => {
+                // One at a time; not on the rows of a dir being left.
+                if self.testing || loading {
+                    return Task::none();
+                }
                 // Dirs by the panel's rows, not a `stat` here (a dir may be named `x.zip`).
-                let dirs: Vec<PathBuf> = (panel.entries().iter())
+                let dirs: std::collections::HashSet<PathBuf> = (panel.entries().iter())
                     .filter(|e| e.is_dir())
                     .map(|e| panel.cwd().join(&e.os_name))
                     .collect();
@@ -4106,16 +4114,17 @@ impl App {
                     return Task::none();
                 }
                 self.say(StatusKind::Busy, fl!("testing-archives"));
+                self.testing = true;
                 // The tab's: leaving the dir stops it.
                 let stop = self.panes[side].active().counting.clone();
                 return Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
+                            // Stopped (`Interrupted`): no more, and that one is not "damaged".
                             (archives.into_iter())
-                                .take_while(|_| !stop.load(Ordering::Relaxed))
-                                .map(|a| {
-                                    let r = archive::test(&a, &stop).map_err(|e| e.to_string());
-                                    (a, r)
+                                .map_while(|a| match archive::test(&a, &stop) {
+                                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => None,
+                                    r => Some((a, r.map_err(|e| e.to_string()))),
                                 })
                                 .collect()
                         })
