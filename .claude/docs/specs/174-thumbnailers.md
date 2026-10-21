@@ -15,3 +15,11 @@ ROADMAP «Вид, дальше: эскизы … видео / PDF — нет».
   since Ubuntu's AppArmor profile lets evince-thumbnailer write only there; created first with
   O_EXCL; removed after. 10 s timeout, then killed. A failure is remembered (same mtime): no rerun.
 - Same `BUSY_MAX` (4 at once), same in-memory cache.
+- On timeout the thumbnailer's whole process group is killed (a worker must not write the output
+  after it is removed): `thumbnailer::run`.
+- A picture we'd decode but over 64 MB gets its icon, never a thumbnailer (the cap holds).
+- `globs2`: the `cs` flag kept (`*.C` vs `*.c`), the heaviest weight across all dirs; an override
+  that isn't installed hides nothing.
+- Not sandboxed (GNOME runs thumbnailers under bwrap; cosmic-files doesn't): only in the
+  Thumbnails view, which the user turns on. Upgrade path: a `bwrap` prefix when present.
+- Not done: a failure is forgotten when the whole cache is dropped (`CACHE_MAX`).

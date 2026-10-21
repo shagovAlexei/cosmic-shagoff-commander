@@ -3,9 +3,9 @@
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use shagoff_core::thumbnailer::{Registry, argv};
+use shagoff_core::thumbnailer::{Registry, argv, run};
 
 use cosmic::widget::image::Handle;
 
@@ -36,9 +36,13 @@ fn registry() -> &'static Registry {
 }
 
 /// Whether `name` (`size` bytes) gets a picture: one we decode, or one a desktop thumbnailer
-/// makes (PDF, video, SVG…).
+/// makes (PDF, video, SVG…). A picture too big for us gets its icon, not a thumbnailer.
 pub fn wanted(name: &str, size: u64) -> bool {
-    shagoff_core::lister::thumb_wanted(name, size) || registry().for_name(name).is_some()
+    use shagoff_core::lister::{THUMB_MAX_BYTES, is_image};
+    match is_image(name) && !name.to_ascii_lowercase().ends_with(".svg") {
+        true => size <= THUMB_MAX_BYTES,
+        false => registry().for_name(name).is_some(),
+    }
 }
 
 /// `path`'s picture shrunk into `SIZE`², proportions kept; `None` if unreadable.
@@ -49,6 +53,9 @@ pub fn make(path: &Path) -> Option<Handle> {
         return None;
     }
     let name = path.file_name()?.to_string_lossy();
+    if !wanted(&name, meta.len()) {
+        return None;
+    }
     let bytes = match shagoff_core::lister::thumb_wanted(&name, meta.len()) {
         true => std::fs::read(path).ok()?,
         false => external(path, &name)?,
@@ -73,32 +80,7 @@ fn external(path: &Path, name: &str) -> Option<Vec<u8>> {
     ));
     std::fs::File::create_new(&out).ok()?;
     // The size the spec calls "normal"; shrunk to ours after.
-    let args = argv(&t.exec, path, &out, 128);
-    let (prog, rest) = args.split_first()?;
-    let child = std::process::Command::new(prog)
-        .args(rest)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    let Ok(mut child) = child else {
-        let _ = std::fs::remove_file(&out);
-        return None;
-    };
-    let start = Instant::now();
-    let ok = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break st.success(),
-            Ok(None) if start.elapsed() < EXTERNAL_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(50))
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break false;
-            }
-        }
-    };
+    let ok = run(&argv(&t.exec, path, &out, 128), EXTERNAL_TIMEOUT);
     let bytes = ok.then(|| std::fs::read(&out).ok()).flatten();
     let _ = std::fs::remove_file(&out);
     bytes

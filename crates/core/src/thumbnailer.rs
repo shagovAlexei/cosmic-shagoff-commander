@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq)]
 pub struct Thumbnailer {
@@ -16,8 +17,10 @@ pub struct Thumbnailer {
 #[derive(Debug, Default)]
 pub struct Registry {
     list: Vec<Thumbnailer>,
-    /// Lowercase name suffix (`pdf`, `tar.gz`) → mime type, the heaviest glob kept.
-    globs: HashMap<String, String>,
+    /// Name suffix (`pdf`, `tar.gz`; lowercase unless the glob is case-sensitive, `cs`) →
+    /// (weight, mime type), the heaviest glob of all the dirs kept.
+    globs: HashMap<String, (u32, String)>,
+    cs_globs: HashMap<String, (u32, String)>,
 }
 
 impl Registry {
@@ -39,10 +42,12 @@ impl Registry {
                 let Some(name) = f.file_name().map(OsString::from) else {
                     continue;
                 };
+                // Only an installed one hides the system's of its name.
                 if f.extension().is_some_and(|e| e == "thumbnailer")
-                    && seen.insert(name)
+                    && !seen.contains(&name)
                     && let Some(t) = std::fs::read_to_string(&f).ok().and_then(|s| parse(&s))
                 {
+                    seen.insert(name);
                     r.list.push(t);
                 }
             }
@@ -50,30 +55,44 @@ impl Registry {
         r
     }
 
-    /// `globs2` lines `weight:mime:*.ext[:flags]`, heaviest first; only plain `*.suffix` globs.
+    /// `globs2` lines `weight:mime:*.ext[:flags]`; only plain `*.suffix` globs.
     fn add_globs(&mut self, text: &str) {
         for line in text.lines().filter(|l| !l.starts_with('#')) {
             let mut f = line.split(':');
-            let (Some(_), Some(mime), Some(glob)) = (f.next(), f.next(), f.next()) else {
+            let (Some(w), Some(mime), Some(glob)) = (f.next(), f.next(), f.next()) else {
                 continue;
             };
-            if let Some(suffix) = glob.strip_prefix("*.")
-                && !suffix.contains(['*', '?', '['])
-            {
-                (self.globs)
-                    .entry(suffix.to_lowercase())
-                    .or_insert_with(|| mime.into());
+            let cs = f
+                .next()
+                .is_some_and(|flags| flags.split(',').any(|x| x == "cs"));
+            let Some(suffix) = glob
+                .strip_prefix("*.")
+                .filter(|s| !s.contains(['*', '?', '[']))
+            else {
+                continue;
+            };
+            let (map, key) = match cs {
+                true => (&mut self.cs_globs, suffix.to_string()),
+                false => (&mut self.globs, suffix.to_lowercase()),
+            };
+            let w = w.parse().unwrap_or(50);
+            let e = map.entry(key).or_insert((0, String::new()));
+            if e.1.is_empty() || w > e.0 {
+                *e = (w, mime.into());
             }
         }
     }
 
     pub fn mime_of(&self, name: &str) -> Option<&str> {
-        let lower = name.to_lowercase();
-        // The longest suffix first: `a.tar.gz` is `tar.gz` before `gz`.
-        (lower.match_indices('.'))
+        // The longest suffix first: `a.tar.gz` is `tar.gz` before `gz`; a case-sensitive glob
+        // (`*.C`) before the others of that suffix.
+        (name.match_indices('.'))
             .filter(|&(i, _)| i > 0)
-            .find_map(|(i, _)| self.globs.get(&lower[i + 1..]))
-            .map(String::as_str)
+            .find_map(|(i, _)| {
+                let suffix = &name[i + 1..];
+                (self.cs_globs.get(suffix)).or_else(|| self.globs.get(&suffix.to_lowercase()))
+            })
+            .map(|(_, m)| m.as_str())
     }
 
     pub fn for_name(&self, name: &str) -> Option<&Thumbnailer> {
@@ -148,6 +167,39 @@ pub fn argv(exec: &str, input: &Path, out: &Path, size: u32) -> Vec<OsString> {
         .collect()
 }
 
+/// Runs `argv` (no input, output dropped) for at most `timeout`; true if it exited fine. Its own
+/// process group, all killed on timeout: a worker it started must not write the output later.
+pub fn run(argv: &[OsString], timeout: Duration) -> bool {
+    use std::process::{Command, Stdio};
+    let Some((prog, rest)) = argv.split_first() else {
+        return false;
+    };
+    let mut cmd = Command::new(prog);
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let child = (cmd.args(rest))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else {
+        return false;
+    };
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return st.success(),
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                if let Some(g) = rustix::process::Pid::from_raw(child.id() as i32) {
+                    let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
+                }
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,7 +213,8 @@ mod tests {
         std::fs::write(
             d.join("mime/globs2"),
             "# comment\n50:application/pdf:*.pdf\n50:application/x-compressed-tar:*.tar.gz\n\
-             40:application/gzip:*.gz\n30:text/x-other:*.pdf\n20:x/odd:*.[ch]\n",
+             40:application/gzip:*.gz\n30:text/x-other:*.pdf\n20:x/odd:*.[ch]\n\
+             50:text/x-c++src:*.C:cs\n50:text/x-csrc:*.c\n",
         )
         .unwrap();
         let t = |exec: &str, mimes: &str| {
@@ -183,7 +236,7 @@ mod tests {
         assert_eq!(r.mime_of("a.tar.gz"), Some("application/x-compressed-tar"));
         assert_eq!(r.mime_of("x.gz"), Some("application/gzip"));
         assert_eq!(
-            (r.mime_of(".pdf"), r.mime_of("pdf"), r.mime_of("a.c")),
+            (r.mime_of(".pdf"), r.mime_of("pdf"), r.mime_of("a.h")),
             (None, None, None)
         );
         assert_eq!(
@@ -191,6 +244,38 @@ mod tests {
             Some("sh -s %s %u %o")
         );
         assert!(r.for_name("x.gz").is_none());
+        assert_eq!(r.mime_of("a.C"), Some("text/x-c++src"));
+        assert_eq!(r.mime_of("a.c"), Some("text/x-csrc"));
+        // A later dir's heavier glob wins; an override that isn't installed hides nothing.
+        let user = tempfile::tempdir().unwrap();
+        let u = user.path();
+        std::fs::create_dir_all(u.join("mime")).unwrap();
+        std::fs::create_dir_all(u.join("thumbnailers")).unwrap();
+        std::fs::write(u.join("mime/globs2"), "10:x/foo:*.pdf\n").unwrap();
+        std::fs::write(
+            u.join("thumbnailers/a.thumbnailer"),
+            t("gone-program %i", "application/pdf"),
+        )
+        .unwrap();
+        let r = Registry::load(&[u.to_path_buf(), d.to_path_buf()]);
+        assert_eq!(r.mime_of("a.pdf"), Some("application/pdf"));
+        assert_eq!(
+            r.for_name("a.pdf").map(|t| t.exec.as_str()),
+            Some("sh -s %s %u %o")
+        );
+    }
+
+    #[test]
+    fn run_kills_the_whole_group_on_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let late = dir.path().join("late");
+        let script = format!("(sleep 1; touch '{}') & sleep 5", late.display());
+        let argv: Vec<OsString> = ["sh", "-c", &script].map(OsString::from).to_vec();
+        assert!(!run(&argv, Duration::from_millis(200)));
+        std::thread::sleep(Duration::from_millis(1300));
+        assert!(!late.exists(), "a worker outlived the timeout");
+        assert!(run(&["true".into()], Duration::from_secs(5)));
+        assert!(!run(&["false".into()], Duration::from_secs(5)));
     }
 
     #[test]
