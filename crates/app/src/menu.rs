@@ -409,6 +409,10 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-copy-names"), Action::CopyNames),
                 b(fl!("menu-copy-paths"), Action::CopyPaths),
+                menu::Item::Divider,
+                b(fl!("menu-clip-cut"), Action::ClipCut),
+                b(fl!("menu-clip-copy"), Action::ClipCopy),
+                b(fl!("menu-clip-paste"), Action::ClipPaste),
             ],
         ),
         (
@@ -419,9 +423,10 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-hotlist"), Action::Hotlist),
                 b(fl!("menu-tree"), Action::TreeDialog),
-                b(fl!("menu-tree-panel"), Action::TreePanel),
                 b(fl!("menu-history"), Action::HistoryList),
                 b(fl!("menu-swap"), Action::SwapPanes),
+                b(fl!("menu-open-left"), Action::OpenLeft),
+                b(fl!("menu-open-right"), Action::OpenRight),
                 menu::Item::Divider,
                 b(fl!("menu-filter"), Action::QuickFilter),
                 b(fl!("menu-reload"), Action::Reload),
@@ -510,12 +515,14 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
             }))
             .chain([
                 menu::Item::Divider,
+                b(fl!("menu-term-full"), Action::TermFull),
                 b(fl!("menu-quick-view"), Action::QuickView),
                 b(fl!("menu-branch"), Action::Branch),
                 b(fl!("menu-branch-sel"), Action::BranchSel),
                 b(fl!("menu-brief"), Action::ViewBrief),
                 b(fl!("menu-full"), Action::ViewFull),
                 b(fl!("menu-thumbs"), Action::ViewThumbs),
+                b(fl!("menu-tree-panel"), Action::TreePanel),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),
                 menu::Item::Divider,
                 sort(fl!("menu-sort-name"), SortKey::Name),
@@ -801,6 +808,27 @@ mod tests {
                 assert!(described.contains(&a), "{a:?} missing in help");
             }
         }
+    }
+
+    #[test]
+    fn every_menu_key_has_an_item() {
+        let all = Checks {
+            classic: true,
+            ..Checks::default()
+        };
+        let items: Vec<MenuAct> = (menus(all, Lock::default()).into_iter())
+            .flat_map(|(_, items)| items)
+            .filter_map(|i| match i {
+                menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        let missing: Vec<_> = (table().into_iter())
+            .map(|(_, _, a)| a)
+            // Enter: the context menu's «Open».
+            .filter(|a| *a != MenuAct::Open && !items.contains(a))
+            .collect();
+        assert!(missing.is_empty(), "no menu item: {missing:?}");
     }
 
     #[test]
