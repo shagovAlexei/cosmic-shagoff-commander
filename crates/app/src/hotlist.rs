@@ -108,12 +108,8 @@ pub struct HotEdit {
     pub sel: Option<usize>,
     /// The selected entry's path as typed (a `PathBuf` can't back a text field).
     pub path: String,
-    /// The row under the pointer, and the one held by the left button (dragged to reorder).
-    pub hover: Option<usize>,
-    pub grab: Option<usize>,
-    /// Where the held row just came from: rows of other heights shift after a move, and the one
-    /// sliding under the still pointer must not move it back (it would flicker).
-    vacated: Option<usize>,
+    /// The row under the pointer and the one held by the left button (dragged to reorder).
+    pub drag: shagoff_core::reorder::Reorder,
 }
 
 #[derive(Clone, Debug)]
@@ -149,9 +145,7 @@ impl HotEdit {
             list,
             sel: None,
             path: String::new(),
-            hover: None,
-            grab: None,
-            vacated: None,
+            drag: Default::default(),
         };
         if !h.list.is_empty() {
             h.select(0);
@@ -228,32 +222,16 @@ impl HotEdit {
                 self.select(i + 1);
             }
             (HotMsg::Hover(at), _) => {
-                self.hover = at;
                 // Held: the entry follows the pointer, as TC's list.
-                if let (Some(from), Some(to)) = (self.grab, at)
-                    && from != to
-                    && to < self.list.len()
-                    && self.vacated != Some(to)
-                {
-                    let e = self.list.remove(from);
-                    self.list.insert(to, e);
-                    self.grab = Some(to);
-                    self.vacated = Some(from);
+                if let Some(to) = self.drag.hover(at, &mut self.list) {
                     self.select(to);
-                } else if at != self.vacated {
-                    self.vacated = None;
                 }
             }
-            (HotMsg::Grab, _) => {
-                self.grab = self.hover;
-                self.vacated = None;
+            (HotMsg::Grab, _) => self.drag.grab(),
+            (HotMsg::Release, _) => {
+                self.drag.release();
             }
-            (HotMsg::Release, _) => self.grab = None,
-            (HotMsg::Left(i), _) => {
-                if self.hover == Some(i) {
-                    self.hover = None;
-                }
-            }
+            (HotMsg::Left(i), _) => self.drag.left(i),
             (HotMsg::Sort, _) => {
                 let kept = sel.map(|i| self.list[i].clone());
                 for block in self.list.split_mut(is_marker) {
@@ -470,11 +448,11 @@ mod tests {
         // Pressed outside the rows (left row 2 into the empty space): nothing held.
         h.update(HotMsg::Hover(Some(2)), cwd);
         h.update(HotMsg::Left(2), cwd);
-        assert_eq!(h.hover, None);
+        assert_eq!(h.drag.hover, None);
         // Moving up: row 1 entered before row 2 says it was left — the late leave keeps row 1.
         h.update(HotMsg::Hover(Some(1)), cwd);
         h.update(HotMsg::Left(2), cwd);
-        assert_eq!(h.hover, Some(1));
+        assert_eq!(h.drag.hover, Some(1));
         h.update(HotMsg::Left(1), cwd);
         h.update(HotMsg::Grab, cwd);
         h.update(HotMsg::Hover(Some(2)), cwd);

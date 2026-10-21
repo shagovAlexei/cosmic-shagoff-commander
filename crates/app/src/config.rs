@@ -205,7 +205,8 @@ impl Config {
 }
 
 /// A toolbar button: `cmd` is an internal `cm_*` command, a program (`params` with `%P`, `%N`, …
-/// appended, run by `sh -c` in the panel's dir), or `-` (a gap). Empty `icon` / `tip`: the command's.
+/// appended, run by `sh -c` in `dir`, `cmdline::start_dir`), or `-` (a gap). Empty `icon` / `tip`:
+/// the command's.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolButton {
@@ -213,6 +214,7 @@ pub struct ToolButton {
     pub params: String,
     pub icon: String,
     pub tip: String,
+    pub dir: String,
 }
 
 /// A favourite dir (Ctrl+D).

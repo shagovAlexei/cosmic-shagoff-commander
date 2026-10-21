@@ -224,22 +224,32 @@ pub fn tip(b: &ToolButton) -> String {
     }
 }
 
-pub fn bar(buttons: &[ToolButton]) -> Element<'static, Message> {
+/// The bar; `held`: the button being moved (Shift + drag).
+pub fn bar(buttons: &[ToolButton], held: Option<usize>) -> Element<'static, Message> {
     use cosmic::widget::tooltip::{Position, tooltip};
     let items = buttons
         .iter()
         .enumerate()
         .map(|(i, b)| -> Element<'static, Message> {
-            if b.cmd == SEP {
-                return widget::Space::new().width(Length::Fixed(10.0)).into();
-            }
-            tooltip(
-                widget::button::icon(widget::icon::from_name(icon(b)).size(16))
-                    .on_press(Message::Tool(i)),
-                widget::text(tip(b)).size(13),
-                Position::Bottom,
-            )
-            .into()
+            let item: Element<'static, Message> = if b.cmd == SEP {
+                widget::Space::new()
+                    .width(Length::Fixed(10.0))
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                tooltip(
+                    widget::button::icon(widget::icon::from_name(icon(b)).size(16))
+                        .selected(held == Some(i))
+                        .on_press(Message::Tool(i)),
+                    widget::text(tip(b)).size(13),
+                    Position::Bottom,
+                )
+                .into()
+            };
+            widget::mouse_area(item)
+                .on_enter(Message::ToolHover(Some(i)))
+                .on_exit(Message::ToolLeft(i))
+                .into()
         });
     let row = widget::row::with_children(items.collect::<Vec<_>>())
         .spacing(2)
@@ -307,6 +317,7 @@ pub enum ToolMsg {
     Params(String),
     Icon(String),
     Tip(String),
+    Dir(String),
     Add,
     AddSep,
     Delete,
@@ -357,6 +368,7 @@ impl ToolEdit {
             (ToolMsg::Params(s), Some(i)) => self.list[i].params = s,
             (ToolMsg::Icon(s), Some(i)) => self.list[i].icon = s,
             (ToolMsg::Tip(s), Some(i)) => self.list[i].tip = s,
+            (ToolMsg::Dir(s), Some(i)) => self.list[i].dir = s,
             (ToolMsg::Add, _) => self.insert(ToolButton {
                 icon: "utilities-terminal-symbolic".into(),
                 ..Default::default()
@@ -504,7 +516,6 @@ pub fn view<'a>(
         btn(fl!("toolbar-add"), ToolMsg::Add, true),
         btn(fl!("hotlist-add-sep"), ToolMsg::AddSep, true),
         btn(fl!("hotlist-delete"), ToolMsg::Delete, sel.is_some()),
-        btn(fl!("toolbar-reset"), ToolMsg::Reset, true),
         row![
             arrow("go-up-symbolic", ToolMsg::Up, sel.is_some_and(|i| i > 0)),
             arrow(
@@ -532,9 +543,9 @@ pub fn view<'a>(
     let on = |f: fn(String) -> ToolMsg| editable.map(|_| f);
     let b = editable.cloned().unwrap_or_default();
     let internal = editable.and_then(|b| builtins().iter().position(|c| c.cm == b.cmd));
-    let (cmd, params, icon_name, tip_text) = match editable {
-        Some(b) => (&*b.cmd, &*b.params, &*b.icon, &*b.tip),
-        None => ("", "", "", ""),
+    let (cmd, params, dir, icon_name, tip_text) = match editable {
+        Some(b) => (&*b.cmd, &*b.params, &*b.dir, &*b.icon, &*b.tip),
+        None => ("", "", "", "", ""),
     };
     let fields = column![
         row![
@@ -554,6 +565,12 @@ pub fn view<'a>(
             fl!("toolbar-hint"),
             params,
             on(ToolMsg::Params).filter(|_| internal.is_none())
+        ),
+        field(
+            fl!("toolbar-dir"),
+            fl!("toolbar-dir-hint"),
+            dir,
+            on(ToolMsg::Dir).filter(|_| internal.is_none())
         ),
         row![
             field(
@@ -581,6 +598,9 @@ pub fn view<'a>(
         )
         .primary_action(widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit))
         .secondary_action(cancel)
+        .tertiary_action(
+            widget::button::standard(fl!("toolbar-reset")).on_press(msg(ToolMsg::Reset)),
+        )
         .into()
 }
 
@@ -629,11 +649,12 @@ mod tests {
         t.update(ToolMsg::Add);
         t.update(ToolMsg::Cmd("xterm".into()));
         t.update(ToolMsg::Params("-e %P".into()));
+        t.update(ToolMsg::Dir("~/src".into()));
         t.update(ToolMsg::AddSep);
         t.update(ToolMsg::Cmd("x".into())); // a separator has no command
         t.update(ToolMsg::Up);
         assert_eq!(cmds(&t), ["-", "xterm"]);
-        assert_eq!(t.list[1].params, "-e %P");
+        assert_eq!((&*t.list[1].params, &*t.list[1].dir), ("-e %P", "~/src"));
         t.update(ToolMsg::Select(1));
         t.update(ToolMsg::Builtin(0)); // internal: params and icon dropped
         assert_eq!(
