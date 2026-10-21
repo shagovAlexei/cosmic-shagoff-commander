@@ -33,6 +33,8 @@ pub struct Panel {
     all: Vec<Entry>,
     /// Quick filter (Ctrl+S); `None` = show everything.
     filter: Option<String>,
+    /// Ctrl+F10 / F11 / F12: which files are shown; unlike the quick filter it stays on in other dirs.
+    show: Show,
     /// Dir sizes counted by Space, by real name; shown instead of `<DIR>`, until the dir changes.
     dir_sizes: HashMap<OsString, u64>,
     /// Totals of all rows and of the marked ones: drawn every frame, a pass over a 100 000-row
@@ -57,6 +59,7 @@ impl Panel {
             marked: HashSet::new(),
             all: Vec::new(),
             filter: None,
+            show: Show::All,
             dir_sizes: HashMap::new(),
             all_sums: OnceLock::new(),
             marked_sums: OnceLock::new(),
@@ -118,15 +121,29 @@ impl Panel {
     /// Recompute the visible rows from `all` and the filter; drop marks that are no longer visible;
     /// put the cursor on `keep` if visible, else on `old`, clamped.
     fn rebuild(&mut self, keep: Option<String>, old: usize) {
-        let mut entries: Vec<Entry> = match &self.filter {
-            Some(f) => self
-                .all
-                .iter()
-                .filter(|e| quicksearch::matches(f, base(&e.name)))
-                .cloned()
-                .collect(),
-            None => self.all.clone(),
+        // Programs: an `x` bit, links left out (a dangling one's mode is the link's own 0o777),
+        // as the Exec colour does.
+        let shown: Box<dyn Fn(&Entry) -> bool> = match &self.show {
+            Show::All => Box::new(|_| true),
+            Show::Programs => Box::new(|e| e.is_dir() || (!e.is_link && e.mode & 0o111 != 0)),
+            Show::Mask(m) => {
+                let m = Mask::parse(m);
+                Box::new(move |e| {
+                    if e.is_dir() {
+                        !m.skips_dir(base(&e.name))
+                    } else {
+                        m.matches(base(&e.name))
+                    }
+                })
+            }
         };
+        let mut entries: Vec<Entry> = (self.all.iter())
+            .filter(|e| shown(e))
+            .filter(|e| {
+                (self.filter.as_ref()).is_none_or(|f| quicksearch::matches(f, base(&e.name)))
+            })
+            .cloned()
+            .collect();
         if self.cwd.parent().is_some() {
             entries.insert(0, parent_entry());
         }
@@ -482,6 +499,21 @@ impl Panel {
         self.rebuild(keep, 0);
     }
 
+    pub fn show(&self) -> &Show {
+        &self.show
+    }
+
+    /// Which files to show (dirs always, but those a mask's `|dir\` leaves out); like the quick
+    /// filter, marks on rows it hides are dropped.
+    pub fn set_show(&mut self, show: Show) {
+        self.show = match show {
+            Show::Mask(m) if Mask::parse(&m).is_all() => Show::All,
+            s => s,
+        };
+        let keep = self.current().map(|e| e.name.clone());
+        self.rebuild(keep, self.cursor);
+    }
+
     fn index_of(&self, name: &str) -> Option<usize> {
         self.entries.iter().position(|e| e.name == name)
     }
@@ -489,6 +521,15 @@ impl Panel {
     fn parent_row(&self) -> bool {
         self.entries.first().is_some_and(|e| e.name == PARENT)
     }
+}
+
+/// Ctrl+F10 all files, Ctrl+F11 programs (an `x` bit), Ctrl+F12 by a TC mask (`*.rs;*.toml|*.bak`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Show {
+    #[default]
+    All,
+    Programs,
+    Mask(String),
 }
 
 /// The file's own name: search results show `sub/a.rs`, but quick search, filter and masks go by
@@ -712,6 +753,39 @@ mod tests {
         p.set_filter(None);
         assert_eq!(names(&p), ["..", "docs", "data.txt", "dump", "readme"]);
         assert_eq!(p.filter(), None);
+    }
+
+    #[test]
+    fn show_programs_or_a_mask_keeps_dirs_and_stays_in_other_dirs() {
+        let exe = Entry {
+            mode: 0o755,
+            ..f("run", 1)
+        };
+        let all = || {
+            vec![
+                d("docs"),
+                d(".git"),
+                f("a.rs", 1),
+                f("b.txt", 1),
+                exe.clone(),
+            ]
+        };
+        let mut p = loaded("/x", all());
+        p.set_cursor(3); // a.rs
+        p.toggle_mark();
+        p.set_show(Show::Programs);
+        assert_eq!(names(&p), ["..", ".git", "docs", "run"]);
+        assert!(!p.has_marks(), "a hidden row is not marked");
+        p.set_show(Show::Mask("*.rs|.git\\".into()));
+        assert_eq!(names(&p), ["..", "docs", "a.rs"]);
+        p.set_listing(PathBuf::from("/y"), all(), None);
+        assert_eq!(names(&p), ["..", "docs", "a.rs"], "kept in another dir");
+        p.set_filter(Some("zz".into())); // with the quick filter on top
+        assert_eq!(names(&p), [".."]);
+        p.set_filter(None);
+        p.set_show(Show::Mask("*;*.*".into())); // takes every file: no filter at all
+        assert_eq!(p.show(), &Show::All);
+        assert_eq!(names(&p).len(), 6);
     }
 
     #[test]

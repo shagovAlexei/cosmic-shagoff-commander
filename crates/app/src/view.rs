@@ -14,7 +14,7 @@ use shagoff_core::colors::{self, Paint};
 use shagoff_core::drives;
 use shagoff_core::format;
 use shagoff_core::listing::Entry;
-use shagoff_core::panel::PARENT;
+use shagoff_core::panel::{PARENT, Show};
 use shagoff_core::sort::{Sort, SortKey};
 use shagoff_core::tabs::Tabs;
 use shagoff_core::viewport;
@@ -1116,10 +1116,16 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
                 sel_dirs = m.dirs.to_string(),
                 dirs = t.dirs.to_string()
             );
-            let line = match p.panel.filter() {
-                Some(f) => format!("{}  {totals}", fl!("filter-status", pattern = f)),
-                None => totals,
+            let show = match p.panel.show() {
+                Show::All => None,
+                Show::Programs => Some(fl!("show-status", what = fl!("show-programs"))),
+                Show::Mask(m) => Some(fl!("show-status", what = m.as_str())),
             };
+            let filter = (p.panel.filter()).map(|f| fl!("filter-status", pattern = f));
+            let line = (show.into_iter().chain(filter))
+                .chain([totals])
+                .collect::<Vec<_>>()
+                .join("  ");
             text(line)
                 .size(TEXT)
                 .wrapping(Wrapping::None)

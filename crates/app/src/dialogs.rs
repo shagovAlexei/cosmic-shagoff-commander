@@ -37,6 +37,14 @@ pub enum InputOp {
     TabName,
 }
 
+/// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskOp {
+    Select,
+    Unselect,
+    Show,
+}
+
 pub enum Dialog {
     /// Alt+F10 (TC «Change directory via tree»): the dirs as an outline; Enter goes there.
     Tree {
@@ -50,7 +58,7 @@ pub enum Dialog {
     /// Num+ / Num−.
     Mask {
         side: usize,
-        select: bool,
+        op: MaskOp,
         input: String,
     },
     /// F5 / F6 target, F7 name, Shift+F6 new name.
@@ -910,11 +918,11 @@ pub fn view<'a>(
             .on_submit(|_| Message::DialogSubmit)
     };
     match d {
-        Dialog::Mask { select, input, .. } => widget::dialog()
-            .title(if *select {
-                fl!("select-group")
-            } else {
-                fl!("unselect-group")
+        Dialog::Mask { op, input, .. } => widget::dialog()
+            .title(match op {
+                MaskOp::Select => fl!("select-group"),
+                MaskOp::Unselect => fl!("unselect-group"),
+                MaskOp::Show => fl!("show-mask"),
             })
             .control(field(input))
             .primary_action(ok)

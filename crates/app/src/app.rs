@@ -1,7 +1,7 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State, ToolButton};
 use crate::dialogs::{
-    self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MrField, SyncOpt, Toggle,
+    self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MaskOp, MrField, SyncOpt, Toggle,
 };
 use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
@@ -32,7 +32,7 @@ use shagoff_core::mount;
 use shagoff_core::multirename::{self, Case, Rule};
 use shagoff_core::openwith;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
-use shagoff_core::panel::{self, PARENT, Panel};
+use shagoff_core::panel::{self, PARENT, Panel, Show};
 use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
@@ -1105,6 +1105,11 @@ impl Application for App {
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
             terminal: c.term_builtin,
+            show: match self.panes[self.active].active().panel.show() {
+                Show::All => 0,
+                Show::Programs => 1,
+                Show::Mask(_) => 2,
+            },
         };
         vec![crate::menu::bar(
             checks,
@@ -4398,6 +4403,8 @@ impl App {
             Action::MarkUp => panel.toggle_mark_and_move(-1),
             Action::Invert => panel.invert(),
             Action::RestoreMarks => panel.restore_marks(),
+            Action::ShowAll => panel.set_show(Show::All),
+            Action::ShowPrograms => panel.set_show(Show::Programs),
             Action::MarkExt => panel.mark_ext(true),
             Action::UnmarkExt => panel.mark_ext(false),
             // TC: the dir / archive under the cursor (`..`: the parent) in that panel; on a file,
@@ -4745,7 +4752,7 @@ impl App {
             | Action::Delete
             | Action::DeletePermanent => {}
             // Opened by `dialog_for` above.
-            Action::SelectGroup | Action::UnselectGroup => {}
+            Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => {}
             // Also the drive list: a stick plugged in shows up (TC rereads drives too).
             Action::Reload => {
                 // Where the tab is going (results fed, a dir entered, not listed yet), not where
@@ -4817,7 +4824,9 @@ impl App {
             Action::NewTab => {
                 let id = self.next_id();
                 let mut copy = self.panes[side].active().duplicate(id);
-                copy.panel.set_filter(None); // TC: the new tab shows the whole dir
+                // TC: the new tab shows the whole dir.
+                copy.panel.set_filter(None);
+                copy.panel.set_show(Show::All);
                 self.panes[side].open_after(copy);
                 return self.restore_scroll(side);
             }
@@ -4876,10 +4885,17 @@ impl App {
             input,
         };
         match action {
-            Action::SelectGroup | Action::UnselectGroup => Some(Dialog::Mask {
+            Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => Some(Dialog::Mask {
                 side,
-                select: action == Action::SelectGroup,
-                input: self.masks.first().cloned().unwrap_or_else(|| "*.*".into()),
+                op: match action {
+                    Action::SelectGroup => MaskOp::Select,
+                    Action::UnselectGroup => MaskOp::Unselect,
+                    _ => MaskOp::Show,
+                },
+                input: match panel.show() {
+                    Show::Mask(m) if action == Action::ShowMask => m.clone(),
+                    _ => self.masks.first().cloned().unwrap_or_else(|| "*.*".into()),
+                },
             }),
             Action::Copy | Action::Move | Action::Link => {
                 let sources = panel.targets();
@@ -5302,16 +5318,13 @@ impl App {
                     move |failed| cosmic::Action::App(Message::PropsDone(side, failed)),
                 )
             }
-            Dialog::Mask {
-                side,
-                select,
-                input,
-            } => {
+            Dialog::Mask { side, op, input } => {
                 self.masks = cmdline::remember(&self.masks, &input);
-                self.panes[side]
-                    .active_mut()
-                    .panel
-                    .mark_by_mask(&Mask::parse(&input), select);
+                let panel = &mut self.panes[side].active_mut().panel;
+                match op {
+                    MaskOp::Show => panel.set_show(Show::Mask(input)),
+                    _ => panel.mark_by_mask(&Mask::parse(&input), op == MaskOp::Select),
+                }
                 Task::none()
             }
             Dialog::Input {
@@ -8708,6 +8721,9 @@ fn on_files(a: Action) -> bool {
             | A::MarkUp
             | A::SelectGroup
             | A::UnselectGroup
+            | A::ShowAll
+            | A::ShowPrograms
+            | A::ShowMask
             | A::SelectAll
             | A::UnselectAll
             | A::Invert
@@ -10559,6 +10575,36 @@ mod tests {
         let bad = (PathBuf::from("/x/b.7z"), Err("checksum".to_string()));
         let _ = app.update(Message::Tested(vec![ok, bad]));
         assert!(app.msg().is_some_and(|m| m.contains("b.7z: checksum")));
+    }
+
+    #[test]
+    fn ctrl_f10_f11_f12_show_all_programs_or_by_mask() {
+        let mut app = files_app(&["a.rs", "b.txt"]);
+        let shown = |app: &App| app.panes[0].active().panel.entries().len();
+        let _ = app.update(Message::Key(Action::ShowPrograms)); // none has an x bit
+        assert_eq!(shown(&app), 1, "only ..");
+        let _ = app.update(Message::Key(Action::ShowMask));
+        let Some(Dialog::Mask {
+            op: MaskOp::Show, ..
+        }) = &app.dialog
+        else {
+            panic!("no mask dialog");
+        };
+        let _ = app.update(Message::DialogInput("*.rs".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(
+            app.panes[0].active().panel.show(),
+            &Show::Mask("*.rs".into())
+        );
+        assert_eq!(shown(&app), 2);
+        let _ = app.update(Message::Key(Action::ShowMask)); // offers the mask in force
+        assert!(matches!(&app.dialog, Some(Dialog::Mask { input, .. }) if input == "*.rs"));
+        let _ = app.update(Message::DialogInput("*.*".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.panes[0].active().panel.show(), &Show::All);
+        let _ = app.update(Message::Key(Action::ShowPrograms));
+        let _ = app.update(Message::Key(Action::ShowAll));
+        assert_eq!(shown(&app), 3);
     }
 
     #[test]
