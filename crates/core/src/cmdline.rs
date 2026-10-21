@@ -251,6 +251,22 @@ pub fn expand(params: &str, v: &Vars) -> String {
     out
 }
 
+/// A toolbar button's working dir: empty → the panel's; `%P` / `%T` → the panel's / the other's
+/// (as is, not quoted: a path, not a shell line); a leading `~` → `home`; relative → under the
+/// panel's dir.
+pub fn start_dir(dir: &str, v: &Vars, home: &Path) -> PathBuf {
+    let dir = dir.trim();
+    let s = (dir.replace("%P", &v.dir.display().to_string()))
+        .replace("%T", &v.other.display().to_string());
+    let s = match s.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+            format!("{}{rest}", home.display())
+        }
+        _ => s,
+    };
+    v.dir.join(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +429,25 @@ mod tests {
             Some("caf?")
         );
         assert!(word(&name, |_: &Path| None).is_none()); // dir not readable
+    }
+
+    #[test]
+    fn start_dir_of_a_button() {
+        let (dir, other, home) = (Path::new("/a b"), Path::new("/t"), Path::new("/home/u"));
+        let v = Vars {
+            dir,
+            other,
+            name: None,
+            selected: &[],
+        };
+        let d = |s: &str| start_dir(s, &v, home);
+        assert_eq!(d("  "), dir);
+        assert_eq!(d("%T/x"), Path::new("/t/x"));
+        assert_eq!(d("%P"), dir);
+        assert_eq!(d("~/src"), Path::new("/home/u/src"));
+        assert_eq!(d("~"), home);
+        assert_eq!(d("~x"), Path::new("/a b/~x"));
+        assert_eq!(d("build"), Path::new("/a b/build"));
+        assert_eq!(d("/tmp"), Path::new("/tmp"));
     }
 }

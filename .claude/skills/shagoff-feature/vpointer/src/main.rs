@@ -71,6 +71,12 @@ fn main() {
     q.roundtrip(&mut s).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(150));
     if drag {
+        // A second motion before the press: a new device's first one reaches the app only with
+        // the next event, so the widget under the pointer would hear of it after the press.
+        p.motion_absolute(t(), x + 1, y, w, h);
+        p.frame();
+        q.roundtrip(&mut s).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
         p.button(t(), 0x110, ButtonState::Pressed);
         p.frame();
         q.roundtrip(&mut s).unwrap();

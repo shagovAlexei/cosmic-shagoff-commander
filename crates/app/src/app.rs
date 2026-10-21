@@ -368,6 +368,8 @@ pub struct App {
     next_id: u64,
     /// Current keyboard modifiers, for Ctrl+click.
     mods: Modifiers,
+    /// A toolbar button held with Shift, moved to where the pointer goes.
+    pub tool_drag: shagoff_core::reorder::Reorder,
     dialog: Option<Dialog>,
     /// Help / about / settings in the side drawer.
     pub(crate) drawer: Option<Drawer>,
@@ -748,6 +750,12 @@ pub enum Message {
     Colors(crate::colorrules::ColorMsg),
     /// Toolbar button `i` of `config.toolbar`.
     Tool(usize),
+    /// Shift + drag on the toolbar (TC): the pointer over / off a button, the left button down /
+    /// up (from a subscription: the buttons keep the press).
+    ToolHover(Option<usize>),
+    ToolLeft(usize),
+    ToolGrab,
+    ToolRelease,
     /// A toolbar program exited with an error: its last stderr line (or exit status).
     ToolFailed(String),
     ToolEdit(crate::toolbar::ToolMsg),
@@ -1014,6 +1022,19 @@ impl Application for App {
                 }),
                 _ => Subscription::none(),
             },
+            // Shift held or a toolbar button held: the left button down / up anywhere.
+            match self.mods.shift() || self.tool_drag.grab.is_some() {
+                true => event::listen_with(|e, _, _| match e {
+                    cosmic::iced::Event::Mouse(mouse::Event::ButtonPressed(
+                        mouse::Button::Left,
+                    )) => Some(Message::ToolGrab),
+                    cosmic::iced::Event::Mouse(mouse::Event::ButtonReleased(
+                        mouse::Button::Left,
+                    )) => Some(Message::ToolRelease),
+                    _ => None,
+                }),
+                false => Subscription::none(),
+            },
             // While the divider is held: where the pointer is, and the release (over any widget).
             match self.splitting {
                 true => event::listen_with(|e, _, window| match e {
@@ -1229,6 +1250,7 @@ impl App {
             tab_drag: None,
             pane_hover: None,
             drop_hover: None,
+            tool_drag: Default::default(),
             thumbs: HashMap::new(),
             thumbs_busy: 0,
             drop_at: None,
@@ -3067,7 +3089,21 @@ impl App {
                 }
                 Err(e) => self.say(StatusKind::Error, fl!("open-failed", err = e)),
             },
+            // A Shift-press moves the button, it doesn't run it.
+            Message::Tool(_) if self.mods.shift() || self.tool_drag.grab.is_some() => {}
             Message::Tool(i) => return self.run_tool(i),
+            Message::ToolHover(at) => {
+                self.tool_drag.hover(at, &mut self.config.toolbar);
+            }
+            Message::ToolLeft(i) => self.tool_drag.left(i),
+            Message::ToolGrab => self.tool_drag.grab(),
+            Message::ToolRelease => {
+                // Moved in place: taken out, or the setter would see no change to write.
+                if self.tool_drag.grab.take().is_some() {
+                    let list = std::mem::take(&mut self.config.toolbar);
+                    self.save_toolbar(list);
+                }
+            }
             Message::ToolFailed(e) => self.say(StatusKind::Error, fl!("cmd-failed", error = e)),
             Message::Colors(m) => {
                 if let Some(Dialog::Colors(c)) = &mut self.dialog {
@@ -5537,14 +5573,7 @@ impl App {
                 Task::none()
             }
             Dialog::Toolbar(t) => {
-                match &self.config_handler {
-                    Some(h) => {
-                        if let Err(e) = self.config.set_toolbar(h, t.list) {
-                            self.config_not_saved(&e);
-                        }
-                    }
-                    None => self.config.toolbar = t.list,
-                }
+                self.save_toolbar(t.list);
                 Task::none()
             }
             Dialog::Keys(k) => {
@@ -7870,6 +7899,17 @@ impl App {
     }
 
     /// A toolbar button: its internal command, or its program with the parameters filled in.
+    fn save_toolbar(&mut self, list: Vec<ToolButton>) {
+        match &self.config_handler {
+            Some(h) => {
+                if let Err(e) = self.config.set_toolbar(h, list) {
+                    self.config_not_saved(&e);
+                }
+            }
+            None => self.config.toolbar = list,
+        }
+    }
+
     fn run_tool(&mut self, i: usize) -> Task<Message> {
         match self.config.toolbar.get(i) {
             Some(b) => self.run_button(b.clone()),
@@ -7903,7 +7943,9 @@ impl App {
             selected: &selected,
         };
         let line = cmdline::append(&b.cmd, &cmdline::expand(&b.params, &vars));
-        match run_watched(&cmdline::argv(&line, &cwd, None), &cwd) {
+        let home = std::env::home_dir().unwrap_or_else(|| "/".into());
+        let dir = cmdline::start_dir(&b.dir, &vars, &home);
+        match run_watched(&cmdline::argv(&line, &dir, None), &dir) {
             Ok(task) => task,
             Err(e) => {
                 self.say(StatusKind::Error, fl!("cmd-failed", error = e.to_string()));
@@ -10376,6 +10418,24 @@ mod tests {
         let _ = app.update(Message::Key(Action::NewTab));
         let _ = app.update(Message::Resized(0, Size::new(FALLBACK_LIST_W, 150.0)));
         assert!(app.panes[0].items().iter().all(|t| t.height == 150.0));
+    }
+
+    #[test]
+    fn toolbar_shift_drag_moves_a_button_without_running_it() {
+        let mut app = app_with(Config::default(), State::default());
+        let bar = app.config.toolbar.clone();
+        let _ = app.update(Message::Modifiers(Modifiers::SHIFT));
+        let _ = app.update(Message::ToolHover(Some(1)));
+        let _ = app.update(Message::ToolGrab);
+        let _ = app.update(Message::ToolHover(Some(2)));
+        let _ = app.update(Message::Tool(2)); // the release over it: not run
+        let _ = app.update(Message::ToolRelease);
+        assert!(!app.panes[0].active().brief, "cm_SrcShort not run");
+        assert_eq!(app.config.toolbar[2], bar[1]);
+        assert_eq!(app.config.toolbar[1], bar[2]);
+        // Released: hovering moves nothing.
+        let _ = app.update(Message::ToolHover(Some(0)));
+        assert_eq!(app.config.toolbar[2], bar[1]);
     }
 
     #[test]

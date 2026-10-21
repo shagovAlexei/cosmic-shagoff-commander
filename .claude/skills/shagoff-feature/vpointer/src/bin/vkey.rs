@@ -1,4 +1,5 @@
-//! `vkey [ctrl] [alt] [shift] [ru] KEY`: press KEY (a-z, or an evdev code) through
+//! `vkey [ctrl] [alt] [shift] [ru] KEY`, or `vkey hold MS MODS…` (just the modifiers, held MS ms:
+//! Shift + drag with `vpointer drag` meanwhile): press KEY (a-z, or an evdev code) through
 //! zwp_virtual_keyboard_v1 with a plain us,ru keymap, so the app sees the real physical key
 //! (wtype uploads a keymap of its own: Ctrl+letters bound to physical keys never arrive). `ru`:
 //! the second layout group. For headless sway only (tests).
@@ -59,9 +60,14 @@ fn code(k: &str) -> u32 {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let hold: Option<u64> = (args.first().map(String::as_str) == Some("hold")).then(|| {
+        args.remove(0);
+        args.remove(0).parse().expect("hold MS")
+    });
+    let n = args.len() - usize::from(hold.is_none());
     let (mut mods, mut group) = (0u32, 0u32);
-    for a in &args[..args.len() - 1] {
+    for a in &args[..n] {
         match a.as_str() {
             "shift" => mods |= 1,
             "ctrl" => mods |= 4,
@@ -70,7 +76,7 @@ fn main() {
             o => panic!("unknown modifier {o}"),
         }
     }
-    let key = code(args.last().expect("KEY"));
+    let key = hold.is_none().then(|| code(args.last().expect("KEY")));
     let conn = Connection::connect_to_env().expect("WAYLAND_DISPLAY");
     let mut q = conn.new_event_queue();
     let qh = q.handle();
@@ -91,12 +97,34 @@ fn main() {
     kb.modifiers(mods, 0, 0, group);
     q.roundtrip(&mut s).unwrap();
     pause();
-    kb.key(t(), key, KeyState::Pressed.into());
-    q.roundtrip(&mut s).unwrap();
-    pause();
-    kb.key(t(), key, KeyState::Released.into());
-    q.roundtrip(&mut s).unwrap();
-    pause();
+    match key {
+        Some(key) => {
+            kb.key(t(), key, KeyState::Pressed.into());
+            q.roundtrip(&mut s).unwrap();
+            pause();
+            kb.key(t(), key, KeyState::Released.into());
+            q.roundtrip(&mut s).unwrap();
+            pause();
+        }
+        // Held: the modifier keys themselves go down too (a bare modifiers event never reaches
+        // the client).
+        None => {
+            let keys: Vec<u32> = [(1, 42), (4, 29), (8, 56)]
+                .into_iter()
+                .filter(|&(m, _)| mods & m != 0)
+                .map(|(_, k)| k)
+                .collect();
+            for &k in &keys {
+                kb.key(t(), k, KeyState::Pressed.into());
+            }
+            q.roundtrip(&mut s).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(hold.unwrap_or(0)));
+            for &k in &keys {
+                kb.key(t(), k, KeyState::Released.into());
+            }
+            q.roundtrip(&mut s).unwrap();
+        }
+    }
     kb.modifiers(0, 0, 0, group);
     q.roundtrip(&mut s).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));

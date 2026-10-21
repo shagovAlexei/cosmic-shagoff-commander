@@ -161,7 +161,11 @@ fn main_view(app: &App) -> Element<'_, Message> {
     ]
     .height(Length::Fill);
     match app.config.skin {
-        Skin::Classic => column![crate::toolbar::bar(&app.config.toolbar), panes].into(),
+        Skin::Classic => column![
+            crate::toolbar::bar(&app.config.toolbar, app.tool_drag.grab),
+            panes
+        ]
+        .into(),
         Skin::Modern => panes.padding([4.0, MODERN_PAD, 0.0, MODERN_PAD]).into(),
     }
 }
