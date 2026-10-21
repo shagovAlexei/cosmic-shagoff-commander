@@ -7250,7 +7250,7 @@ impl App {
                 if self.thumbs_busy >= crate::thumbs::BUSY_MAX {
                     break;
                 }
-                if e.is_dir() || !shagoff_core::lister::thumb_wanted(&e.name, e.size) {
+                if e.is_dir() || !crate::thumbs::wanted(&e.name, e.size) {
                     continue;
                 }
                 let path = t.panel.cwd().join(&e.os_name);
