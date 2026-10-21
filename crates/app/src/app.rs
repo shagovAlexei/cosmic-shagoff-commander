@@ -1804,7 +1804,14 @@ impl App {
                 self.panes[side].close(i);
                 return self.tab_switched(side);
             }
-            Message::Modifiers(m) => self.mods = m,
+            Message::Modifiers(m) => {
+                self.mods = m;
+                // Shift let go (or the window left, which clears them): a held button is dropped
+                // where it is — the release may never come.
+                if !m.shift() {
+                    self.tool_drop();
+                }
+            }
             Message::DialogInput(s) => {
                 if let Some(input) = self.dialog.as_mut().and_then(Dialog::input_mut) {
                     *input = s;
@@ -3096,14 +3103,10 @@ impl App {
                 self.tool_drag.hover(at, &mut self.config.toolbar);
             }
             Message::ToolLeft(i) => self.tool_drag.left(i),
-            Message::ToolGrab => self.tool_drag.grab(),
-            Message::ToolRelease => {
-                // Moved in place: taken out, or the setter would see no change to write.
-                if self.tool_drag.grab.take().is_some() {
-                    let list = std::mem::take(&mut self.config.toolbar);
-                    self.save_toolbar(list);
-                }
-            }
+            // Under a dialog the last button entered may still count as hovered.
+            Message::ToolGrab if self.dialog.is_none() => self.tool_drag.grab(),
+            Message::ToolGrab => {}
+            Message::ToolRelease => self.tool_drop(),
             Message::ToolFailed(e) => self.say(StatusKind::Error, fl!("cmd-failed", error = e)),
             Message::Colors(m) => {
                 if let Some(Dialog::Colors(c)) = &mut self.dialog {
@@ -7898,7 +7901,15 @@ impl App {
         }
     }
 
-    /// A toolbar button: its internal command, or its program with the parameters filled in.
+    /// The held toolbar button let go: the bar saved if it moved.
+    fn tool_drop(&mut self) {
+        if self.tool_drag.release() {
+            // Moved in place: taken out, or the setter would see no change to write.
+            let list = std::mem::take(&mut self.config.toolbar);
+            self.save_toolbar(list);
+        }
+    }
+
     fn save_toolbar(&mut self, list: Vec<ToolButton>) {
         match &self.config_handler {
             Some(h) => {
@@ -7910,6 +7921,7 @@ impl App {
         }
     }
 
+    /// A toolbar button: its internal command, or its program with the parameters filled in.
     fn run_tool(&mut self, i: usize) -> Task<Message> {
         match self.config.toolbar.get(i) {
             Some(b) => self.run_button(b.clone()),
@@ -10436,6 +10448,16 @@ mod tests {
         // Released: hovering moves nothing.
         let _ = app.update(Message::ToolHover(Some(0)));
         assert_eq!(app.config.toolbar[2], bar[1]);
+        // Shift let go mid-drag (the release may never come, e.g. focus left): dropped there.
+        let _ = app.update(Message::ToolGrab);
+        let _ = app.update(Message::Modifiers(Modifiers::empty()));
+        let _ = app.update(Message::ToolHover(Some(1)));
+        assert_eq!(app.config.toolbar[0], bar[0]);
+        // Under a dialog nothing is grabbed.
+        let _ = app.update(Message::Modifiers(Modifiers::SHIFT));
+        let _ = app.update(Message::Key(Action::ConfigureToolbar));
+        let _ = app.update(Message::ToolGrab);
+        assert_eq!(app.tool_drag.grab, None);
     }
 
     #[test]

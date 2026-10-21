@@ -228,7 +228,9 @@ impl HotEdit {
                 }
             }
             (HotMsg::Grab, _) => self.drag.grab(),
-            (HotMsg::Release, _) => self.drag.release(),
+            (HotMsg::Release, _) => {
+                self.drag.release();
+            }
             (HotMsg::Left(i), _) => self.drag.left(i),
             (HotMsg::Sort, _) => {
                 let kept = sel.map(|i| self.list[i].clone());

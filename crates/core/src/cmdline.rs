@@ -256,15 +256,30 @@ pub fn expand(params: &str, v: &Vars) -> String {
 /// panel's dir.
 pub fn start_dir(dir: &str, v: &Vars, home: &Path) -> PathBuf {
     let dir = dir.trim();
-    let s = (dir.replace("%P", &v.dir.display().to_string()))
-        .replace("%T", &v.other.display().to_string());
-    let s = match s.strip_prefix('~') {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
-            format!("{}{rest}", home.display())
+    // Bytes: a dir whose name is not UTF-8 must come out as it is.
+    let mut out = Vec::new();
+    let rest = match dir.strip_prefix('~') {
+        Some(r) if r.is_empty() || r.starts_with('/') => {
+            out.extend_from_slice(home.as_os_str().as_bytes());
+            r
         }
-        _ => s,
+        _ => dir,
     };
-    v.dir.join(s)
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        match (c, chars.clone().next()) {
+            ('%', Some(n @ ('P' | 'T' | '%'))) => {
+                chars.next();
+                match n {
+                    'P' => out.extend_from_slice(v.dir.as_os_str().as_bytes()),
+                    'T' => out.extend_from_slice(v.other.as_os_str().as_bytes()),
+                    _ => out.push(b'%'),
+                }
+            }
+            _ => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+        }
+    }
+    v.dir.join(std::ffi::OsStr::from_bytes(&out))
 }
 
 #[cfg(test)]
@@ -449,5 +464,10 @@ mod tests {
         assert_eq!(d("~x"), Path::new("/a b/~x"));
         assert_eq!(d("build"), Path::new("/a b/build"));
         assert_eq!(d("/tmp"), Path::new("/tmp"));
+        assert_eq!(d("/data/100%%"), Path::new("/data/100%"));
+        // regression: a panel dir not in UTF-8 came out with U+FFFD, a dir that isn't there
+        let raw = PathBuf::from(std::ffi::OsStr::from_bytes(b"/caf\xe9"));
+        let v = Vars { dir: &raw, ..v };
+        assert_eq!(start_dir("%P/x", &v, home), raw.join("x"));
     }
 }

@@ -9,6 +9,8 @@ pub struct Reorder {
     /// Where the held item just came from: items of other sizes shift after a move, and the one
     /// sliding under the still pointer must not move it back (it would flicker).
     vacated: Option<usize>,
+    /// Something moved since the grab.
+    moved: bool,
 }
 
 impl Reorder {
@@ -25,6 +27,7 @@ impl Reorder {
             list.insert(to, e);
             self.grab = Some(to);
             self.vacated = Some(from);
+            self.moved = true;
             return Some(to);
         }
         if at != self.vacated {
@@ -37,10 +40,13 @@ impl Reorder {
     pub fn grab(&mut self) {
         self.grab = self.hover;
         self.vacated = None;
+        self.moved = false;
     }
 
-    pub fn release(&mut self) {
+    /// Lets go; true if the held item moved (the list is to be saved).
+    pub fn release(&mut self) -> bool {
         self.grab = None;
+        std::mem::take(&mut self.moved)
     }
 
     /// The pointer left `i`: forgotten only if still the hovered one (the enter of a neighbour
@@ -64,7 +70,8 @@ mod tests {
         r.grab();
         assert_eq!(r.hover(Some(2), &mut l), Some(2)); // over "c": "a" moves there
         assert_eq!(l, ["b", "c", "a"]);
-        r.release();
+        assert!(r.release());
+        assert!(!r.release(), "once");
         assert_eq!(r.hover(Some(0), &mut l), None); // released: hovering moves nothing
         // Moved onto an item of another size: the one sliding under the pointer does not move
         // it back.
@@ -73,7 +80,11 @@ mod tests {
         assert_eq!(l, ["c", "b", "a"]);
         r.hover(Some(0), &mut l);
         assert_eq!(l, ["c", "b", "a"]);
-        r.release();
+        assert!(r.release());
+        // Held and let go in place: nothing to save.
+        r.grab();
+        r.hover(Some(0), &mut l);
+        assert!(!r.release());
         // Pressed outside the items: nothing held.
         r.hover(Some(2), &mut l);
         r.left(2);
