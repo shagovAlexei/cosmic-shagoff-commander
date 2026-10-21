@@ -703,6 +703,25 @@ tested-ok = { $n ->
    *[other] { $files } files
 } read)
 tested-bad = { $bad } of { $n } archives damaged:
+menu-checksum-create = Create checksum files…
+menu-checksum-verify = Verify checksums
+checksum-create = Create checksum files
+checksum-algo = Algorithm
+checksum-separate = A separate file for each file
+checksum-go = Create
+checksum-making = Calculating checksums…
+checksum-made = { $n ->
+    [one] Checksum file created: { $names }
+   *[other] { $n } checksum files created
+}
+checksum-no-files = No checksum files among the selected files (.md5, .sha1, .sha256, .sha512, *SUMS)
+checksum-verifying = Verifying checksums…
+checksum-bad = checksum does not match
+checksum-ok = { $n ->
+    [one] The file is intact
+   *[other] All { $n } files are intact
+}
+checksum-failed = { $bad } of { $n } files failed:
 menu-tree = Folder tree…
 tree = Folder tree
 tree-go = Go
@@ -737,6 +756,7 @@ why-password = The archive's password is needed (or the one given is wrong)
 why-read-only = The file is read-only
 why-hard-links = The file has other hard links (they would keep the old text)
 why-changed = The file changed on disk since it was compared; compare again
+why-no-sums = No checksum lines in the file
 err-not-permitted = Operation not permitted (an immutable file, or not yours)
 err-quota = Disk quota exceeded
 err-cross-device = Not possible across file systems

@@ -72,6 +72,8 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                     fl!("menu-test-archives"),
                     Action::TestArchives,
                 ),
+                r("", fl!("menu-checksum-create"), Action::ChecksumCreate),
+                r("", fl!("menu-checksum-verify"), Action::ChecksumVerify),
                 r("Shift+F10", fl!("context-menu"), Action::ContextMenu),
                 r("Ctrl+←", fl!("help-open-left"), Action::OpenLeft),
                 r("Ctrl+→", fl!("help-open-right"), Action::OpenRight),

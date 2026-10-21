@@ -384,6 +384,8 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-pack"), Action::Pack),
                 b(fl!("menu-unpack"), Action::Unpack),
                 b(fl!("menu-test-archives"), Action::TestArchives),
+                b(fl!("menu-checksum-create"), Action::ChecksumCreate),
+                b(fl!("menu-checksum-verify"), Action::ChecksumVerify),
                 menu::Item::Divider,
                 b(fl!("menu-multi-rename"), Action::MultiRename),
                 b(fl!("menu-compare-files"), Action::CompareFiles),
@@ -857,6 +859,8 @@ mod tests {
                             | Action::OpenTerminal
                             | Action::PickTerminal
                             | Action::PickShell
+                            | Action::ChecksumCreate
+                            | Action::ChecksumVerify
                     )
                 ) {
                     continue;

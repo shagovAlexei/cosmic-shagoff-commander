@@ -2,6 +2,7 @@
 //! Must not depend on libcosmic so everything here stays unit-testable.
 
 pub mod archive;
+pub mod checksum;
 pub mod clipboard;
 pub mod cmdline;
 pub mod colors;
