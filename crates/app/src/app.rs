@@ -2607,6 +2607,9 @@ impl App {
                                 let name = name.display();
                                 match c {
                                     Check::Ok => ok += 1,
+                                    Check::NotFile => {
+                                        bad.push(format!("{name}: {}", fl!("checksum-not-file")))
+                                    }
                                     Check::Bad => {
                                         bad.push(format!("{name}: {}", fl!("checksum-bad")))
                                     }
@@ -4477,8 +4480,13 @@ impl App {
                 if self.testing || loading {
                     return Task::none();
                 }
+                // Dirs by the panel's rows, not a `stat` here (as Alt+Shift+F9).
+                let dirs: std::collections::HashSet<PathBuf> = (panel.entries().iter())
+                    .filter(|e| e.is_dir())
+                    .map(|e| panel.cwd().join(&e.os_name))
+                    .collect();
                 let sums: Vec<PathBuf> = (panel.targets().into_iter())
-                    .filter(|p| !inside_archive(p) && !p.is_dir())
+                    .filter(|p| !inside_archive(p) && !dirs.contains(p))
                     .filter(|p| {
                         checksum::is_sum_file(&p.file_name().unwrap_or_default().to_string_lossy())
                     })

@@ -44,12 +44,13 @@ impl Algo {
     }
 }
 
-/// A checksum file by its name: `.md5`, `.sha1`, `.sha256`, `.sha512`, `.sha`, or `…SUMS`.
+/// A checksum file by its name: `.md5`, `.sha1`, `.sha256`, `.sha512`, `.sha`, or `MD5SUMS`,
+/// `SHA256SUMS`… (not `B2SUMS`: BLAKE2 has SHA-512's length).
 pub fn is_sum_file(name: &str) -> bool {
     let lower = name.to_lowercase();
-    name.ends_with("SUMS")
-        || (Algo::ALL.iter().map(|a| a.ext()).chain(["sha"]))
-            .any(|e| lower.strip_suffix(e).is_some_and(|s| s.ends_with('.')))
+    let exts = || Algo::ALL.iter().map(|a| a.ext());
+    exts().any(|e| name.strip_suffix("SUMS") == Some(&e.to_uppercase()))
+        || (exts().chain(["sha"])).any(|e| lower.strip_suffix(e).is_some_and(|s| s.ends_with('.')))
 }
 
 /// `path`'s hash in lower-case hex. Stopped: `Interrupted`.
@@ -108,9 +109,10 @@ fn files(base: &Path, targets: &[PathBuf], stop: &AtomicBool) -> io::Result<Vec<
         .collect())
 }
 
-/// Sums `targets` (in `dir`) into checksum files there: one per file (`a.txt.sha256`; dirs
-/// left out) with `separate`, else one named after `dir` (`docs.sha256`). Written whole then
-/// renamed; an existing file is never replaced (`AlreadyExists`). Returns the files written.
+/// Sums `targets` (in `dir`) into checksum files: one next to each file (`a.txt.sha256`; dirs
+/// left out) with `separate`, else one in `dir` named after it (`docs.sha256`). Written whole
+/// then renamed; an existing file is never replaced (`AlreadyExists`, checked for all before
+/// any is written). Returns the files written.
 pub fn create(
     dir: &Path,
     targets: &[PathBuf],
@@ -119,36 +121,59 @@ pub fn create(
     stop: &AtomicBool,
 ) -> io::Result<Vec<PathBuf>> {
     let all = files(dir, targets, stop)?;
-    let groups: Vec<(PathBuf, Vec<PathBuf>)> = if separate {
-        (all.into_iter())
-            .filter(|f| f.parent() == Some(Path::new("")))
-            .map(|f| {
-                let mut name = f.clone().into_os_string();
-                name.push(format!(".{}", algo.ext()));
-                (dir.join(name), vec![f])
-            })
-            .collect()
+    // (sum file, [(file, its name in the sum file)])
+    type Group = (PathBuf, Vec<(PathBuf, PathBuf)>);
+    let groups: Vec<Group> = if separate {
+        let tops = (targets.iter())
+            .filter(|t| fs::symlink_metadata(dir.join(t)).is_ok_and(|m| m.is_file()));
+        tops.map(|t| {
+            let f = dir.join(t);
+            let mut out = f.clone().into_os_string();
+            out.push(format!(".{}", algo.ext()));
+            let name = PathBuf::from(f.file_name().unwrap_or_default());
+            (PathBuf::from(out), vec![(f, name)])
+        })
+        .collect()
     } else {
         let stem = dir
             .file_name()
             .map_or("checksums".into(), |n| n.to_os_string());
         let mut name = stem;
         name.push(format!(".{}", algo.ext()));
+        let all = all.into_iter().map(|f| (dir.join(&f), f)).collect();
         vec![(dir.join(name), all)]
     };
+    if groups.iter().all(|(_, m)| m.is_empty()) {
+        return Err(io::Error::other(crate::why::NO_FILES));
+    }
+    if groups
+        .iter()
+        .any(|(out, _)| fs::symlink_metadata(out).is_ok())
+    {
+        return Err(io::ErrorKind::AlreadyExists.into());
+    }
     let mut written = Vec::new();
     for (out, members) in groups {
-        if fs::symlink_metadata(&out).is_ok() {
-            return Err(io::ErrorKind::AlreadyExists.into());
-        }
         let mut text = Vec::new();
-        for m in &members {
-            text.extend_from_slice(hash(&dir.join(m), algo, stop)?.as_bytes());
+        for (path, name) in &members {
+            let name = name.as_os_str().as_bytes();
+            // GNU: a name with `\` or a line break is escaped, the line marked by a leading `\`.
+            let odd = name.iter().any(|b| matches!(b, b'\\' | b'\n' | b'\r'));
+            if odd {
+                text.push(b'\\');
+            }
+            text.extend_from_slice(hash(path, algo, stop)?.as_bytes());
             text.extend_from_slice(b" *");
-            text.extend_from_slice(m.as_os_str().as_bytes());
+            for &b in name {
+                match b {
+                    b'\\' if odd => text.extend_from_slice(b"\\\\"),
+                    b'\n' => text.extend_from_slice(b"\\n"),
+                    b'\r' => text.extend_from_slice(b"\\r"),
+                    b => text.push(b),
+                }
+            }
             text.push(b'\n');
         }
-        // ponytail: a name with a newline is written as is (GNU escapes it with `\`); rare enough.
         let mut part = out.clone().into_os_string();
         part.push(".shagoff-part");
         let part = PathBuf::from(part);
@@ -171,6 +196,8 @@ pub enum Check {
     Bad,
     /// Unreadable: why.
     Missing(io::ErrorKind),
+    /// A dir, a pipe, a device: not read (a pipe would hang).
+    NotFile,
 }
 
 /// `(hash, name)` of each line `hash *name` / `hash  name` with a known hash length; others
@@ -181,19 +208,47 @@ pub fn parse(text: &[u8]) -> Vec<(String, PathBuf)> {
             let line = line.strip_suffix(b"\r").unwrap_or(line);
             let sp = line.iter().position(|&b| b == b' ')?;
             let (h, rest) = line.split_at(sp);
-            let h = std::str::from_utf8(h).ok()?.trim_start_matches('\\');
+            let h = std::str::from_utf8(h).ok()?;
+            let (escaped, h) = match h.strip_prefix('\\') {
+                Some(h) => (true, h),
+                None => (false, h),
+            };
             Algo::by_len(h.len()).filter(|_| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
             let name = rest
                 .strip_prefix(b" *")
                 .or_else(|| rest.strip_prefix(b"  "))?;
+            let name = if escaped {
+                unescape(name)
+            } else {
+                name.to_vec()
+            };
             (!name.is_empty()).then(|| {
                 (
                     h.to_lowercase(),
-                    PathBuf::from(std::ffi::OsString::from_vec(name.to_vec())),
+                    PathBuf::from(std::ffi::OsString::from_vec(name)),
                 )
             })
         })
         .collect()
+}
+
+/// GNU's `\\` → `\`, `\n`, `\r` → line breaks.
+fn unescape(name: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(name.len());
+    let mut it = name.iter();
+    while let Some(&b) = it.next() {
+        out.push(match (b, it.as_slice().first()) {
+            (b'\\', Some(b'\\')) => b'\\',
+            (b'\\', Some(b'n')) => b'\n',
+            (b'\\', Some(b'r')) => b'\r',
+            _ => {
+                out.push(b);
+                continue;
+            }
+        });
+        it.next();
+    }
+    out
 }
 
 /// Each file named in a sum file and what its check found.
@@ -209,11 +264,16 @@ pub fn verify(sum: &Path, stop: &AtomicBool) -> io::Result<Report> {
     let mut out = Vec::new();
     for (h, name) in lines {
         let algo = Algo::by_len(h.len()).expect("parse keeps known lengths");
-        let check = match hash(&base.join(&name), algo, stop) {
-            Ok(got) if got == h => Check::Ok,
-            Ok(_) => Check::Bad,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
+        let path = base.join(&name);
+        let check = match fs::metadata(&path).map(|m| m.is_file()) {
+            Ok(false) => Check::NotFile,
             Err(e) => Check::Missing(e.kind()),
+            Ok(true) => match hash(&path, algo, stop) {
+                Ok(got) if got == h => Check::Ok,
+                Ok(_) => Check::Bad,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
+                Err(e) => Check::Missing(e.kind()),
+            },
         };
         out.push((name, check));
     }
@@ -252,7 +312,7 @@ mod tests {
         for n in ["a.md5", "a.SHA256", "x.sha", "SHA256SUMS", "b.sha512"] {
             assert!(is_sum_file(n), "{n}");
         }
-        for n in ["md5", "a.txt", "sha256", "a.sha2"] {
+        for n in ["md5", "a.txt", "sha256", "a.sha2", "B2SUMS"] {
             assert!(!is_sum_file(n), "{n}");
         }
     }
@@ -301,6 +361,52 @@ mod tests {
         assert_eq!(
             verify(&out[0], &no).unwrap(),
             [(PathBuf::from("abc"), Check::Ok)]
+        );
+        // A file in a subdir (search results): its sum next to it, by its own name.
+        let out = create(d.path(), &[PathBuf::from("sub/x")], Algo::Md5, true, &no).unwrap();
+        assert_eq!(out, [d.path().join("sub/x.md5")]);
+        assert_eq!(
+            fs::read_to_string(&out[0]).unwrap(),
+            format!("{ABC_MD5} *x\n")
+        );
+        // Only dirs: nothing to sum is said, not «0 created».
+        let e = create(d.path(), &[PathBuf::from("sub")], Algo::Md5, true, &no).unwrap_err();
+        assert_eq!(e.to_string(), crate::why::NO_FILES);
+        // One taken name: none written.
+        fs::write(d.path().join("sub/x.sha256"), "").unwrap();
+        let t = [PathBuf::from("abc"), PathBuf::from("sub/x")];
+        fs::remove_file(d.path().join("abc.sha256")).unwrap();
+        let e = create(d.path(), &t, Algo::Sha256, true, &no).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
+        assert!(!d.path().join("abc.sha256").exists());
+    }
+
+    #[test]
+    fn odd_names_escaped_like_gnu_and_pipes_not_read() {
+        let d = tempfile::tempdir().unwrap();
+        let name = "a\\b\nc";
+        fs::write(d.path().join(name), "abc").unwrap();
+        let no = AtomicBool::new(false);
+        let out = create(d.path(), &[PathBuf::from(name)], Algo::Md5, true, &no).unwrap();
+        let text = fs::read_to_string(&out[0]).unwrap();
+        assert_eq!(text, format!("\\{ABC_MD5} *a\\\\b\\nc\n"));
+        assert_eq!(
+            verify(&out[0], &no).unwrap(),
+            [(PathBuf::from(name), Check::Ok)]
+        );
+        let fifo = d.path().join("p");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let sum = d.path().join("p.md5");
+        fs::write(&sum, format!("{ABC_MD5} *p\n")).unwrap();
+        assert_eq!(
+            verify(&sum, &no).unwrap(),
+            [(PathBuf::from("p"), Check::NotFile)]
         );
     }
 

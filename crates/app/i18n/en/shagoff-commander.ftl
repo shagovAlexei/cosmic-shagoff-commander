@@ -717,6 +717,7 @@ checksum-made = { $n ->
 checksum-no-files = No checksum files among the selected files (.md5, .sha1, .sha256, .sha512, *SUMS)
 checksum-verifying = Verifying checksums…
 checksum-bad = checksum does not match
+checksum-not-file = not a file
 checksum-ok = { $n ->
     [one] The file is intact
    *[other] All { $n } files are intact
@@ -756,6 +757,7 @@ why-password = The archive's password is needed (or the one given is wrong)
 why-read-only = The file is read-only
 why-hard-links = The file has other hard links (they would keep the old text)
 why-changed = The file changed on disk since it was compared; compare again
+why-no-files = No files to sum (with a file for each file, folders are left out)
 why-no-sums = No checksum lines in the file
 err-not-permitted = Operation not permitted (an immutable file, or not yours)
 err-quota = Disk quota exceeded
