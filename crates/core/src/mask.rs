@@ -66,6 +66,13 @@ impl Mask {
         }
     }
 
+    /// Takes every file and dir (`*.*`, `*;*`, empty).
+    pub fn is_all(&self) -> bool {
+        self.include.iter().any(|p| p == "*")
+            && self.exclude.is_empty()
+            && self.exclude_dirs.is_empty()
+    }
+
     pub fn matches(&self, name: &str) -> bool {
         let name = self.fold(name);
         self.include.iter().any(|p| glob(p, &name)) && !self.exclude.iter().any(|p| glob(p, &name))

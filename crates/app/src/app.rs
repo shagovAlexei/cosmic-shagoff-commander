@@ -1105,6 +1105,11 @@ impl Application for App {
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
             terminal: c.term_builtin,
+            show: match self.panes[self.active].active().panel.show() {
+                Show::All => 0,
+                Show::Programs => 1,
+                Show::Mask(_) => 2,
+            },
         };
         vec![crate::menu::bar(
             checks,
@@ -4819,7 +4824,9 @@ impl App {
             Action::NewTab => {
                 let id = self.next_id();
                 let mut copy = self.panes[side].active().duplicate(id);
-                copy.panel.set_filter(None); // TC: the new tab shows the whole dir
+                // TC: the new tab shows the whole dir.
+                copy.panel.set_filter(None);
+                copy.panel.set_show(Show::All);
                 self.panes[side].open_after(copy);
                 return self.restore_scroll(side);
             }
@@ -5315,9 +5322,6 @@ impl App {
                 self.masks = cmdline::remember(&self.masks, &input);
                 let panel = &mut self.panes[side].active_mut().panel;
                 match op {
-                    MaskOp::Show if matches!(input.trim(), "" | "*" | "*.*") => {
-                        panel.set_show(Show::All)
-                    }
                     MaskOp::Show => panel.set_show(Show::Mask(input)),
                     _ => panel.mark_by_mask(&Mask::parse(&input), op == MaskOp::Select),
                 }

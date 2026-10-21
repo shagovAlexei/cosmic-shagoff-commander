@@ -359,6 +359,8 @@ pub struct Checks {
     /// look's cards have one of their own).
     pub classic: bool,
     pub terminal: bool,
+    /// Ctrl+F10 / F11 / F12 in force in the active panel (0 / 1 / 2): its item checked.
+    pub show: u8,
 }
 
 /// (title, items) of every menu.
@@ -526,11 +528,26 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-full"), Action::ViewFull),
                 b(fl!("menu-thumbs"), Action::ViewThumbs),
                 b(fl!("menu-tree-panel"), Action::TreePanel),
-                menu::Item::Divider,
-                b(fl!("menu-show-all"), Action::ShowAll),
-                b(fl!("menu-show-programs"), Action::ShowPrograms),
-                b(fl!("menu-show-mask"), Action::ShowMask),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),
+                menu::Item::Divider,
+                menu::Item::CheckBox(
+                    fl!("menu-show-all"),
+                    None,
+                    checks.show == 0,
+                    MenuAct::Key(Action::ShowAll),
+                ),
+                menu::Item::CheckBox(
+                    fl!("menu-show-programs"),
+                    None,
+                    checks.show == 1,
+                    MenuAct::Key(Action::ShowPrograms),
+                ),
+                menu::Item::CheckBox(
+                    fl!("menu-show-mask"),
+                    None,
+                    checks.show == 2,
+                    MenuAct::Key(Action::ShowMask),
+                ),
                 menu::Item::Divider,
                 sort(fl!("menu-sort-name"), SortKey::Name),
                 sort(fl!("menu-sort-ext"), SortKey::Ext),

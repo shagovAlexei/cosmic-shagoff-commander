@@ -121,20 +121,20 @@ impl Panel {
     /// Recompute the visible rows from `all` and the filter; drop marks that are no longer visible;
     /// put the cursor on `keep` if visible, else on `old`, clamped.
     fn rebuild(&mut self, keep: Option<String>, old: usize) {
-        let mask = match &self.show {
-            Show::Mask(m) => Some(Mask::parse(m)),
-            _ => None,
-        };
-        let shown = |e: &Entry| match &self.show {
-            Show::All => true,
-            Show::Programs => e.is_dir() || e.mode & 0o111 != 0,
-            Show::Mask(_) => {
-                let m = mask.as_ref().expect("parsed above");
-                if e.is_dir() {
-                    !m.skips_dir(base(&e.name))
-                } else {
-                    m.matches(base(&e.name))
-                }
+        // Programs: an `x` bit, links left out (a dangling one's mode is the link's own 0o777),
+        // as the Exec colour does.
+        let shown: Box<dyn Fn(&Entry) -> bool> = match &self.show {
+            Show::All => Box::new(|_| true),
+            Show::Programs => Box::new(|e| e.is_dir() || (!e.is_link && e.mode & 0o111 != 0)),
+            Show::Mask(m) => {
+                let m = Mask::parse(m);
+                Box::new(move |e| {
+                    if e.is_dir() {
+                        !m.skips_dir(base(&e.name))
+                    } else {
+                        m.matches(base(&e.name))
+                    }
+                })
             }
         };
         let mut entries: Vec<Entry> = (self.all.iter())
@@ -506,9 +506,12 @@ impl Panel {
     /// Which files to show (dirs always, but those a mask's `|dir\` leaves out); like the quick
     /// filter, marks on rows it hides are dropped.
     pub fn set_show(&mut self, show: Show) {
-        self.show = show;
+        self.show = match show {
+            Show::Mask(m) if Mask::parse(&m).is_all() => Show::All,
+            s => s,
+        };
         let keep = self.current().map(|e| e.name.clone());
-        self.rebuild(keep, 0);
+        self.rebuild(keep, self.cursor);
     }
 
     fn index_of(&self, name: &str) -> Option<usize> {
@@ -780,7 +783,8 @@ mod tests {
         p.set_filter(Some("zz".into())); // with the quick filter on top
         assert_eq!(names(&p), [".."]);
         p.set_filter(None);
-        p.set_show(Show::All);
+        p.set_show(Show::Mask("*;*.*".into())); // takes every file: no filter at all
+        assert_eq!(p.show(), &Show::All);
         assert_eq!(names(&p).len(), 6);
     }
 
