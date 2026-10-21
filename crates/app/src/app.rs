@@ -10574,6 +10574,36 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_f10_f11_f12_show_all_programs_or_by_mask() {
+        let mut app = files_app(&["a.rs", "b.txt"]);
+        let shown = |app: &App| app.panes[0].active().panel.entries().len();
+        let _ = app.update(Message::Key(Action::ShowPrograms)); // none has an x bit
+        assert_eq!(shown(&app), 1, "only ..");
+        let _ = app.update(Message::Key(Action::ShowMask));
+        let Some(Dialog::Mask {
+            op: MaskOp::Show, ..
+        }) = &app.dialog
+        else {
+            panic!("no mask dialog");
+        };
+        let _ = app.update(Message::DialogInput("*.rs".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(
+            app.panes[0].active().panel.show(),
+            &Show::Mask("*.rs".into())
+        );
+        assert_eq!(shown(&app), 2);
+        let _ = app.update(Message::Key(Action::ShowMask)); // offers the mask in force
+        assert!(matches!(&app.dialog, Some(Dialog::Mask { input, .. }) if input == "*.rs"));
+        let _ = app.update(Message::DialogInput("*.*".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.panes[0].active().panel.show(), &Show::All);
+        let _ = app.update(Message::Key(Action::ShowPrograms));
+        let _ = app.update(Message::Key(Action::ShowAll));
+        assert_eq!(shown(&app), 3);
+    }
+
+    #[test]
     fn checksums_dialog_keeps_the_algo_and_verify_says_what_is_wrong() {
         let mut app = files_app(&["notes.txt"]);
         let _ = app.update(Message::Key(Action::Down));
