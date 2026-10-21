@@ -33,4 +33,6 @@ reasons! {
     READ_ONLY = "why-read-only", "the file is read-only";
     HARD_LINKS = "why-hard-links", "the file has other hard links";
     CHANGED = "why-changed", "the file changed on disk since it was compared; compare again";
+    NO_SUMS = "why-no-sums", "no checksum lines in the file";
+    NO_FILES = "why-no-files", "no files to sum (dirs are left out with a file for each file)";
 }

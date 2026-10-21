@@ -19,6 +19,7 @@ use cosmic::iced::widget::text_editor;
 use cosmic::iced::{Size, Subscription, event, keyboard, mouse};
 use cosmic::{Application, Element, widget};
 use shagoff_core::archive::{self, Format};
+use shagoff_core::checksum::{self, Algo, Check};
 use shagoff_core::clipboard::Kind as ClipKind;
 use shagoff_core::cmdline::{self, Cmd};
 use shagoff_core::drives::{self, Drive};
@@ -627,6 +628,11 @@ pub enum Message {
     MrInsert(&'static str),
     /// Pack dialog: format button.
     PackFormat(Format),
+    SumAlgo(Algo),
+    /// Checksum files written (tab, the files) or the error.
+    Summed(u64, Result<Vec<PathBuf>, String>),
+    /// Each checksum file verified: its (file, result) rows, or why it could not be read.
+    Verified(Vec<(PathBuf, Result<checksum::Report, String>)>),
     /// Alt+F5's password field (`true`: the second one).
     PackPassword(bool, String),
     /// The encrypted archive's password field.
@@ -1433,7 +1439,12 @@ impl App {
                 if let Some(d) = &self.dialog {
                     // Modal: panels must not move. Enter confirms a dialog without a text field.
                     if action == Action::Enter
-                        && matches!(d, Dialog::ConfirmDelete { .. } | Dialog::Props(_))
+                        && matches!(
+                            d,
+                            Dialog::ConfirmDelete { .. }
+                                | Dialog::Props(_)
+                                | Dialog::Checksum { .. }
+                        )
                     {
                         return self.submit_dialog();
                     }
@@ -1801,6 +1812,20 @@ impl App {
                     m.rule.case = c;
                 }
             }
+            Message::SumAlgo(a) => {
+                if let Some(Dialog::Checksum { algo, .. }) = &mut self.dialog {
+                    *algo = a;
+                }
+                let v = a.ext().to_string();
+                match &self.config_handler {
+                    Some(h) => {
+                        if let Err(e) = self.config.set_checksum_algo(h, v) {
+                            self.config_not_saved(&e);
+                        }
+                    }
+                    None => self.config.checksum_algo = v,
+                }
+            }
             Message::PackFormat(f) => {
                 if let Some(Dialog::Pack(p)) = &mut self.dialog {
                     p.format = f;
@@ -1828,6 +1853,9 @@ impl App {
                     }
                 }
                 (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
+                (Some(Dialog::Checksum { separate, .. }), Toggle::SumSeparate) => {
+                    *separate = !*separate
+                }
                 _ => {}
             },
             Message::FindInput(field, s) => {
@@ -2531,6 +2559,74 @@ impl App {
                     self.say(StatusKind::Info, fl!("tested-ok", n = n, files = files));
                 } else {
                     let head = fl!("tested-bad", bad = bad.len(), n = n);
+                    self.say(StatusKind::Error, format!("{head}\n{}", bad.join("\n")));
+                }
+            }
+            Message::Summed(tab, r) => {
+                if (self.status.as_ref()).is_some_and(|s| s.text == fl!("checksum-making")) {
+                    self.status = None;
+                }
+                match r {
+                    Ok(files) => {
+                        let names: Vec<String> = (files.iter())
+                            .map(|f| f.file_name().unwrap_or_default().to_string_lossy().into())
+                            .collect();
+                        let text = fl!("checksum-made", n = names.len(), names = names.join(", "));
+                        self.say(StatusKind::Info, text);
+                        // The cursor onto the (first) new file, the other panel just read again.
+                        let reload = |app: &mut Self, s: usize, focus: Option<String>| {
+                            let to = app.panes[s].active().target();
+                            app.reload(s, to, focus)
+                        };
+                        let side = self.side_of(tab);
+                        let focus = names.first().cloned();
+                        return Task::batch([
+                            reload(self, 0, focus.clone().filter(|_| side == Some(0))),
+                            reload(self, 1, focus.filter(|_| side == Some(1))),
+                        ]);
+                    }
+                    Err(e) if e.is_empty() => {} // stopped
+                    Err(e) => self.say(StatusKind::Error, e),
+                }
+            }
+            Message::Verified(results) => {
+                self.testing = false;
+                if (self.status.as_ref()).is_some_and(|s| s.text == fl!("checksum-verifying")) {
+                    self.status = None;
+                }
+                if results.is_empty() {
+                    return Task::none(); // stopped before the first one
+                }
+                let (mut ok, mut bad) = (0usize, Vec::new());
+                for (sum, r) in &results {
+                    let sum_name = sum.file_name().unwrap_or_default().to_string_lossy();
+                    match r {
+                        Err(e) => bad.push(format!("{sum_name}: {}", crate::why::message(e))),
+                        Ok(rows) => {
+                            for (name, c) in rows {
+                                let name = name.display();
+                                match c {
+                                    Check::Ok => ok += 1,
+                                    Check::NotFile => {
+                                        bad.push(format!("{name}: {}", fl!("checksum-not-file")))
+                                    }
+                                    Check::Bad => {
+                                        bad.push(format!("{name}: {}", fl!("checksum-bad")))
+                                    }
+                                    Check::Missing(k) => {
+                                        let e = crate::why::text(&std::io::Error::from(*k));
+                                        bad.push(format!("{name}: {e}"))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if bad.is_empty() {
+                    self.say(StatusKind::Info, fl!("checksum-ok", n = ok));
+                } else {
+                    let n = ok + bad.len();
+                    let head = fl!("checksum-failed", bad = bad.len(), n = n);
                     self.say(StatusKind::Error, format!("{head}\n{}", bad.join("\n")));
                 }
             }
@@ -4380,6 +4476,44 @@ impl App {
                     |r| cosmic::Action::App(Message::Tested(r)),
                 );
             }
+            Action::ChecksumVerify => {
+                if self.testing || loading {
+                    return Task::none();
+                }
+                // Dirs by the panel's rows, not a `stat` here (as Alt+Shift+F9).
+                let dirs: std::collections::HashSet<PathBuf> = (panel.entries().iter())
+                    .filter(|e| e.is_dir())
+                    .map(|e| panel.cwd().join(&e.os_name))
+                    .collect();
+                let sums: Vec<PathBuf> = (panel.targets().into_iter())
+                    .filter(|p| !inside_archive(p) && !dirs.contains(p))
+                    .filter(|p| {
+                        checksum::is_sum_file(&p.file_name().unwrap_or_default().to_string_lossy())
+                    })
+                    .collect();
+                if sums.is_empty() {
+                    self.say(StatusKind::Error, fl!("checksum-no-files"));
+                    return Task::none();
+                }
+                self.say(StatusKind::Busy, fl!("checksum-verifying"));
+                self.testing = true;
+                let stop = self.panes[side].active().counting.clone();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            (sums.into_iter())
+                                .map_while(|s| match checksum::verify(&s, &stop) {
+                                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => None,
+                                    r => Some((s, r.map_err(|e| crate::why::text(&e)))),
+                                })
+                                .collect()
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    |r| cosmic::Action::App(Message::Verified(r)),
+                );
+            }
             Action::TreePanel => {} // `tree_act`
             Action::TreeDialog => {
                 let hidden = panel.show_hidden();
@@ -4600,6 +4734,7 @@ impl App {
             | Action::MultiRename
             | Action::Pack
             | Action::Unpack
+            | Action::ChecksumCreate
             | Action::FindFiles
             | Action::SyncDirs
             | Action::Mkdir
@@ -5034,6 +5169,17 @@ impl App {
                 id: 0,
                 running: None,
             }))),
+            Action::ChecksumCreate => {
+                let sources = panel.targets();
+                (!sources.is_empty()).then(|| Dialog::Checksum {
+                    side,
+                    sources,
+                    algo: (Algo::ALL.into_iter())
+                        .find(|a| a.ext() == self.config.checksum_algo)
+                        .unwrap_or(Algo::Sha256),
+                    separate: false,
+                })
+            }
             Action::Unpack => {
                 let archives: Vec<PathBuf> = panel
                     .targets()
@@ -5059,6 +5205,33 @@ impl App {
             return Task::none();
         };
         match d {
+            Dialog::Checksum {
+                side,
+                sources,
+                algo,
+                separate,
+            } => {
+                let t = self.panes[side].active();
+                let (tab, dir, stop) = (t.id, t.panel.cwd().to_path_buf(), t.counting.clone());
+                self.say(StatusKind::Busy, fl!("checksum-making"));
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            // Stopped: "" (no error to show).
+                            (checksum::create(&dir, &sources, algo, separate, &stop)).map_err(|e| {
+                                if e.kind() == std::io::ErrorKind::Interrupted {
+                                    String::new()
+                                } else {
+                                    crate::why::text(&e)
+                                }
+                            })
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |r| cosmic::Action::App(Message::Summed(tab, r)),
+                )
+            }
             Dialog::Tree { side, tree, .. } => match tree.current() {
                 Some(n) => {
                     self.active = side;
@@ -6734,6 +6907,7 @@ impl App {
             Action::CopySame | Action::NewFile => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::Link => inside(side) || inside(1 - side),
+            Action::ChecksumCreate => inside(side),
             // One side in an archive syncs (158): jobs extract from it and add to it.
             Action::SyncDirs => inside(side) && inside(1 - side),
             _ => false,
@@ -8521,6 +8695,8 @@ fn on_files(a: Action) -> bool {
             | A::Pack
             | A::Unpack
             | A::TestArchives
+            | A::ChecksumCreate
+            | A::ChecksumVerify
             | A::Properties
             | A::Occupied
             | A::CountDirs
@@ -10359,6 +10535,43 @@ mod tests {
         let bad = (PathBuf::from("/x/b.7z"), Err("checksum".to_string()));
         let _ = app.update(Message::Tested(vec![ok, bad]));
         assert!(app.msg().is_some_and(|m| m.contains("b.7z: checksum")));
+    }
+
+    #[test]
+    fn checksums_dialog_keeps_the_algo_and_verify_says_what_is_wrong() {
+        let mut app = files_app(&["notes.txt"]);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::ChecksumVerify)); // no sum file
+        assert_eq!(app.msg(), Some(fl!("checksum-no-files").as_str()));
+        let _ = app.update(Message::Key(Action::ChecksumCreate));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Checksum {
+                algo: Algo::Sha256,
+                ..
+            })
+        ));
+        let _ = app.update(Message::SumAlgo(Algo::Md5));
+        assert_eq!(app.config.checksum_algo, "md5");
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::Checksum {
+                algo: Algo::Md5,
+                ..
+            })
+        ));
+        let _ = app.update(Message::Key(Action::Enter)); // no text field: Enter creates
+        assert!(app.dialog.is_none());
+        let sum = PathBuf::from("/x/SHA256SUMS");
+        let good = vec![(PathBuf::from("a"), Check::Ok)];
+        let _ = app.update(Message::Verified(vec![(sum.clone(), Ok(good.clone()))]));
+        assert_eq!(app.msg(), Some(fl!("checksum-ok", n = 1).as_str()));
+        let bad = vec![(PathBuf::from("b"), Check::Bad)];
+        let _ = app.update(Message::Verified(vec![(sum, Ok([good, bad].concat()))]));
+        assert!(
+            app.msg()
+                .is_some_and(|m| m.contains(&format!("b: {}", fl!("checksum-bad"))))
+        );
     }
 
     #[test]

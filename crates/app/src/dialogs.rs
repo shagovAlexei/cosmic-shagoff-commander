@@ -7,6 +7,7 @@ use cosmic::iced::widget::text::Wrapping;
 use cosmic::iced::widget::{column, row};
 use cosmic::{Element, widget};
 use shagoff_core::archive::Format;
+use shagoff_core::checksum::Algo;
 use shagoff_core::diff;
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::mount;
@@ -109,6 +110,14 @@ pub enum Dialog {
     MultiRename(Box<MultiRename>),
     /// Alt+F5. Boxed: the form is large.
     Pack(Box<Pack>),
+    /// Files → «Create checksum files».
+    Checksum {
+        side: usize,
+        sources: Vec<PathBuf>,
+        algo: Algo,
+        /// One file per file (TC «Separate file for each file»), else one for all.
+        separate: bool,
+    },
     /// Alt+F9: the archives among the targets at open.
     Unpack {
         side: usize,
@@ -502,6 +511,7 @@ pub enum Toggle {
     Separate,
     Encrypt,
     OwnDir,
+    SumSeparate,
 }
 
 pub struct MultiRename {
@@ -617,6 +627,7 @@ impl Dialog {
             } => Some(sources),
             Dialog::Pack(p) => Some(&p.sources),
             Dialog::Unpack { archives, .. } => Some(archives),
+            Dialog::Checksum { sources, .. } => Some(sources),
             _ => None,
         }
     }
@@ -1684,6 +1695,38 @@ pub fn view<'a>(
                 .control(widget::scrollable(col).height(Length::Shrink))
                 .primary_action(
                     widget::button::suggested(fl!("connect-go")).on_press(Message::DialogSubmit),
+                )
+                .secondary_action(cancel)
+                .into()
+        }
+        Dialog::Checksum {
+            sources,
+            algo,
+            separate,
+            ..
+        } => {
+            let pick = |a: Algo| {
+                let b = if *algo == a {
+                    widget::button::suggested(a.ext().to_uppercase())
+                } else {
+                    widget::button::standard(a.ext().to_uppercase())
+                };
+                b.on_press(Message::SumAlgo(a))
+            };
+            let algos = (Algo::ALL.into_iter()).fold(row![].spacing(8), |r, a| r.push(pick(a)));
+            widget::dialog()
+                .title(fl!("checksum-create"))
+                .control(
+                    column![
+                        what_to(sources, icon, fl!("checksum-algo"), algos.into()),
+                        widget::checkbox(*separate)
+                            .label(fl!("checksum-separate"))
+                            .on_toggle(|_| Message::Toggle(Toggle::SumSeparate)),
+                    ]
+                    .spacing(12),
+                )
+                .primary_action(
+                    widget::button::suggested(fl!("checksum-go")).on_press(Message::DialogSubmit),
                 )
                 .secondary_action(cancel)
                 .into()

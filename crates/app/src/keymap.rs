@@ -21,6 +21,10 @@ pub enum Action {
     Occupied,
     /// Alt+Shift+F9: the archives among the targets read through (TC «Test archives»).
     TestArchives,
+    /// Files → «Create checksum files» (TC `cm_CRCcreate`, no default key).
+    ChecksumCreate,
+    /// Files → «Verify checksums» (TC `cm_CRCcheck`).
+    ChecksumVerify,
     /// Alt+F10: go to a dir chosen in a tree (TC «Change directory via tree»).
     TreeDialog,
     /// Ctrl+F8: the dirs as a tree in this panel, the other one showing the files (TC).
