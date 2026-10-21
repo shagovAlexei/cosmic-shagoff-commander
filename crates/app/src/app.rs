@@ -1448,11 +1448,14 @@ impl App {
                     {
                         return self.submit_dialog();
                     }
-                    // Tab is not taken by text fields; walk the multi-rename form with it.
-                    if action == Action::SwitchPane && matches!(d, Dialog::MultiRename(_)) {
-                        return cosmic::iced::widget::operation::focus_next();
-                    }
-                    return Task::none();
+                    // Through its buttons and fields, as in TC: arrows and Tab (a field keeps ← →
+                    // for itself); Enter presses the focused button (the button takes it).
+                    use cosmic::iced::widget::operation::{focus_next, focus_previous};
+                    return match action {
+                        Action::Down | Action::Right | Action::SwitchPane => focus_next(),
+                        Action::Up | Action::Left => focus_previous(),
+                        _ => Task::none(),
+                    };
                 }
                 if self.busy() {
                     return Task::none(); // panels wait for the running operation's dialog
@@ -10521,6 +10524,27 @@ mod tests {
         assert!(mkdir_free && items.iter().any(|it| it.kind == Item::Sep));
         let _ = app.update(Message::ListPick(props));
         assert!(matches!(app.dialog, Some(Dialog::Props(_))));
+    }
+
+    #[test]
+    fn regression_dialog_arrows_walk_its_buttons_not_the_panel() {
+        let mut app = files_app(&["a.txt", "b.txt"]);
+        let _ = app.update(Message::Key(Action::Down));
+        let _ = app.update(Message::Key(Action::Delete));
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmDelete { .. })));
+        let cursor = app.panes[0].active().panel.cursor();
+        for a in [
+            Action::Down,
+            Action::Right,
+            Action::Up,
+            Action::Left,
+            Action::SwitchPane,
+        ] {
+            let _ = app.update(Message::Key(a)); // focus moves (a widget operation)
+        }
+        assert_eq!(app.panes[0].active().panel.cursor(), cursor);
+        assert_eq!(app.active, 0);
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmDelete { .. })));
     }
 
     #[test]
