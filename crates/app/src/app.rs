@@ -1,7 +1,7 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State, ToolButton};
 use crate::dialogs::{
-    self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MrField, SyncOpt, Toggle,
+    self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MaskOp, MrField, SyncOpt, Toggle,
 };
 use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
@@ -32,7 +32,7 @@ use shagoff_core::mount;
 use shagoff_core::multirename::{self, Case, Rule};
 use shagoff_core::openwith;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
-use shagoff_core::panel::{self, PARENT, Panel};
+use shagoff_core::panel::{self, PARENT, Panel, Show};
 use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
@@ -4398,6 +4398,8 @@ impl App {
             Action::MarkUp => panel.toggle_mark_and_move(-1),
             Action::Invert => panel.invert(),
             Action::RestoreMarks => panel.restore_marks(),
+            Action::ShowAll => panel.set_show(Show::All),
+            Action::ShowPrograms => panel.set_show(Show::Programs),
             Action::MarkExt => panel.mark_ext(true),
             Action::UnmarkExt => panel.mark_ext(false),
             // TC: the dir / archive under the cursor (`..`: the parent) in that panel; on a file,
@@ -4745,7 +4747,7 @@ impl App {
             | Action::Delete
             | Action::DeletePermanent => {}
             // Opened by `dialog_for` above.
-            Action::SelectGroup | Action::UnselectGroup => {}
+            Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => {}
             // Also the drive list: a stick plugged in shows up (TC rereads drives too).
             Action::Reload => {
                 // Where the tab is going (results fed, a dir entered, not listed yet), not where
@@ -4876,10 +4878,17 @@ impl App {
             input,
         };
         match action {
-            Action::SelectGroup | Action::UnselectGroup => Some(Dialog::Mask {
+            Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => Some(Dialog::Mask {
                 side,
-                select: action == Action::SelectGroup,
-                input: self.masks.first().cloned().unwrap_or_else(|| "*.*".into()),
+                op: match action {
+                    Action::SelectGroup => MaskOp::Select,
+                    Action::UnselectGroup => MaskOp::Unselect,
+                    _ => MaskOp::Show,
+                },
+                input: match panel.show() {
+                    Show::Mask(m) if action == Action::ShowMask => m.clone(),
+                    _ => self.masks.first().cloned().unwrap_or_else(|| "*.*".into()),
+                },
             }),
             Action::Copy | Action::Move | Action::Link => {
                 let sources = panel.targets();
@@ -5302,16 +5311,16 @@ impl App {
                     move |failed| cosmic::Action::App(Message::PropsDone(side, failed)),
                 )
             }
-            Dialog::Mask {
-                side,
-                select,
-                input,
-            } => {
+            Dialog::Mask { side, op, input } => {
                 self.masks = cmdline::remember(&self.masks, &input);
-                self.panes[side]
-                    .active_mut()
-                    .panel
-                    .mark_by_mask(&Mask::parse(&input), select);
+                let panel = &mut self.panes[side].active_mut().panel;
+                match op {
+                    MaskOp::Show if matches!(input.trim(), "" | "*" | "*.*") => {
+                        panel.set_show(Show::All)
+                    }
+                    MaskOp::Show => panel.set_show(Show::Mask(input)),
+                    _ => panel.mark_by_mask(&Mask::parse(&input), op == MaskOp::Select),
+                }
                 Task::none()
             }
             Dialog::Input {
@@ -8708,6 +8717,9 @@ fn on_files(a: Action) -> bool {
             | A::MarkUp
             | A::SelectGroup
             | A::UnselectGroup
+            | A::ShowAll
+            | A::ShowPrograms
+            | A::ShowMask
             | A::SelectAll
             | A::UnselectAll
             | A::Invert

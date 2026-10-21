@@ -52,6 +52,10 @@ pub enum Action {
     MarkUp,
     SelectGroup,
     UnselectGroup,
+    /// Ctrl+F10 / Ctrl+F11 / Ctrl+F12: show all files / programs only / files by a mask (TC).
+    ShowAll,
+    ShowPrograms,
+    ShowMask,
     Invert,
     SelectAll,
     UnselectAll,
@@ -334,6 +338,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F5, true, true) => Action::Link,
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
             (Named::F8, true, false) => Action::TreePanel,
+            (Named::F10, true, false) => Action::ShowAll,
+            (Named::F11, true, false) => Action::ShowPrograms,
+            (Named::F12, true, false) => Action::ShowMask,
             (Named::Insert, false, false) | (Named::ArrowDown, false, true) => Action::MarkDown,
             (Named::ArrowUp, false, true) => Action::MarkUp,
             (Named::F1, false, false) => Action::Help,
@@ -906,5 +913,8 @@ mod tests {
         assert_eq!(named(Named::F9, alt_shift), Some(Action::TestArchives));
         assert_eq!(named(Named::F10, ALT), Some(Action::TreeDialog));
         assert_eq!(named(Named::F8, CTRL), Some(Action::TreePanel));
+        assert_eq!(named(Named::F10, CTRL), Some(Action::ShowAll));
+        assert_eq!(named(Named::F11, CTRL), Some(Action::ShowPrograms));
+        assert_eq!(named(Named::F12, CTRL), Some(Action::ShowMask));
     }
 }
