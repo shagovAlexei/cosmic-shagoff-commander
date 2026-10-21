@@ -66,6 +66,15 @@ fn exec_and_terminal(text: &str) -> (Option<String>, bool) {
 /// `Exec=` as arguments (the Desktop Entry quoting: `"…"` with `\"` `\\` inside), field codes
 /// (`%f %U %i %c %k`…) dropped, `%%` → `%`.
 pub fn exec_argv(exec: &str) -> Vec<String> {
+    exec_words(exec)
+        .into_iter()
+        .filter(|a| !(a.len() == 2 && a.starts_with('%') && a != "%%"))
+        .map(|a| a.replace("%%", "%"))
+        .collect()
+}
+
+/// `Exec=` split by the Desktop Entry quoting, field codes left in.
+pub fn exec_words(exec: &str) -> Vec<String> {
     let mut args = Vec::new();
     let (mut cur, mut quoted, mut any) = (String::new(), false, false);
     let mut chars = exec.chars().peekable();
@@ -85,10 +94,7 @@ pub fn exec_argv(exec: &str) -> Vec<String> {
     if any {
         args.push(cur);
     }
-    args.into_iter()
-        .filter(|a| !(a.len() == 2 && a.starts_with('%') && a != "%%"))
-        .map(|a| a.replace("%%", "%"))
-        .collect()
+    args
 }
 
 /// The terminals in `dirs` (`openwith::data_dirs()`), by name. An id in an earlier dir hides later

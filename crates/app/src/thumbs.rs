@@ -1,6 +1,11 @@
 //! Thumbnails view (TC Ctrl+Shift+F1): cell sizes and the pictures, made off the UI thread.
 
 use std::path::Path;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use shagoff_core::thumbnailer::{Registry, argv, run};
 
 use cosmic::widget::image::Handle;
 
@@ -20,18 +25,65 @@ pub fn cell_h(row_h: f32) -> f32 {
     SIZE as f32 + row_h + 8.0
 }
 
+/// A desktop thumbnailer gets this long before it is killed (a video read over the network…).
+const EXTERNAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The desktop's thumbnailers, read once.
+// ponytail: one installed while running is seen after a restart.
+fn registry() -> &'static Registry {
+    static R: OnceLock<Registry> = OnceLock::new();
+    R.get_or_init(|| Registry::load(&shagoff_core::openwith::data_dirs()))
+}
+
+/// Whether `name` (`size` bytes) gets a picture: one we decode, or one a desktop thumbnailer
+/// makes (PDF, video, SVG…). A picture too big for us gets its icon, not a thumbnailer.
+pub fn wanted(name: &str, size: u64) -> bool {
+    use shagoff_core::lister::{THUMB_MAX_BYTES, is_image};
+    match is_image(name) && !name.to_ascii_lowercase().ends_with(".svg") {
+        true => size <= THUMB_MAX_BYTES,
+        false => registry().for_name(name).is_some(),
+    }
+}
+
 /// `path`'s picture shrunk into `SIZE`², proportions kept; `None` if unreadable.
 pub fn make(path: &Path) -> Option<Handle> {
     // Not a FIFO or a device named `*.png`: reading one would never end.
-    if !std::fs::metadata(path).ok()?.is_file() {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
         return None;
     }
-    let bytes = std::fs::read(path).ok()?;
+    let name = path.file_name()?.to_string_lossy();
+    if !wanted(&name, meta.len()) {
+        return None;
+    }
+    let bytes = match shagoff_core::lister::thumb_wanted(&name, meta.len()) {
+        true => std::fs::read(path).ok()?,
+        false => external(path, &name)?,
+    };
     let px = crate::lister::decode(&bytes, MAX_ALLOC)?
         .thumbnail(SIZE, SIZE)
         .into_rgba8();
     let (w, h) = px.dimensions();
     Some(Handle::from_rgba(w, h, px.into_raw()))
+}
+
+/// The PNG the desktop's thumbnailer for `name` makes of `path`.
+fn external(path: &Path, name: &str) -> Option<Vec<u8>> {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let t = registry().for_name(name)?;
+    // GNOME's name in /tmp itself (not $TMPDIR): AppArmor lets evince-thumbnailer write only
+    // there. Made first with O_EXCL: a link put in its place beforehand is not written through.
+    let out = std::path::PathBuf::from(format!(
+        "/tmp/.gnome_desktop_thumbnail.shagoff.{}.{}.png",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::File::create_new(&out).ok()?;
+    // The size the spec calls "normal"; shrunk to ours after.
+    let ok = run(&argv(&t.exec, path, &out, 128), EXTERNAL_TIMEOUT);
+    let bytes = ok.then(|| std::fs::read(&out).ok()).flatten();
+    let _ = std::fs::remove_file(&out);
+    bytes
 }
 
 #[cfg(test)]

@@ -7250,11 +7250,13 @@ impl App {
                 if self.thumbs_busy >= crate::thumbs::BUSY_MAX {
                     break;
                 }
-                if e.is_dir() || !shagoff_core::lister::thumb_wanted(&e.name, e.size) {
+                if e.is_dir() {
                     continue;
                 }
                 let path = t.panel.cwd().join(&e.os_name);
-                if self.thumbs.get(&path).is_some_and(|(m, _)| *m == e.mtime) {
+                if self.thumbs.get(&path).is_some_and(|(m, _)| *m == e.mtime)
+                    || !crate::thumbs::wanted(&e.name, e.size)
+                {
                     continue;
                 }
                 // ponytail: the whole cache goes at once; an LRU if big picture dirs thrash it.
