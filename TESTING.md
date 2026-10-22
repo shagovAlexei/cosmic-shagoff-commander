@@ -1309,6 +1309,11 @@
 - [x] Файл без thumbnailer’а (например, `.txt`) — значок типа, как раньше; картинки png / jpg — как раньше
 - [x] После просмотра в `/tmp` не остаётся `.gnome_desktop_thumbnail.shagoff.*`
 
+### Эскизы в песочнице (175)
+
+- [ ] С установленным `bubblewrap` (`sudo apt install bubblewrap`): Ctrl+Shift+F1 в каталоге с PDF, mp4, SVG — эскизы есть, как в 174 (проверено в headless); пока они делаются, `ps -ef | grep gnome-desktop-file-to-thumbnail` показывает `bwrap`
+- [ ] После — в `/tmp` нет `shagoff-thumb.*` (проверено в headless)
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.

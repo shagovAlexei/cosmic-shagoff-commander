@@ -167,6 +167,135 @@ pub fn argv(exec: &str, input: &Path, out: &Path, size: u32) -> Vec<OsString> {
         .collect()
 }
 
+/// GNOME's layout inside the sandbox (gnome-desktop-thumbnail-script): the file under a fixed name,
+/// the output dir as `/tmp` (AppArmor lets evince-thumbnailer write there).
+const SANDBOX_IN: &str = "/tmp/gnome-desktop-file-to-thumbnail";
+const SANDBOX_OUT: &str = "gnome-desktop-thumbnailer.png";
+
+/// bwrap with the system read-only and nothing else: no home, no network, no other process, no
+/// environment but the language. Built once. `--unshare-pid` + `--die-with-parent`: killing bwrap
+/// (`run`'s timeout) takes everything inside with it, `--new-session` notwithstanding.
+fn bwrap_base() -> &'static [OsString] {
+    static BASE: std::sync::OnceLock<Vec<OsString>> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        let s = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
+        let mut a = s(&[
+            "bwrap",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--unshare-all",
+            "--die-with-parent",
+            "--new-session",
+            "--chdir",
+            "/",
+            "--clearenv",
+            "--setenv",
+            "PATH",
+            "/usr/bin:/bin",
+            "--setenv",
+            "HOME",
+            "/tmp",
+            "--setenv",
+            "GIO_USE_VFS",
+            "local",
+            // Fonts as the desktop has them, read-only: without the cache each PDF / font
+            // rescans them all.
+            "--ro-bind-try",
+            "/var/cache/fontconfig",
+            "/var/cache/fontconfig",
+        ]);
+        for k in ["LANG", "LC_ALL", "LC_CTYPE"] {
+            if let Some(v) = std::env::var_os(k) {
+                a.extend(["--setenv".into(), k.into(), v]);
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            for d in [".local/share/fonts", ".fonts"] {
+                let p = home.join(d);
+                a.extend(["--ro-bind-try".into(), p.clone().into(), p.into()]);
+            }
+        }
+        // Merged /usr: links to it; else the dirs themselves.
+        for d in ["/lib", "/lib64", "/lib32", "/bin", "/sbin"] {
+            match std::fs::read_link(d) {
+                Ok(to) => a.extend(["--symlink".into(), to.into(), d.into()]),
+                Err(_) if Path::new(d).is_dir() => a.extend(s(&["--ro-bind", d, d])),
+                Err(_) => {}
+            }
+        }
+        a
+    })
+}
+
+/// Whether `exec`'s program is one of the system's (`/usr`, or found there on `$PATH`): only
+/// those exist inside the sandbox (not `/opt`, `~/.local/bin`, flatpak exports).
+pub fn in_system(exec: &str) -> bool {
+    let Some(prog) = crate::terminals::exec_words(exec).into_iter().next() else {
+        return false;
+    };
+    let path = match prog.contains('/') {
+        true => Some(PathBuf::from(&prog)),
+        false => std::env::var_os("PATH").and_then(|p| {
+            std::env::split_paths(&p)
+                .map(|d| d.join(&prog))
+                .find(|p| p.is_file())
+        }),
+    };
+    (path.and_then(|p| p.canonicalize().ok())).is_some_and(|p| p.starts_with("/usr/"))
+}
+
+/// The picture a thumbnailer left at `out`, read without trusting it: not through a link, only a
+/// regular file, at most `max` bytes (a sandboxed one could leave `/dev/zero`, a FIFO, a link
+/// to the home in our dir).
+pub fn read_output(out: &Path, max: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
+        .open(out)
+        .ok()?;
+    let meta = f.metadata().ok()?;
+    if !meta.is_file() || meta.len() > max {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    f.take(max).read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// `exec` for `input` inside bwrap, writing into `dir` (empty, ours): the arguments and where the
+/// picture comes out.
+pub fn sandboxed(exec: &str, input: &Path, dir: &Path, size: u32) -> (Vec<OsString>, PathBuf) {
+    let inner = match input.extension() {
+        Some(e) => format!("{SANDBOX_IN}.{}", e.to_string_lossy().to_lowercase()),
+        None => SANDBOX_IN.into(),
+    };
+    let out = Path::new("/tmp").join(SANDBOX_OUT);
+    let mut a = bwrap_base().to_vec();
+    a.extend(["--bind".into(), dir.into(), "/tmp".into()]);
+    a.extend(["--ro-bind".into(), input.into(), OsString::from(&inner)]);
+    a.extend(argv(exec, Path::new(&inner), &out, size));
+    (a, dir.join(SANDBOX_OUT))
+}
+
+/// Whether bwrap is there and may make its sandbox (unprivileged user namespaces can be off).
+pub fn bwrap_works() -> bool {
+    installed("bwrap") && {
+        let mut a = bwrap_base().to_vec();
+        a.push("true".into());
+        run(&a, Duration::from_secs(5))
+    }
+}
+
 /// Runs `argv` (no input, output dropped) for at most `timeout`; true if it exited fine. Its own
 /// process group, all killed on timeout: a worker it started must not write the output later.
 pub fn run(argv: &[OsString], timeout: Duration) -> bool {
@@ -262,6 +391,69 @@ mod tests {
         assert_eq!(
             r.for_name("a.pdf").map(|t| t.exec.as_str()),
             Some("sh -s %s %u %o")
+        );
+    }
+
+    #[test]
+    fn sandboxed_sees_only_its_file() {
+        if !bwrap_works() {
+            eprintln!("no working bwrap here: skipped");
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let input = home.path().join("Doc.PDF");
+        std::fs::write(&input, "pdf").unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let (a, png) = sandboxed("cp %i %o", &input, out.path(), 128);
+        assert!(run(&a, Duration::from_secs(10)));
+        assert_eq!(std::fs::read_to_string(&png).unwrap(), "pdf");
+        // The file's own dir is not there inside.
+        let probe = format!("test -e {}", input.display());
+        let (a, _) = sandboxed(&probe, &input, out.path(), 128);
+        assert!(!run(&a, Duration::from_secs(10)));
+        // Nor the home, nor the environment.
+        let home = std::env::var("HOME").unwrap();
+        let (a, _) = sandboxed(
+            &format!("test -e {home}/.bashrc -o -e {home}/.config"),
+            &input,
+            out.path(),
+            128,
+        );
+        assert!(!run(&a, Duration::from_secs(10)));
+        let (a, png) = sandboxed("sh -c \"env > %o\"", &input, out.path(), 128);
+        assert!(run(&a, Duration::from_secs(10)));
+        let env = std::fs::read_to_string(&png).unwrap();
+        assert!(
+            !env.contains("DBUS_SESSION_BUS_ADDRESS") && env.contains("HOME=/tmp"),
+            "{env}"
+        );
+    }
+
+    #[test]
+    fn the_output_is_read_without_trusting_it() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("secret"), "key").unwrap();
+        std::fs::write(d.join("ok.png"), "png").unwrap();
+        symlink(d.join("secret"), d.join("link.png")).unwrap();
+        symlink("/dev/zero", d.join("zero.png")).unwrap();
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            d.join("fifo.png"),
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
+        assert_eq!(
+            read_output(&d.join("ok.png"), 10).as_deref(),
+            Some(b"png".as_slice())
+        );
+        assert_eq!(read_output(&d.join("ok.png"), 2), None, "too big");
+        for bad in ["link.png", "zero.png", "fifo.png", "none.png"] {
+            assert_eq!(read_output(&d.join(bad), 10), None, "{bad}");
+        }
+        assert!(
+            in_system("sh -c x") && !in_system("/opt/x/thumb %i") && !in_system("no-such-prog")
         );
     }
 
