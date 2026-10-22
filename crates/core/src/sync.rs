@@ -410,8 +410,13 @@ pub fn archive_plan(left: &Path, right: &Path, rows: &[Row]) -> Option<ArchivePl
     Some(ap)
 }
 
-/// Shift+F2: files to mark on each side — missing opposite, newer, or same date with another size.
-pub fn compare_lists(left: &[Entry], right: &[Entry]) -> (Vec<OsString>, Vec<OsString>) {
+/// Shift+F2: files to mark on each side — missing opposite, newer, or same date with another size;
+/// with `dirs` (TC `cm_CompareDirsWithSubdirs`) also the dirs missing opposite.
+pub fn compare_lists(
+    left: &[Entry],
+    right: &[Entry],
+    dirs: bool,
+) -> (Vec<OsString>, Vec<OsString>) {
     let files = |v: &[Entry]| -> BTreeMap<OsString, (u64, SystemTime)> {
         v.iter()
             .filter(|e| !e.is_dir())
@@ -434,6 +439,17 @@ pub fn compare_lists(left: &[Entry], right: &[Entry]) -> (Vec<OsString>, Vec<OsS
         }
     }
     mr.extend(r.keys().filter(|n| !l.contains_key(*n)).cloned());
+    if dirs {
+        let names = |v: &[Entry]| -> BTreeSet<OsString> {
+            (v.iter().filter(|e| e.is_dir() && e.name != ".."))
+                .map(|e| e.os_name.clone())
+                .collect()
+        };
+        let (ld, rd) = (names(left), names(right));
+        ml.extend(ld.difference(&rd).cloned());
+        mr.extend(rd.difference(&ld).cloned());
+        ml.sort();
+    }
     mr.sort();
     (ml, mr)
 }
@@ -788,8 +804,12 @@ mod tests {
             entry("size", 2, 1000, false),
             entry("ronly", 1, 1, false),
         ];
-        let (ml, mr) = compare_lists(&left, &right);
+        let (ml, mr) = compare_lists(&left, &right, false);
         assert_eq!(ml, ["a", "only", "size"].map(OsString::from));
+        assert_eq!(mr, ["ronly", "size"].map(OsString::from));
+        // With subdirs: `d` is not on the right; `..` never.
+        let (ml, mr) = compare_lists(&left, &right, true);
+        assert_eq!(ml, ["a", "d", "only", "size"].map(OsString::from));
         assert_eq!(mr, ["ronly", "size"].map(OsString::from));
     }
 

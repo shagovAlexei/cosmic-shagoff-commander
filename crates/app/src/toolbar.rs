@@ -91,6 +91,18 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-compare-lists"
         ),
         b!(
+            "cm_CompareDirsWithSubdirs",
+            CompareListsSubdirs,
+            "view-dual-symbolic",
+            "menu-compare-subdirs"
+        ),
+        b!(
+            "cm_DirMatch",
+            CompareListsDiffOnly,
+            "view-dual-symbolic",
+            "menu-compare-diff-only"
+        ),
+        b!(
             "cm_SyncDirs",
             SyncDirs,
             "emblem-synchronizing-symbolic",

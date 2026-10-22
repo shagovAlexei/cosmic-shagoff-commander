@@ -154,6 +154,10 @@ pub enum Action {
     FindFiles,
     /// Shift+F2: mark what differs between the two panels.
     CompareLists,
+    /// Shift+F2 also marking the dirs missing opposite (TC `cm_CompareDirsWithSubdirs`).
+    CompareListsSubdirs,
+    /// Shift+F2, then only what differs is shown in both panels (TC `cm_DirMatch`).
+    CompareListsDiffOnly,
     /// Ctrl+Shift+S: synchronize the two panels' dirs.
     SyncDirs,
     /// Ctrl+Shift+D: compare two files by content.

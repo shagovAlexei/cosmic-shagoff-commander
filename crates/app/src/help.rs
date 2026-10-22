@@ -60,6 +60,12 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Alt+Num +", fl!("menu-mark-ext"), Action::MarkExt),
                 r("Alt+Num −", fl!("menu-unmark-ext"), Action::UnmarkExt),
                 r("Shift+F2", fl!("help-compare-lists"), Action::CompareLists),
+                r("", fl!("menu-compare-subdirs"), Action::CompareListsSubdirs),
+                r(
+                    "",
+                    fl!("menu-compare-diff-only"),
+                    Action::CompareListsDiffOnly,
+                ),
             ],
         ),
         (
