@@ -12,6 +12,24 @@ pub enum Action {
     /// Alt+Num + / Alt+Num −: the files with the extension under the cursor.
     MarkExt,
     UnmarkExt,
+    /// Mark → the same name / name and extension as under the cursor (TC `cm_SelectCurrentName`,
+    /// `cm_SelectCurrentNameExt` and the `Unselect…` ones; no keys there).
+    MarkName,
+    UnmarkName,
+    MarkNameExt,
+    UnmarkNameExt,
+    /// Mark → «Save selection» for Num / (TC `cm_SaveSelection`).
+    SaveMarks,
+    /// Mark → the marked names into a file / marks from a file or the clipboard's text (TC
+    /// `cm_SaveSelectionToFile`, `cm_LoadSelectionFromFile`, `cm_LoadSelectionFromClip`).
+    SaveMarksToFile,
+    LoadMarksFromFile,
+    LoadMarksFromClip,
+    /// The cursor to the next / previous marked row (TC `cm_GotoNextSelected`, `…Prev…`).
+    NextMarked,
+    PrevMarked,
+    /// View → only the marked rows (TC `cm_ShowOnlySelected`).
+    ShowOnlyMarked,
     /// Shift+F10 / the Menu key: the row's context menu as a list (keyboard).
     ContextMenu,
     /// Ctrl+← / Ctrl+→: what is under the cursor opened in the left / right panel (TC).

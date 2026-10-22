@@ -170,6 +170,72 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-count-dirs"
         ),
         b!(
+            "cm_SelectCurrentName",
+            MarkName,
+            "edit-select-all-symbolic",
+            "menu-mark-name"
+        ),
+        b!(
+            "cm_UnselectCurrentName",
+            UnmarkName,
+            "edit-clear-symbolic",
+            "menu-unmark-name"
+        ),
+        b!(
+            "cm_SelectCurrentNameExt",
+            MarkNameExt,
+            "edit-select-all-symbolic",
+            "menu-mark-name-ext"
+        ),
+        b!(
+            "cm_UnselectCurrentNameExt",
+            UnmarkNameExt,
+            "edit-clear-symbolic",
+            "menu-unmark-name-ext"
+        ),
+        b!(
+            "cm_SaveSelection",
+            SaveMarks,
+            "document-save-symbolic",
+            "menu-save-marks"
+        ),
+        b!(
+            "cm_SaveSelectionToFile",
+            SaveMarksToFile,
+            "document-save-as-symbolic",
+            "menu-save-marks-file"
+        ),
+        b!(
+            "cm_LoadSelectionFromFile",
+            LoadMarksFromFile,
+            "document-open-symbolic",
+            "menu-load-marks-file"
+        ),
+        b!(
+            "cm_LoadSelectionFromClip",
+            LoadMarksFromClip,
+            "edit-paste-symbolic",
+            "menu-load-marks-clip"
+        ),
+        b!(
+            "cm_GotoNextSelected",
+            NextMarked,
+            "go-down-symbolic",
+            "menu-next-marked"
+        ),
+        b!(
+            "cm_GotoPrevSelected",
+            PrevMarked,
+            "go-up-symbolic",
+            "menu-prev-marked"
+        ),
+        b!(
+            "cm_ShowOnlySelected",
+            ShowOnlyMarked,
+            "view-filter-symbolic",
+            "menu-show-only-marked"
+        ),
+        b!(
             "cm_ChangeStartMenu",
             ConfigureStartMenu,
             "document-edit-symbolic",

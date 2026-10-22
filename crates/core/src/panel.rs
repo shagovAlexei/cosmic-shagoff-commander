@@ -19,6 +19,14 @@ pub struct Totals {
     pub dirs: usize,
 }
 
+/// What `Panel::mark_like` compares (TC «… with the same extension / name / name and extension»).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Like {
+    Ext,
+    Name,
+    NameExt,
+}
+
 /// One panel's state. Never touches the filesystem: the UI scans and hands results to `set_listing`.
 #[derive(Debug, Clone)]
 pub struct Panel {
@@ -33,6 +41,8 @@ pub struct Panel {
     all: Vec<Entry>,
     /// Quick filter (Ctrl+S); `None` = show everything.
     filter: Option<String>,
+    /// «Show only selected»: the names it hides; dropped on a dir change and by `set_show`.
+    hidden: HashSet<OsString>,
     /// Ctrl+F10 / F11 / F12: which files are shown; unlike the quick filter it stays on in other dirs.
     show: Show,
     /// Dir sizes counted by Space, by real name; shown instead of `<DIR>`, until the dir changes.
@@ -64,6 +74,7 @@ impl Panel {
             all_sums: OnceLock::new(),
             marked_sums: OnceLock::new(),
             longest: OnceLock::new(),
+            hidden: HashSet::new(),
             saved: None,
         }
     }
@@ -112,6 +123,7 @@ impl Panel {
         if !same_dir {
             self.marked.clear();
             self.filter = None;
+            self.hidden.clear();
             self.dir_sizes.clear();
         }
         // Usually sorted already, off the UI thread (`App::load_tab`); again only if not.
@@ -147,6 +159,7 @@ impl Panel {
             .filter(|e| {
                 (self.filter.as_ref()).is_none_or(|f| quicksearch::matches(f, base(&e.name)))
             })
+            .filter(|e| !self.hidden.contains(&e.os_name))
             .cloned()
             .collect();
         if self.cwd.parent().is_some() {
@@ -396,8 +409,8 @@ impl Panel {
         }
     }
 
-    /// The marks as they are, for Num / (`restore_marks`).
-    fn keep_marks(&mut self) {
+    /// The marks as they are, for Num / (`restore_marks`); also TC «Temporarily save selection».
+    pub fn keep_marks(&mut self) {
         if !self.marked.is_empty() {
             self.saved = Some((self.cwd.clone(), self.marked.clone()));
         }
@@ -423,14 +436,27 @@ impl Panel {
     /// Alt+Num + / Alt+Num −: the files with the extension of the one under the cursor (any case;
     /// none: the ones without one). On a dir or `..`: nothing.
     pub fn mark_ext(&mut self, on: bool) {
-        let Some(ext) = self
-            .current()
-            .filter(|e| !e.is_dir())
-            .map(|e| e.ext.clone())
-        else {
+        self.mark_like(Like::Ext, on);
+    }
+
+    /// TC «Select all files with the same extension / name / name and extension» (and unselect):
+    /// the files that share it with the one under the cursor, in any case. On a dir: nothing.
+    pub fn mark_like(&mut self, like: Like, on: bool) {
+        let key = |e: &Entry| {
+            let name = base(&e.name);
+            let stem = (name.strip_suffix(&*e.ext))
+                .and_then(|s| s.strip_suffix('.'))
+                .filter(|_| !e.ext.is_empty());
+            match like {
+                Like::Ext => e.ext.to_lowercase(),
+                Like::Name => stem.unwrap_or(name).to_lowercase(),
+                Like::NameExt => name.to_lowercase(),
+            }
+        };
+        let Some(want) = self.current().filter(|e| !e.is_dir()).map(key) else {
             return;
         };
-        for e in (self.entries.iter()).filter(|e| !e.is_dir() && e.ext.eq_ignore_ascii_case(&ext)) {
+        for e in (self.entries.iter()).filter(|e| !e.is_dir() && key(e) == want) {
             if on {
                 self.marked.insert(e.os_name.clone());
             } else {
@@ -508,9 +534,74 @@ impl Panel {
         &self.show
     }
 
+    /// TC «Hide files which aren't selected»: the rows not marked now hidden (a file renamed or
+    /// made meanwhile is shown), until the dir changes or Ctrl+F10 / F11 / F12. Nothing marked:
+    /// nothing hidden.
+    pub fn show_only_marked(&mut self) {
+        if self.marked.is_empty() {
+            return;
+        }
+        let hide = (self.entries.iter())
+            .filter(|e| e.name != PARENT && !self.marked.contains(&e.os_name))
+            .map(|e| e.os_name.clone());
+        self.hidden.extend(hide);
+        let keep = self.current().map(|e| e.name.clone());
+        self.rebuild(keep, self.cursor);
+    }
+
+    /// The marked rows' names (as shown: in a branch view relative paths), in the panel's order.
+    pub fn marked_names(&self) -> Vec<&str> {
+        (self.entries.iter())
+            .filter(|e| self.marked.contains(&e.os_name))
+            .map(|e| e.name.as_str())
+            .collect()
+    }
+
+    /// TC «Read file selection from file / clipboard»: marks the rows named by `text`'s lines
+    /// (as `marked_names` writes them, or full paths into this dir); how many.
+    pub fn mark_listed(&mut self, text: &str) -> usize {
+        let cwd = self.cwd.clone();
+        // As written (a name may start or end with a space), and trimmed (typed, pasted).
+        let names: HashSet<&str> = (text.lines())
+            .flat_map(|l| [l, l.trim()])
+            .map(|l| l.trim_end_matches('/'))
+            .map(|l| {
+                (Path::new(l).strip_prefix(&cwd).ok())
+                    .and_then(|r| r.to_str())
+                    .unwrap_or(l)
+            })
+            .collect();
+        let hits: Vec<OsString> = (self.entries.iter())
+            .filter(|e| e.name != PARENT && names.contains(e.name.as_str()))
+            .map(|e| e.os_name.clone())
+            .collect();
+        let n = hits.len();
+        self.marked.extend(hits);
+        self.touched();
+        n
+    }
+
+    /// TC «Go to next / previous selected file»: the cursor to the nearest marked row that way.
+    pub fn goto_marked(&mut self, forward: bool) {
+        let marked = |&i: &usize| self.marked.contains(&self.entries[i].os_name);
+        let found = match forward {
+            true => (self.cursor + 1..self.entries.len()).find(marked),
+            false => (0..self.cursor).rev().find(marked),
+        };
+        if let Some(i) = found {
+            self.cursor = i;
+        }
+    }
+
+    /// «Only selected» in force (`show_only_marked`).
+    pub fn only_marked(&self) -> bool {
+        !self.hidden.is_empty()
+    }
+
     /// Which files to show (dirs always, but those a mask's `|dir\` leaves out); like the quick
     /// filter, marks on rows it hides are dropped.
     pub fn set_show(&mut self, show: Show) {
+        self.hidden.clear();
         self.show = match show {
             Show::Mask(m) if Mask::parse(&m).is_all() => Show::All,
             s => s,
@@ -705,6 +796,68 @@ mod tests {
         p.set_cursor(1); // a dir: nothing
         p.mark_ext(true);
         assert_eq!(marked(&p), ["noext"]);
+    }
+
+    #[test]
+    fn selection_by_name_saved_listed_shown_only_and_walked() {
+        let mut p = loaded(
+            "/d",
+            vec![
+                fx("a.txt"),
+                fx("A.rs"),
+                fx("b.txt"),
+                fx("a.TXT.bak"),
+                d("a"),
+            ],
+        );
+        let marked =
+            |p: &Panel| -> Vec<String> { p.marked_names().into_iter().map(String::from).collect() };
+        // sorted: "..", "a", "A.rs", "a.txt", "a.TXT.bak", "b.txt"
+        p.set_cursor(3);
+        p.mark_like(Like::Name, true); // the name without the extension, any case
+        assert_eq!(marked(&p), ["A.rs", "a.txt"]);
+        p.mark_like(Like::Name, false);
+        p.set_cursor(4);
+        p.mark_like(Like::NameExt, true);
+        assert_eq!(marked(&p), ["a.TXT.bak"]);
+        p.set_cursor(1); // a dir: nothing
+        p.mark_like(Like::Name, true);
+        assert_eq!(marked(&p), ["a.TXT.bak"]);
+        // Saved, dropped, back (Num /).
+        p.keep_marks();
+        p.mark_names(&[]);
+        p.restore_marks();
+        assert_eq!(marked(&p), ["a.TXT.bak"]);
+        // From a list: names, or full paths here; unknown lines ignored.
+        assert_eq!(p.mark_listed("b.txt\n/d/A.rs\n/elsewhere/a.txt\nnope\n"), 2);
+        assert_eq!(marked(&p), ["A.rs", "a.TXT.bak", "b.txt"]);
+        // Next / previous marked, from "a".
+        p.goto_marked(true);
+        assert_eq!(p.current().unwrap().name, "A.rs");
+        p.goto_marked(true);
+        p.goto_marked(true);
+        p.goto_marked(true); // none further: stays
+        assert_eq!(p.current().unwrap().name, "b.txt");
+        p.goto_marked(false);
+        assert_eq!(p.current().unwrap().name, "a.TXT.bak");
+        // Only the marked shown; Ctrl+F10 or another dir: all again.
+        p.show_only_marked();
+        let names = |p: &Panel| {
+            p.entries()
+                .iter()
+                .map(|e| e.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&p), ["..", "A.rs", "a.TXT.bak", "b.txt"]);
+        p.set_show(Show::All);
+        assert_eq!(names(&p).len(), 6);
+        // A file made meanwhile is not hidden.
+        p.show_only_marked();
+        let mut rows: Vec<Entry> = p.all.clone();
+        rows.push(fx("new.txt"));
+        p.set_listing(PathBuf::from("/d"), rows, None);
+        assert!(names(&p).contains(&"new.txt".to_string()));
+        assert!(!names(&p).contains(&"a.txt".to_string()));
     }
 
     #[test]
