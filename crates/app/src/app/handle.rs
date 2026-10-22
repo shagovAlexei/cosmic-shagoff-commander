@@ -2183,6 +2183,26 @@ impl App {
                     }));
                 }
             }
+            Message::SplitSize(s) => {
+                if let Some(Dialog::Split { size, .. }) = &mut self.dialog {
+                    *size = s;
+                }
+            }
+            Message::Pieces(done) => {
+                self.clear_busy();
+                match done {
+                    Ok(note) => self.say(StatusKind::Info, note),
+                    Err(e) => self.say(StatusKind::Error, e),
+                }
+                // The parts / the joined file show up where they went.
+                let tasks: Vec<_> = (0..2)
+                    .map(|s| {
+                        let to = self.panes[s].active().target();
+                        self.reload(s, to, None)
+                    })
+                    .collect();
+                return Task::batch(tasks);
+            }
             Message::Made {
                 side,
                 cwd,

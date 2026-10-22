@@ -865,7 +865,8 @@ impl App {
             | Action::SaveMarksToFile
             | Action::LoadMarksFromFile
             | Action::SaveDetails
-            | Action::SaveDetailsHdr => {}
+            | Action::SaveDetailsHdr
+            | Action::SplitFile => {}
             // Opened by `dialog_for` above.
             Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => {}
             // Also the drive list: a stick plugged in shows up (TC rereads drives too).
@@ -969,6 +970,11 @@ impl App {
                     return Task::none();
                 };
                 return self.load(side, home, None);
+            }
+            // Here only when `dialog_for` found no parts under the cursor.
+            Action::CombineFiles => {
+                self.say(StatusKind::Error, fl!("combine-not-part"));
+                return Task::none();
             }
             Action::NewFromTemplate => {
                 let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);

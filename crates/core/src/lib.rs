@@ -31,6 +31,7 @@ pub mod search;
 pub mod session;
 pub mod shell;
 pub mod sort;
+pub mod split;
 pub mod sync;
 pub mod tabs;
 pub mod templates;

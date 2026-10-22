@@ -335,6 +335,26 @@ impl App {
                 id: 0,
                 running: None,
             }))),
+            Action::SplitFile => {
+                let file = panel
+                    .current()
+                    .filter(|e| !e.is_dir() && e.name != PARENT)?;
+                Some(Dialog::Split {
+                    side,
+                    sources: vec![panel.cwd().join(&file.os_name)],
+                    path: dir_input(self.panes[1 - side].active().panel.cwd()),
+                    size: SPLIT_SIZE.into(),
+                })
+            }
+            Action::CombineFiles => {
+                let file = panel
+                    .current()
+                    .filter(|e| !e.is_dir() && e.name != PARENT)?;
+                // Not a part: `act` says so.
+                let (_, parts) = split::parts_of(&panel.cwd().join(&file.os_name))?;
+                let to = dir_input(self.panes[1 - side].active().panel.cwd());
+                Some(input(InputOp::Combine, parts, to))
+            }
             Action::ChecksumCreate => {
                 let sources = panel.targets();
                 (!sources.is_empty()).then(|| Dialog::Checksum {
@@ -486,6 +506,46 @@ impl App {
                 input,
                 ..
             } => self.new_file(side, input.trim()),
+            Dialog::Split {
+                side,
+                sources,
+                path,
+                size,
+            } => {
+                let Some(bytes) = split::parse_size(&size) else {
+                    self.say(StatusKind::Error, fl!("split-bad-size", size = size));
+                    return Task::none();
+                };
+                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                let dir = cwd.join(session::expand_home(Path::new(path.trim()), &self.home));
+                let Some(src) = sources.into_iter().next() else {
+                    return Task::none();
+                };
+                self.say(StatusKind::Busy, fl!("split-busy"));
+                pieces(move || {
+                    split::split(&src, &dir, bytes)
+                        .map(|parts| fl!("split-done", count = parts.len()))
+                })
+            }
+            Dialog::Input {
+                op: InputOp::Combine,
+                side,
+                sources,
+                input,
+            } => {
+                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                let dir = cwd.join(session::expand_home(Path::new(input.trim()), &self.home));
+                let Some((name, _)) = sources.first().and_then(|p| split::parts_of(p)) else {
+                    return Task::none();
+                };
+                self.say(StatusKind::Busy, fl!("combine-busy"));
+                pieces(move || {
+                    split::combine(&sources, &dir, &name).map(|to| {
+                        let name = to.file_name().unwrap_or_default().to_string_lossy();
+                        fl!("combine-done", name = name.into_owned())
+                    })
+                })
+            }
             Dialog::Input {
                 op: InputOp::FromTemplate,
                 side,

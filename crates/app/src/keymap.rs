@@ -63,6 +63,10 @@ pub enum Action {
     EmptyTrash,
     /// Files → «Verify checksums» (TC `cm_CRCcheck`).
     ChecksumVerify,
+    /// Files → the file under the cursor in parts / the parts under the cursor joined back
+    /// (TC `cm_Split`, `cm_Combine`).
+    SplitFile,
+    CombineFiles,
     /// Alt+F10: go to a dir chosen in a tree (TC «Change directory via tree»).
     TreeDialog,
     /// Ctrl+F8: the dirs as a tree in this panel, the other one showing the files (TC).

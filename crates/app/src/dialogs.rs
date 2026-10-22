@@ -42,6 +42,8 @@ pub enum InputOp {
     SaveDetails(bool),
     /// The new file's name; `sources[0]` is the template.
     FromTemplate,
+    /// Files → «Combine files»: where the parts (`sources`) are joined.
+    Combine,
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -132,6 +134,13 @@ pub enum Dialog {
         algo: Algo,
         /// One file per file (TC «Separate file for each file»), else one for all.
         separate: bool,
+    },
+    /// Files → «Split file»: `sources[0]` cut into parts of `size` (as typed) in `path`.
+    Split {
+        side: usize,
+        sources: Vec<PathBuf>,
+        path: String,
+        size: String,
     },
     /// Alt+F9: the archives among the targets at open.
     Unpack {
@@ -649,6 +658,12 @@ impl Dialog {
             Dialog::Pack(p) => Some(&p.sources),
             Dialog::Unpack { archives, .. } => Some(archives),
             Dialog::Checksum { sources, .. } => Some(sources),
+            Dialog::Split { sources, .. }
+            | Dialog::Input {
+                op: InputOp::Combine,
+                sources,
+                ..
+            } => Some(sources),
             _ => None,
         }
     }
@@ -658,7 +673,7 @@ impl Dialog {
         match self {
             Dialog::Mask { input, .. } | Dialog::Input { input, .. } => Some(input),
             Dialog::Pack(p) => Some(&mut p.path),
-            Dialog::Unpack { path, .. } => Some(path),
+            Dialog::Unpack { path, .. } | Dialog::Split { path, .. } => Some(path),
             Dialog::Connect { url, .. } => Some(url),
             Dialog::Conflict { name, .. } => Some(name),
             _ => None,
@@ -951,6 +966,7 @@ pub fn view<'a>(
                 InputOp::Mkdir => fl!("mkdir"),
                 InputOp::NewFile => fl!("new-file"),
                 InputOp::FromTemplate => fl!("new-from-template"),
+                InputOp::Combine => fl!("combine"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
                 InputOp::OpenWith => fl!("open-with-other-title"),
@@ -960,7 +976,7 @@ pub fn view<'a>(
                 InputOp::SaveDetails(_) => fl!("menu-save-details").replace('…', ""),
             };
             let control = match op {
-                InputOp::Copy | InputOp::Move | InputOp::Link => {
+                InputOp::Copy | InputOp::Move | InputOp::Link | InputOp::Combine => {
                     what_to(sources, icon, fl!("to"), field(input).into())
                 }
                 _ => field(input).into(),
@@ -1764,6 +1780,31 @@ pub fn view<'a>(
                 .secondary_action(cancel)
                 .into()
         }
+        Dialog::Split {
+            sources,
+            path,
+            size,
+            ..
+        } => widget::dialog()
+            .title(fl!("split"))
+            .control(
+                column![
+                    what_to(sources, icon, fl!("to"), field(path).into()),
+                    row![
+                        widget::text::body(fl!("split-size")),
+                        widget::text_input(fl!("split-size-hint"), size)
+                            .on_input(Message::SplitSize)
+                            .on_submit(|_| Message::DialogSubmit)
+                            .width(Length::Fixed(160.0)),
+                    ]
+                    .spacing(8)
+                    .align_y(cosmic::iced::Alignment::Center),
+                ]
+                .spacing(12),
+            )
+            .primary_action(widget::button::suggested(fl!("split")).on_press(Message::DialogSubmit))
+            .secondary_action(cancel)
+            .into(),
         Dialog::Unpack {
             archives,
             path,

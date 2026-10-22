@@ -334,6 +334,8 @@ pub(super) fn on_files(a: Action) -> bool {
             | A::TestArchives
             | A::ChecksumCreate
             | A::ChecksumVerify
+            | A::SplitFile
+            | A::CombineFiles
             | A::Properties
             | A::Occupied
             | A::CountDirs
@@ -570,6 +572,26 @@ pub(super) fn into_archive(p: &Path) -> bool {
 }
 
 /// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").
+/// Files → «Split file»: the part size offered.
+pub(super) const SPLIT_SIZE: &str = "100M";
+
+/// Split / Combine off the UI thread; its note or its error (a CRC mismatch said as such).
+pub(super) fn pieces(
+    f: impl FnOnce() -> std::io::Result<String> + Send + 'static,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            match tokio::task::spawn_blocking(f).await {
+                Ok(Ok(note)) => Ok(note),
+                Ok(Err(e)) if e.to_string() == split::CRC_MISMATCH => Err(fl!("combine-crc-bad")),
+                Ok(Err(e)) => Err(crate::why::text(&e)),
+                Err(e) => Err(e.to_string()),
+            }
+        },
+        |r| cosmic::Action::App(Message::Pieces(r)),
+    )
+}
+
 pub(super) fn dir_input(dir: &Path) -> String {
     let s = dir.display().to_string();
     if s.ends_with('/') { s } else { s + "/" }
