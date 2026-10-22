@@ -1,11 +1,11 @@
 //! Thumbnails view (TC Ctrl+Shift+F1): cell sizes and the pictures, made off the UI thread.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use shagoff_core::thumbnailer::{Registry, argv, run, sandboxed};
+use shagoff_core::thumbnailer::{self, Registry};
 
 use cosmic::widget::image::Handle;
 
@@ -25,6 +25,10 @@ pub fn cell_h(row_h: f32) -> f32 {
     SIZE as f32 + row_h + 8.0
 }
 
+/// The size asked of a desktop thumbnailer (the spec's "normal"), shrunk to ours after; its
+/// picture is read up to `EXTERNAL_MAX` bytes.
+const EXTERNAL_SIZE: u32 = 128;
+const EXTERNAL_MAX: u64 = 16 << 20;
 /// A desktop thumbnailer gets this long before it is killed (a video read over the network…).
 const EXTERNAL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -73,29 +77,34 @@ fn external(path: &Path, name: &str) -> Option<Vec<u8>> {
     static SANDBOX: OnceLock<bool> = OnceLock::new();
     let t = registry().for_name(name)?;
     let n = N.fetch_add(1, Ordering::Relaxed);
-    // In bwrap when it works (GNOME does so too): a crafted file meets a parser that sees
-    // nothing of the home. Else as cosmic-files: as is.
-    if *SANDBOX.get_or_init(shagoff_core::thumbnailer::bwrap_works) {
-        use std::os::unix::fs::DirBuilderExt;
-        let dir = std::env::temp_dir().join(format!("shagoff-thumb.{}.{n}", std::process::id()));
-        std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?;
-        let (args, out) = sandboxed(&t.exec, path, &dir, 128);
-        let ok = run(&args, EXTERNAL_TIMEOUT);
-        let bytes = ok.then(|| std::fs::read(&out).ok()).flatten();
-        let _ = std::fs::remove_dir_all(&dir);
-        return bytes;
-    }
-    // GNOME's name in /tmp itself (not $TMPDIR): AppArmor lets evince-thumbnailer write only
-    // there. Made first with O_EXCL: a link put in its place beforehand is not written through.
-    let out = std::path::PathBuf::from(format!(
-        "/tmp/.gnome_desktop_thumbnail.shagoff.{}.{n}.png",
-        std::process::id(),
-    ));
-    std::fs::File::create_new(&out).ok()?;
-    // The size the spec calls "normal"; shrunk to ours after.
-    let ok = run(&argv(&t.exec, path, &out, 128), EXTERNAL_TIMEOUT);
-    let bytes = ok.then(|| std::fs::read(&out).ok()).flatten();
-    let _ = std::fs::remove_file(&out);
+    let pid = std::process::id();
+    // In bwrap when it works and the program is the system's (GNOME does so too): a crafted file
+    // meets a parser that sees nothing of the home. Else as cosmic-files: as is.
+    let (args, out, scratch) =
+        if thumbnailer::in_system(&t.exec) && *SANDBOX.get_or_init(thumbnailer::bwrap_works) {
+            use std::os::unix::fs::DirBuilderExt;
+            let dir = std::env::temp_dir().join(format!("shagoff-thumb.{pid}.{n}"));
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?;
+            let (args, out) = thumbnailer::sandboxed(&t.exec, path, &dir, EXTERNAL_SIZE);
+            (args, out, dir)
+        } else {
+            // GNOME's name in /tmp itself (not $TMPDIR): AppArmor lets evince-thumbnailer write only
+            // there. Made first with O_EXCL: a link put in its place beforehand is not written through.
+            let out = PathBuf::from(format!(
+                "/tmp/.gnome_desktop_thumbnail.shagoff.{pid}.{n}.png"
+            ));
+            std::fs::File::create_new(&out).ok()?;
+            let args = thumbnailer::argv(&t.exec, path, &out, EXTERNAL_SIZE);
+            (args, out.clone(), out)
+        };
+    let ok = thumbnailer::run(&args, EXTERNAL_TIMEOUT);
+    let bytes = ok
+        .then(|| thumbnailer::read_output(&out, EXTERNAL_MAX))
+        .flatten();
+    let _ = match scratch.is_dir() {
+        true => std::fs::remove_dir_all(&scratch),
+        false => std::fs::remove_file(&scratch),
+    };
     bytes
 }
 
