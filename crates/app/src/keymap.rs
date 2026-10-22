@@ -197,6 +197,23 @@ pub enum Action {
     TabRename,
     /// Ctrl+Shift+W: close the panel's other tabs but the locked ones.
     CloseOtherTabs,
+    /// Ctrl+Shift+A: the panel's tabs as a list, Enter goes to one (TC `cm_SrcTabsList`).
+    TabsList,
+    /// Ctrl+Shift+T: a copy of the active tab, staying in this one (TC `cm_OpenNewTabBg`).
+    NewTabBg,
+    /// A copy of the active tab in the other panel, the keys staying here (TC `cm_OpenNewTabOther`).
+    NewTabOther,
+    /// Tabs → «All tabs»: close the ones showing a dir an earlier one shows / all but this one
+    /// (TC `cm_CloseDuplicateTabs`, `cm_CloseAllTabs`).
+    CloseDuplicateTabs,
+    CloseAllTabs,
+    /// Every tab of the panel locked / locked with dir changes / unlocked (TC
+    /// `cm_SetAllTabsOptionPathLocked`, `…PathResets`, `…Normal`).
+    LockAllTabs,
+    RoamAllTabs,
+    UnlockAllTabs,
+    /// A tab locked with dir changes: back to its dir (TC `cm_GoToLockedDir`).
+    GoToLockedDir,
     /// Alt+Enter: properties and permission bits of the selection.
     Properties,
     /// Alt+Shift+Enter: count the size of every dir in the panel.
@@ -415,6 +432,8 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyR), true, false) => Some(Action::Reload),
         (Physical::Code(Code::Backslash), true, false) => Some(Action::Root),
         (Physical::Code(Code::KeyT), true, false) => Some(Action::NewTab),
+        (Physical::Code(Code::KeyT), true, true) => Some(Action::NewTabBg),
+        (Physical::Code(Code::KeyA), true, true) => Some(Action::TabsList),
         (Physical::Code(Code::KeyW), true, false) => Some(Action::CloseTab),
         (Physical::Code(Code::KeyW), true, true) => Some(Action::CloseOtherTabs),
         (Physical::Code(Code::KeyH), true, false) => Some(Action::ToggleHidden),
@@ -726,6 +745,13 @@ mod tests {
             chr("W", Code::KeyW, CTRL | Modifiers::SHIFT),
             Some(Action::CloseOtherTabs)
         );
+        let tab_keys = [
+            (Code::KeyT, Action::NewTabBg),
+            (Code::KeyA, Action::TabsList),
+        ];
+        for (code, a) in tab_keys {
+            assert_eq!(chr("x", code, CTRL | Modifiers::SHIFT), Some(a));
+        }
     }
 
     #[test]

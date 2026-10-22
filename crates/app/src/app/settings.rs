@@ -337,6 +337,10 @@ impl App {
                 _ => Task::none(),
             };
         }
+        if kind == ListKind::Tabs {
+            self.panes[side].select(i);
+            return self.tab_switched(side);
+        }
         if kind == ListKind::NameEncoding {
             let (Some(it), Some(&enc)) = (items.get(i), archive::NameEnc::ALL.get(i)) else {
                 return Task::none();

@@ -278,6 +278,60 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-save-details-hdr"
         ),
         b!(
+            "cm_SrcTabsList",
+            TabsList,
+            "view-list-symbolic",
+            "menu-tabs-list"
+        ),
+        b!(
+            "cm_OpenNewTabBg",
+            NewTabBg,
+            "tab-new-symbolic",
+            "menu-new-tab-bg"
+        ),
+        b!(
+            "cm_OpenNewTabOther",
+            NewTabOther,
+            "tab-new-symbolic",
+            "menu-new-tab-other"
+        ),
+        b!(
+            "cm_CloseDuplicateTabs",
+            CloseDuplicateTabs,
+            "window-close-symbolic",
+            "menu-close-duplicate-tabs"
+        ),
+        b!(
+            "cm_CloseAllTabs",
+            CloseAllTabs,
+            "window-close-symbolic",
+            "menu-close-all-tabs"
+        ),
+        b!(
+            "cm_SetAllTabsOptionPathLocked",
+            LockAllTabs,
+            "changes-prevent-symbolic",
+            "menu-lock-all-tabs"
+        ),
+        b!(
+            "cm_SetAllTabsOptionPathResets",
+            RoamAllTabs,
+            "changes-prevent-symbolic",
+            "menu-roam-all-tabs"
+        ),
+        b!(
+            "cm_SetAllTabsOptionNormal",
+            UnlockAllTabs,
+            "changes-allow-symbolic",
+            "menu-unlock-all-tabs"
+        ),
+        b!(
+            "cm_GoToLockedDir",
+            GoToLockedDir,
+            "go-home-symbolic",
+            "menu-go-locked-dir"
+        ),
+        b!(
             "cm_ChangeStartMenu",
             ConfigureStartMenu,
             "document-edit-symbolic",

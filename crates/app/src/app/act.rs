@@ -936,14 +936,82 @@ impl App {
                 self.panes[side].retain(Tab::pinned);
                 return Task::none();
             }
-            Action::NewTab => {
+            // TC asks before closing locked ones; here they stay, and it is said.
+            Action::CloseAllTabs => {
+                self.panes[side].retain(Tab::pinned);
+                if self.panes[side].items().len() > 1 {
+                    self.say(StatusKind::Info, fl!("tabs-locked-kept"));
+                }
+                return Task::none();
+            }
+            Action::CloseDuplicateTabs => {
+                self.panes[side].close_duplicates(Tab::target, Tab::pinned);
+                return Task::none();
+            }
+            Action::LockAllTabs | Action::RoamAllTabs | Action::UnlockAllTabs => {
+                for t in self.panes[side].items_mut() {
+                    t.locked = action == Action::LockAllTabs;
+                    // A tab moving about keeps its own dir; another gets the one it is going to.
+                    t.home = match action {
+                        Action::RoamAllTabs => Some(t.home.clone().unwrap_or_else(|| t.target())),
+                        _ => None,
+                    };
+                    // As Lock on one tab: a scan into another dir would still land and move it.
+                    if t.locked && t.target() != t.panel.cwd() {
+                        t.pending = None;
+                    }
+                }
+                return Task::none();
+            }
+            Action::GoToLockedDir => {
+                let Some(home) = self.panes[side].active().home.clone() else {
+                    self.say(StatusKind::Error, fl!("tab-not-roaming"));
+                    return Task::none();
+                };
+                return self.load(side, home, None);
+            }
+            Action::TabsList => {
+                let tabs = self.panes[side].items();
+                let items = (tabs.iter().enumerate())
+                    .map(|(i, t)| ListItem {
+                        label: format!("{}. {}", i + 1, t.title()),
+                        path: self.shown(&t.target()),
+                        kind: Item::Dir,
+                        icon: String::new(),
+                    })
+                    .collect();
+                self.dialog = Some(Dialog::List {
+                    kind: ListKind::Tabs,
+                    side,
+                    cursor: self.panes[side].active_index(),
+                    items,
+                });
+                return Task::none();
+            }
+
+            // Ctrl+T / Ctrl+Shift+T (staying in this one) / in the other panel (the keys staying here).
+            Action::NewTab | Action::NewTabBg | Action::NewTabOther => {
                 let id = self.next_id();
                 let mut copy = self.panes[side].active().duplicate(id);
                 // TC: the new tab shows the whole dir.
                 copy.panel.set_filter(None);
                 copy.panel.set_show(Show::All);
-                self.panes[side].open_after(copy);
-                return self.restore_scroll(side);
+                let here = self.panes[side].active_index();
+                return match action {
+                    Action::NewTabOther => {
+                        self.panes[1 - side].open_after(copy);
+                        self.tab_switched(1 - side)
+                    }
+                    Action::NewTabBg => {
+                        self.panes[side].open_after(copy);
+                        self.panes[side].select(here);
+                        Task::none()
+                    }
+                    _ => {
+                        self.panes[side].open_after(copy);
+                        self.restore_scroll(side)
+                    }
+                };
             }
             Action::CloseTab => {
                 if self.panes[side].active().pinned() {

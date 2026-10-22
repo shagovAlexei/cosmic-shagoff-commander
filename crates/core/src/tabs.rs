@@ -73,6 +73,26 @@ impl<T> Tabs<T> {
         self.active = new_active;
     }
 
+    /// TC «Close duplicate tabs»: one tab per `key` (its dir) stays: the active one for its own,
+    /// else the first; `keep` (locked) ones stay too.
+    pub fn close_duplicates<K: Eq + std::hash::Hash>(
+        &mut self,
+        key: impl Fn(&T) -> K,
+        keep: impl Fn(&T) -> bool,
+    ) {
+        let active = self.active;
+        let mut seen = std::collections::HashSet::from([key(&self.items[active])]);
+        let kept: Vec<bool> = (self.items.iter().enumerate())
+            .map(|(i, t)| i == active || keep(t) || seen.insert(key(t)))
+            .collect();
+        let mut i = 0;
+        self.items.retain(|_| {
+            i += 1;
+            kept[i - 1]
+        });
+        self.active = kept[..active].iter().filter(|&&k| k).count();
+    }
+
     pub fn select(&mut self, i: usize) {
         if i < self.items.len() {
             self.active = i;
@@ -127,6 +147,29 @@ mod tests {
         t.open_after('x');
         assert_eq!(t.items(), ['a', 'x', 'b', 'c']);
         assert_eq!(*t.active(), 'x');
+    }
+
+    #[test]
+    fn close_duplicates_keeps_one_per_dir_the_active_one_first() {
+        // dirs: a b a a b c, the 4th "a" locked, the 5th "b" active
+        let mut t = Tabs::new(('a', false));
+        for d in [
+            ('b', false),
+            ('a', false),
+            ('a', true),
+            ('b', false),
+            ('c', false),
+        ] {
+            t.items.push(d);
+        }
+        t.active = 4;
+        t.close_duplicates(|&(d, _)| d, |&(_, locked)| locked);
+        // the 2nd "b" is active: the 1st goes; of the "a"s the 1st and the locked one stay
+        assert_eq!(
+            t.items(),
+            [('a', false), ('a', true), ('b', false), ('c', false)]
+        );
+        assert_eq!(t.active_index(), 2);
     }
 
     #[test]
