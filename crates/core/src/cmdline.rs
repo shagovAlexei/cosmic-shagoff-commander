@@ -29,13 +29,19 @@ pub fn parse(line: &str, cwd: &Path, home: &Path) -> Option<Cmd> {
     if arg.contains(|c| ";&|<>$`()".contains(c)) {
         return Some(Cmd::Run(line.into()));
     }
-    let arg = unquote(arg);
+    Some(Cmd::Cd(resolve(arg, cwd, home)))
+}
+
+/// A typed path as `cd` takes it (and the path line's edit, TC `cm_EditPath`): quotes dropped,
+/// `~` the home, relative under `cwd`, `.` / `..` folded; empty: `cwd`.
+pub fn resolve(arg: &str, cwd: &Path, home: &Path) -> PathBuf {
+    let arg = unquote(arg.trim());
     let path = match arg.strip_prefix('~') {
         Some("") => home.to_path_buf(),
         Some(rest) if rest.starts_with('/') => home.join(&rest[1..]),
         _ => cwd.join(arg),
     };
-    Some(Cmd::Cd(fold(&path)))
+    fold(&path)
 }
 
 fn unquote(s: &str) -> &str {
@@ -444,6 +450,17 @@ mod tests {
             Some("caf?")
         );
         assert!(word(&name, |_: &Path| None).is_none()); // dir not readable
+    }
+
+    #[test]
+    fn resolve_a_typed_path() {
+        let (cwd, home) = (Path::new("/a/b"), Path::new("/home/u"));
+        let r = |s: &str| resolve(s, cwd, home);
+        assert_eq!(r(" /etc/ "), Path::new("/etc"));
+        assert_eq!(r("~/x"), Path::new("/home/u/x"));
+        assert_eq!(r("../c"), Path::new("/a/c"));
+        assert_eq!(r("'my dir'"), Path::new("/a/b/my dir"));
+        assert_eq!(r(""), cwd);
     }
 
     #[test]

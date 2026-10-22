@@ -209,7 +209,21 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         None => cwd.display().to_string(),
     };
     let skin = app.config.skin;
+    let editing = app.path_edit.as_ref().filter(|(s, _)| *s == side);
     let path: Element<'_, Message> = match (skin, &p.results) {
+        // TC `cm_EditPath`: the line as a field; Enter goes there, Esc leaves it.
+        _ if editing.is_some() => {
+            let text = editing.map_or("", |(_, t)| t.as_str());
+            widget::text_input("", text)
+                .id(app.path_id.clone())
+                .on_input(Message::PathEdit)
+                .on_submit(|_| Message::PathEditGo)
+                .on_unfocus(Message::PathEditCancel)
+                .size(TEXT)
+                .padding([2, 6])
+                .width(Length::Fill)
+                .into()
+        }
         (Skin::Modern, None) => breadcrumbs(side, &cwd, active),
         // TC: the plain path line, each part clickable.
         (Skin::Classic, None) => container(path_parts(side, &cwd))
@@ -221,6 +235,13 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             .padding([2, 6])
             .width(Length::Fill)
             .class(bar_style(active, app.scheme.paint()))
+            .into(),
+    };
+    // A click on the line where no part of the path is (those take their own) edits it (TC).
+    let path: Element<'_, Message> = match editing {
+        Some(_) => path,
+        None => mouse_area(path)
+            .on_press(Message::PathEditStart(side))
             .into(),
     };
 

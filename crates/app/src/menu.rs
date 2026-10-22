@@ -432,6 +432,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-swap"), Action::SwapPanes),
                 b(fl!("menu-open-left"), Action::OpenLeft),
                 b(fl!("menu-open-right"), Action::OpenRight),
+                b(fl!("menu-edit-path"), Action::EditPath),
                 menu::Item::Divider,
                 b(fl!("menu-filter"), Action::QuickFilter),
                 b(fl!("menu-reload"), Action::Reload),
@@ -913,6 +914,7 @@ mod tests {
                             | Action::PickShell
                             | Action::ChecksumCreate
                             | Action::ChecksumVerify
+                            | Action::EditPath
                     )
                 ) {
                     continue;
