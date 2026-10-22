@@ -40,6 +40,8 @@ pub enum InputOp {
     LoadMarks,
     /// The file every row's columns go to (`true`: with the column titles).
     SaveDetails(bool),
+    /// The new file's name; `sources[0]` is the template.
+    FromTemplate,
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -593,6 +595,8 @@ pub enum ListKind {
     NameEncoding,
     /// Ctrl+Shift+A: row i is tab i of the panel, `path` its dir.
     Tabs,
+    /// Files → «New file from template»: `path` is the template.
+    Templates,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -946,6 +950,7 @@ pub fn view<'a>(
                 InputOp::Link => fl!("link"),
                 InputOp::Mkdir => fl!("mkdir"),
                 InputOp::NewFile => fl!("new-file"),
+                InputOp::FromTemplate => fl!("new-from-template"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
                 InputOp::OpenWith => fl!("open-with-other-title"),
@@ -1364,6 +1369,8 @@ pub fn view<'a>(
                 let path = match item.kind {
                     // The archive's path: the same on every row.
                     _ if *kind == ListKind::NameEncoding => String::new(),
+                    // All in one dir: the name says it.
+                    _ if *kind == ListKind::Templates => String::new(),
                     Item::Mount => format!("{}   ({})", item.path.display(), fl!("not-mounted")),
                     Item::Sub(_) => "▸".into(),
                     Item::App => item.path.file_name().map_or(String::new(), |n| {
@@ -1409,6 +1416,7 @@ pub fn view<'a>(
                 ListKind::Context => fl!("context-menu"),
                 ListKind::NameEncoding => fl!("archive-encoding"),
                 ListKind::Tabs => fl!("tabs-list-title"),
+                ListKind::Templates => fl!("new-from-template"),
             };
             let dialog = widget::dialog()
                 .title(title)

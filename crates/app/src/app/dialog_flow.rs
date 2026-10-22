@@ -487,6 +487,34 @@ impl App {
                 ..
             } => self.new_file(side, input.trim()),
             Dialog::Input {
+                op: InputOp::FromTemplate,
+                side,
+                input,
+                sources,
+            } => {
+                let name = input.trim();
+                if !ops::valid_name(name) {
+                    if !name.is_empty() {
+                        self.say(StatusKind::Error, plan_error(&PlanError::BadName));
+                    }
+                    return Task::none();
+                }
+                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                let Some(template) = sources.first() else {
+                    return Task::none();
+                };
+                if let Err(e) = templates::create(template, &cwd.join(name)) {
+                    let err = crate::why::text(&e);
+                    self.say(
+                        StatusKind::Error,
+                        fl!("new-file-failed", path = name, err = err),
+                    );
+                    return Task::none();
+                }
+                // `load`: out of search results too, on the new file.
+                self.load(side, cwd, Some(name.to_string()))
+            }
+            Dialog::Input {
                 op: op @ (InputOp::SaveMarks | InputOp::LoadMarks),
                 side,
                 input,

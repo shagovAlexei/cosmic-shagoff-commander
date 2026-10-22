@@ -34,7 +34,7 @@ impl App {
         // F4, F7, F8, Shift+F6 inside and F5 / F6 into or out of one rewrite the archive.
         match action {
             // Shift+F5 inside one copies from the archive into itself.
-            Action::CopySame | Action::NewFile => inside(side),
+            Action::CopySame | Action::NewFile | Action::NewFromTemplate => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::Link => inside(side) || inside(1 - side),
             Action::ChecksumCreate => inside(side),

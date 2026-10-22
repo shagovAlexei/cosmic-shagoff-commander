@@ -90,6 +90,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("", fl!("menu-archive-encoding"), Action::ArchiveEncoding),
                 r("F7", fl!("menu-mkdir"), Action::Mkdir),
                 r("Shift+F4", fl!("menu-new-file"), Action::NewFile),
+                r("", fl!("menu-new-from-template"), Action::NewFromTemplate),
                 r("F8, Delete", fl!("help-delete"), Action::Delete),
                 r(
                     "Shift+F8, Shift+Delete",

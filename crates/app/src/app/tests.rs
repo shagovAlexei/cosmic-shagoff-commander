@@ -6649,3 +6649,37 @@ fn tabs_listed_opened_behind_and_closed_as_duplicates() {
     let _ = app.update(Message::Key(Action::CloseAllTabs));
     assert_eq!(app.panes[0].items().len(), 1);
 }
+
+#[test]
+fn a_new_file_from_a_template_is_its_copy_never_over_a_file() {
+    let d = tempfile::tempdir().unwrap();
+    let template = d.path().join("tpl.txt");
+    std::fs::write(&template, "hello").unwrap();
+    let mut app = app_with(Config::default(), State::default());
+    let p = &mut app.panes[0].active_mut().panel;
+    p.set_listing(d.path().to_path_buf(), Vec::new(), None);
+    let ask = |name: &str| Dialog::Input {
+        op: InputOp::FromTemplate,
+        side: 0,
+        sources: vec![template.clone()],
+        input: name.into(),
+    };
+    app.dialog = Some(ask("note.txt"));
+    let _ = app.update(Message::DialogSubmit);
+    assert_eq!(
+        std::fs::read_to_string(d.path().join("note.txt")).unwrap(),
+        "hello"
+    );
+    std::fs::write(d.path().join("note.txt"), "mine").unwrap();
+    app.dialog = Some(ask("note.txt"));
+    let _ = app.update(Message::DialogSubmit);
+    assert_eq!(
+        std::fs::read_to_string(d.path().join("note.txt")).unwrap(),
+        "mine"
+    );
+    assert!(
+        app.status
+            .as_ref()
+            .is_some_and(|s| s.kind == StatusKind::Error)
+    );
+}

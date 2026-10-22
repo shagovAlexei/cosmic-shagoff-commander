@@ -332,6 +332,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-go-locked-dir"
         ),
         b!(
+            "cm_EditFileMenu",
+            NewFromTemplate,
+            "document-new-symbolic",
+            "menu-new-from-template"
+        ),
+        b!(
             "cm_ChangeStartMenu",
             ConfigureStartMenu,
             "document-edit-symbolic",
