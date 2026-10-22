@@ -636,9 +636,15 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
                 None => entry_icon(e, 64).into(),
             };
             let name = painted(label, paint, font);
+            // Inner containers without a style of their own: cosmic's default sets its text colour
+            // and the cursor's dark ink was lost (light name on the cursor's cyan), as in the list.
+            let bare = || theme::Container::custom(|_| container::Style::default());
             let cell = column![
-                container(pic).center(Length::Fixed(size)),
-                container(name).center_x(Length::Fill).clip(true),
+                container(pic).center(Length::Fixed(size)).class(bare()),
+                container(name)
+                    .center_x(Length::Fill)
+                    .clip(true)
+                    .class(bare()),
             ]
             .align_x(Alignment::Center);
             let cell = container(cell)
