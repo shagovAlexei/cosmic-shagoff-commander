@@ -76,6 +76,11 @@ impl Panel {
         &self.entries
     }
 
+    /// A subdir `name` here, filtered out of the rows (Ctrl+S, Ctrl+F12) or not.
+    pub fn has_dir(&self, name: &std::ffi::OsStr) -> bool {
+        self.all.iter().any(|e| e.is_dir() && e.os_name == name)
+    }
+
     pub fn cursor(&self) -> usize {
         self.cursor
     }
@@ -581,6 +586,34 @@ pub fn parent_of(path: &Path) -> Option<(PathBuf, String)> {
     let parent = path.parent()?;
     let name = path.file_name()?.to_string_lossy().into_owned();
     Some((parent.to_path_buf(), name))
+}
+
+/// Synchronous dir change (TC `cm_SyncChangeDir`): one panel went `from` → `to`; where the other,
+/// in `other`, goes along (with the name to put the cursor on). One subdir down: the same one,
+/// when it has it (`has`); as many levels up, on the dir it left; any other jump: nowhere.
+pub fn sync_step(
+    from: &Path,
+    to: &Path,
+    other: &Path,
+    has: impl Fn(&std::ffi::OsStr) -> bool,
+) -> Option<(PathBuf, Option<String>)> {
+    if let Ok(rel) = to.strip_prefix(from) {
+        let mut parts = rel.components();
+        let (Some(sub), None) = (parts.next(), parts.next()) else {
+            return None;
+        };
+        return has(sub.as_os_str()).then(|| (other.join(sub), None));
+    }
+    let up = from.strip_prefix(to).ok()?.components().count();
+    let mut at = other;
+    let mut left = None;
+    for _ in 0..up {
+        let Some(parent) = at.parent() else { break };
+        left = at.file_name();
+        at = parent;
+    }
+    let name = left?.to_string_lossy().into_owned();
+    Some((at.to_path_buf(), Some(name)))
 }
 
 #[cfg(test)]
@@ -1252,5 +1285,33 @@ mod tests {
         );
         assert_eq!(child_toward(Path::new("/a"), Path::new("/a")), None); // the dir itself
         assert_eq!(child_toward(Path::new("/a"), Path::new("/x")), None);
+    }
+    #[test]
+    fn sync_step_follows_down_and_up() {
+        let p = |s: &str| PathBuf::from(s);
+        let has = |n: &std::ffi::OsStr| n == "docs";
+        // Down into a dir the other has: the same one there.
+        let down = sync_step(&p("/a"), &p("/a/docs"), &p("/b"), has);
+        assert_eq!(down, Some((p("/b/docs"), None)));
+        // Deeper at once (the hotlist, `cd a/b`), or from the root anywhere: it stays.
+        assert_eq!(sync_step(&p("/a"), &p("/a/docs/x"), &p("/b"), has), None);
+        assert_eq!(sync_step(&p("/"), &p("/docs/x"), &p("/b"), has), None);
+        // One it lacks: it stays.
+        assert_eq!(sync_step(&p("/a"), &p("/a/src"), &p("/b"), has), None);
+        // Up two levels: two there too, on the dir it left.
+        let up = sync_step(&p("/a/x/y"), &p("/a"), &p("/b/c/d"), has);
+        assert_eq!(up, Some((p("/b"), Some("c".into()))));
+        // Shallower: up to the root and no further; at the root already: nowhere.
+        assert_eq!(
+            sync_step(&p("/a/x/y"), &p("/a"), &p("/b"), has),
+            Some((p("/"), Some("b".into())))
+        );
+        assert_eq!(sync_step(&p("/a/x"), &p("/a"), &p("/"), has), None);
+        // Elsewhere, or the same dir again: nowhere.
+        assert_eq!(sync_step(&p("/a"), &p("/c/docs"), &p("/b"), has), None);
+        assert_eq!(sync_step(&p("/a"), &p("/a"), &p("/b"), has), None);
+        // Through an archive, a path like any other.
+        let zip = sync_step(&p("/a/x.zip"), &p("/a"), &p("/b/y.zip/docs"), has);
+        assert_eq!(zip, Some((p("/b/y.zip"), Some("docs".into()))));
     }
 }
