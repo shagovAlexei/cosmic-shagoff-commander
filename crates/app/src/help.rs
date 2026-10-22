@@ -117,6 +117,11 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             fl!("help-archives"),
             vec![
                 r("Alt+F5", fl!("menu-pack"), Action::Pack),
+                r(
+                    "Alt+Shift+F5",
+                    fl!("menu-move-to-archive"),
+                    Action::MoveToArchive,
+                ),
                 r("Alt+F9", fl!("menu-unpack"), Action::Unpack),
                 o("Enter", fl!("help-archive-enter")),
             ],

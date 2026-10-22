@@ -234,7 +234,7 @@ impl App {
                     help: false,
                 })))
             }
-            Action::Pack => {
+            Action::Pack | Action::MoveToArchive => {
                 let sources = panel.targets();
                 if sources.is_empty() {
                     return None;
@@ -257,7 +257,7 @@ impl App {
                     base,
                     path: path.display().to_string(),
                     format,
-                    move_after: false,
+                    move_after: action == Action::MoveToArchive,
                     separate: false,
                     encrypt: false,
                     password: String::new(),

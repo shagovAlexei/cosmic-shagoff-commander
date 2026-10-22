@@ -103,6 +103,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-pack"
         ),
         b!(
+            "cm_MoveToArchive",
+            MoveToArchive,
+            "package-x-generic-symbolic",
+            "menu-move-to-archive"
+        ),
+        b!(
             "cm_UnpackFiles",
             Unpack,
             "document-open-symbolic",

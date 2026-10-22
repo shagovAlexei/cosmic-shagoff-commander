@@ -854,6 +854,7 @@ impl App {
             | Action::Rename
             | Action::MultiRename
             | Action::Pack
+            | Action::MoveToArchive
             | Action::Unpack
             | Action::ChecksumCreate
             | Action::FindFiles
