@@ -3921,7 +3921,8 @@ impl App {
             .map_or_else(|| p.to_path_buf(), |(_, real)| real)
     }
 
-    /// The pane's path line becomes a field with its path, all selected (TC `cm_EditPath`).
+    /// The pane's path line becomes a field with its path, the cursor at its end (TC `cm_EditPath`;
+    /// not selected: the selection's colour is the active line's, the path vanished in it).
     fn edit_path(&mut self, side: usize) -> Task<Message> {
         // Not under the viewer in the panels' place: no path line there.
         if self.busy() || self.viewer() {
@@ -3933,7 +3934,7 @@ impl App {
         self.path_edit = Some((side, shown.to_string_lossy().into_owned()));
         Task::batch([
             widget::text_input::focus(self.path_id.clone()),
-            widget::text_input::select_all(self.path_id.clone()),
+            widget::text_input::move_cursor_to_end(self.path_id.clone()),
         ])
     }
 
