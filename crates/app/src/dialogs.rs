@@ -38,6 +38,8 @@ pub enum InputOp {
     /// The file the marked names go to / marks are read from.
     SaveMarks,
     LoadMarks,
+    /// The file every row's columns go to (`true`: with the column titles).
+    SaveDetails(bool),
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -948,6 +950,7 @@ pub fn view<'a>(
                 // The menu items' names, without their «…».
                 InputOp::SaveMarks => fl!("menu-save-marks-file").replace('…', ""),
                 InputOp::LoadMarks => fl!("menu-load-marks-file").replace('…', ""),
+                InputOp::SaveDetails(_) => fl!("menu-save-details").replace('…', ""),
             };
             let control = match op {
                 InputOp::Copy | InputOp::Move | InputOp::Link => {

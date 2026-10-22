@@ -439,8 +439,21 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Divider,
                 b(fl!("menu-compare-lists"), Action::CompareLists),
                 menu::Item::Divider,
-                b(fl!("menu-copy-names"), Action::CopyNames),
-                b(fl!("menu-copy-paths"), Action::CopyPaths),
+                menu::Item::Folder(
+                    fl!("menu-copy-to-clip"),
+                    vec![
+                        b(fl!("menu-copy-names"), Action::CopyNames),
+                        b(fl!("menu-copy-paths"), Action::CopyPaths),
+                        b(fl!("menu-copy-src-path"), Action::CopySrcPath),
+                        b(fl!("menu-copy-trg-path"), Action::CopyTrgPath),
+                        b(fl!("menu-copy-dirs"), Action::CopyDirsOfFiles),
+                        b(fl!("menu-copy-details"), Action::CopyDetails),
+                        b(fl!("menu-copy-details-hdr"), Action::CopyDetailsHdr),
+                        menu::Item::Divider,
+                        b(fl!("menu-save-details"), Action::SaveDetails),
+                        b(fl!("menu-save-details-hdr"), Action::SaveDetailsHdr),
+                    ],
+                ),
                 menu::Item::Divider,
                 b(fl!("menu-clip-cut"), Action::ClipCut),
                 b(fl!("menu-clip-copy"), Action::ClipCopy),
@@ -1014,6 +1027,13 @@ mod tests {
                             | Action::NextMarked
                             | Action::PrevMarked
                             | Action::ShowOnlyMarked
+                            | Action::CopySrcPath
+                            | Action::CopyTrgPath
+                            | Action::CopyDirsOfFiles
+                            | Action::CopyDetails
+                            | Action::CopyDetailsHdr
+                            | Action::SaveDetails
+                            | Action::SaveDetailsHdr
                             | Action::MatchSrc
                             | Action::Restore
                             | Action::EmptyTrash

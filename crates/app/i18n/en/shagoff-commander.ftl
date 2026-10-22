@@ -352,6 +352,16 @@ copied-paths = { $n ->
 }
 menu-copy-names = Copy names to clipboard
 menu-copy-paths = Copy names with path
+menu-copy-to-clip = Copy to clipboard
+menu-copy-src-path = This panel's path
+menu-copy-trg-path = The other panel's path
+menu-copy-dirs = The selected files' dirs
+menu-copy-details = File details
+menu-copy-details-hdr = File details with headers
+menu-save-details = Save details to file…
+menu-save-details-hdr = Save details with headers to file…
+copied-details = Details copied: { $n }
+details-saved = Rows saved: { $count }
 
 # Viewer (F3)
 lister-text = Text (1)

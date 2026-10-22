@@ -176,6 +176,31 @@ pub fn icon_name(e: &Entry) -> (String, &'static str) {
     }
 }
 
+/// TC «Copy file details» / «Save all shown columns to file»: a line per row, its columns as
+/// shown (name, extension, size, date, attributes) between tabs; `head`: their titles first.
+/// A row is (entry, its Size column as the panel shows it); a row with no details (`unknown`)
+/// has an empty date and attributes, as there.
+pub fn details_table(rows: &[(&Entry, String)], tz: &TimeZone, head: Option<[&str; 5]>) -> String {
+    let line = |e: &Entry, size: &str| {
+        let (date, attrs) = match e.unknown() {
+            true => (String::new(), String::new()),
+            false => (date(e.mtime, tz), attrs(e)),
+        };
+        [
+            display_name(e),
+            e.ext.clone(),
+            size.to_string(),
+            date,
+            attrs,
+        ]
+        .join("\t")
+    };
+    (head.map(|h| h.join("\t")).into_iter())
+        .chain(rows.iter().map(|(e, s)| line(e, s)))
+        .map(|l| l + "\n")
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +399,35 @@ mod tests {
         t.target = Some("/home/u/docs/a.txt".into());
         let line = details(&t, &TimeZone::UTC, &o, self::size);
         assert_eq!(line, "a.txt ← /home/u/docs/a.txt");
+    }
+
+    #[test]
+    fn details_are_the_shown_columns_by_tabs() {
+        use crate::listing::Kind;
+        let e = |name: &str, ext: &str, kind| Entry {
+            name: name.into(),
+            os_name: name.into(),
+            ext: ext.into(),
+            size: 1234,
+            mtime: SystemTime::UNIX_EPOCH,
+            kind,
+            is_link: false,
+            mode: 0o644,
+            owner: None,
+            target: None,
+        };
+        let (f, d) = (e("a.txt", "txt", Kind::File), e("sub", "", Kind::Dir));
+        let utc = TimeZone::UTC;
+        let text = details_table(&[(&f, "1 234".into()), (&d, "<DIR>".into())], &utc, None);
+        assert_eq!(
+            text,
+            "a\ttxt\t1 234\t01.01.1970 00:00\t-rw-r--r--\n[sub]\t\t<DIR>\t01.01.1970 00:00\tdrw-r--r--\n"
+        );
+        let head = details_table(
+            &[(&f, "1 234".into())],
+            &utc,
+            Some(["Name", "Ext", "Size", "Date", "Attr"]),
+        );
+        assert!(head.starts_with("Name\tExt\tSize\tDate\tAttr\na\t"));
     }
 }

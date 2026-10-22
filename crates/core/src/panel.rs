@@ -367,6 +367,18 @@ impl Panel {
             .get_or_init(|| self.sum(self.entries.iter().filter(|e| self.is_marked(e))))
     }
 
+    /// The rows `targets` stands for: the marked ones, else the one under the cursor (not `..`).
+    pub fn target_entries(&self) -> Vec<&Entry> {
+        let marked: Vec<&Entry> = self.entries.iter().filter(|e| self.is_marked(e)).collect();
+        if !marked.is_empty() {
+            return marked;
+        }
+        self.current()
+            .filter(|e| e.name != PARENT)
+            .into_iter()
+            .collect()
+    }
+
     /// What an operation acts on: marked entries (in list order), else the row under the cursor; never `..`.
     pub fn targets(&self) -> Vec<PathBuf> {
         let marked: Vec<PathBuf> = self
