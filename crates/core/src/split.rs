@@ -5,7 +5,10 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read, Write};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+
+use crate::why::{CRC_MISMATCH, MISSING_PART};
 
 /// A part size as typed: bytes, or with K / M / G (KB, MB, GB, any case, 1024-based), a decimal
 /// point allowed (`1.44M`, `700 MB`, `4,7G`). Zero or nonsense: `None`.
@@ -39,9 +42,11 @@ pub fn split(src: &Path, dir: &Path, size: u64) -> io::Result<Vec<PathBuf>> {
     let count = total.div_ceil(size).max(1) as usize;
     let crc_file = dir.join(crc_name(name));
     let parts: Vec<PathBuf> = (1..=count).map(|i| dir.join(part_name(name, i))).collect();
+    // One past the last, left from a split with a smaller size, would be joined with them.
+    let next = dir.join(part_name(name, count + 1));
     if let Some(there) = parts
         .iter()
-        .chain([&crc_file])
+        .chain([&crc_file, &next])
         .find(|p| p.symlink_metadata().is_ok())
     {
         return Err(io::Error::new(
@@ -63,7 +68,9 @@ pub fn split(src: &Path, dir: &Path, size: u64) -> io::Result<Vec<PathBuf>> {
             name.to_string_lossy(),
             crc.finalize()
         );
-        fs::File::create_new(&crc_file)?.write_all(line.as_bytes())?;
+        let mut f = fs::File::create_new(&crc_file)?;
+        made.push(crc_file.clone());
+        f.write_all(line.as_bytes())?;
         Ok(())
     })();
     if let Err(e) = result {
@@ -77,50 +84,63 @@ pub fn split(src: &Path, dir: &Path, size: u64) -> io::Result<Vec<PathBuf>> {
 /// are there, and the name to join them as (the `.crc`'s `filename=`, else `base`'s name).
 /// Not a part: `None`.
 pub fn parts_of(one: &Path) -> Option<(OsString, Vec<PathBuf>)> {
-    let name = one.file_name()?.to_str()?;
-    let (base, ext) = name.rsplit_once('.')?;
-    let digits = ext.len() >= 3 && ext.bytes().all(|b| b.is_ascii_digit());
-    if !(digits || ext.eq_ignore_ascii_case("crc")) {
+    let name = one.file_name()?.as_bytes();
+    let dot = name.iter().rposition(|&b| b == b'.')?;
+    let (base, ext) = (OsStr::from_bytes(&name[..dot]), &name[dot + 1..]);
+    let digits = ext.len() >= 3 && ext.iter().all(u8::is_ascii_digit);
+    if !(digits || ext.eq_ignore_ascii_case(b"crc")) {
         return None;
     }
     let dir = one.parent()?;
     let parts: Vec<PathBuf> = (1..)
-        .map(|i| dir.join(part_name(OsStr::new(base), i)))
+        .map(|i| dir.join(part_name(base, i)))
         .take_while(|p| p.is_file())
         .collect();
     if parts.is_empty() {
         return None;
     }
-    let info = crc_info(&dir.join(crc_name(OsStr::new(base))));
+    let info = crc_info(&dir.join(crc_name(base)));
     let joined = (info.as_ref())
         .and_then(|i| i.name.clone())
         .unwrap_or_else(|| base.into());
     Some((joined, parts))
 }
 
-/// Joins `parts` into `dir/name` (never over a file); with a `.crc` next to the first, checks
-/// the size and CRC: a mismatch is an error, the joined file left for a look.
+/// Joins `parts` into `dir/name` (never over a file: a hidden part file renamed at the end); with
+/// a `.crc` next to the first, checks the size and CRC: a mismatch is `CRC_MISMATCH`, the joined
+/// file left for a look. A later number past a gap is `MISSING_PART`, nothing written.
 pub fn combine(parts: &[PathBuf], dir: &Path, name: &OsStr) -> io::Result<PathBuf> {
+    let first = parts.first().ok_or(io::ErrorKind::InvalidInput)?;
+    let (base, dir_of) = (
+        first.file_stem().unwrap_or_default(),
+        first.parent().unwrap_or(dir),
+    );
+    if has_later_part(dir_of, base, parts.len() + 1) {
+        return Err(io::Error::other(MISSING_PART));
+    }
     let to_path = dir.join(name);
-    let mut to = fs::File::create_new(&to_path)?;
+    if to_path.symlink_metadata().is_ok() {
+        return Err(io::ErrorKind::AlreadyExists.into());
+    }
+    let mut part = OsString::from(".");
+    part.push(name);
+    part.push(format!(".{}.shagoff-part", std::process::id()));
+    let part = dir.join(part);
+    let mut to = fs::File::create_new(&part)?;
     let mut crc = crc32fast::Hasher::new();
     let mut total = 0;
     let joined = (|| {
         for p in parts {
             total += copy_n(&mut fs::File::open(p)?, &mut to, u64::MAX, &mut crc)?;
         }
-        to.flush()
+        to.flush()?;
+        drop(to);
+        crate::ops::rename_noreplace(&part, &to_path)
     })();
     if let Err(e) = joined {
-        drop(to);
-        let _ = fs::remove_file(&to_path);
+        let _ = fs::remove_file(&part);
         return Err(e);
     }
-    let base = parts
-        .first()
-        .and_then(|p| p.file_stem())
-        .unwrap_or_default();
-    let dir_of = parts.first().and_then(|p| p.parent()).unwrap_or(dir);
     if let Some(info) = crc_info(&dir_of.join(crc_name(base))) {
         let crc = crc.finalize();
         if info.size.is_some_and(|s| s != total) || info.crc.is_some_and(|c| c != crc) {
@@ -130,8 +150,20 @@ pub fn combine(parts: &[PathBuf], dir: &Path, name: &OsStr) -> io::Result<PathBu
     Ok(to_path)
 }
 
-/// `combine`'s error when the joined file is not the one the `.crc` describes.
-pub const CRC_MISMATCH: &str = "crc mismatch";
+/// A part numbered `from` or more in `dir` (`base.NNN`): the parts found end at a gap.
+fn has_later_part(dir: &Path, base: &OsStr, from: usize) -> bool {
+    let Ok(list) = fs::read_dir(dir) else {
+        return false;
+    };
+    list.flatten().any(|e| {
+        let name = e.file_name().into_vec();
+        let num = (name.strip_prefix(base.as_bytes()))
+            .and_then(|n| n.strip_prefix(b"."))
+            .filter(|n| n.len() >= 3 && n.iter().all(u8::is_ascii_digit))
+            .and_then(|n| std::str::from_utf8(n).ok()?.parse::<usize>().ok());
+        num.is_some_and(|n| n >= from)
+    })
+}
 
 fn crc_name(name: &OsStr) -> OsString {
     let mut n = name.to_os_string();
@@ -147,8 +179,12 @@ struct CrcInfo {
 }
 
 fn crc_info(file: &Path) -> Option<CrcInfo> {
-    let text = fs::read(file).ok()?;
-    let text = String::from_utf8_lossy(&text);
+    let bytes = fs::read(file).ok()?;
+    // UTF-8 (a BOM dropped), else the ANSI page TC writes on a Russian Windows.
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(t) => t.trim_start_matches('\u{feff}').to_owned(),
+        Err(_) => encoding_rs::WINDOWS_1251.decode(&bytes).0.into_owned(),
+    };
     let field = |key: &str| {
         (text.lines())
             .find_map(|l| l.trim().strip_prefix(key)?.strip_prefix('='))
@@ -239,6 +275,22 @@ mod tests {
         fs::write(&parts[1], vec![0u8; 1000]).unwrap();
         let err = combine(&found, &out, OsStr::new("again.bin")).unwrap_err();
         assert_eq!(err.to_string(), CRC_MISMATCH);
+        // A gap in the numbers: said, nothing joined.
+        fs::remove_file(out.join("big.bin")).unwrap();
+        fs::rename(&parts[1], parts_dir.join("big.bin.009")).unwrap();
+        let (name, found) = parts_of(&parts[0]).unwrap();
+        let err = combine(&found, &out, &name).unwrap_err();
+        assert_eq!(err.to_string(), MISSING_PART);
+        assert_eq!(fs::read_dir(&out).unwrap().count(), 1); // again.bin only
+        // TC's .crc: a BOM, or the name in cp1251.
+        fs::write(parts_dir.join("big.bin.crc"), "\u{feff}filename=x.bin\r\n").unwrap();
+        assert_eq!(parts_of(&parts[0]).unwrap().0, OsStr::new("x.bin"));
+        fs::write(
+            parts_dir.join("big.bin.crc"),
+            b"filename=\xcf\xf0\xe8.bin\r\n",
+        )
+        .unwrap();
+        assert_eq!(parts_of(&parts[0]).unwrap().0, OsStr::new("При.bin"));
         // A .crc naming a path is not followed.
         fs::write(parts_dir.join("big.bin.crc"), "filename=../evil\r\n").unwrap();
         assert_eq!(parts_of(&parts[0]).unwrap().0, OsStr::new("big.bin"));
