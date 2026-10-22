@@ -240,7 +240,7 @@
 - [x] 183. Вкладки: список вкладок Ctrl+Shift+A (`cm_*TabsList`), вкладка по номеру (`cm_*ActivateTab1…`), новая в фоне Ctrl+Shift+T (`cm_OpenNewTabBg`), в другой панели (`cm_OpenNewTabOther`), закрыть дубликаты / все (`cm_CloseDuplicateTabs`, `cm_CloseAllTabs`), закрепить / открепить все (`cm_SetAllTabsOption…`), в базовый каталог закреплённой (`cm_GoToLockedDir`) (вкладка по номеру — через список Ctrl+Shift+A, где они пронумерованы; своих клавиш `cm_SrcActivateTabN` пока нет)
 - [x] 184. Новый файл по шаблону (`cm_EditFileMenu`): список из `~/Шаблоны` (`XDG_TEMPLATES_DIR`)
 - [x] 185. Разрезать / собрать файл (`cm_Split`, `cm_Combine`)
-- [ ] 186. Упаковать с удалением исходных (`cm_MoveToArchive`): флажок в Alt+F5
+- [x] 186. Упаковать с удалением исходных (`cm_MoveToArchive`): флажок в Alt+F5
 - [ ] 187. Сравнение каталогов с подкаталогами и «скрыть одинаковые» (`cm_CompareDirsWithSubdirs`, `cm_DirMatch`)
 - [ ] 188. Список исключений — имена, которые не показывать (`cm_SwitchIgnoreList`); переключатели: автообновление (`cm_SwitchWatchDirs`), каталоги всегда по имени (`cm_SwitchDirSort`), цвета по типам (`cm_SwitchColorsByFileType`), без сортировки (`cm_*Unsorted`)
 - [ ] 189. Показ частей окна из меню «Вид» (`cm_Vis*`: панель инструментов, кнопки дисков, вкладки, строка пути, заголовки колонок, строка состояния, командная строка, F-кнопки); ширина панели 50 % / 100 % (`cm_50Percent`, `cm_100Percent`)

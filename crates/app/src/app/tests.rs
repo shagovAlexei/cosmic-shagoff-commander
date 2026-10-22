@@ -6725,3 +6725,23 @@ fn split_offers_the_other_panel_and_combine_only_takes_parts() {
         Some(Dialog::Input { op: InputOp::Combine, sources, .. }) if sources.len() == 1
     ));
 }
+
+#[test]
+fn move_to_archive_opens_alt_f5_with_delete_sources_on() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("a.txt"), "a").unwrap();
+    let mut app = app_with(Config::default(), State::default());
+    let tab = app.panes[0].active_mut();
+    tab.pending = None;
+    let entries = listing::scan(d.path(), false).unwrap();
+    tab.panel
+        .set_listing(d.path().to_path_buf(), entries, Some("a.txt"));
+    for (action, delete) in [(Action::Pack, false), (Action::MoveToArchive, true)] {
+        app.dialog = None;
+        let _ = app.update(Message::Key(action));
+        let Some(Dialog::Pack(p)) = &app.dialog else {
+            panic!("{action:?}: no pack dialog");
+        };
+        assert_eq!(p.move_after, delete, "{action:?}");
+    }
+}

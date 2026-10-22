@@ -141,6 +141,8 @@ pub enum Action {
     MultiRename,
     /// Alt+F5 / Alt+F9: pack the targets / unpack the archives among them.
     Pack,
+    /// Alt+Shift+F5: Alt+F5 with «Move to archive» on (TC `cm_MoveToArchive`).
+    MoveToArchive,
     Unpack,
     /// Files → the encoding of a zip's names (TC `cm_ChangeArchiveEncoding`, no key there).
     ArchiveEncoding,
@@ -345,6 +347,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             Key::Named(Named::F8) if mods == Modifiers::ALT => Some(Action::CmdHistory),
             Key::Named(Named::F9) if mods == Modifiers::ALT => Some(Action::Unpack),
             Key::Named(Named::F10) if mods == Modifiers::ALT => Some(Action::TreeDialog),
+            Key::Named(Named::F5) if mods == Modifiers::ALT | Modifiers::SHIFT => {
+                Some(Action::MoveToArchive)
+            }
             Key::Named(Named::F9) if mods == Modifiers::ALT | Modifiers::SHIFT => {
                 Some(Action::TestArchives)
             }
@@ -828,7 +833,10 @@ mod tests {
     fn alt_f5_f9_pack_unpack() {
         assert_eq!(named(Named::F5, ALT), Some(Action::Pack));
         assert_eq!(named(Named::F9, ALT), Some(Action::Unpack));
-        assert_eq!(named(Named::F5, ALT | Modifiers::SHIFT), None);
+        assert_eq!(
+            named(Named::F5, ALT | Modifiers::SHIFT),
+            Some(Action::MoveToArchive)
+        );
     }
 
     #[test]

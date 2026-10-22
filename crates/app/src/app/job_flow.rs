@@ -36,7 +36,9 @@ impl App {
             // Shift+F5 inside one copies from the archive into itself.
             Action::CopySame | Action::NewFile | Action::NewFromTemplate => inside(side),
             // A link to or into an archive's inside would point at nothing on disk.
-            Action::Pack | Action::Unpack | Action::Link => inside(side) || inside(1 - side),
+            Action::Pack | Action::MoveToArchive | Action::Unpack | Action::Link => {
+                inside(side) || inside(1 - side)
+            }
             Action::ChecksumCreate => inside(side),
             // Parts are read and written as files on disk.
             Action::SplitFile | Action::CombineFiles => inside(side) || inside(1 - side),

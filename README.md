@@ -42,6 +42,7 @@ Total Commander's layout, so the hands already know it:
 | Insert, Space, Num+ / Num− | Mark one / by mask |
 | Alt+F7 | Find files |
 | Alt+F5 / Alt+F9 | Pack / unpack |
+| Alt+Shift+F5 | Move to archive (pack, then delete the sources) |
 | Ctrl+B | Branch view: every file below, in one list |
 | Ctrl+D | Hotlist |
 | Ctrl+F | Connect to a server (sftp, smb, ftp, dav) |

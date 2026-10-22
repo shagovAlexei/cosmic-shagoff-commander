@@ -176,9 +176,16 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                             .filter(|s| r.completed.contains(s))
                             .cloned()
                             .collect();
-                        // Unreadable (a password on its names): delete nothing.
-                        let Ok(packed) = archive::packed(dest) else {
-                            continue;
+                        // Not read back: delete nothing, and say so.
+                        let packed = match archive::packed(dest) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                if h.error(dest, &e) == ErrorChoice::Cancel {
+                                    r.cancelled = true;
+                                    break;
+                                }
+                                continue;
+                            }
                         };
                         let mut kept = |p: &Path, m: &std::fs::Metadata| {
                             let rel = p.strip_prefix(&base).unwrap_or(p);

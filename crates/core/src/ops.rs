@@ -186,7 +186,11 @@ pub fn delete_kept(
     let mut report = Report::default();
     for src in sources {
         match prune(src, kept, h) {
-            Ok(true) => report.completed.push(src.clone()),
+            Ok(true) => {
+                // Moved out of the trash: its info goes too, as with `delete`.
+                crate::trashcan::forget(src);
+                report.completed.push(src.clone());
+            }
             Ok(false) => {}
             Err(()) => {
                 report.cancelled = true;

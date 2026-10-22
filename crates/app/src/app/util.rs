@@ -330,6 +330,7 @@ pub(super) fn on_files(a: Action) -> bool {
             | A::NewFromTemplate
             | A::Link
             | A::Pack
+            | A::MoveToArchive
             | A::Unpack
             | A::TestArchives
             | A::ChecksumCreate
