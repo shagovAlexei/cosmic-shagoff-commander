@@ -6727,7 +6727,7 @@ fn split_offers_the_other_panel_and_combine_only_takes_parts() {
 }
 
 #[test]
-fn move_to_archive_is_alt_f5_with_the_sources_deleted() {
+fn move_to_archive_opens_alt_f5_with_delete_sources_on() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("a.txt"), "a").unwrap();
     let mut app = app_with(Config::default(), State::default());
