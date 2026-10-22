@@ -506,6 +506,9 @@ pub struct App {
     /// Command line under the panels (TC `path>`): its text, field id, history (last first).
     pub cmdline: String,
     pub(crate) cmd_id: widget::Id,
+    /// The path line being edited: its pane and text (`PathEditStart`).
+    pub(crate) path_edit: Option<(usize, String)>,
+    pub(crate) path_id: widget::Id,
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first: the dialog opens with the last, ↑ / ↓ go through them.
     pub masks: Vec<String>,
@@ -813,6 +816,10 @@ pub enum Message {
     ColDragEnd,
     /// A part of the path line clicked: go there, the cursor on the dir we came from.
     PathPart(usize, PathBuf),
+    /// The path line as a field (TC `cm_EditPath`): opened on this pane, typed, Enter.
+    PathEditStart(usize),
+    PathEdit(String),
+    PathEditGo,
     CloseDrawer,
     Setting(Setting),
     /// Tab in a settings field.
@@ -1291,6 +1298,8 @@ impl App {
             connecting: None,
             cmdline: String::new(),
             cmd_id: widget::Id::unique(),
+            path_edit: None,
+            path_id: widget::Id::unique(),
             commands: state.commands.clone(),
             masks: state.masks.clone(),
             other_cmds: state.other_cmds.clone(),
@@ -2756,6 +2765,9 @@ impl App {
                 )));
             }
             // Esc during a header-edge drag: back to the widths before it.
+            Message::Escape(_) if self.path_edit.is_some() && self.dialog.is_none() => {
+                self.path_edit = None;
+            }
             Message::Escape(_) if self.col_drag.is_some() => {
                 self.col_drag = None;
                 self.cols = self.config.columns;
@@ -3376,6 +3388,32 @@ impl App {
                     return self.act(from, action);
                 }
             }
+            Message::PathEditStart(side) => return self.edit_path(side),
+            Message::PathEdit(s) => {
+                if let Some((_, text)) = &mut self.path_edit {
+                    *text = s;
+                }
+            }
+            Message::PathEditGo => {
+                let Some((side, text)) = self.path_edit.take() else {
+                    return Task::none();
+                };
+                if self.busy() {
+                    return Task::none();
+                }
+                let home = std::env::home_dir().unwrap_or_else(|| "/".into());
+                let cwd = self.shown(self.panes[side].active().panel.cwd());
+                let path = self.real(&cmdline::resolve(&text, &cwd, &home));
+                // A file: its dir, the cursor on it (an archive is entered, as Enter does).
+                let file = path.is_file() && archive::split_path(&path).is_none();
+                return match (file, path.parent(), path.file_name()) {
+                    (true, Some(dir), Some(name)) => {
+                        let name = name.to_string_lossy().into_owned();
+                        self.load(side, dir.to_path_buf(), Some(name))
+                    }
+                    _ => self.load(side, path, None),
+                };
+            }
             Message::PathPart(side, path) => {
                 self.search = None;
                 if self.busy() {
@@ -3864,8 +3902,25 @@ impl App {
     }
 
     /// Go to `path` in the active tab (leaves search results).
+    /// The pane's path line becomes a field with its path, all selected (TC `cm_EditPath`).
+    fn edit_path(&mut self, side: usize) -> Task<Message> {
+        if self.busy() {
+            return Task::none();
+        }
+        self.active = side;
+        let shown = self.shown(self.panes[side].active().panel.cwd());
+        self.path_edit = Some((side, shown.to_string_lossy().into_owned()));
+        Task::batch([
+            widget::text_input::focus(self.path_id.clone()),
+            widget::text_input::select_all(self.path_id.clone()),
+        ])
+    }
+
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
         let path = self.real(&path);
+        if self.path_edit.as_ref().is_some_and(|(s, _)| *s == side) {
+            self.path_edit = None;
+        }
         // A locked tab keeps its dir: going elsewhere happens in a new tab next to it (TC).
         if path != self.panes[side].active().panel.cwd() {
             self.leave_locked(side);
@@ -4124,6 +4179,12 @@ impl App {
         }
         if let Some(task) = self.tree_act(side, action) {
             return task;
+        }
+        // TC: Shift+F6 on `..` with nothing marked renames the path, i.e. edits it.
+        let p = &self.panes[side].active().panel;
+        let on_parent = p.current().is_some_and(|e| e.name == PARENT) && p.targets().is_empty();
+        if action == Action::EditPath || (action == Action::Rename && on_parent) {
+            return self.edit_path(side);
         }
         // Names there are paths: Ctrl+M would move files between dirs, Shift+F2 compares by name.
         if matches!(action, Action::MultiRename | Action::CompareLists)
@@ -4589,6 +4650,8 @@ impl App {
                 );
             }
             Action::TreePanel => {} // `tree_act`
+            // Taken at the top of `act`.
+            Action::EditPath => {}
             Action::TreeDialog => {
                 let hidden = panel.show_hidden();
                 let cwd = panel.cwd().to_path_buf();
@@ -9835,6 +9898,34 @@ mod tests {
         l.name = "a.txt".into();
         lister_loaded(&mut app, tmp.path());
         assert!(!ticking(&app));
+    }
+
+    #[test]
+    fn the_path_line_is_edited_and_goes_there() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let editing = |app: &App| app.path_edit.as_ref().map(|(s, t)| (*s, t.clone()));
+        // A file under the cursor: Shift+F6 renames it, as always.
+        let _ = app.update(Message::Key(Action::Rename));
+        assert!(app.dialog.is_some() && editing(&app).is_none());
+        let _ = app.update(Message::DialogCancel);
+        // On `..` with nothing marked: the path (TC).
+        let _ = app.update(Message::Key(Action::Home));
+        let _ = app.update(Message::Key(Action::Rename));
+        let cwd = tmp.path().to_string_lossy().into_owned();
+        assert_eq!(editing(&app), Some((0, cwd.clone())));
+        let _ = app.update(Message::Escape(app.window_id()));
+        assert_eq!(editing(&app), None);
+        // A relative dir; a file: its dir with the cursor on it; a click on the other pane's line.
+        let _ = app.update(Message::Key(Action::EditPath));
+        let _ = app.update(Message::PathEdit("sub".into()));
+        let _ = app.update(Message::PathEditGo);
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+        assert_eq!(editing(&app), None);
+        let _ = app.update(Message::PathEditStart(1));
+        assert_eq!(app.active, 1);
+        let _ = app.update(Message::PathEdit(format!("{cwd}/a.txt")));
+        let _ = app.update(Message::PathEditGo);
+        assert_eq!(app.panes[1].active().target(), tmp.path());
     }
 
     #[test]

@@ -23,6 +23,8 @@ pub enum Action {
     TestArchives,
     /// Files → «Create checksum files» (TC `cm_CRCcreate`, no default key).
     ChecksumCreate,
+    /// The path line as a field (TC `cm_EditPath`; no key there either).
+    EditPath,
     /// Files → «Verify checksums» (TC `cm_CRCcheck`).
     ChecksumVerify,
     /// Alt+F10: go to a dir chosen in a tree (TC «Change directory via tree»).
