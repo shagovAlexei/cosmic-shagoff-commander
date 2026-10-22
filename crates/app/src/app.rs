@@ -820,6 +820,10 @@ pub enum Message {
     PathEditStart(usize),
     PathEdit(String),
     PathEditGo,
+    /// The field lost the focus (TC leaves the edit then).
+    PathEditCancel,
+    /// Where Enter goes, found off the UI thread: the pane, the path, the file to put the cursor on.
+    PathEditFound(usize, PathBuf, Option<String>),
     CloseDrawer,
     Setting(Setting),
     /// Tab in a settings field.
@@ -2764,10 +2768,11 @@ impl App {
                     window,
                 )));
             }
-            // Esc during a header-edge drag: back to the widths before it.
+            // The path line's field has the focus (it closes when it loses it).
             Message::Escape(_) if self.path_edit.is_some() && self.dialog.is_none() => {
                 self.path_edit = None;
             }
+            // Esc during a header-edge drag: back to the widths before it.
             Message::Escape(_) if self.col_drag.is_some() => {
                 self.col_drag = None;
                 self.cols = self.config.columns;
@@ -3404,13 +3409,28 @@ impl App {
                 let home = std::env::home_dir().unwrap_or_else(|| "/".into());
                 let cwd = self.shown(self.panes[side].active().panel.cwd());
                 let path = self.real(&cmdline::resolve(&text, &cwd, &home));
+                // Off the UI thread: a dead network mount would hang a stat.
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let focus = file_in_its_dir(&path);
+                            (path, focus)
+                        })
+                        .await
+                    },
+                    move |r| match r {
+                        Ok((path, focus)) => {
+                            cosmic::Action::App(Message::PathEditFound(side, path, focus))
+                        }
+                        Err(_) => cosmic::Action::None,
+                    },
+                );
+            }
+            Message::PathEditCancel => self.path_edit = None,
+            Message::PathEditFound(side, path, focus) => {
                 // A file: its dir, the cursor on it (an archive is entered, as Enter does).
-                let file = path.is_file() && archive::split_path(&path).is_none();
-                return match (file, path.parent(), path.file_name()) {
-                    (true, Some(dir), Some(name)) => {
-                        let name = name.to_string_lossy().into_owned();
-                        self.load(side, dir.to_path_buf(), Some(name))
-                    }
+                return match (focus, path.parent()) {
+                    (Some(name), Some(dir)) => self.load(side, dir.to_path_buf(), Some(name)),
                     _ => self.load(side, path, None),
                 };
             }
@@ -3901,12 +3921,13 @@ impl App {
             .map_or_else(|| p.to_path_buf(), |(_, real)| real)
     }
 
-    /// Go to `path` in the active tab (leaves search results).
     /// The pane's path line becomes a field with its path, all selected (TC `cm_EditPath`).
     fn edit_path(&mut self, side: usize) -> Task<Message> {
-        if self.busy() {
+        // Not under the viewer in the panels' place: no path line there.
+        if self.busy() || self.viewer() {
             return Task::none();
         }
+        self.search = None;
         self.active = side;
         let shown = self.shown(self.panes[side].active().panel.cwd());
         self.path_edit = Some((side, shown.to_string_lossy().into_owned()));
@@ -3916,11 +3937,9 @@ impl App {
         ])
     }
 
+    /// Go to `path` in the active tab (leaves search results).
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
         let path = self.real(&path);
-        if self.path_edit.as_ref().is_some_and(|(s, _)| *s == side) {
-            self.path_edit = None;
-        }
         // A locked tab keeps its dir: going elsewhere happens in a new tab next to it (TC).
         if path != self.panes[side].active().panel.cwd() {
             self.leave_locked(side);
@@ -9113,6 +9132,23 @@ fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
 
 /// Like `spawn_in`, but a failure is reported (`Message::ToolFailed`): a toolbar button's shell
 /// always starts, so "command not found" and the like only show in its exit status and stderr.
+/// `path`'s name if it is a file (on disk or in an archive: its dir's listing says), not a dir or
+/// an archive to enter. Reads the disk: off the UI thread.
+fn file_in_its_dir(path: &Path) -> Option<String> {
+    let (dir, name) = (path.parent()?, path.file_name()?.to_string_lossy());
+    if path.is_dir()
+        || archive::split_path(path).is_some_and(|(_, inner)| inner.as_os_str().is_empty())
+    {
+        return None;
+    }
+    let e = listing::scan(dir, true)
+        .ok()?
+        .into_iter()
+        .find(|e| e.name == name)?;
+    let enter = e.is_dir() || archive::Format::detect(&e.name).is_some_and(|f| f.is_tree());
+    (!enter).then(|| e.name)
+}
+
 fn run_watched(argv: &[String], dir: &Path) -> std::io::Result<Task<Message>> {
     use std::io::BufRead;
     use std::process::Stdio;
@@ -9918,14 +9954,31 @@ mod tests {
         // A relative dir; a file: its dir with the cursor on it; a click on the other pane's line.
         let _ = app.update(Message::Key(Action::EditPath));
         let _ = app.update(Message::PathEdit("sub".into()));
-        let _ = app.update(Message::PathEditGo);
-        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
+        let _ = app.update(Message::PathEditGo); // checked off the UI thread, then:
         assert_eq!(editing(&app), None);
+        let _ = app.update(Message::PathEditFound(0, tmp.path().join("sub"), None));
+        assert_eq!(app.panes[0].active().target(), tmp.path().join("sub"));
         let _ = app.update(Message::PathEditStart(1));
         assert_eq!(app.active, 1);
-        let _ = app.update(Message::PathEdit(format!("{cwd}/a.txt")));
-        let _ = app.update(Message::PathEditGo);
+        let _ = app.update(Message::PathEditCancel); // clicked elsewhere
+        assert_eq!(editing(&app), None);
+        let a = tmp.path().join("a.txt");
+        let _ = app.update(Message::PathEditFound(1, a.clone(), Some("a.txt".into())));
         assert_eq!(app.panes[1].active().target(), tmp.path());
+        // What is a file: on disk and inside an archive; a dir and an archive are entered.
+        let zip = tmp.path().join("z.zip");
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&zip).unwrap());
+        w.start_file("in.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        w.finish().unwrap();
+        assert_eq!(file_in_its_dir(&a).as_deref(), Some("a.txt"));
+        assert_eq!(
+            file_in_its_dir(&zip.join("in.txt")).as_deref(),
+            Some("in.txt")
+        );
+        for enter in [tmp.path().join("sub"), zip.clone(), tmp.path().join("none")] {
+            assert_eq!(file_in_its_dir(&enter), None, "{enter:?}");
+        }
     }
 
     #[test]

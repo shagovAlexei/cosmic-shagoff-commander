@@ -218,6 +218,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
                 .id(app.path_id.clone())
                 .on_input(Message::PathEdit)
                 .on_submit(|_| Message::PathEditGo)
+                .on_unfocus(Message::PathEditCancel)
                 .size(TEXT)
                 .padding([2, 6])
                 .width(Length::Fill)
