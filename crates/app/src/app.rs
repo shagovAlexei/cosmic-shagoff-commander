@@ -9146,7 +9146,7 @@ fn file_in_its_dir(path: &Path) -> Option<String> {
         .into_iter()
         .find(|e| e.name == name)?;
     let enter = e.is_dir() || archive::Format::detect(&e.name).is_some_and(|f| f.is_tree());
-    (!enter).then(|| e.name)
+    (!enter).then_some(e.name)
 }
 
 fn run_watched(argv: &[String], dir: &Path) -> std::io::Result<Task<Message>> {
