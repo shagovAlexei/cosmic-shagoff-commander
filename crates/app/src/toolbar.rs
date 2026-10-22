@@ -236,6 +236,48 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-show-only-marked"
         ),
         b!(
+            "cm_CopySrcPathToClip",
+            CopySrcPath,
+            "edit-copy-symbolic",
+            "menu-copy-src-path"
+        ),
+        b!(
+            "cm_CopyTrgPathToClip",
+            CopyTrgPath,
+            "edit-copy-symbolic",
+            "menu-copy-trg-path"
+        ),
+        b!(
+            "cm_CopyPathOfFilesToClip",
+            CopyDirsOfFiles,
+            "edit-copy-symbolic",
+            "menu-copy-dirs"
+        ),
+        b!(
+            "cm_CopyFileDetailsToClip",
+            CopyDetails,
+            "edit-copy-symbolic",
+            "menu-copy-details"
+        ),
+        b!(
+            "cm_CopyHdrFileDetailsToClip",
+            CopyDetailsHdr,
+            "edit-copy-symbolic",
+            "menu-copy-details-hdr"
+        ),
+        b!(
+            "cm_SaveDetailsToFile",
+            SaveDetails,
+            "document-save-as-symbolic",
+            "menu-save-details"
+        ),
+        b!(
+            "cm_SaveHdrDetailsToFile",
+            SaveDetailsHdr,
+            "document-save-as-symbolic",
+            "menu-save-details-hdr"
+        ),
+        b!(
             "cm_ChangeStartMenu",
             ConfigureStartMenu,
             "document-edit-symbolic",

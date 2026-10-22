@@ -353,6 +353,16 @@ copied-paths = { $n ->
 }
 menu-copy-names = Копировать имена в буфер
 menu-copy-paths = Копировать имена с путём
+menu-copy-to-clip = Копировать в буфер
+menu-copy-src-path = Путь этой панели
+menu-copy-trg-path = Путь другой панели
+menu-copy-dirs = Каталоги выделенных файлов
+menu-copy-details = Сведения о файлах
+menu-copy-details-hdr = Сведения о файлах с заголовками
+menu-save-details = Сохранить сведения в файл…
+menu-save-details-hdr = Сохранить сведения с заголовками в файл…
+copied-details = Скопированы сведения: { $n }
+details-saved = Сохранено строк: { $count }
 
 # Просмотр (F3)
 lister-text = Текст (1)

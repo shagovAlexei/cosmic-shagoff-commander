@@ -795,6 +795,23 @@ pub fn size_text(config: &crate::config::Config, n: u64) -> String {
     }
 }
 
+/// The Size column of a row: a dir its size once Space counted it, else `<DIR>`; as the
+/// settings show sizes (also copied by «File details»).
+pub fn size_cell(app: &App, panel: &shagoff_core::panel::Panel, e: &Entry) -> String {
+    let bytes = if e.is_dir() {
+        panel.dir_size(e)
+    } else {
+        Some(e.size)
+    };
+    let modern = app.config.skin == Skin::Modern;
+    match bytes {
+        None => "<DIR>".to_string(),
+        Some(_) if e.unknown() => String::new(),
+        Some(b) if format::human_size(b, app.config.human_sizes, modern) => human(b),
+        Some(b) => format::size(b),
+    }
+}
+
 pub fn human(n: u64) -> String {
     let units = fl!("size-units");
     let units: [&str; 6] = units
@@ -954,19 +971,7 @@ fn file_row<'a>(
     is_marked: bool,
 ) -> Element<'a, Message> {
     let is_parent = e.name == PARENT;
-    // A dir shows its size once Space counted it.
-    let bytes = if e.is_dir() {
-        app.panes[side].active().panel.dir_size(e)
-    } else {
-        Some(e.size)
-    };
-    let modern = app.config.skin == Skin::Modern;
-    let size = match bytes {
-        None => "<DIR>".to_string(),
-        Some(_) if e.unknown() => String::new(),
-        Some(b) if format::human_size(b, app.config.human_sizes, modern) => human(b),
-        Some(b) => format::size(b),
-    };
+    let size = size_cell(app, &app.panes[side].active().panel, e);
     let (date, attrs) = if is_parent || e.unknown() {
         (String::new(), String::new())
     } else {

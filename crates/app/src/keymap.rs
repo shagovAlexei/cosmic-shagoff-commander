@@ -30,6 +30,18 @@ pub enum Action {
     PrevMarked,
     /// View → only the marked rows (TC `cm_ShowOnlySelected`).
     ShowOnlyMarked,
+    /// Mark → clipboard: this / the other panel's path, the dirs of the targets (TC
+    /// `cm_CopySrcPathToClip`, `cm_CopyTrgPathToClip`, `cm_CopyPathOfFilesToClip`).
+    CopySrcPath,
+    CopyTrgPath,
+    CopyDirsOfFiles,
+    /// The targets' shown columns, by tabs; with the column titles first (TC
+    /// `cm_CopyFileDetailsToClip`, `cm_CopyHdrFileDetailsToClip`).
+    CopyDetails,
+    CopyDetailsHdr,
+    /// Every row's shown columns into a file (TC `cm_SaveDetailsToFile`, `cm_SaveHdrDetailsToFile`).
+    SaveDetails,
+    SaveDetailsHdr,
     /// Shift+F10 / the Menu key: the row's context menu as a list (keyboard).
     ContextMenu,
     /// Ctrl+← / Ctrl+→: what is under the cursor opened in the left / right panel (TC).

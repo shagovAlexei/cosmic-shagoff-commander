@@ -524,13 +524,30 @@ pub struct App {
 /// Mark → «Save selection to file…»: the file offered, in the panel's dir.
 const MARKS_FILE: &str = "selection.txt";
 
-/// `MARKS_FILE` in the panel's dir; inside an archive, next to it (that is no place to write).
+/// Mark → «Save details to file…»: the file offered.
+const DETAILS_FILE: &str = "details.txt";
+
 fn marks_file(panel: &Panel) -> String {
-    let dir = match archive::split_path(panel.cwd()) {
+    offered_file(panel, MARKS_FILE)
+}
+
+/// Where a file of ours goes: the panel's dir; inside an archive, next to it (that is no place
+/// to write).
+fn writable_dir(panel: &Panel) -> PathBuf {
+    match archive::split_path(panel.cwd()) {
         Some((arc, _)) => arc.parent().map(Path::to_path_buf).unwrap_or_default(),
         None => panel.cwd().to_path_buf(),
-    };
-    dir.join(MARKS_FILE).display().to_string()
+    }
+}
+
+fn offered_file(panel: &Panel, name: &str) -> String {
+    writable_dir(panel).join(name).display().to_string()
+}
+
+/// Write `text` to a new file: one that is there is not written over (TC asks; here: refused).
+// ponytail: on the UI thread, a few KB; a dead mount hangs it.
+fn write_new(file: &Path, text: &str) -> std::io::Result<()> {
+    std::io::Write::write_all(&mut std::fs::File::create_new(file)?, text.as_bytes())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4358,6 +4375,43 @@ impl App {
                 });
                 return Task::none();
             }
+            Action::CopySrcPath | Action::CopyTrgPath | Action::CopyDirsOfFiles => {
+                let s = match action {
+                    Action::CopyTrgPath => 1 - side,
+                    _ => side,
+                };
+                let panel = &self.panes[s].active().panel;
+                let mut dirs: Vec<PathBuf> = match action {
+                    // In search results each file's own dir; once each, in the panel's order.
+                    Action::CopyDirsOfFiles => (panel.targets().iter())
+                        .filter_map(|p| p.parent().map(Path::to_path_buf))
+                        .collect(),
+                    _ => vec![panel.cwd().to_path_buf()],
+                };
+                let mut seen = std::collections::HashSet::new();
+                dirs.retain(|d| seen.insert(d.clone()));
+                if dirs.is_empty() {
+                    return Task::none();
+                }
+                let dirs: Vec<PathBuf> = dirs.iter().map(|d| self.shown(d)).collect();
+                let text = shagoff_core::clipboard::names_text(&dirs, true);
+                self.say(
+                    StatusKind::Info,
+                    fl!("copied-paths", n = dirs.len(), text = text.clone()),
+                );
+                return cosmic::iced::clipboard::write(text);
+            }
+            Action::CopyDetails | Action::CopyDetailsHdr => {
+                let panel = &self.panes[side].active().panel;
+                let rows = panel.target_entries();
+                if rows.is_empty() {
+                    return Task::none();
+                }
+                let n = rows.len();
+                let text = self.details_text(panel, &rows, action == Action::CopyDetailsHdr);
+                self.say(StatusKind::Info, fl!("copied-details", n = n));
+                return cosmic::iced::clipboard::write(text);
+            }
             Action::CopyNames | Action::CopyPaths => {
                 let paths = self.panes[side].active().panel.targets();
                 if paths.is_empty() {
@@ -4966,6 +5020,11 @@ impl App {
             | Action::OpenWith
             | Action::CopyNames
             | Action::CopyPaths
+            | Action::CopySrcPath
+            | Action::CopyTrgPath
+            | Action::CopyDirsOfFiles
+            | Action::CopyDetails
+            | Action::CopyDetailsHdr
             | Action::CmdName
             | Action::CmdPath
             | Action::CmdCwd
@@ -5077,7 +5136,9 @@ impl App {
             | Action::Delete
             | Action::DeletePermanent
             | Action::SaveMarksToFile
-            | Action::LoadMarksFromFile => {}
+            | Action::LoadMarksFromFile
+            | Action::SaveDetails
+            | Action::SaveDetailsHdr => {}
             // Opened by `dialog_for` above.
             Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => {}
             // Also the drive list: a stick plugged in shows up (TC rereads drives too).
@@ -5219,6 +5280,16 @@ impl App {
             Action::LoadMarksFromFile => {
                 Some(input(InputOp::LoadMarks, Vec::new(), marks_file(panel)))
             }
+            Action::SaveDetails | Action::SaveDetailsHdr
+                if panel.entries().iter().all(|e| e.name == PARENT) =>
+            {
+                None
+            }
+            Action::SaveDetails | Action::SaveDetailsHdr => Some(input(
+                InputOp::SaveDetails(action == Action::SaveDetailsHdr),
+                Vec::new(),
+                offered_file(panel, DETAILS_FILE),
+            )),
             Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => Some(Dialog::Mask {
                 side,
                 op: match action {
@@ -5681,23 +5752,14 @@ impl App {
                 input,
                 ..
             } => {
-                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
-                let file = cwd.join(session::expand_home(Path::new(input.trim()), &self.home));
+                let file = writable_dir(&self.panes[side].active().panel)
+                    .join(session::expand_home(Path::new(input.trim()), &self.home));
                 let panel = &mut self.panes[side].active_mut().panel;
                 let done = match op {
                     InputOp::SaveMarks => {
                         let names = panel.marked_names();
                         let n = names.len();
-                        // An existing file is not written over (TC asks; here: say so).
-                        // ponytail: on the UI thread, a few hundred bytes; a dead mount hangs it.
-                        (std::fs::File::create_new(&file))
-                            .and_then(|mut f| {
-                                std::io::Write::write_all(
-                                    &mut f,
-                                    (names.join("\n") + "\n").as_bytes(),
-                                )
-                            })
-                            .map(|_| n)
+                        write_new(&file, &(names.join("\n") + "\n")).map(|_| n)
                     }
                     _ => std::fs::read_to_string(&file).map(|t| panel.mark_listed(&t)),
                 };
@@ -5707,6 +5769,26 @@ impl App {
                     }
                     (Ok(n), _) => self.say(StatusKind::Info, fl!("marks-loaded", count = n)),
                     (Err(e), _) => self.say(StatusKind::Error, crate::why::text(&e)),
+                }
+                Task::none()
+            }
+            Dialog::Input {
+                op: InputOp::SaveDetails(head),
+                side,
+                input,
+                ..
+            } => {
+                let panel = &self.panes[side].active().panel;
+                let file = writable_dir(&self.panes[side].active().panel)
+                    .join(session::expand_home(Path::new(input.trim()), &self.home));
+                let rows: Vec<&Entry> = (panel.entries().iter())
+                    .filter(|e| e.name != PARENT)
+                    .collect();
+                let n = rows.len();
+                let text = self.details_text(panel, &rows, head);
+                match write_new(&file, &text) {
+                    Ok(()) => self.say(StatusKind::Info, fl!("details-saved", count = n)),
+                    Err(e) => self.say(StatusKind::Error, crate::why::text(&e)),
                 }
                 Task::none()
             }
@@ -8273,6 +8355,22 @@ impl App {
         }
     }
 
+    /// `rows` of `panel` as `format::details_table`: the panel's columns, a dir's counted size.
+    fn details_text(&self, panel: &Panel, rows: &[&Entry], head: bool) -> String {
+        let rows: Vec<(&Entry, String)> = (rows.iter())
+            .map(|&e| (e, crate::view::size_cell(self, panel, e)))
+            .collect();
+        let titles = [
+            fl!("col-name"),
+            fl!("col-ext"),
+            fl!("col-size"),
+            fl!("col-date"),
+            fl!("col-attr"),
+        ];
+        let titles = titles.each_ref().map(String::as_str);
+        format::details_table(&rows, &self.tz, head.then_some(titles))
+    }
+
     fn save_toolbar(&mut self, list: Vec<ToolButton>) {
         match &self.config_handler {
             Some(h) => {
@@ -9158,6 +9256,11 @@ fn on_files(a: Action) -> bool {
             | A::NextMarked
             | A::PrevMarked
             | A::ShowOnlyMarked
+            | A::CopyDirsOfFiles
+            | A::CopyDetails
+            | A::CopyDetailsHdr
+            | A::SaveDetails
+            | A::SaveDetailsHdr
             | A::ClipCut
             | A::ClipCopy
             | A::ClipPaste
@@ -10049,6 +10152,29 @@ mod tests {
         let _ = app.update(Message::Key(Action::SaveMarksToFile));
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "a.txt\nc.txt\n");
+    }
+
+    #[test]
+    fn details_go_to_a_file_and_paths_to_the_clipboard() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        let rows = vec![entry("a.txt"), entry("b")];
+        let p = &mut app.panes[0].active_mut().panel;
+        p.set_listing(d.path().to_path_buf(), rows, None);
+        let _ = app.update(Message::Key(Action::SaveDetailsHdr));
+        let _ = app.update(Message::DialogSubmit);
+        let text = std::fs::read_to_string(d.path().join(DETAILS_FILE)).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3); // the titles, then every row but ".."
+        assert!(lines[0].starts_with(&format!("{}\t", fl!("col-name"))));
+        assert!(lines[1].starts_with("a.txt\t\t")); // `entry` leaves the extension empty
+        // The other panel's path: said (and put in the clipboard).
+        let o = tempfile::tempdir().unwrap();
+        let p = &mut app.panes[1].active_mut().panel;
+        p.set_listing(o.path().to_path_buf(), Vec::new(), None);
+        let other = o.path().display().to_string();
+        let _ = app.update(Message::Key(Action::CopyTrgPath));
+        assert!(app.status.as_ref().is_some_and(|s| s.text.contains(&other)));
     }
 
     #[test]
