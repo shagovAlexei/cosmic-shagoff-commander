@@ -80,6 +80,8 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 ),
                 r("", fl!("menu-checksum-create"), Action::ChecksumCreate),
                 r("", fl!("menu-checksum-verify"), Action::ChecksumVerify),
+                r("", fl!("menu-split"), Action::SplitFile),
+                r("", fl!("menu-combine"), Action::CombineFiles),
                 r("Shift+F10", fl!("context-menu"), Action::ContextMenu),
                 r("Ctrl+←", fl!("help-open-left"), Action::OpenLeft),
                 r("Ctrl+→", fl!("help-open-right"), Action::OpenRight),

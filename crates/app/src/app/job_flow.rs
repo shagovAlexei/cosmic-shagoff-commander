@@ -38,6 +38,8 @@ impl App {
             // A link to or into an archive's inside would point at nothing on disk.
             Action::Pack | Action::Unpack | Action::Link => inside(side) || inside(1 - side),
             Action::ChecksumCreate => inside(side),
+            // Parts are read and written as files on disk.
+            Action::SplitFile | Action::CombineFiles => inside(side) || inside(1 - side),
             // One side in an archive syncs (158): jobs extract from it and add to it.
             Action::SyncDirs => inside(side) && inside(1 - side),
             _ => false,

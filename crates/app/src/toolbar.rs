@@ -331,6 +331,13 @@ pub fn builtins() -> &'static [Builtin] {
             "go-home-symbolic",
             "menu-go-locked-dir"
         ),
+        b!("cm_Split", SplitFile, "edit-cut-symbolic", "menu-split"),
+        b!(
+            "cm_Combine",
+            CombineFiles,
+            "insert-object-symbolic",
+            "menu-combine"
+        ),
         b!(
             "cm_EditFileMenu",
             NewFromTemplate,

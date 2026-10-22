@@ -35,6 +35,7 @@ use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution
 use shagoff_core::panel::{self, Like, PARENT, Panel, Show};
 use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
+use shagoff_core::split;
 use shagoff_core::tabs::Tabs;
 use shagoff_core::templates;
 use shagoff_core::terminals::{self, Terminal};
@@ -593,6 +594,10 @@ pub enum Message {
     /// Ctrl+Shift+F5 done (`App::make_links`) for tab id: the sources linked, and the error to
     /// show (one line for every link that failed), or the error that stopped it all.
     Linked(u64, Result<(Vec<PathBuf>, Option<String>), String>),
+    /// Files → «Split file»: the part size typed.
+    SplitSize(String),
+    /// Split / Combine done: what to say (`Ok`) or the error.
+    Pieces(Result<String, String>),
     /// F7 done (`App::mkdir`): the dir it was typed in, the name as typed and its first part.
     Made {
         side: usize,

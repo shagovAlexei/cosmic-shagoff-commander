@@ -408,6 +408,8 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-archive-encoding"), Action::ArchiveEncoding),
                 b(fl!("menu-checksum-create"), Action::ChecksumCreate),
                 b(fl!("menu-checksum-verify"), Action::ChecksumVerify),
+                b(fl!("menu-split"), Action::SplitFile),
+                b(fl!("menu-combine"), Action::CombineFiles),
                 menu::Item::Divider,
                 b(fl!("menu-multi-rename"), Action::MultiRename),
                 b(fl!("menu-compare-files"), Action::CompareFiles),
@@ -1059,6 +1061,8 @@ mod tests {
                             | Action::ShowOnlyMarked
                             | Action::NewTabOther
                             | Action::NewFromTemplate
+                            | Action::SplitFile
+                            | Action::CombineFiles
                             | Action::CloseDuplicateTabs
                             | Action::CloseAllTabs
                             | Action::LockAllTabs

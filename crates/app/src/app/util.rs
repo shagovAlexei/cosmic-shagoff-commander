@@ -334,6 +334,8 @@ pub(super) fn on_files(a: Action) -> bool {
             | A::TestArchives
             | A::ChecksumCreate
             | A::ChecksumVerify
+            | A::SplitFile
+            | A::CombineFiles
             | A::Properties
             | A::Occupied
             | A::CountDirs
@@ -567,6 +569,25 @@ pub(super) fn find_query(
 /// or copying onto an existing `a.zip` asks to replace it, as for any file.
 pub(super) fn into_archive(p: &Path) -> bool {
     archive::split_path(p).is_some_and(|(_, inner)| !inner.as_os_str().is_empty())
+}
+
+/// Files → «Split file»: the part size offered.
+pub(super) const SPLIT_SIZE: &str = "100M";
+
+/// Split / Combine off the UI thread; its note or its error.
+pub(super) fn pieces(
+    f: impl FnOnce() -> std::io::Result<String> + Send + 'static,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            match tokio::task::spawn_blocking(f).await {
+                Ok(Ok(note)) => Ok(note),
+                Ok(Err(e)) => Err(crate::why::text(&e)),
+                Err(e) => Err(e.to_string()),
+            }
+        },
+        |r| cosmic::Action::App(Message::Pieces(r)),
+    )
 }
 
 /// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").

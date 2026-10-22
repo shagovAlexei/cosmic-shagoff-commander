@@ -6683,3 +6683,45 @@ fn a_new_file_from_a_template_is_its_copy_never_over_a_file() {
             .is_some_and(|s| s.kind == StatusKind::Error)
     );
 }
+
+#[test]
+fn split_offers_the_other_panel_and_combine_only_takes_parts() {
+    let (d, o) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    std::fs::write(d.path().join("big.bin"), [1u8; 10]).unwrap();
+    std::fs::write(d.path().join("big.bin.001"), [1u8; 10]).unwrap();
+    let mut app = app_with(Config::default(), State::default());
+    for (side, dir) in [(0, d.path()), (1, o.path())] {
+        let tab = app.panes[side].active_mut();
+        tab.pending = None;
+        let entries = listing::scan(dir, false).unwrap();
+        tab.panel
+            .set_listing(dir.to_path_buf(), entries, Some("big.bin"));
+    }
+    let _ = app.update(Message::Key(Action::SplitFile));
+    let Some(Dialog::Split { path, size, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog.is_some());
+    };
+    assert_eq!(
+        (path.as_str(), size.as_str()),
+        (dir_input(o.path()).as_str(), SPLIT_SIZE)
+    );
+    let _ = app.update(Message::SplitSize("0".into()));
+    let _ = app.update(Message::DialogSubmit);
+    assert!(
+        app.status
+            .as_ref()
+            .is_some_and(|s| s.kind == StatusKind::Error)
+    );
+    // Not a part under the cursor: said, no dialog.
+    app.dialog = None;
+    let _ = app.update(Message::Key(Action::CombineFiles));
+    assert!(app.dialog.is_none());
+    let p = &mut app.panes[0].active_mut().panel;
+    let entries = listing::scan(d.path(), false).unwrap();
+    p.set_listing(d.path().to_path_buf(), entries, Some("big.bin.001"));
+    let _ = app.update(Message::Key(Action::CombineFiles));
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::Input { op: InputOp::Combine, sources, .. }) if sources.len() == 1
+    ));
+}
