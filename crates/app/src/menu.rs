@@ -389,6 +389,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-pack"), Action::Pack),
                 b(fl!("menu-unpack"), Action::Unpack),
                 b(fl!("menu-test-archives"), Action::TestArchives),
+                b(fl!("menu-archive-encoding"), Action::ArchiveEncoding),
                 b(fl!("menu-checksum-create"), Action::ChecksumCreate),
                 b(fl!("menu-checksum-verify"), Action::ChecksumVerify),
                 menu::Item::Divider,
@@ -943,6 +944,7 @@ mod tests {
                             | Action::ChecksumVerify
                             | Action::EditPath
                             | Action::OpenTrash
+                            | Action::ArchiveEncoding
                             | Action::Restore
                             | Action::EmptyTrash
                     )

@@ -1184,7 +1184,16 @@ pub fn footer(app: &App) -> Element<'_, Message> {
             .panel
             .current()
             .is_some_and(|e| e.name != shagoff_core::panel::PARENT);
-        let line = if side == app.active && extra {
+        // In the trash, where the item was deleted from takes the whole half: a path cut to `/h…`
+        // between the totals says nothing.
+        // With marks, their totals matter more.
+        let p = &app.panes[side].active().panel;
+        let origin = (p.current()).is_some_and(|e| e.target.is_some() && !e.is_link)
+            && !p.has_marks()
+            && shagoff_core::trashcan::is_top(p.cwd());
+        let line = if side == app.active && origin {
+            row![container(window_status(app)).width(Length::Fill).clip(true)]
+        } else if side == app.active && extra {
             row![
                 totals,
                 container(window_status(app))

@@ -4540,6 +4540,42 @@ impl App {
                 }
             }
             Action::Root => return self.load(side, "/".into(), None),
+            // The zip the panel is in, or the one under the cursor.
+            Action::ArchiveEncoding => {
+                let is_zip = |p: &Path| {
+                    Format::detect(&p.file_name().unwrap_or_default().to_string_lossy())
+                        == Some(Format::Zip)
+                };
+                let on = (panel.current().filter(|e| !e.is_dir()))
+                    .map(|e| panel.cwd().join(&e.os_name))
+                    .filter(|z| is_zip(z));
+                let zip = on.or_else(|| archive::split_path(panel.cwd()).map(|(a, _)| a));
+                let Some(zip) = zip.filter(|z| is_zip(z)) else {
+                    self.say(StatusKind::Error, fl!("archive-encoding-no-zip"));
+                    return Task::none();
+                };
+                let now = archive::name_encoding(&zip);
+                let label = |e: archive::NameEnc| match e {
+                    archive::NameEnc::Auto => fl!("name-enc-auto"),
+                    archive::NameEnc::Cp866 => fl!("name-enc-cp866"),
+                    archive::NameEnc::Cp1251 => fl!("name-enc-cp1251"),
+                    archive::NameEnc::Cp437 => fl!("name-enc-cp437"),
+                    archive::NameEnc::Utf8 => fl!("name-enc-utf8"),
+                };
+                self.dialog = Some(Dialog::List {
+                    kind: ListKind::NameEncoding,
+                    side,
+                    cursor: (archive::NameEnc::ALL.iter().position(|&e| e == now)).unwrap_or(0),
+                    items: (archive::NameEnc::ALL.iter())
+                        .map(|&e| ListItem {
+                            label: label(e),
+                            path: zip.clone(),
+                            kind: Item::Dir,
+                            icon: String::new(),
+                        })
+                        .collect(),
+                });
+            }
             Action::OpenTrash => match trashcan::home() {
                 Ok(path) => return self.load(side, path, None),
                 Err(e) => self.say(StatusKind::Error, crate::why::text(&e)),
@@ -7931,6 +7967,23 @@ impl App {
                 _ => Task::none(),
             };
         }
+        if kind == ListKind::NameEncoding {
+            let (Some(it), Some(&enc)) = (items.get(i), archive::NameEnc::ALL.get(i)) else {
+                return Task::none();
+            };
+            archive::set_name_encoding(&it.path, enc);
+            // Every tab inside it lists it anew (the index is keyed by the encoding), from its
+            // root: the dirs' names change too.
+            let mut tasks = Vec::new();
+            for s in 0..2 {
+                for t in 0..self.panes[s].items().len() {
+                    if self.panes[s].items()[t].target().starts_with(&it.path) {
+                        tasks.push(self.load_tab(s, t, it.path.clone(), None));
+                    }
+                }
+            }
+            return Task::batch(tasks);
+        }
         if kind == ListKind::Shells {
             let path = items
                 .get(i)
@@ -10029,6 +10082,38 @@ mod tests {
         let (mut app, _tmp) = lister_app(Config::default());
         let _ = app.update(Message::Key(Action::Restore));
         assert_eq!(app.msg(), Some(fl!("why-not-in-trash").as_str()));
+    }
+
+    #[test]
+    fn the_names_encoding_is_chosen_for_a_zip() {
+        let (mut app, tmp) = lister_app(Config::default());
+        // Not on a zip: said so.
+        let _ = app.update(Message::Key(Action::ArchiveEncoding));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.msg(), Some(fl!("archive-encoding-no-zip").as_str()));
+        // Inside one: every encoding offered, the chosen one kept for it.
+        let zip = tmp.path().join("z.zip");
+        zip::ZipWriter::new(std::fs::File::create(&zip).unwrap())
+            .finish()
+            .unwrap();
+        let _ = app.load(0, zip.clone(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: zip.clone(),
+            focus: None,
+            result: Ok(Vec::new()),
+            space: None,
+        });
+        let _ = app.update(Message::Key(Action::ArchiveEncoding));
+        let Some(Dialog::List { items, cursor, .. }) = &app.dialog else {
+            panic!("no list");
+        };
+        assert_eq!((items.len(), *cursor), (archive::NameEnc::ALL.len(), 0));
+        let _ = app.update(Message::ListPick(1));
+        assert_eq!(archive::name_encoding(&zip), archive::NameEnc::Cp866);
     }
 
     /// What the background read would deliver for the viewer's current file.
