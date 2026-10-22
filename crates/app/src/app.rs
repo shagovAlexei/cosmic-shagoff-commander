@@ -856,6 +856,8 @@ pub enum Message {
     ListerPart(u64, Slide, Arc<Result<lister::Loaded, String>>),
     /// The viewer's picture is in the renderer (redraws with it).
     ListerAllocated(u64, Option<cosmic::iced::runtime::image::Allocation>),
+    /// Nothing but a redraw: see `subscription`.
+    ListerWake,
     ListerKey(ListerKey),
     /// A viewer letter key typed in the panel: the viewer's when it is open, else the command line's.
     Letter(ListerKey, char),
@@ -1056,6 +1058,15 @@ impl Application for App {
                 .watch_config::<Config>(APP_ID)
                 .map(|u| Message::Config(Box::new(u.config))),
         ];
+        // The viewer's picture handed to the renderer, not there yet: the renderer's "redraw, it's
+        // uploaded" is lost while the main window isn't drawn (covered by the viewer's window), so
+        // a tick wakes the loop until it is (regression: F3 showed nothing until a key).
+        if self.lister.as_ref().is_some_and(|l| l.allocating) {
+            subs.push(
+                cosmic::iced::time::every(std::time::Duration::from_millis(100))
+                    .map(|_| Message::ListerWake),
+            );
+        }
         if !self.edited.is_empty() {
             subs.push(
                 cosmic::iced::time::every(std::time::Duration::from_secs(2))
@@ -2292,6 +2303,7 @@ impl App {
                 {
                     l.set_loaded(loaded);
                     if let Some(h) = l.raster_handle() {
+                        l.allocating = true;
                         return cosmic::iced::runtime::image::allocate(h).map(move |a| {
                             cosmic::Action::App(Message::ListerAllocated(id, a.ok()))
                         });
@@ -2323,11 +2335,12 @@ impl App {
                 let read = part.read.map_or(Task::none(), |s| self.lister_slide(s));
                 return Task::batch([scroll, read]);
             }
+            Message::ListerWake => {}
             Message::ListerAllocated(id, a) => {
                 if let Some(l) = &mut self.lister
                     && l.id == id
                 {
-                    l.allocation = a;
+                    (l.allocation, l.allocating) = (a, false);
                 }
             }
             Message::ListerKey(k) if self.viewer() && self.dialog.is_none() && !self.busy() => {
@@ -9780,6 +9793,30 @@ mod tests {
         let (id, name) = (l.id, l.name.clone());
         let loaded = lister::Loaded::read(&dir.join(&name), &name);
         let _ = app.update(Message::ListerLoaded(id, Arc::new(loaded)));
+    }
+
+    #[test]
+    fn regression_a_picture_wakes_the_loop_until_the_renderer_has_it() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        let png = tmp.path().join("p.png");
+        image::RgbImage::new(4, 4).save(&png).unwrap();
+        let l = app.lister.as_mut().unwrap();
+        l.name = "p.png".into();
+        let id = l.id;
+        lister_loaded(&mut app, tmp.path());
+        // The answer may never come while the main window isn't drawn: woken until it does.
+        assert!(app.lister.as_ref().unwrap().allocating);
+        let _ = app.update(Message::ListerAllocated(id, None));
+        assert!(
+            !app.lister.as_ref().unwrap().allocating,
+            "a failure stops it too"
+        );
+        // Text: nothing to wait for.
+        let l = app.lister.as_mut().unwrap();
+        l.name = "a.txt".into();
+        lister_loaded(&mut app, tmp.path());
+        assert!(!app.lister.as_ref().unwrap().allocating);
     }
 
     #[test]
