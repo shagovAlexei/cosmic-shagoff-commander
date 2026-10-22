@@ -167,6 +167,71 @@ pub fn argv(exec: &str, input: &Path, out: &Path, size: u32) -> Vec<OsString> {
         .collect()
 }
 
+/// GNOME's layout inside the sandbox (gnome-desktop-thumbnail-script): the file under a fixed name,
+/// the output dir as `/tmp` (AppArmor lets evince-thumbnailer write there).
+const SANDBOX_IN: &str = "/tmp/gnome-desktop-file-to-thumbnail";
+const SANDBOX_OUT: &str = "gnome-desktop-thumbnailer.png";
+
+/// bwrap with the system read-only and nothing else: no home, no network, no other process.
+fn bwrap_base() -> Vec<OsString> {
+    let mut a: Vec<OsString> = [
+        "bwrap",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/etc",
+        "/etc",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--chdir",
+        "/",
+        "--setenv",
+        "GIO_USE_VFS",
+        "local",
+    ]
+    .map(OsString::from)
+    .to_vec();
+    // Merged /usr: links to it; else the dirs themselves.
+    for d in ["/lib", "/lib64", "/lib32", "/bin", "/sbin"] {
+        match std::fs::read_link(d) {
+            Ok(to) => a.extend(["--symlink".into(), to.into(), d.into()]),
+            Err(_) if Path::new(d).is_dir() => a.extend(["--ro-bind".into(), d.into(), d.into()]),
+            Err(_) => {}
+        }
+    }
+    a
+}
+
+/// `exec` for `input` inside bwrap, writing into `dir` (empty, ours): the arguments and where the
+/// picture comes out.
+pub fn sandboxed(exec: &str, input: &Path, dir: &Path, size: u32) -> (Vec<OsString>, PathBuf) {
+    let inner = match input.extension() {
+        Some(e) => format!("{SANDBOX_IN}.{}", e.to_string_lossy().to_lowercase()),
+        None => SANDBOX_IN.into(),
+    };
+    let out = Path::new("/tmp").join(SANDBOX_OUT);
+    let mut a = bwrap_base();
+    a.extend(["--bind".into(), dir.into(), "/tmp".into()]);
+    a.extend(["--ro-bind".into(), input.into(), OsString::from(&inner)]);
+    a.extend(argv(exec, Path::new(&inner), &out, size));
+    (a, dir.join(SANDBOX_OUT))
+}
+
+/// Whether bwrap is there and may make its sandbox (unprivileged user namespaces can be off).
+pub fn bwrap_works() -> bool {
+    installed("bwrap") && {
+        let mut a = bwrap_base();
+        a.push("true".into());
+        run(&a, Duration::from_secs(5))
+    }
+}
+
 /// Runs `argv` (no input, output dropped) for at most `timeout`; true if it exited fine. Its own
 /// process group, all killed on timeout: a worker it started must not write the output later.
 pub fn run(argv: &[OsString], timeout: Duration) -> bool {
@@ -263,6 +328,25 @@ mod tests {
             r.for_name("a.pdf").map(|t| t.exec.as_str()),
             Some("sh -s %s %u %o")
         );
+    }
+
+    #[test]
+    fn sandboxed_sees_only_its_file() {
+        if !bwrap_works() {
+            eprintln!("no working bwrap here: skipped");
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let input = home.path().join("Doc.PDF");
+        std::fs::write(&input, "pdf").unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let (a, png) = sandboxed("cp %i %o", &input, out.path(), 128);
+        assert!(run(&a, Duration::from_secs(10)));
+        assert_eq!(std::fs::read_to_string(&png).unwrap(), "pdf");
+        // The file's own dir is not there inside.
+        let probe = format!("test -e {}", input.display());
+        let (a, _) = sandboxed(&probe, &input, out.path(), 128);
+        assert!(!run(&a, Duration::from_secs(10)));
     }
 
     #[test]

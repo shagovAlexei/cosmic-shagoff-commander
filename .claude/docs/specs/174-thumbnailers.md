@@ -21,5 +21,5 @@ ROADMAP «Вид, дальше: эскизы … видео / PDF — нет».
 - `globs2`: the `cs` flag kept (`*.C` vs `*.c`), the heaviest weight across all dirs; an override
   that isn't installed hides nothing.
 - Not sandboxed (GNOME runs thumbnailers under bwrap; cosmic-files doesn't): only in the
-  Thumbnails view, which the user turns on. Upgrade path: a `bwrap` prefix when present.
+  Thumbnails view, which the user turns on. ~~Upgrade path: a `bwrap` prefix when present.~~ 175.
 - Not done: a failure is forgotten when the whole cache is dropped (`CACHE_MAX`).

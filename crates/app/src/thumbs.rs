@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use shagoff_core::thumbnailer::{Registry, argv, run};
+use shagoff_core::thumbnailer::{Registry, argv, run, sandboxed};
 
 use cosmic::widget::image::Handle;
 
@@ -70,13 +70,26 @@ pub fn make(path: &Path) -> Option<Handle> {
 /// The PNG the desktop's thumbnailer for `name` makes of `path`.
 fn external(path: &Path, name: &str) -> Option<Vec<u8>> {
     static N: AtomicU64 = AtomicU64::new(0);
+    static SANDBOX: OnceLock<bool> = OnceLock::new();
     let t = registry().for_name(name)?;
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    // In bwrap when it works (GNOME does so too): a crafted file meets a parser that sees
+    // nothing of the home. Else as cosmic-files: as is.
+    if *SANDBOX.get_or_init(shagoff_core::thumbnailer::bwrap_works) {
+        use std::os::unix::fs::DirBuilderExt;
+        let dir = std::env::temp_dir().join(format!("shagoff-thumb.{}.{n}", std::process::id()));
+        std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?;
+        let (args, out) = sandboxed(&t.exec, path, &dir, 128);
+        let ok = run(&args, EXTERNAL_TIMEOUT);
+        let bytes = ok.then(|| std::fs::read(&out).ok()).flatten();
+        let _ = std::fs::remove_dir_all(&dir);
+        return bytes;
+    }
     // GNOME's name in /tmp itself (not $TMPDIR): AppArmor lets evince-thumbnailer write only
     // there. Made first with O_EXCL: a link put in its place beforehand is not written through.
     let out = std::path::PathBuf::from(format!(
-        "/tmp/.gnome_desktop_thumbnail.shagoff.{}.{}.png",
+        "/tmp/.gnome_desktop_thumbnail.shagoff.{}.{n}.png",
         std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::File::create_new(&out).ok()?;
     // The size the spec calls "normal"; shrunk to ours after.
