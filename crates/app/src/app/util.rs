@@ -385,6 +385,8 @@ pub(super) fn on_files(a: Action) -> bool {
             | A::Branch
             | A::BranchSel
             | A::CompareLists
+            | A::CompareListsSubdirs
+            | A::CompareListsDiffOnly
             | A::QuickFilter
             | A::QuickView
             | A::Sort(_)

@@ -550,9 +550,13 @@ impl Panel {
     /// made meanwhile is shown), until the dir changes or Ctrl+F10 / F11 / F12. Nothing marked:
     /// nothing hidden.
     pub fn show_only_marked(&mut self) {
-        if self.marked.is_empty() {
-            return;
+        if !self.marked.is_empty() {
+            self.hide_unmarked();
         }
+    }
+
+    /// `show_only_marked` even with nothing marked (all but `..` hidden): «only what differs».
+    pub fn hide_unmarked(&mut self) {
         let hide = (self.entries.iter())
             .filter(|e| e.name != PARENT && !self.marked.contains(&e.os_name))
             .map(|e| e.os_name.clone());

@@ -456,7 +456,14 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-next-marked"), Action::NextMarked),
                 b(fl!("menu-prev-marked"), Action::PrevMarked),
                 menu::Item::Divider,
-                b(fl!("menu-compare-lists"), Action::CompareLists),
+                menu::Item::Folder(
+                    fl!("menu-compare-lists"),
+                    vec![
+                        b(fl!("menu-compare-files"), Action::CompareLists),
+                        b(fl!("menu-compare-subdirs"), Action::CompareListsSubdirs),
+                        b(fl!("menu-compare-diff-only"), Action::CompareListsDiffOnly),
+                    ],
+                ),
                 menu::Item::Divider,
                 menu::Item::Folder(
                     fl!("menu-copy-to-clip"),

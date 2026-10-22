@@ -6745,3 +6745,38 @@ fn move_to_archive_opens_alt_f5_with_delete_sources_on() {
         assert_eq!(p.move_after, delete, "{action:?}");
     }
 }
+
+#[test]
+fn compare_with_subdirs_marks_dirs_and_diff_only_hides_the_same() {
+    let (l, r) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    for d in [l.path(), r.path()] {
+        std::fs::write(d.join("same.txt"), "s").unwrap();
+    }
+    std::fs::write(l.path().join("only.txt"), "o").unwrap();
+    std::fs::create_dir(l.path().join("sub")).unwrap();
+    let mut app = app_with(Config::default(), State::default());
+    let list = |app: &mut App| {
+        for (side, dir) in [(0, l.path()), (1, r.path())] {
+            let tab = app.panes[side].active_mut();
+            tab.pending = None;
+            let entries = listing::scan(dir, false).unwrap();
+            tab.panel.set_listing(dir.to_path_buf(), entries, None);
+        }
+    };
+    let marked = |app: &App| app.panes[0].active().panel.marked_names().len();
+    let shown = |app: &App| app.panes[0].active().panel.entries().len();
+    list(&mut app);
+    let _ = app.update(Message::Key(Action::CompareLists));
+    assert_eq!(marked(&app), 1);
+    let _ = app.update(Message::Key(Action::CompareListsSubdirs));
+    assert_eq!(marked(&app), 2);
+    let all = shown(&app);
+    let _ = app.update(Message::Key(Action::CompareListsDiffOnly));
+    assert_eq!(shown(&app), all - 1, "same.txt hidden, sub not");
+    // Nothing differs on the right: all of it hidden but `..`.
+    let right = &app.panes[1].active().panel;
+    assert!(right.entries().iter().all(|e| e.name == ".."));
+    // Again: what was hidden is compared too, not taken for missing.
+    let _ = app.update(Message::Key(Action::CompareLists));
+    assert_eq!(app.panes[1].active().panel.marked_names().len(), 0);
+}

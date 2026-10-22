@@ -24,8 +24,13 @@ impl App {
             return self.edit_path(side);
         }
         // Names there are paths: Ctrl+M would move files between dirs, Shift+F2 compares by name.
-        if matches!(action, Action::MultiRename | Action::CompareLists)
-            && (0..2).any(|s| self.panes[s].active().results.is_some())
+        if matches!(
+            action,
+            Action::MultiRename
+                | Action::CompareLists
+                | Action::CompareListsSubdirs
+                | Action::CompareListsDiffOnly
+        ) && (0..2).any(|s| self.panes[s].active().results.is_some())
         {
             self.say(StatusKind::Error, fl!("results-unsupported"));
             return Task::none();
@@ -786,17 +791,30 @@ impl App {
                 };
                 self.say(StatusKind::Error, msg);
             }
-            Action::CompareLists => {
+            Action::CompareLists | Action::CompareListsSubdirs | Action::CompareListsDiffOnly => {
+                // Rows an earlier «only what differs» hid are compared too.
+                for s in 0..2 {
+                    let panel = &mut self.panes[s].active_mut().panel;
+                    if panel.only_marked() {
+                        panel.set_show(panel.show().clone());
+                    }
+                }
                 let (l, r) = shagoff_core::sync::compare_lists(
                     self.panes[0].active().panel.entries(),
                     self.panes[1].active().panel.entries(),
+                    action != Action::CompareLists,
                 );
                 // Nothing to mark must not look like a key that did nothing.
                 if l.is_empty() && r.is_empty() {
                     self.say(StatusKind::Info, fl!("compare-identical"));
                 }
-                self.panes[0].active_mut().panel.mark_names(&l);
-                self.panes[1].active_mut().panel.mark_names(&r);
+                for (s, names) in [(0, &l), (1, &r)] {
+                    let panel = &mut self.panes[s].active_mut().panel;
+                    panel.mark_names(names);
+                    if action == Action::CompareListsDiffOnly {
+                        panel.hide_unmarked();
+                    }
+                }
                 return Task::none();
             }
             Action::Branch | Action::BranchSel => return self.branch(side, action),
