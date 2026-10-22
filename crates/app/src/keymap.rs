@@ -185,6 +185,10 @@ pub enum Action {
     NewFile,
     /// Right click on the toolbar: TC "Change button bar".
     ConfigureToolbar,
+    /// Start → «Change Start menu…» (TC `cm_ChangeStartMenu`).
+    ConfigureStartMenu,
+    /// Start → item `i` of `config.start_menu` (TC `cm_UserMenu`).
+    UserMenu(usize),
     /// Configuration → "Colors by type…".
     ConfigureColors,
     /// Commands → "Open terminal": the chosen terminal in the active panel's dir (TC

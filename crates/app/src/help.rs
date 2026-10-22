@@ -32,6 +32,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+U", fl!("menu-swap"), Action::SwapPanes),
                 r("", fl!("menu-match-src"), Action::MatchSrc),
                 r("", fl!("menu-sync-change-dir"), Action::SyncChangeDir),
+                r("", fl!("menu-start-edit"), Action::ConfigureStartMenu),
                 r("Ctrl+Q", fl!("menu-quick-view"), Action::QuickView),
                 r("Ctrl+B", fl!("menu-branch"), Action::Branch),
                 r("Ctrl+Shift+B", fl!("menu-branch-sel"), Action::BranchSel),
