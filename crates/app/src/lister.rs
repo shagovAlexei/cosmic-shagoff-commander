@@ -58,6 +58,9 @@ pub static ENCODINGS: std::sync::LazyLock<Vec<(Encoding, &'static str)>> =
     });
 static ENCODING_NAMES: std::sync::LazyLock<Vec<&'static str>> =
     std::sync::LazyLock::new(|| ENCODINGS.iter().map(|&(_, n)| n).collect());
+/// A picture's upload wakes the loop at most this long, and this long after it is in the renderer.
+pub const WAKE_MAX: std::time::Duration = std::time::Duration::from_secs(10);
+pub const WAKE_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
 /// Arrow keys on a zoomed picture move it this many pixels.
 const PAN: f32 = 40.0;
 
@@ -248,8 +251,8 @@ pub struct Lister {
     /// The picture held in the renderer: the next frame draws it (without it the renderer loads
     /// it on its own and nothing redraws until the pointer moves).
     pub allocation: Option<cosmic::iced::runtime::image::Allocation>,
-    /// Asked for `allocation`, no answer yet: `App::subscription` ticks meanwhile.
-    pub allocating: bool,
+    /// `App::subscription` ticks till then: the picture is being uploaded (see there).
+    pub wake_until: Option<std::time::Instant>,
     /// The file on disk, for reading other windows of a big one; `None`: only the first.
     pub file: Option<PathBuf>,
     /// Another window is being read for this.
@@ -309,7 +312,7 @@ impl Lister {
             quick: None,
             zoom: None,
             allocation: None,
-            allocating: false,
+            wake_until: None,
             file: None,
             slide: None,
             origin: None,
@@ -372,7 +375,7 @@ impl Lister {
         self.loaded = Some(loaded);
         self.zoom = None; // each picture opens fitted
         self.allocation = None;
-        self.allocating = false;
+        self.wake_until = None;
         self.retext();
     }
 
