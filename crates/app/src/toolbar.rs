@@ -170,6 +170,18 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-count-dirs"
         ),
         b!(
+            "cm_SyncChangeDir",
+            SyncChangeDir,
+            "media-playlist-repeat-symbolic",
+            "menu-sync-change-dir"
+        ),
+        b!(
+            "cm_MatchSrc",
+            MatchSrc,
+            "go-next-symbolic",
+            "menu-match-src"
+        ),
+        b!(
             "cm_ChangeArchiveEncoding",
             ArchiveEncoding,
             "preferences-desktop-locale-symbolic",

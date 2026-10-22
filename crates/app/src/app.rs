@@ -431,6 +431,8 @@ pub struct App {
     pub term: Option<Box<crate::term::Pane>>,
     /// Ctrl+O: the terminal in place of the panels.
     pub term_full: bool,
+    /// Commands → «Synchronous dir change»: the other panel goes along (`panel::sync_step`).
+    pub sync_dirs: bool,
     pub term_id: widget::Id,
     /// Its shell ended: not started again on its own (Ctrl+O or a click does).
     term_ended: bool,
@@ -1159,6 +1161,7 @@ impl Application for App {
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
             terminal: c.term_builtin,
+            sync_dirs: self.sync_dirs,
             show: match self.panes[self.active].active().panel.show() {
                 Show::All => 0,
                 Show::Programs => 1,
@@ -1267,6 +1270,7 @@ impl App {
             term_tx: None,
             term: None,
             term_full: false,
+            sync_dirs: false,
             term_id: widget::Id::unique(),
             term_ended: false,
             term_drag: None,
@@ -3967,6 +3971,26 @@ impl App {
     /// Go to `path` in the active tab (leaves search results).
     fn load(&mut self, side: usize, path: PathBuf, focus: Option<String>) -> Task<Message> {
         let path = self.real(&path);
+        // Where both are going, so quick steps on a slow fs are not lost (as `Action::Parent`).
+        let from = self.panes[side].active().target();
+        let other = 1 - side;
+        let o = self.panes[other].active();
+        // A locked tab there would open a new tab at every step: it stays (as `tree_follow`).
+        let along = (self.sync_dirs && side == self.active && !o.locked)
+            .then(|| {
+                // Still reading: its rows are the old dir's.
+                let has = |n: &std::ffi::OsStr| o.pending.is_none() && o.panel.has_dir(n);
+                panel::sync_step(&from, &path, &o.target(), has)
+            })
+            .flatten()
+            // Up out of an archive opened from inside another: that is a temp dir, it stays.
+            .filter(|(to, _)| {
+                (self.nested.keys()).all(|k| !o.target().starts_with(k) || to.starts_with(k))
+            });
+        let along = match along {
+            Some((to, focus)) => self.load(other, to, focus),
+            None => Task::none(),
+        };
         // A locked tab keeps its dir: going elsewhere happens in a new tab next to it (TC).
         if path != self.panes[side].active().panel.cwd() {
             self.leave_locked(side);
@@ -3975,7 +3999,7 @@ impl App {
         t.results = None;
         t.stop_branch(); // a branch read for the dir left (or re-entered) is not wanted
         let volumes = self.refresh_volumes(false);
-        Task::batch([self.reload(side, path, focus), volumes])
+        Task::batch([self.reload(side, path, focus), volumes, along])
     }
 
     /// Ask gio for unmounted volumes (`force`: now; else not within 3 s of the last time).
@@ -4957,6 +4981,16 @@ impl App {
                 }
                 return Task::none();
             }
+            Action::SyncChangeDir => {
+                self.sync_dirs = !self.sync_dirs;
+                let note = match self.sync_dirs {
+                    true => fl!("sync-change-dir-on"),
+                    false => fl!("sync-change-dir-off"),
+                };
+                self.say(StatusKind::Info, note);
+                return Task::none();
+            }
+            Action::MatchSrc => return self.load(1 - side, target, None),
             Action::SwapPanes => {
                 self.panes.swap(0, 1);
                 self.space.swap(0, 1);
@@ -9870,6 +9904,82 @@ mod tests {
             .pending
             .as_ref()
             .map(|(_, p)| p.clone())
+    }
+
+    #[test]
+    fn sync_change_dir_takes_the_other_panel_along() {
+        let mut app = app_with(Config::default(), State::default());
+        let other = |app: &App| {
+            app.panes[1]
+                .active()
+                .pending
+                .as_ref()
+                .map(|(_, p)| p.clone())
+        };
+        let docs = Entry {
+            kind: shagoff_core::listing::Kind::Dir,
+            ..entry("docs")
+        };
+        app.panes[0]
+            .active_mut()
+            .panel
+            .set_listing("/a".into(), vec![docs.clone()], None);
+        app.panes[1]
+            .active_mut()
+            .panel
+            .set_listing("/b".into(), vec![docs], None);
+        app.panes[1].active_mut().pending = None; // its start-up scan
+        // Off: the other stays.
+        let _ = app.load(0, "/a/docs".into(), None);
+        assert_eq!(other(&app), None);
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::SyncChangeDir));
+        assert!(app.sync_dirs);
+        let _ = app.load(0, "/a/docs".into(), None);
+        assert_eq!(other(&app), Some(PathBuf::from("/b/docs")));
+        // Deeper at once: it stays.
+        app.panes[1].active_mut().pending = None;
+        app.panes[1]
+            .active_mut()
+            .panel
+            .set_listing("/b/docs".into(), Vec::new(), None);
+        app.panes[0].active_mut().pending = None;
+        app.panes[0]
+            .active_mut()
+            .panel
+            .set_listing("/a/docs".into(), Vec::new(), None);
+        let _ = app.load(0, "/a/docs/x/y".into(), None);
+        assert_eq!(other(&app), None);
+        // Up: it goes up too, even while its last step is still being read.
+        app.panes[0].active_mut().pending = None;
+        let _ = app.load(0, "/a".into(), None);
+        assert_eq!(other(&app), Some(PathBuf::from("/b")));
+        // A locked tab there stays.
+        app.panes[1].active_mut().pending = None;
+        app.panes[1].active_mut().locked = true;
+        let _ = app.load(0, "/a/docs".into(), None);
+        assert_eq!(other(&app), None);
+        app.panes[1].active_mut().locked = false;
+        app.panes[1].active_mut().panel.set_listing(
+            "/b".into(),
+            vec![Entry {
+                kind: shagoff_core::listing::Kind::Dir,
+                ..entry("docs")
+            }],
+            None,
+        );
+        // A dir it lacks: it stays where it is.
+        app.panes[0].active_mut().pending = None;
+        app.panes[0]
+            .active_mut()
+            .panel
+            .set_listing("/a".into(), Vec::new(), None);
+        let _ = app.load(0, "/a/src".into(), None);
+        assert_eq!(other(&app), None);
+        // Other panel → the same dir.
+        app.panes[0].active_mut().pending = None;
+        let _ = app.update(Message::Key(Action::MatchSrc));
+        assert_eq!(other(&app), Some(PathBuf::from("/a")));
     }
 
     #[test]

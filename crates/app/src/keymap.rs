@@ -110,6 +110,10 @@ pub enum Action {
     Unpack,
     /// Files → the encoding of a zip's names (TC `cm_ChangeArchiveEncoding`, no key there).
     ArchiveEncoding,
+    /// Commands → the other panel follows into subdirs and up (TC `cm_SyncChangeDir`, no key).
+    SyncChangeDir,
+    /// Commands → the other panel to this one's dir (TC `cm_MatchSrc`, no key).
+    MatchSrc,
     /// Alt+F7: find files.
     FindFiles,
     /// Shift+F2: mark what differs between the two panels.

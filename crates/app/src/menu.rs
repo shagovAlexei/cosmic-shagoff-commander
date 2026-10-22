@@ -359,6 +359,7 @@ pub struct Checks {
     /// look's cards have one of their own).
     pub classic: bool,
     pub terminal: bool,
+    pub sync_dirs: bool,
     /// Ctrl+F10 / F11 / F12 in force in the active panel (0 / 1 / 2): its item checked.
     pub show: u8,
 }
@@ -431,6 +432,13 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-tree"), Action::TreeDialog),
                 b(fl!("menu-history"), Action::HistoryList),
                 b(fl!("menu-swap"), Action::SwapPanes),
+                b(fl!("menu-match-src"), Action::MatchSrc),
+                menu::Item::CheckBox(
+                    fl!("menu-sync-change-dir"),
+                    None,
+                    checks.sync_dirs,
+                    MenuAct::Key(Action::SyncChangeDir),
+                ),
                 b(fl!("menu-open-left"), Action::OpenLeft),
                 b(fl!("menu-open-right"), Action::OpenRight),
                 b(fl!("menu-edit-path"), Action::EditPath),
@@ -945,6 +953,8 @@ mod tests {
                             | Action::EditPath
                             | Action::OpenTrash
                             | Action::ArchiveEncoding
+                            | Action::SyncChangeDir
+                            | Action::MatchSrc
                             | Action::Restore
                             | Action::EmptyTrash
                     )
