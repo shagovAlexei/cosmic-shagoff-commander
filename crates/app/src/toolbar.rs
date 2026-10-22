@@ -170,6 +170,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-count-dirs"
         ),
         b!(
+            "cm_ChangeArchiveEncoding",
+            ArchiveEncoding,
+            "preferences-desktop-locale-symbolic",
+            "menu-archive-encoding"
+        ),
+        b!(
             "cm_OpenRecycled",
             OpenTrash,
             "user-trash-symbolic",

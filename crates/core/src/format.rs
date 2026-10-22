@@ -117,6 +117,11 @@ pub fn details(
     if e.unknown() {
         return e.name.clone();
     }
+    // In the trash (a target that is no link): where it came from is the line — the rest is in
+    // the columns, and with it the path was cut to nothing.
+    if let Some(t) = e.target.as_ref().filter(|_| !e.is_link) {
+        return format!("{} ← {}", e.name, t.display());
+    }
     let mut parts = vec![match &e.target {
         Some(t) => format!("{} → {}", e.name, t.display()),
         None => e.name.clone(),
@@ -358,5 +363,16 @@ mod tests {
         (unreadable.mode, unreadable.owner) = (0, None);
         (unreadable.size, unreadable.mtime) = (0, UNIX_EPOCH);
         assert_eq!(details(&unreadable, &tz, &o, self::size), "secret");
+    }
+
+    #[test]
+    fn regression_the_trash_origin_is_not_cut_away() {
+        // In the trash: where it was deleted from, nothing else (with size, date, mode and owner
+        // after it, the half-width status line cut the path to `/h…`).
+        let o = crate::owners::Owners::default();
+        let mut t = full("a.txt", Kind::File);
+        t.target = Some("/home/u/docs/a.txt".into());
+        let line = details(&t, &TimeZone::UTC, &o, self::size);
+        assert_eq!(line, "a.txt ← /home/u/docs/a.txt");
     }
 }

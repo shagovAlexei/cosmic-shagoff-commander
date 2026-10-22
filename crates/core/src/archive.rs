@@ -502,6 +502,103 @@ pub fn password(archive: &Path) -> Option<String> {
     m.as_ref()?.get(&password_key(archive)).cloned()
 }
 
+/// How a zip's names not marked UTF-8 are read (TC `cm_ChangeArchiveEncoding`): Windows writes
+/// them in the OEM code page — cp866 on a Russian one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NameEnc {
+    /// UTF-8 if they are, else cp866 under a Cyrillic locale or when they read as Cyrillic words,
+    /// else cp437 (the zip standard).
+    #[default]
+    Auto,
+    Cp866,
+    Cp1251,
+    Cp437,
+    Utf8,
+}
+
+impl NameEnc {
+    pub const ALL: [NameEnc; 5] = [
+        NameEnc::Auto,
+        NameEnc::Cp866,
+        NameEnc::Cp1251,
+        NameEnc::Cp437,
+        NameEnc::Utf8,
+    ];
+}
+
+/// Chosen per archive, kept until the program exits (like the passwords).
+static NAME_ENCS: Mutex<Option<std::collections::HashMap<PathBuf, NameEnc>>> = Mutex::new(None);
+
+pub fn set_name_encoding(archive: &Path, enc: NameEnc) {
+    let mut m = NAME_ENCS.lock().unwrap_or_else(|e| e.into_inner());
+    m.get_or_insert_with(std::collections::HashMap::new)
+        .insert(password_key(archive), enc);
+}
+
+/// Asked on every listing inside an archive: nothing chosen yet, nothing looked up on disk.
+pub fn name_encoding(archive: &Path) -> NameEnc {
+    let any = |m: &Option<std::collections::HashMap<PathBuf, NameEnc>>| {
+        m.as_ref().is_some_and(|m| !m.is_empty())
+    };
+    if !any(&NAME_ENCS.lock().unwrap_or_else(|e| e.into_inner())) {
+        return NameEnc::Auto;
+    }
+    let key = password_key(archive);
+    let m = NAME_ENCS.lock().unwrap_or_else(|e| e.into_inner());
+    (m.as_ref().and_then(|m| m.get(&key)))
+        .copied()
+        .unwrap_or_default()
+}
+
+/// The locale's language uses Cyrillic (its DOS code page is cp866).
+fn cyrillic_locale() -> bool {
+    static CYR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CYR.get_or_init(|| {
+        let lang = ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .find(|v| !v.is_empty())
+            .unwrap_or_default();
+        ["ru", "uk", "be"]
+            .iter()
+            .any(|l| lang.as_encoded_bytes().starts_with(l.as_bytes()))
+    })
+}
+
+/// Read as cp866, `raw` is Cyrillic words: every non-ASCII byte a cp866 letter, two of them in a
+/// row, and more of them than Latin letters (a Western cp437 name is Latin with a few accents:
+/// `Café`, `Größe`, `Füße`).
+fn looks_cp866(raw: &[u8]) -> bool {
+    let letter = |b: u8| matches!(b, 0x80..=0xAF | 0xE0..=0xF7);
+    let latin = raw.iter().filter(|b| b.is_ascii_alphabetic()).count();
+    raw.iter().all(|&b| b.is_ascii() || letter(b))
+        && raw.windows(2).any(|w| letter(w[0]) && letter(w[1]))
+        && raw.iter().filter(|&&b| letter(b)).count() > latin
+}
+
+/// A zip entry's name: `name` as the crate read it (UTF-8 if marked, else cp437), `raw` its bytes.
+fn zip_name(name: &str, raw: &[u8], enc: NameEnc, cyrillic: bool) -> String {
+    let marked = raw.is_ascii() || std::str::from_utf8(raw) == Ok(name);
+    let decode = |e: &'static encoding_rs::Encoding| e.decode_without_bom_handling(raw).0;
+    match enc {
+        _ if marked => name.into(),
+        NameEnc::Auto => match std::str::from_utf8(raw) {
+            Ok(s) => s.into(),
+            Err(_) if cyrillic || looks_cp866(raw) => decode(encoding_rs::IBM866).into(),
+            Err(_) => name.into(),
+        },
+        NameEnc::Cp866 => decode(encoding_rs::IBM866).into(),
+        NameEnc::Cp1251 => decode(encoding_rs::WINDOWS_1251).into(),
+        NameEnc::Cp437 => name.into(),
+        NameEnc::Utf8 => String::from_utf8_lossy(raw).into(),
+    }
+}
+
+/// `e`'s name in the encoding chosen for its archive.
+fn zip_entry_name<R: Read + ?Sized>(e: &zip::read::ZipFile<'_, R>, enc: NameEnc) -> String {
+    zip_name(e.name(), e.name_raw(), enc, cyrillic_locale())
+}
+
 fn zip_password_error(e: zip::result::ZipError) -> io::Error {
     use zip::result::ZipError;
     match e {
@@ -520,7 +617,7 @@ fn sz_password_error(e: sevenz_rust2::Error) -> io::Error {
     }
 }
 
-fn read_zip(r: Counted, st: &mut Stage, password: Option<&str>) -> Result<(), Stop> {
+fn read_zip(r: Counted, st: &mut Stage, password: Option<&str>, enc: NameEnc) -> Result<(), Stop> {
     let mut z = zip::ZipArchive::new(r)?;
     for i in 0..z.len() {
         let e = match password {
@@ -528,7 +625,7 @@ fn read_zip(r: Counted, st: &mut Stage, password: Option<&str>) -> Result<(), St
             None => z.by_index(i),
         };
         let mut e = e.map_err(zip_password_error)?;
-        let name = PathBuf::from(e.name());
+        let name = PathBuf::from(zip_entry_name(&e, enc));
         let (mode, mtime) = (e.unix_mode(), e.last_modified().and_then(from_zip_time));
         let kind = if e.is_dir() {
             Kind::Dir
@@ -672,7 +769,7 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
         )
     };
     match f {
-        Format::Zip => read_zip(r, st, password(archive).as_deref()),
+        Format::Zip => read_zip(r, st, password(archive).as_deref(), name_encoding(archive)),
         Format::SevenZ => read_7z(r, st, password(archive).as_deref()),
         f if f.is_tree() => read_tar(decoder(f, r)?, st),
         f => single(decoder(f, r)?, st),
@@ -781,6 +878,7 @@ fn files(archive: &Path, stop: &AtomicBool, strict: bool, f: &mut OnFile) -> io:
     };
     match fmt {
         Format::Zip => {
+            let enc = name_encoding(archive);
             let mut z = zip::ZipArchive::new(file)?;
             for i in 0..z.len() {
                 stopped()?;
@@ -796,7 +894,7 @@ fn files(archive: &Path, stop: &AtomicBool, strict: bool, f: &mut OnFile) -> io:
                 if e.is_dir() || e.is_symlink() {
                     continue;
                 }
-                let path = PathBuf::from(e.name());
+                let path = PathBuf::from(zip_entry_name(&e, enc));
                 let mtime = e
                     .last_modified()
                     .and_then(from_zip_time)
@@ -927,13 +1025,14 @@ fn read_index(f: Format, archive: &Path, stop: &AtomicBool) -> io::Result<Vec<It
     let file = File::open(archive)?;
     match f {
         Format::Zip => {
+            let enc = name_encoding(archive);
             let mut z = zip::ZipArchive::new(file)?;
             for i in 0..z.len() {
                 stopped()?;
                 let e = z.by_index_raw(i)?;
                 let mtime = e.last_modified().and_then(from_zip_time);
                 push(
-                    Path::new(e.name()),
+                    Path::new(&zip_entry_name(&e, enc)),
                     e.is_dir(),
                     e.is_symlink(),
                     e.size(),
@@ -1008,16 +1107,20 @@ fn read_index(f: Format, archive: &Path, stop: &AtomicBool) -> io::Result<Vec<It
 type Index = Arc<Vec<Item>>;
 
 /// The last archive listed: browsing a big tar.gz must not decompress it on every step.
-static INDEX: Mutex<Option<(PathBuf, u64, SystemTime, Index)>> = Mutex::new(None);
+/// Keyed by the names' encoding too: a new one reads it again.
+type Cached = (PathBuf, u64, SystemTime, NameEnc, Index);
+static INDEX: Mutex<Option<Cached>> = Mutex::new(None);
 
 fn index(archive: &Path) -> io::Result<Index> {
     let m = fs::metadata(archive)?;
     let (size, mtime) = (m.len(), m.modified().unwrap_or(UNIX_EPOCH));
+    let enc = name_encoding(archive);
     let mut cache = INDEX.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((p, s, t, i)) = cache.as_ref()
+    if let Some((p, s, t, n, i)) = cache.as_ref()
         && p == archive
         && *s == size
         && *t == mtime
+        && *n == enc
     {
         return Ok(i.clone());
     }
@@ -1027,7 +1130,7 @@ fn index(archive: &Path) -> io::Result<Index> {
         .unwrap_or_default();
     let f = Format::detect(&name).ok_or_else(|| io::Error::from(io::ErrorKind::NotADirectory))?;
     let i: Index = Arc::new(read_index(f, archive, &AtomicBool::new(false))?);
-    *cache = Some((archive.to_path_buf(), size, mtime, i.clone()));
+    *cache = Some((archive.to_path_buf(), size, mtime, enc, i.clone()));
     Ok(i)
 }
 
@@ -2297,6 +2400,68 @@ mod tests {
             groups(&t, cwd, Path::new("/dst/"), Format::Tar, false, &|_| false),
             [(t.clone(), PathBuf::from("/dst/src.tar"))]
         );
+    }
+
+    #[test]
+    fn zip_names_not_marked_utf8_are_read_in_the_chosen_encoding() {
+        let cp866 = encoding_rs::IBM866.encode("Привет").0.into_owned();
+        let as437 = "\u{c5}\u{3b1}\u{bf}\u{f3}\u{d1}\u{393}"; // the bytes as the crate reads them
+        let n = |enc, cyr| zip_name(as437, &cp866, enc, cyr);
+        assert_eq!(n(NameEnc::Auto, true), "Привет");
+        assert_eq!(n(NameEnc::Auto, false), "Привет"); // reads as Russian words
+        let cafe = zip_name("Caf\u{e9}", b"Caf\x82", NameEnc::Auto, false);
+        assert_eq!(cafe, "Caf\u{e9}"); // a lone accent: cp437
+        // Two accents in a row, still a Latin word: cp437 (`Größe`, `Füße`).
+        for (shown, raw) in [
+            ("Gr\u{f6}\u{df}e", &b"Gr\x94\xe1e"[..]),
+            ("F\u{fc}\u{df}e", b"F\x81\xe1e"),
+        ] {
+            assert_eq!(zip_name(shown, raw, NameEnc::Auto, false), shown);
+        }
+        assert_eq!(n(NameEnc::Cp866, false), "Привет");
+        assert_eq!(n(NameEnc::Cp437, true), as437);
+        let cp1251 = encoding_rs::WINDOWS_1251.encode("Привет").0.into_owned();
+        assert_eq!(zip_name("x", &cp1251, NameEnc::Cp1251, false), "Привет");
+        // UTF-8 without the flag (zips from Linux / macOS tools): so by itself.
+        assert_eq!(zip_name("x", "П".as_bytes(), NameEnc::Auto, false), "П");
+        // Marked UTF-8, or plain ASCII: as written, whatever is chosen.
+        assert_eq!(zip_name("П", "П".as_bytes(), NameEnc::Cp866, true), "П");
+        assert_eq!(zip_name("a.txt", b"a.txt", NameEnc::Cp1251, true), "a.txt");
+    }
+
+    #[test]
+    fn a_cp866_zip_is_listed_and_unpacked_with_its_names() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("dos.zip");
+        let mut z = zip::ZipWriter::new(File::create(&a).unwrap());
+        z.start_file("XXXXXX.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        z.write_all(b"x").unwrap();
+        z.finish().unwrap();
+        // Its name in cp866, without the UTF-8 flag (as Windows writes it).
+        let cp866 = encoding_rs::IBM866.encode("Привет").0.into_owned();
+        let mut bytes = fs::read(&a).unwrap();
+        while let Some(i) = bytes.windows(6).position(|w| w == b"XXXXXX") {
+            bytes[i..i + 6].copy_from_slice(&cp866);
+        }
+        fs::write(&a, &bytes).unwrap();
+        set_name_encoding(&a, NameEnc::Cp866);
+        let names: Vec<String> = (list(&a, Path::new(""), true).unwrap().into_iter())
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["Привет.txt"]);
+        let out = d.path().join("out");
+        unpack(
+            std::slice::from_ref(&a),
+            &out,
+            false,
+            &mut Script::default(),
+        );
+        assert_eq!(fs::read(out.join("Привет.txt")).unwrap(), b"x");
+        // Another encoding chosen: listed anew in it.
+        set_name_encoding(&a, NameEnc::Cp437);
+        assert_ne!(list(&a, Path::new(""), true).unwrap()[0].name, "Привет.txt");
     }
 
     #[test]

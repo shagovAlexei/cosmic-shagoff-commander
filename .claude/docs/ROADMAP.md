@@ -232,7 +232,7 @@
 
 - [x] 176. Правка строки пути (`cm_EditPath`): щелчок по пустому месту строки пути / клавиша — поле с путём, Enter — туда
 - [x] 177. Корзина (`cm_OpenRecycled`): `trash:///` как каталог — восстановить, удалить насовсем, очистить
-- [ ] 178. Кодировка имён в архиве (`cm_ChangeArchiveEncoding`): zip из Windows с именами в cp866 — выбор кодировки
+- [x] 178. Кодировка имён в архиве (`cm_ChangeArchiveEncoding`): zip из Windows с именами в cp866 — выбор кодировки
 - [ ] 179. Синхронная смена каталогов (`cm_SyncChangeDir`) и «другая панель — в этот же каталог» (`cm_MatchSrc`)
 - [ ] 180. Меню «Запуск» (`cm_UserMenu`, TC Start menu): свои пункты-команды с параметрами `%P %N …`, как кнопки панели
 - [ ] 181. Выделение: сохранить / восстановить (`cm_SaveSelection`), в файл / из файла / из буфера (`cm_SaveSelectionToFile`, `cm_LoadSelectionFromFile`, `cm_LoadSelectionFromClip`), с тем же именем / именем и расширением (`cm_SelectCurrentName`, `…NameExt`), показать только выделенные (`cm_ShowOnlySelected`), к следующему / предыдущему выделенному (`cm_GotoNextSelected`)

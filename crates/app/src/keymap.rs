@@ -108,6 +108,8 @@ pub enum Action {
     /// Alt+F5 / Alt+F9: pack the targets / unpack the archives among them.
     Pack,
     Unpack,
+    /// Files → the encoding of a zip's names (TC `cm_ChangeArchiveEncoding`, no key there).
+    ArchiveEncoding,
     /// Alt+F7: find files.
     FindFiles,
     /// Shift+F2: mark what differs between the two panels.

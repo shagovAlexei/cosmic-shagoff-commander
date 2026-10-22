@@ -584,6 +584,8 @@ pub enum ListKind {
     Shells,
     /// Shift+F10 / the Menu key: the row's context menu (`menu::context_rows`).
     Context,
+    /// Files → the encoding of a zip's names: `path` is the archive, row i is `NameEnc::ALL[i]`.
+    NameEncoding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1349,6 +1351,8 @@ pub fn view<'a>(
                     continue;
                 }
                 let path = match item.kind {
+                    // The archive's path: the same on every row.
+                    _ if *kind == ListKind::NameEncoding => String::new(),
                     Item::Mount => format!("{}   ({})", item.path.display(), fl!("not-mounted")),
                     Item::Sub(_) => "▸".into(),
                     Item::App => item.path.file_name().map_or(String::new(), |n| {
@@ -1392,6 +1396,7 @@ pub fn view<'a>(
                 ListKind::Terminals => fl!("menu-terminal"),
                 ListKind::Shells => fl!("menu-shell"),
                 ListKind::Context => fl!("context-menu"),
+                ListKind::NameEncoding => fl!("archive-encoding"),
             };
             let dialog = widget::dialog()
                 .title(title)
