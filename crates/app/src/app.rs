@@ -856,6 +856,8 @@ pub enum Message {
     ListerPart(u64, Slide, Arc<Result<lister::Loaded, String>>),
     /// The viewer's picture is in the renderer (redraws with it).
     ListerAllocated(u64, Option<cosmic::iced::runtime::image::Allocation>),
+    /// Nothing but a redraw: see `subscription`.
+    ListerWake,
     ListerKey(ListerKey),
     /// A viewer letter key typed in the panel: the viewer's when it is open, else the command line's.
     Letter(ListerKey, char),
@@ -938,6 +940,10 @@ impl Application for App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // Only to have the windows redrawn (`subscription`): no state changes to follow.
+        if let Message::ListerWake = message {
+            return Task::none();
+        }
         let shown = self.viewer_shown();
         let task = self.handle(message);
         if self.dialog.is_none() {
@@ -1056,6 +1062,17 @@ impl Application for App {
                 .watch_config::<Config>(APP_ID)
                 .map(|u| Message::Config(Box::new(u.config))),
         ];
+        // The viewer's picture handed to the renderers: their "redraw, it's uploaded" is lost while
+        // the main window isn't drawn (covered by the viewer's window), so a tick wakes the loop a
+        // while (regression: F3 showed nothing until a key). Each tick recomputes this: it stops.
+        if (self.lister.as_ref().and_then(|l| l.wake_until))
+            .is_some_and(|t| std::time::Instant::now() < t)
+        {
+            subs.push(
+                cosmic::iced::time::every(std::time::Duration::from_millis(100))
+                    .map(|_| Message::ListerWake),
+            );
+        }
         if !self.edited.is_empty() {
             subs.push(
                 cosmic::iced::time::every(std::time::Duration::from_secs(2))
@@ -2292,6 +2309,7 @@ impl App {
                 {
                     l.set_loaded(loaded);
                     if let Some(h) = l.raster_handle() {
+                        l.wake_until = Some(std::time::Instant::now() + lister::WAKE_MAX);
                         return cosmic::iced::runtime::image::allocate(h).map(move |a| {
                             cosmic::Action::App(Message::ListerAllocated(id, a.ok()))
                         });
@@ -2323,10 +2341,17 @@ impl App {
                 let read = part.read.map_or(Task::none(), |s| self.lister_slide(s));
                 return Task::batch([scroll, read]);
             }
+            Message::ListerWake => {}
             Message::ListerAllocated(id, a) => {
                 if let Some(l) = &mut self.lister
                     && l.id == id
                 {
+                    // Held in the main window's renderer; the viewer's own may need a frame or
+                    // two more. Failed: that one loads it alone, the whole while.
+                    if a.is_some() {
+                        let soon = std::time::Instant::now() + lister::WAKE_AFTER;
+                        l.wake_until = l.wake_until.map(|t| t.min(soon));
+                    }
                     l.allocation = a;
                 }
             }
@@ -9780,6 +9805,36 @@ mod tests {
         let (id, name) = (l.id, l.name.clone());
         let loaded = lister::Loaded::read(&dir.join(&name), &name);
         let _ = app.update(Message::ListerLoaded(id, Arc::new(loaded)));
+    }
+
+    #[test]
+    fn regression_a_picture_wakes_the_loop_until_the_renderer_has_it() {
+        let (mut app, tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::View));
+        let png = tmp.path().join("p.png");
+        image::RgbImage::new(4, 4).save(&png).unwrap();
+        let l = app.lister.as_mut().unwrap();
+        l.name = "p.png".into();
+        let id = l.id;
+        let ticking = |app: &App| {
+            (app.lister.as_ref().and_then(|l| l.wake_until))
+                .is_some_and(|t| std::time::Instant::now() < t)
+        };
+        lister_loaded(&mut app, tmp.path());
+        // The renderers' answer may never come while the main window isn't drawn: woken a while.
+        assert!(ticking(&app));
+        let _ = app.update(Message::ListerAllocated(id, None));
+        assert!(
+            ticking(&app),
+            "failed: the viewer's renderer loads it alone, still woken"
+        );
+        let until = app.lister.as_ref().unwrap().wake_until.unwrap();
+        assert!(until <= std::time::Instant::now() + lister::WAKE_MAX);
+        // Text: nothing to wait for.
+        let l = app.lister.as_mut().unwrap();
+        l.name = "a.txt".into();
+        lister_loaded(&mut app, tmp.path());
+        assert!(!ticking(&app));
     }
 
     #[test]

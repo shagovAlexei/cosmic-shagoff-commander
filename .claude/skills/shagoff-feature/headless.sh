@@ -37,7 +37,7 @@ start)
     before=$(ls "$XDG_RUNTIME_DIR" | grep -E '^wayland-[0-9]+$' || true)
     printf 'output HEADLESS-1 resolution %s\ndefault_border none\n' "${2:-1036x530}" >"$DIR/sway.cfg"
     echo "${2:-1036x530}" >"$DIR/size"
-    env -u WAYLAND_DISPLAY -u DISPLAY WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
+    env -u WAYLAND_DISPLAY -u DISPLAY WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=${WLR_RENDERER:-pixman} \
         setsid sway -c "$DIR/sway.cfg" >"$DIR/sway.log" 2>&1 &
     echo $! >"$DIR/sway.pid"
     sleep 2
