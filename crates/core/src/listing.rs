@@ -28,7 +28,7 @@ pub struct Entry {
     pub mode: u32,
     /// (uid, gid) of the entry itself; `None` inside archives or when stat failed.
     pub owner: Option<(u32, u32)>,
-    /// Where a symlink points (as written in the link).
+    /// Where a symlink points (as written in the link); in the trash, where it was deleted from.
     pub target: Option<std::path::PathBuf>,
 }
 
@@ -63,6 +63,7 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
         Err(e) => return Err(e),
     };
     let mut out = Vec::new();
+    let trash = crate::trashcan::is_top(path);
     for item in dir {
         let Ok(item) = item else { continue };
         let os_name = item.file_name();
@@ -93,7 +94,12 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
             });
             continue;
         };
-        out.push(from_meta(&item.path(), os_name, name, &lmeta));
+        let mut e = from_meta(&item.path(), os_name, name, &lmeta);
+        // The trash: where each item was deleted from, in the status line.
+        if trash {
+            e.target = crate::trashcan::origin(&item.path()).or(e.target);
+        }
+        out.push(e);
     }
     Ok(out)
 }
@@ -367,6 +373,16 @@ mod tests {
         assert_eq!(get("f").owner, Some((me.uid(), me.gid())));
         assert_eq!(get("f").target, None);
         assert_eq!(get("l").target, Some("f".into()));
+        // In the trash: where it was deleted from.
+        let root = crate::trashcan::test_root(d.path());
+        let files = root.join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::create_dir_all(root.join("info")).unwrap();
+        std::fs::write(files.join("a"), "").unwrap();
+        let info = "[Trash Info]\nPath=u/a\nDeletionDate=2026-10-22T10:00:00\n";
+        std::fs::write(root.join("info/a.trashinfo"), info).unwrap();
+        let origin = scan(&files, false).unwrap()[0].target.clone();
+        assert_eq!(origin, Some(d.path().join("u/a")));
     }
 
     #[test]

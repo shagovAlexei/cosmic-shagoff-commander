@@ -25,6 +25,12 @@ pub enum Action {
     ChecksumCreate,
     /// The path line as a field (TC `cm_EditPath`; no key there either).
     EditPath,
+    /// The trash as a dir (TC `cm_OpenRecycled`, no key there either).
+    OpenTrash,
+    /// The trash's items back where they were deleted from.
+    Restore,
+    /// Everything in the trash deleted for good, after asking.
+    EmptyTrash,
     /// Files → «Verify checksums» (TC `cm_CRCcheck`).
     ChecksumVerify,
     /// Alt+F10: go to a dir chosen in a tree (TC «Change directory via tree»).

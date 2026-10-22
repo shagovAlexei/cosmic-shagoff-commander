@@ -37,6 +37,7 @@ use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
 use shagoff_core::terminals::{self, Terminal};
+use shagoff_core::trashcan;
 use shagoff_core::viewport;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -638,6 +639,10 @@ pub enum Message {
     Summed(u64, Result<Vec<PathBuf>, String>),
     /// Each checksum file verified: its (file, result) rows, or why it could not be read.
     Verified(Vec<(PathBuf, Result<checksum::Report, String>)>),
+    /// Items put back from the trash: the ones that could not be, with why.
+    Restored(Vec<String>),
+    /// «Empty trash»: everything in every trash, to ask about (side), or why it can't be read.
+    TrashListed(usize, Result<Vec<PathBuf>, String>),
     /// Alt+F5's password field (`true`: the second one).
     PackPassword(bool, String),
     /// The encrypted archive's password field.
@@ -2637,6 +2642,27 @@ impl App {
                     self.say(StatusKind::Error, format!("{head}\n{}", bad.join("\n")));
                 }
             }
+            Message::TrashListed(side, r) => match r {
+                Err(e) => self.say(StatusKind::Error, e),
+                Ok(paths) if paths.is_empty() => self.say(StatusKind::Info, fl!("trash-empty")),
+                Ok(paths) if self.dialog.is_none() && !self.busy() => {
+                    self.dialog = Some(Dialog::ConfirmDelete {
+                        side,
+                        permanent: true,
+                        paths,
+                    });
+                }
+                Ok(_) => {}
+            },
+            Message::Restored(bad) => {
+                if !bad.is_empty() {
+                    self.say(StatusKind::Error, bad.join("\n"));
+                }
+                return Task::batch((0..2).map(|s| {
+                    let to = self.panes[s].active().target();
+                    self.reload(s, to, None)
+                }));
+            }
             Message::Summed(tab, r) => {
                 if (self.status.as_ref()).is_some_and(|s| s.text == fl!("checksum-making")) {
                     self.status = None;
@@ -4514,6 +4540,45 @@ impl App {
                 }
             }
             Action::Root => return self.load(side, "/".into(), None),
+            Action::OpenTrash => match trashcan::home() {
+                Ok(path) => return self.load(side, path, None),
+                Err(e) => self.say(StatusKind::Error, crate::why::text(&e)),
+            },
+            Action::Restore => {
+                let paths = panel.targets();
+                if paths.is_empty() || !trashcan::is_top(panel.cwd()) {
+                    self.say(StatusKind::Error, fl!("why-not-in-trash"));
+                    return Task::none();
+                }
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            (paths.iter())
+                                .filter_map(|p| {
+                                    let e = trashcan::restore(p).err()?;
+                                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                                    Some(format!("{name}: {}", crate::why::text(&e)))
+                                })
+                                .collect()
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    |bad| cosmic::Action::App(Message::Restored(bad)),
+                );
+            }
+            // Off the UI thread: finding the drives' trashes stats every mount.
+            Action::EmptyTrash => {
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(trashcan::everything)
+                            .await
+                            .unwrap_or_else(|e| Err(std::io::Error::other(e)))
+                            .map_err(|e| crate::why::text(&e))
+                    },
+                    move |r| cosmic::Action::App(Message::TrashListed(side, r)),
+                );
+            }
             Action::Mark => {
                 panel.toggle_mark();
                 // TC: Space on a dir also counts its size (not in archives: not real dirs).
@@ -4695,10 +4760,7 @@ impl App {
             }
             Action::ContextMenu => {
                 let ctx = match panel.current() {
-                    Some(e) if e.name != PARENT => crate::menu::Ctx::Entry {
-                        dir: e.is_dir(),
-                        archive: archive::Format::detect(&e.name).is_some_and(|f| f.is_tree()),
-                    },
+                    Some(e) if e.name != PARENT => crate::menu::Ctx::entry(e, panel.cwd()),
                     _ => crate::menu::Ctx::Dir,
                 };
                 let items = (crate::menu::context_rows(ctx).into_iter())
@@ -5123,11 +5185,13 @@ impl App {
             }
             Action::Delete | Action::DeletePermanent => {
                 let paths = panel.targets();
-                // An archive has no trash: deleting from one is always for good (TC too).
+                // An archive has no trash: deleting from one is always for good (TC too); in the
+                // trash itself, too.
                 let in_archive = archive::split_path(panel.cwd()).is_some();
+                let for_good = in_archive || paths.iter().any(|p| trashcan::inside(p));
                 (!paths.is_empty()).then_some(Dialog::ConfirmDelete {
                     side,
-                    permanent: action == Action::DeletePermanent || in_archive,
+                    permanent: action == Action::DeletePermanent || for_good,
                     paths,
                 })
             }
@@ -9897,6 +9961,74 @@ mod tests {
             space: None,
         });
         (app, tmp)
+    }
+
+    #[test]
+    fn the_trash_deletes_for_good_and_restores() {
+        let tmp = tempfile::tempdir().unwrap();
+        use std::os::unix::fs::MetadataExt;
+        let uid = std::fs::metadata(tmp.path()).unwrap().uid();
+        let root = tmp.path().join(format!(".Trash-{uid}"));
+        let files = root.join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::create_dir_all(root.join("info")).unwrap();
+        std::fs::write(files.join("a.txt"), "x").unwrap();
+        let from = tmp.path().join("docs/a.txt");
+        std::fs::write(
+            root.join("info/a.txt.trashinfo"),
+            "[Trash Info]\nPath=docs/a.txt\n",
+        )
+        .unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.load(0, files.clone(), None);
+        let t = app.panes[0].active();
+        let (id, generation) = (t.id, t.pending.as_ref().unwrap().0);
+        let _ = app.update(Message::Listed {
+            tab: id,
+            generation,
+            path: files.clone(),
+            focus: Some("a.txt".into()),
+            result: Ok(listing::scan(&files, false).unwrap()),
+            space: None,
+        });
+        // F8 there is for good (never into the trash again).
+        let _ = app.update(Message::Key(Action::Delete));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ConfirmDelete {
+                permanent: true,
+                ..
+            })
+        ));
+        let _ = app.update(Message::DialogCancel);
+        // The row's menu is the trash's own.
+        let e = app.panes[0].active().panel.current().unwrap().clone();
+        assert!(matches!(
+            crate::menu::Ctx::entry(&e, &files),
+            crate::menu::Ctx::Trash
+        ));
+        // Restore: back where it came from (done off the UI thread, here by hand).
+        let _ = app.update(Message::Key(Action::Restore));
+        assert!(app.msg().is_none());
+        assert_eq!(trashcan::restore(&files.join("a.txt")).unwrap(), from);
+        let _ = app.update(Message::Restored(vec!["b: taken".into()]));
+        assert_eq!(app.msg(), Some("b: taken"));
+        // «Empty trash»: asked about everything found; nothing found — said so.
+        let _ = app.update(Message::TrashListed(0, Ok(vec![files.join("x")])));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::ConfirmDelete {
+                permanent: true,
+                ..
+            })
+        ));
+        let _ = app.update(Message::DialogCancel);
+        let _ = app.update(Message::TrashListed(0, Ok(Vec::new())));
+        assert_eq!(app.msg(), Some(fl!("trash-empty").as_str()));
+        // Not in the trash: nothing to restore.
+        let (mut app, _tmp) = lister_app(Config::default());
+        let _ = app.update(Message::Key(Action::Restore));
+        assert_eq!(app.msg(), Some(fl!("why-not-in-trash").as_str()));
     }
 
     /// What the background read would deliver for the viewer's current file.

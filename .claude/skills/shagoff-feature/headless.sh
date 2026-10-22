@@ -27,7 +27,7 @@ kill_pid() { [ -f "$DIR/$1.pid" ] && { kill "$(cat "$DIR/$1.pid")" 2>/dev/null |
 app() {
     kill_pid app
     cd "$ROOT"
-    WAYLAND_DISPLAY="$(sock)" XDG_CONFIG_HOME="$DIR/cfg" XDG_STATE_HOME="$DIR/state" \
+    WAYLAND_DISPLAY="$(sock)" XDG_CONFIG_HOME="$DIR/cfg" XDG_STATE_HOME="$DIR/state" XDG_DATA_HOME="$DIR/data" \
         XDG_CACHE_HOME="$DIR/cache" ICED_BACKEND="${ICED_BACKEND:-}" setsid "$ROOT/target/debug/shagoff-commander" >"$DIR/app.log" 2>&1 &
     echo $! >"$DIR/app.pid"
     sleep 3

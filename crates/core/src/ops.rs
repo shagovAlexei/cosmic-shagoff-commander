@@ -257,7 +257,7 @@ pub fn delete(paths: &[PathBuf], permanent: bool, h: &mut dyn Handler) -> Report
         }
         loop {
             let r = if permanent {
-                remove(p)
+                remove(p).inspect(|()| crate::trashcan::forget(p))
             } else {
                 trash::delete(p).map_err(io::Error::other)
             };
@@ -398,7 +398,13 @@ pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handle
     let mut report = Report::default();
     for ((src, dst), size) in pairs.iter().zip(sizes) {
         match t.entry(src, dst, Some(size)) {
-            Step::Done => report.completed.push(src.clone()),
+            Step::Done => {
+                // Moved out of the trash (or renamed in it): its info is of no item now.
+                if method != Method::Copy && fs::symlink_metadata(src).is_err() {
+                    crate::trashcan::forget(src);
+                }
+                report.completed.push(src.clone())
+            }
             Step::Skipped => {}
             Step::Cancel => {
                 report.cancelled = true;
@@ -1553,6 +1559,19 @@ mod tests {
         assert!(!a.exists());
         assert_eq!(read(&to.join("a")), "x");
         assert_eq!(r.completed, [a]);
+        // Out of the trash: its info goes; a copy keeps it.
+        let root = crate::trashcan::test_root(d.path());
+        fs::create_dir_all(root.join("files")).unwrap();
+        fs::create_dir_all(root.join("info")).unwrap();
+        let (item, info) = (root.join("files/t"), root.join("info/t.trashinfo"));
+        write(&item, "x");
+        write(&info, "[Trash Info]\nPath=t\n");
+        let pairs = plan(std::slice::from_ref(&item), &to).unwrap();
+        transfer(Method::Copy, &pairs, &mut Script::default());
+        assert!(info.exists());
+        fs::remove_file(to.join("t")).unwrap();
+        transfer(Method::Move, &pairs, &mut Script::default());
+        assert!(!info.exists() && to.join("t").exists());
     }
 
     #[test]
