@@ -360,6 +360,8 @@ pub struct Checks {
     pub classic: bool,
     pub terminal: bool,
     pub sync_dirs: bool,
+    /// View → «Only selected files» in force in the active panel.
+    pub only_marked: bool,
     /// The Start menu's item names (`None`: a line).
     pub start: Vec<Option<String>>,
     /// Ctrl+F10 / F11 / F12 in force in the active panel (0 / 1 / 2): its item checked.
@@ -411,8 +413,29 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-unselect-all"), Action::UnselectAll),
                 b(fl!("menu-invert"), Action::Invert),
                 b(fl!("menu-restore-marks"), Action::RestoreMarks),
-                b(fl!("menu-mark-ext"), Action::MarkExt),
-                b(fl!("menu-unmark-ext"), Action::UnmarkExt),
+                // Submenus: all of it in one column runs off a small screen.
+                menu::Item::Folder(
+                    fl!("menu-mark-alike"),
+                    vec![
+                        b(fl!("menu-mark-ext"), Action::MarkExt),
+                        b(fl!("menu-unmark-ext"), Action::UnmarkExt),
+                        b(fl!("menu-mark-name"), Action::MarkName),
+                        b(fl!("menu-unmark-name"), Action::UnmarkName),
+                        b(fl!("menu-mark-name-ext"), Action::MarkNameExt),
+                        b(fl!("menu-unmark-name-ext"), Action::UnmarkNameExt),
+                    ],
+                ),
+                menu::Item::Folder(
+                    fl!("menu-marks-keep"),
+                    vec![
+                        b(fl!("menu-save-marks"), Action::SaveMarks),
+                        b(fl!("menu-save-marks-file"), Action::SaveMarksToFile),
+                        b(fl!("menu-load-marks-file"), Action::LoadMarksFromFile),
+                        b(fl!("menu-load-marks-clip"), Action::LoadMarksFromClip),
+                    ],
+                ),
+                b(fl!("menu-next-marked"), Action::NextMarked),
+                b(fl!("menu-prev-marked"), Action::PrevMarked),
                 menu::Item::Divider,
                 b(fl!("menu-compare-lists"), Action::CompareLists),
                 menu::Item::Divider,
@@ -560,6 +583,12 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                     None,
                     checks.show == 2,
                     MenuAct::Key(Action::ShowMask),
+                ),
+                menu::Item::CheckBox(
+                    fl!("menu-show-only-marked"),
+                    None,
+                    checks.only_marked,
+                    MenuAct::Key(Action::ShowOnlyMarked),
                 ),
                 menu::Item::Divider,
                 sort(fl!("menu-sort-name"), SortKey::Name),
@@ -890,13 +919,19 @@ mod tests {
             classic: true,
             ..Checks::default()
         };
-        let items: Vec<MenuAct> = (menus(all, Lock::default()).into_iter())
-            .flat_map(|(_, items)| items)
-            .filter_map(|i| match i {
-                menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => Some(a),
-                _ => None,
-            })
-            .collect();
+        fn acts(items: Vec<Item>, out: &mut Vec<MenuAct>) {
+            for i in items {
+                match i {
+                    menu::Item::Button(_, _, a) | menu::Item::CheckBox(_, _, _, a) => out.push(a),
+                    menu::Item::Folder(_, sub) => acts(sub, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut items = Vec::new();
+        for (_, menu) in menus(all, Lock::default()) {
+            acts(menu, &mut items);
+        }
         let missing: Vec<_> = (table().into_iter())
             .map(|(_, _, a)| a)
             // Enter: the context menu's «Open».
@@ -968,6 +1003,17 @@ mod tests {
                             | Action::OpenTrash
                             | Action::ArchiveEncoding
                             | Action::SyncChangeDir
+                            | Action::MarkName
+                            | Action::UnmarkName
+                            | Action::MarkNameExt
+                            | Action::UnmarkNameExt
+                            | Action::SaveMarks
+                            | Action::SaveMarksToFile
+                            | Action::LoadMarksFromFile
+                            | Action::LoadMarksFromClip
+                            | Action::NextMarked
+                            | Action::PrevMarked
+                            | Action::ShowOnlyMarked
                             | Action::MatchSrc
                             | Action::Restore
                             | Action::EmptyTrash

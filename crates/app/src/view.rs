@@ -1145,6 +1145,7 @@ fn pane_status(app: &App, side: usize) -> Element<'_, Message> {
                 dirs = t.dirs.to_string()
             );
             let show = match p.panel.show() {
+                _ if p.panel.only_marked() => Some(fl!("show-status", what = fl!("show-marked"))),
                 Show::All => None,
                 Show::Programs => Some(fl!("show-status", what = fl!("show-programs"))),
                 Show::Mask(m) => Some(fl!("show-status", what = m.as_str())),

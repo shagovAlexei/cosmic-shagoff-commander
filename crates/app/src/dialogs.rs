@@ -35,6 +35,9 @@ pub enum InputOp {
     Rename,
     /// Own caption of the active tab.
     TabName,
+    /// The file the marked names go to / marks are read from.
+    SaveMarks,
+    LoadMarks,
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -942,6 +945,9 @@ pub fn view<'a>(
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
                 InputOp::OpenWith => fl!("open-with-other-title"),
+                // The menu items' names, without their «…».
+                InputOp::SaveMarks => fl!("menu-save-marks-file").replace('…', ""),
+                InputOp::LoadMarks => fl!("menu-load-marks-file").replace('…', ""),
             };
             let control = match op {
                 InputOp::Copy | InputOp::Move | InputOp::Link => {

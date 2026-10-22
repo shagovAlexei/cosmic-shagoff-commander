@@ -32,7 +32,7 @@ use shagoff_core::mount;
 use shagoff_core::multirename::{self, Case, Rule};
 use shagoff_core::openwith;
 use shagoff_core::ops::{self, ErrorChoice, Method, PlanError, Report, Resolution};
-use shagoff_core::panel::{self, PARENT, Panel, Show};
+use shagoff_core::panel::{self, Like, PARENT, Panel, Show};
 use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
@@ -521,6 +521,18 @@ pub struct App {
     testing: bool,
 }
 
+/// Mark → «Save selection to file…»: the file offered, in the panel's dir.
+const MARKS_FILE: &str = "selection.txt";
+
+/// `MARKS_FILE` in the panel's dir; inside an archive, next to it (that is no place to write).
+fn marks_file(panel: &Panel) -> String {
+    let dir = match archive::split_path(panel.cwd()) {
+        Some((arc, _)) => arc.parent().map(Path::to_path_buf).unwrap_or_default(),
+        None => panel.cwd().to_path_buf(),
+    };
+    dir.join(MARKS_FILE).display().to_string()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusKind {
     Info,
@@ -774,6 +786,8 @@ pub enum Message {
     FontFilter(String),
     /// Text typed into the quick search / filter field.
     SearchInput(String),
+    /// Mark → «Selection from the clipboard»: its text, for the active panel.
+    MarksText(usize, Option<String>),
     /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
     Pasted(Option<(ClipKind, Vec<PathBuf>)>),
     /// Files dropped on a pane (`dir`: the dir row they were dropped on); `mv`: Shift was held.
@@ -1162,6 +1176,7 @@ impl Application for App {
             classic: c.skin == config::Skin::Classic,
             terminal: c.term_builtin,
             sync_dirs: self.sync_dirs,
+            only_marked: self.panes[self.active].active().panel.only_marked(),
             start: (c.start_menu.iter())
                 .map(|b| (b.cmd != crate::toolbar::SEP).then(|| crate::toolbar::tip(b)))
                 .collect(),
@@ -2905,6 +2920,11 @@ impl App {
                 return task;
             }
             Message::Pasted(_) => {}
+            Message::MarksText(_, None) => self.say(StatusKind::Error, fl!("marks-no-text")),
+            Message::MarksText(side, Some(text)) => {
+                let n = self.panes[side].active_mut().panel.mark_listed(&text);
+                self.say(StatusKind::Info, fl!("marks-loaded", count = n));
+            }
             Message::DragStart(right) => {
                 self.right_hold = None; // a drag, not a click: no mark, no menu
                 self.right_drag = right;
@@ -4691,6 +4711,18 @@ impl App {
             Action::ShowPrograms => panel.set_show(Show::Programs),
             Action::MarkExt => panel.mark_ext(true),
             Action::UnmarkExt => panel.mark_ext(false),
+            Action::MarkName => panel.mark_like(Like::Name, true),
+            Action::UnmarkName => panel.mark_like(Like::Name, false),
+            Action::MarkNameExt => panel.mark_like(Like::NameExt, true),
+            Action::UnmarkNameExt => panel.mark_like(Like::NameExt, false),
+            Action::SaveMarks => panel.keep_marks(),
+            Action::NextMarked => panel.goto_marked(true),
+            Action::PrevMarked => panel.goto_marked(false),
+            Action::ShowOnlyMarked => panel.show_only_marked(),
+            Action::LoadMarksFromClip => {
+                return cosmic::iced::clipboard::read()
+                    .map(move |t| cosmic::Action::App(Message::MarksText(side, t)));
+            }
             // TC: the dir / archive under the cursor (`..`: the parent) in that panel; on a file,
             // this panel's dir.
             Action::OpenLeft | Action::OpenRight => {
@@ -5043,7 +5075,9 @@ impl App {
             | Action::Mkdir
             | Action::NewFile
             | Action::Delete
-            | Action::DeletePermanent => {}
+            | Action::DeletePermanent
+            | Action::SaveMarksToFile
+            | Action::LoadMarksFromFile => {}
             // Opened by `dialog_for` above.
             Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => {}
             // Also the drive list: a stick plugged in shows up (TC rereads drives too).
@@ -5178,6 +5212,13 @@ impl App {
             input,
         };
         match action {
+            Action::SaveMarksToFile if !panel.has_marks() => None,
+            Action::SaveMarksToFile => {
+                Some(input(InputOp::SaveMarks, Vec::new(), marks_file(panel)))
+            }
+            Action::LoadMarksFromFile => {
+                Some(input(InputOp::LoadMarks, Vec::new(), marks_file(panel)))
+            }
             Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => Some(Dialog::Mask {
                 side,
                 op: match action {
@@ -5634,6 +5675,41 @@ impl App {
                 input,
                 ..
             } => self.new_file(side, input.trim()),
+            Dialog::Input {
+                op: op @ (InputOp::SaveMarks | InputOp::LoadMarks),
+                side,
+                input,
+                ..
+            } => {
+                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+                let file = cwd.join(session::expand_home(Path::new(input.trim()), &self.home));
+                let panel = &mut self.panes[side].active_mut().panel;
+                let done = match op {
+                    InputOp::SaveMarks => {
+                        let names = panel.marked_names();
+                        let n = names.len();
+                        // An existing file is not written over (TC asks; here: say so).
+                        // ponytail: on the UI thread, a few hundred bytes; a dead mount hangs it.
+                        (std::fs::File::create_new(&file))
+                            .and_then(|mut f| {
+                                std::io::Write::write_all(
+                                    &mut f,
+                                    (names.join("\n") + "\n").as_bytes(),
+                                )
+                            })
+                            .map(|_| n)
+                    }
+                    _ => std::fs::read_to_string(&file).map(|t| panel.mark_listed(&t)),
+                };
+                match (done, op) {
+                    (Ok(n), InputOp::SaveMarks) => {
+                        self.say(StatusKind::Info, fl!("marks-saved", count = n))
+                    }
+                    (Ok(n), _) => self.say(StatusKind::Info, fl!("marks-loaded", count = n)),
+                    (Err(e), _) => self.say(StatusKind::Error, crate::why::text(&e)),
+                }
+                Task::none()
+            }
             Dialog::Input {
                 op: InputOp::OpenWith,
                 side,
@@ -9071,6 +9147,17 @@ fn on_files(a: Action) -> bool {
             | A::RestoreMarks
             | A::MarkExt
             | A::UnmarkExt
+            | A::MarkName
+            | A::UnmarkName
+            | A::MarkNameExt
+            | A::UnmarkNameExt
+            | A::SaveMarks
+            | A::SaveMarksToFile
+            | A::LoadMarksFromFile
+            | A::LoadMarksFromClip
+            | A::NextMarked
+            | A::PrevMarked
+            | A::ShowOnlyMarked
             | A::ClipCut
             | A::ClipCopy
             | A::ClipPaste
@@ -9930,6 +10017,38 @@ mod tests {
             .pending
             .as_ref()
             .map(|(_, p)| p.clone())
+    }
+
+    #[test]
+    fn the_selection_goes_to_a_file_and_back() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        let rows = vec![entry("a.txt"), entry("b.txt"), entry("c.txt")];
+        let p = &mut app.panes[0].active_mut().panel;
+        p.set_listing(d.path().to_path_buf(), rows, None);
+        // Nothing marked: nothing to save, no dialog.
+        let _ = app.update(Message::Key(Action::SaveMarksToFile));
+        assert!(app.dialog.is_none());
+        let p = &mut app.panes[0].active_mut().panel;
+        p.mark_names(&["a.txt".into(), "c.txt".into()]);
+        let _ = app.update(Message::Key(Action::SaveMarksToFile));
+        let _ = app.update(Message::DialogSubmit); // the offered name, in the panel's dir
+        let file = d.path().join(MARKS_FILE);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "a.txt\nc.txt\n");
+        app.panes[0].active_mut().panel.mark_names(&[]);
+        let _ = app.update(Message::Key(Action::LoadMarksFromFile));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(
+            app.panes[0].active().panel.marked_names(),
+            ["a.txt", "c.txt"]
+        );
+        // The clipboard's text: one more.
+        let _ = app.update(Message::MarksText(0, Some("b.txt\n".into())));
+        assert_eq!(app.panes[0].active().panel.marked_names().len(), 3);
+        // Saved again: the file is there, kept as it was.
+        let _ = app.update(Message::Key(Action::SaveMarksToFile));
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "a.txt\nc.txt\n");
     }
 
     #[test]
