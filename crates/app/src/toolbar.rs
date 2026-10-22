@@ -170,6 +170,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-count-dirs"
         ),
         b!(
+            "cm_ChangeStartMenu",
+            ConfigureStartMenu,
+            "document-edit-symbolic",
+            "menu-start-edit"
+        ),
+        b!(
             "cm_SyncChangeDir",
             SyncChangeDir,
             "media-playlist-repeat-symbolic",
@@ -294,6 +300,8 @@ pub struct ToolEdit {
     labels: Vec<String>,
     /// The icon picker shown instead of the editor: (all names, filter).
     pub picker: Option<(Vec<String>, String)>,
+    /// The Start menu's items, not the bar: no icons, no defaults, `tip` is the item's name.
+    pub menu: bool,
 }
 
 /// The picker draws at most this many icons; the filter narrows the rest down.
@@ -366,6 +374,14 @@ impl ToolEdit {
             sel,
             labels: builtins().iter().map(|b| (b.label)()).collect(),
             picker: None,
+            menu: false,
+        }
+    }
+
+    pub fn menu(list: Vec<ToolButton>) -> Self {
+        Self {
+            menu: true,
+            ..Self::new(list)
         }
     }
 
@@ -394,7 +410,10 @@ impl ToolEdit {
             (ToolMsg::Tip(s), Some(i)) => self.list[i].tip = s,
             (ToolMsg::Dir(s), Some(i)) => self.list[i].dir = s,
             (ToolMsg::Add, _) => self.insert(ToolButton {
-                icon: "utilities-terminal-symbolic".into(),
+                icon: match self.menu {
+                    true => String::new(),
+                    false => "utilities-terminal-symbolic".into(),
+                },
                 ..Default::default()
             }),
             (ToolMsg::AddSep, _) => self.insert(ToolButton {
@@ -419,7 +438,7 @@ impl ToolEdit {
                     self.sel = Some(i + 1);
                 }
             }
-            (ToolMsg::Reset, _) => *self = Self::new(default_bar()),
+            (ToolMsg::Reset, _) if !self.menu => *self = Self::new(default_bar()),
             (ToolMsg::PickOpen, Some(_)) => self.picker = Some((Vec::new(), String::new())),
             (ToolMsg::PickLoaded(names), _) => {
                 if let Some((all, _)) = &mut self.picker {
@@ -512,12 +531,17 @@ pub fn view<'a>(
         list = list.push(if b.cmd == SEP {
             crate::hotlist::sep_row(t.sel == Some(i), on)
         } else {
-            let line = row![
-                widget::icon::from_name(icon(b)).size(16),
-                crate::dialogs::menu_row(tip(b), b.cmd.clone(), t.sel == Some(i), on, font),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center);
+            let line = row![]
+                .push_maybe((!t.menu).then(|| widget::icon::from_name(icon(b)).size(16)))
+                .push(crate::dialogs::menu_row(
+                    tip(b),
+                    b.cmd.clone(),
+                    t.sel == Some(i),
+                    on,
+                    font,
+                ))
+                .spacing(6)
+                .align_y(Alignment::Center);
             line.into()
         });
     }
@@ -537,7 +561,14 @@ pub fn view<'a>(
             .on_press_maybe(on.then(|| msg(m)))
     };
     let buttons = column![
-        btn(fl!("toolbar-add"), ToolMsg::Add, true),
+        btn(
+            match t.menu {
+                true => fl!("start-menu-add"),
+                false => fl!("toolbar-add"),
+            },
+            ToolMsg::Add,
+            true,
+        ),
         btn(fl!("hotlist-add-sep"), ToolMsg::AddSep, true),
         btn(fl!("hotlist-delete"), ToolMsg::Delete, sel.is_some()),
         row![
@@ -596,6 +627,10 @@ pub fn view<'a>(
             dir,
             on(ToolMsg::Dir).filter(|_| internal.is_none())
         ),
+    ]
+    .spacing(6)
+    // In the Start menu an item is a line of text: no icon.
+    .push_maybe((!t.menu).then(|| {
         row![
             field(
                 fl!("toolbar-icon"),
@@ -608,24 +643,32 @@ pub fn view<'a>(
                 .on_press_maybe(editable.map(|_| msg(ToolMsg::PickOpen))),
         ]
         .spacing(6)
-        .align_y(Alignment::Center),
-        field(fl!("toolbar-tip"), tip(&b), tip_text, on(ToolMsg::Tip)),
-    ]
-    .spacing(6);
+        .align_y(Alignment::Center)
+    }))
+    .push(match t.menu {
+        true => field(fl!("start-menu-name"), tip(&b), tip_text, on(ToolMsg::Tip)),
+        false => field(fl!("toolbar-tip"), tip(&b), tip_text, on(ToolMsg::Tip)),
+    });
 
-    widget::dialog()
-        .title(fl!("toolbar-title"))
+    let title = match t.menu {
+        true => fl!("start-menu-title"),
+        false => fl!("toolbar-title"),
+    };
+    let reset = (!t.menu)
+        .then(|| widget::button::standard(fl!("toolbar-reset")).on_press(msg(ToolMsg::Reset)));
+    let dialog = widget::dialog()
+        .title(title)
         .control(
             column![row![list, buttons].spacing(12), fields]
                 .spacing(10)
                 .width(Length::Fill),
         )
         .primary_action(widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit))
-        .secondary_action(cancel)
-        .tertiary_action(
-            widget::button::standard(fl!("toolbar-reset")).on_press(msg(ToolMsg::Reset)),
-        )
-        .into()
+        .secondary_action(cancel);
+    match reset {
+        Some(r) => dialog.tertiary_action(r).into(),
+        None => dialog.into(),
+    }
 }
 
 #[cfg(test)]

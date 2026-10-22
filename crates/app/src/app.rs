@@ -1162,6 +1162,9 @@ impl Application for App {
             classic: c.skin == config::Skin::Classic,
             terminal: c.term_builtin,
             sync_dirs: self.sync_dirs,
+            start: (c.start_menu.iter())
+                .map(|b| (b.cmd != crate::toolbar::SEP).then(|| crate::toolbar::tip(b)))
+                .collect(),
             show: match self.panes[self.active].active().panel.show() {
                 Show::All => 0,
                 Show::Programs => 1,
@@ -1372,7 +1375,7 @@ impl App {
                 if let Some(task) = self.lister_action(action) {
                     return task;
                 }
-                if action == Action::RunTerminal {
+                if matches!(action, Action::RunTerminal | Action::UserMenu(_)) {
                     return Task::none(); // not the panel's file from under the viewer
                 }
                 return self.act(self.active, action);
@@ -4461,6 +4464,17 @@ impl App {
                 self.dialog = Some(Dialog::Keys(Box::new(crate::hotkeys::KeyEdit::new(list))));
                 return Task::none();
             }
+            Action::ConfigureStartMenu => {
+                let t = crate::toolbar::ToolEdit::menu(self.config.start_menu.clone());
+                self.dialog = Some(Dialog::Toolbar(Box::new(t)));
+                return Task::none();
+            }
+            Action::UserMenu(i) => {
+                return match self.config.start_menu.get(i) {
+                    Some(b) => self.run_button(b.clone()),
+                    None => Task::none(),
+                };
+            }
             Action::ConfigureToolbar => {
                 let list = self.config.toolbar.clone();
                 self.dialog = Some(Dialog::Toolbar(Box::new(crate::toolbar::ToolEdit::new(
@@ -5815,6 +5829,18 @@ impl App {
                 }
                 self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors)
                     .with_panel(&self.config.panel);
+                Task::none()
+            }
+            Dialog::Toolbar(mut t) if t.menu => {
+                t.list.retain(|b| !b.cmd.trim().is_empty()); // added, never filled in
+                match &self.config_handler {
+                    Some(h) => {
+                        if let Err(e) = self.config.set_start_menu(h, t.list) {
+                            self.config_not_saved(&e);
+                        }
+                    }
+                    None => self.config.start_menu = t.list,
+                }
                 Task::none()
             }
             Dialog::Toolbar(t) => {
@@ -9904,6 +9930,30 @@ mod tests {
             .pending
             .as_ref()
             .map(|(_, p)| p.clone())
+    }
+
+    #[test]
+    fn the_start_menu_is_edited_apart_from_the_bar_and_runs_its_items() {
+        let mut app = app_with(Config::default(), State::default());
+        let bar = app.config.toolbar.clone();
+        let _ = app.update(Message::Key(Action::ConfigureStartMenu));
+        use crate::toolbar::ToolMsg;
+        for m in [
+            ToolMsg::Reset,
+            ToolMsg::Add,
+            ToolMsg::Cmd("cm_Exchange".into()),
+            ToolMsg::Add,
+        ] {
+            let _ = app.update(Message::ToolEdit(m)); // no defaults to reset to
+        }
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.config.toolbar, bar);
+        assert_eq!(app.config.start_menu.len(), 1); // the empty one is not kept
+        // Its item runs as a button does: here the internal command, panels swapped.
+        let left = app.panes[0].active().id;
+        let _ = app.update(Message::Key(Action::UserMenu(0)));
+        assert_eq!(app.panes[1].active().id, left);
+        let _ = app.update(Message::Key(Action::UserMenu(5))); // gone meanwhile: nothing
     }
 
     #[test]

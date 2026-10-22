@@ -348,8 +348,8 @@ pub fn commands() -> Vec<(String, Action)> {
 
 type Item = menu::Item<MenuAct, String>;
 
-/// The menu checkboxes' states.
-#[derive(Clone, Copy, Default)]
+/// The menu checkboxes' states (and the Start menu's items).
+#[derive(Clone, Default)]
 pub struct Checks {
     pub hidden: bool,
     pub divider_line: bool,
@@ -360,6 +360,8 @@ pub struct Checks {
     pub classic: bool,
     pub terminal: bool,
     pub sync_dirs: bool,
+    /// The Start menu's item names (`None`: a line).
+    pub start: Vec<Option<String>>,
     /// Ctrl+F10 / F11 / F12 in force in the active panel (0 / 1 / 2): its item checked.
     pub show: u8,
 }
@@ -575,6 +577,17 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-colors"), Action::ConfigureColors),
                 b(fl!("menu-keys"), Action::ConfigureKeys),
             ],
+        ),
+        (
+            fl!("menu-start"),
+            [b(fl!("menu-start-edit"), Action::ConfigureStartMenu)]
+                .into_iter()
+                .chain((!checks.start.is_empty()).then_some(menu::Item::Divider))
+                .chain(checks.start.iter().enumerate().map(|(i, l)| match l {
+                    None => menu::Item::Divider,
+                    Some(l) => b(l.clone(), Action::UserMenu(i)),
+                }))
+                .collect(),
         ),
         (
             fl!("menu-help-root"),
@@ -943,6 +956,7 @@ mod tests {
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar
+                            | Action::ConfigureStartMenu
                             | Action::ConfigureColors
                             | Action::ConfigureKeys
                             | Action::OpenTerminal
