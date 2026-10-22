@@ -130,6 +130,8 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             fl!("help-tabs"),
             vec![
                 r("Ctrl+T", fl!("menu-new-tab"), Action::NewTab),
+                r("Ctrl+Shift+T", fl!("menu-new-tab-bg"), Action::NewTabBg),
+                r("Ctrl+Shift+A", fl!("menu-tabs-list"), Action::TabsList),
                 r("Ctrl+W", fl!("menu-close-tab"), Action::CloseTab),
                 r(
                     "Ctrl+Shift+W",

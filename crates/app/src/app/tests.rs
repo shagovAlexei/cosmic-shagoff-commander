@@ -6591,3 +6591,61 @@ mod tabs_more {
         assert!(!app.panes[0].items()[0].locked);
     }
 }
+
+#[test]
+fn tabs_listed_opened_behind_and_closed_as_duplicates() {
+    let mut app = app_with(Config::default(), State::default());
+    let _ = app.update(Message::Key(Action::NewTabBg));
+    assert_eq!(app.panes[0].items().len(), 2);
+    assert_eq!(app.panes[0].active_index(), 0); // stayed in this one
+    for t in app.panes[0].items_mut() {
+        t.pending = None; // the start-up scan
+        t.panel.set_listing("/x".into(), Vec::new(), None);
+    }
+    // The list: a row per tab, the active one under the cursor; Enter goes to the chosen one.
+    let _ = app.update(Message::Key(Action::TabsList));
+    let Some(Dialog::List {
+        kind,
+        cursor,
+        items,
+        ..
+    }) = &mut app.dialog
+    else {
+        panic!("no list");
+    };
+    assert_eq!((*kind, items.len(), *cursor), (ListKind::Tabs, 2, 0));
+    *cursor = 1;
+    let _ = app.update(Message::DialogSubmit);
+    assert_eq!(app.panes[0].active_index(), 1);
+    // Both show the same dir: the active one stays, the other goes.
+    let _ = app.update(Message::Key(Action::CloseDuplicateTabs));
+    assert_eq!(app.panes[0].items().len(), 1);
+    // A copy in the other panel, the keys staying here.
+    let n = app.panes[1].items().len();
+    let _ = app.update(Message::Key(Action::NewTabOther));
+    assert_eq!((app.panes[1].items().len(), app.active), (n + 1, 0));
+    // All locked, with dir changes, and back.
+    let _ = app.update(Message::Key(Action::NewTabBg));
+    app.panes[0].active_mut().home = Some("/own".into()); // moving about already: its dir kept
+    let _ = app.update(Message::Key(Action::RoamAllTabs));
+    assert!(
+        app.panes[0]
+            .items()
+            .iter()
+            .all(|t| t.home.is_some() && !t.locked)
+    );
+    assert_eq!(app.panes[0].active().home, Some(PathBuf::from("/own")));
+    let _ = app.update(Message::Key(Action::LockAllTabs));
+    assert!(
+        app.panes[0]
+            .items()
+            .iter()
+            .all(|t| t.locked && t.home.is_none())
+    );
+    let _ = app.update(Message::Key(Action::CloseAllTabs)); // the locked ones stay
+    assert_eq!(app.panes[0].items().len(), 2);
+    let _ = app.update(Message::Key(Action::UnlockAllTabs));
+    assert!(!app.panes[0].active().pinned());
+    let _ = app.update(Message::Key(Action::CloseAllTabs));
+    assert_eq!(app.panes[0].items().len(), 1);
+}

@@ -164,6 +164,16 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         ),
         (vec![Ctrl], K::Letter(Code::KeyR, "r"), a(Action::Reload)),
         (vec![Ctrl], K::Letter(Code::KeyT, "t"), a(Action::NewTab)),
+        (
+            vec![Ctrl, Shift],
+            K::Letter(Code::KeyT, "t"),
+            a(Action::NewTabBg),
+        ),
+        (
+            vec![Ctrl, Shift],
+            K::Letter(Code::KeyA, "a"),
+            a(Action::TabsList),
+        ),
         (vec![Ctrl], K::Letter(Code::KeyW, "w"), a(Action::CloseTab)),
         (
             vec![Ctrl, Shift],
@@ -493,12 +503,19 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
         (
             fl!("menu-tabs"),
             vec![
+                b(fl!("menu-tabs-list"), Action::TabsList),
                 b(fl!("menu-new-tab"), Action::NewTab),
+                b(fl!("menu-new-tab-bg"), Action::NewTabBg),
                 b(fl!("menu-tab-open"), Action::TabOpen),
-                b(fl!("menu-tab-open-other"), Action::TabOpenOther),
-                menu::Item::Divider,
-                b(fl!("menu-tab-copy-other"), Action::TabCopyOther),
-                b(fl!("menu-tab-move-other"), Action::TabMoveOther),
+                menu::Item::Folder(
+                    fl!("menu-tabs-other"),
+                    vec![
+                        b(fl!("menu-tab-open-other"), Action::TabOpenOther),
+                        b(fl!("menu-new-tab-other"), Action::NewTabOther),
+                        b(fl!("menu-tab-copy-other"), Action::TabCopyOther),
+                        b(fl!("menu-tab-move-other"), Action::TabMoveOther),
+                    ],
+                ),
                 menu::Item::Divider,
                 menu::Item::CheckBox(
                     fl!("menu-tab-lock"),
@@ -512,12 +529,24 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                     lock.roam,
                     MenuAct::Key(Action::TabRoam),
                 ),
+                b(fl!("menu-go-locked-dir"), Action::GoToLockedDir),
                 b(fl!("menu-tab-rename"), Action::TabRename),
                 b(fl!("menu-tab-left"), Action::MoveTabLeft),
                 b(fl!("menu-tab-right"), Action::MoveTabRight),
                 menu::Item::Divider,
                 b(fl!("menu-close-tab"), Action::CloseTab),
                 b(fl!("menu-close-other-tabs"), Action::CloseOtherTabs),
+                menu::Item::Folder(
+                    fl!("menu-all-tabs"),
+                    vec![
+                        b(fl!("menu-lock-all-tabs"), Action::LockAllTabs),
+                        b(fl!("menu-roam-all-tabs"), Action::RoamAllTabs),
+                        b(fl!("menu-unlock-all-tabs"), Action::UnlockAllTabs),
+                        menu::Item::Divider,
+                        b(fl!("menu-close-duplicate-tabs"), Action::CloseDuplicateTabs),
+                        b(fl!("menu-close-all-tabs"), Action::CloseAllTabs),
+                    ],
+                ),
             ],
         ),
         (
@@ -1027,6 +1056,13 @@ mod tests {
                             | Action::NextMarked
                             | Action::PrevMarked
                             | Action::ShowOnlyMarked
+                            | Action::NewTabOther
+                            | Action::CloseDuplicateTabs
+                            | Action::CloseAllTabs
+                            | Action::LockAllTabs
+                            | Action::RoamAllTabs
+                            | Action::UnlockAllTabs
+                            | Action::GoToLockedDir
                             | Action::CopySrcPath
                             | Action::CopyTrgPath
                             | Action::CopyDirsOfFiles

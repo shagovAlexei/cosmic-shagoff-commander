@@ -591,6 +591,8 @@ pub enum ListKind {
     Context,
     /// Files → the encoding of a zip's names: `path` is the archive, row i is `NameEnc::ALL[i]`.
     NameEncoding,
+    /// Ctrl+Shift+A: row i is tab i of the panel, `path` its dir.
+    Tabs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1406,6 +1408,7 @@ pub fn view<'a>(
                 ListKind::Shells => fl!("menu-shell"),
                 ListKind::Context => fl!("context-menu"),
                 ListKind::NameEncoding => fl!("archive-encoding"),
+                ListKind::Tabs => fl!("tabs-list-title"),
             };
             let dialog = widget::dialog()
                 .title(title)
