@@ -433,6 +433,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-open-left"), Action::OpenLeft),
                 b(fl!("menu-open-right"), Action::OpenRight),
                 b(fl!("menu-edit-path"), Action::EditPath),
+                b(fl!("menu-open-trash"), Action::OpenTrash),
                 menu::Item::Divider,
                 b(fl!("menu-filter"), Action::QuickFilter),
                 b(fl!("menu-reload"), Action::Reload),
@@ -586,6 +587,8 @@ pub enum Ctx {
         dir: bool,
         archive: bool,
     },
+    /// An item right in the trash.
+    Trash,
     /// `..` or the empty space below the rows: the dir itself.
     Dir,
     Tab {
@@ -640,6 +643,17 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             v.push(b(fl!("menu-properties"), Action::Properties));
             v
         }
+        Ctx::Trash => vec![
+            b(fl!("menu-restore"), Action::Restore),
+            b(fl!("menu-view"), Action::View),
+            menu::Item::Divider,
+            b(fl!("menu-copy"), Action::Copy),
+            b(fl!("menu-move"), Action::Move),
+            b(fl!("menu-delete"), Action::Delete),
+            menu::Item::Divider,
+            b(fl!("menu-empty-trash"), Action::EmptyTrash),
+            b(fl!("menu-properties"), Action::Properties),
+        ],
         Ctx::Dir => vec![
             b(fl!("menu-mkdir"), Action::Mkdir),
             b(fl!("menu-clip-paste"), Action::ClipPaste),
@@ -675,6 +689,19 @@ fn context_items(ctx: Ctx) -> Vec<Item> {
             b(fl!("menu-close-tab"), Action::CloseTab),
             b(fl!("ctx-close-other-tabs"), Action::CloseOtherTabs),
         ],
+    }
+}
+
+impl Ctx {
+    /// The menu for the row `e` (not `..`) of the dir `cwd`.
+    pub fn entry(e: &shagoff_core::listing::Entry, cwd: &std::path::Path) -> Self {
+        if shagoff_core::trashcan::is_top(cwd) {
+            return Ctx::Trash;
+        }
+        Ctx::Entry {
+            dir: e.is_dir(),
+            archive: shagoff_core::archive::Format::detect(&e.name).is_some_and(|f| f.is_tree()),
+        }
     }
 }
 
@@ -915,6 +942,9 @@ mod tests {
                             | Action::ChecksumCreate
                             | Action::ChecksumVerify
                             | Action::EditPath
+                            | Action::OpenTrash
+                            | Action::Restore
+                            | Action::EmptyTrash
                     )
                 ) {
                     continue;

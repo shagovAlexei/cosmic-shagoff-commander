@@ -256,10 +256,7 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
     };
     // Right-click menu: about the row under the cursor if the press landed on one, else the dir.
     let ctx = match (app.ctx_entry, p.panel.current()) {
-        (true, Some(e)) if e.name != PARENT => crate::menu::Ctx::Entry {
-            dir: e.is_dir(),
-            archive: shagoff_core::archive::Format::detect(&e.name).is_some_and(|f| f.is_tree()),
-        },
+        (true, Some(e)) if e.name != PARENT => crate::menu::Ctx::entry(e, p.panel.cwd()),
         _ => crate::menu::Ctx::Dir,
     };
     // Dropped on no dir row: into the pane's dir (not into search results: no one dir there).

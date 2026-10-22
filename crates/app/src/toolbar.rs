@@ -170,6 +170,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-count-dirs"
         ),
         b!(
+            "cm_OpenRecycled",
+            OpenTrash,
+            "user-trash-symbolic",
+            "menu-open-trash"
+        ),
+        b!(
             "cm_ExecuteDOS",
             OpenTerminal,
             "utilities-terminal-symbolic",
