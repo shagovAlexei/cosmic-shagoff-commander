@@ -230,6 +230,8 @@ pub enum Action {
     ResetColumns,
     /// Shift+F4: create a file (if missing) and edit it.
     NewFile,
+    /// Files → a new file as a copy of one of the XDG templates (TC `cm_EditFileMenu`).
+    NewFromTemplate,
     /// Right click on the toolbar: TC "Change button bar".
     ConfigureToolbar,
     /// Start → «Change Start menu…» (TC `cm_ChangeStartMenu`).

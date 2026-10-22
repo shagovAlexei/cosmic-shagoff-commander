@@ -398,6 +398,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-occupied"), Action::Occupied),
                 b(fl!("menu-mkdir"), Action::Mkdir),
                 b(fl!("menu-new-file"), Action::NewFile),
+                b(fl!("menu-new-from-template"), Action::NewFromTemplate),
                 b(fl!("menu-delete"), Action::Delete),
                 b(fl!("menu-delete-permanent"), Action::DeletePermanent),
                 menu::Item::Divider,
@@ -1057,6 +1058,7 @@ mod tests {
                             | Action::PrevMarked
                             | Action::ShowOnlyMarked
                             | Action::NewTabOther
+                            | Action::NewFromTemplate
                             | Action::CloseDuplicateTabs
                             | Action::CloseAllTabs
                             | Action::LockAllTabs

@@ -36,6 +36,7 @@ use shagoff_core::panel::{self, Like, PARENT, Panel, Show};
 use shagoff_core::repack::Change;
 use shagoff_core::session::{self, PaneState};
 use shagoff_core::tabs::Tabs;
+use shagoff_core::templates;
 use shagoff_core::terminals::{self, Terminal};
 use shagoff_core::trashcan;
 use shagoff_core::viewport;

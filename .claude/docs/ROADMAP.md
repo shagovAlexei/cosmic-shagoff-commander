@@ -238,7 +238,7 @@
 - [x] 181. Выделение: сохранить / восстановить (`cm_SaveSelection`), в файл / из файла / из буфера (`cm_SaveSelectionToFile`, `cm_LoadSelectionFromFile`, `cm_LoadSelectionFromClip`), с тем же именем / именем и расширением (`cm_SelectCurrentName`, `…NameExt`), показать только выделенные (`cm_ShowOnlySelected`), к следующему / предыдущему выделенному (`cm_GotoNextSelected`)
 - [x] 182. Буфер обмена: путь панели / другой панели / каталоги файлов (`cm_CopySrcPathToClip`, `cm_CopyTrgPathToClip`, `cm_CopyPathOfFilesToClip`), сведения о файлах — в буфер и в файл (`cm_CopyFileDetailsToClip`, `cm_SaveDetailsToFile`, с заголовками)
 - [x] 183. Вкладки: список вкладок Ctrl+Shift+A (`cm_*TabsList`), вкладка по номеру (`cm_*ActivateTab1…`), новая в фоне Ctrl+Shift+T (`cm_OpenNewTabBg`), в другой панели (`cm_OpenNewTabOther`), закрыть дубликаты / все (`cm_CloseDuplicateTabs`, `cm_CloseAllTabs`), закрепить / открепить все (`cm_SetAllTabsOption…`), в базовый каталог закреплённой (`cm_GoToLockedDir`) (вкладка по номеру — через список Ctrl+Shift+A, где они пронумерованы; своих клавиш `cm_SrcActivateTabN` пока нет)
-- [ ] 184. Новый файл по шаблону (`cm_EditFileMenu`): список из `~/Шаблоны` (`XDG_TEMPLATES_DIR`)
+- [x] 184. Новый файл по шаблону (`cm_EditFileMenu`): список из `~/Шаблоны` (`XDG_TEMPLATES_DIR`)
 - [ ] 185. Разрезать / собрать файл (`cm_Split`, `cm_Combine`)
 - [ ] 186. Упаковать с удалением исходных (`cm_MoveToArchive`): флажок в Alt+F5
 - [ ] 187. Сравнение каталогов с подкаталогами и «скрыть одинаковые» (`cm_CompareDirsWithSubdirs`, `cm_DirMatch`)

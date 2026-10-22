@@ -327,6 +327,7 @@ pub(super) fn on_files(a: Action) -> bool {
             | A::DeletePermanent
             | A::Mkdir
             | A::NewFile
+            | A::NewFromTemplate
             | A::Link
             | A::Pack
             | A::Unpack

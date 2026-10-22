@@ -970,6 +970,35 @@ impl App {
                 };
                 return self.load(side, home, None);
             }
+            Action::NewFromTemplate => {
+                let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+                let dir = templates::dir(&self.home, config);
+                let files = templates::list(&dir, &self.home);
+                if files.is_empty() {
+                    let dir = dir.display().to_string();
+                    self.say(StatusKind::Error, fl!("templates-none", dir = dir));
+                    return Task::none();
+                }
+                let items = (files.into_iter())
+                    .map(|path| ListItem {
+                        label: path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        path,
+                        kind: Item::Dir,
+                        icon: String::new(),
+                    })
+                    .collect();
+                self.dialog = Some(Dialog::List {
+                    kind: ListKind::Templates,
+                    side,
+                    cursor: 0,
+                    items,
+                });
+                return Task::none();
+            }
             Action::TabsList => {
                 let tabs = self.panes[side].items();
                 let items = (tabs.iter().enumerate())

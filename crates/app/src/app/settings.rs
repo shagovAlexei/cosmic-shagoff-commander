@@ -337,6 +337,18 @@ impl App {
                 _ => Task::none(),
             };
         }
+        if kind == ListKind::Templates {
+            let Some(item) = items.into_iter().nth(i) else {
+                return Task::none();
+            };
+            self.dialog = Some(Dialog::Input {
+                op: InputOp::FromTemplate,
+                side,
+                input: item.label,
+                sources: vec![item.path],
+            });
+            return widget::text_input::focus(self.input_id.clone());
+        }
         if kind == ListKind::Tabs {
             self.panes[side].select(i);
             return self.tab_switched(side);

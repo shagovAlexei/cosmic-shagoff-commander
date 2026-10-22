@@ -33,6 +33,7 @@ pub mod shell;
 pub mod sort;
 pub mod sync;
 pub mod tabs;
+pub mod templates;
 pub mod terminals;
 pub mod thumbnailer;
 pub mod trashcan;
