@@ -792,10 +792,17 @@ impl App {
                 self.say(StatusKind::Error, msg);
             }
             Action::CompareLists | Action::CompareListsSubdirs | Action::CompareListsDiffOnly => {
+                // Rows an earlier «only what differs» hid are compared too.
+                for s in 0..2 {
+                    let panel = &mut self.panes[s].active_mut().panel;
+                    if panel.only_marked() {
+                        panel.set_show(panel.show().clone());
+                    }
+                }
                 let (l, r) = shagoff_core::sync::compare_lists(
                     self.panes[0].active().panel.entries(),
                     self.panes[1].active().panel.entries(),
-                    action == Action::CompareListsSubdirs,
+                    action != Action::CompareLists,
                 );
                 // Nothing to mark must not look like a key that did nothing.
                 if l.is_empty() && r.is_empty() {
@@ -805,7 +812,7 @@ impl App {
                     let panel = &mut self.panes[s].active_mut().panel;
                     panel.mark_names(names);
                     if action == Action::CompareListsDiffOnly {
-                        panel.show_only_marked();
+                        panel.hide_unmarked();
                     }
                 }
                 return Task::none();

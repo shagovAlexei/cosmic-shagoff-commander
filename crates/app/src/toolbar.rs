@@ -93,13 +93,13 @@ pub fn builtins() -> &'static [Builtin] {
         b!(
             "cm_CompareDirsWithSubdirs",
             CompareListsSubdirs,
-            "view-dual-symbolic",
+            "folder-symbolic",
             "menu-compare-subdirs"
         ),
         b!(
             "cm_DirMatch",
             CompareListsDiffOnly,
-            "view-dual-symbolic",
+            "view-conceal-symbolic",
             "menu-compare-diff-only"
         ),
         b!(

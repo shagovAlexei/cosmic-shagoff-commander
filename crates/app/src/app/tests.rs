@@ -6772,5 +6772,11 @@ fn compare_with_subdirs_marks_dirs_and_diff_only_hides_the_same() {
     assert_eq!(marked(&app), 2);
     let all = shown(&app);
     let _ = app.update(Message::Key(Action::CompareListsDiffOnly));
-    assert_eq!(shown(&app), all - 2, "same.txt and sub hidden");
+    assert_eq!(shown(&app), all - 1, "same.txt hidden, sub not");
+    // Nothing differs on the right: all of it hidden but `..`.
+    let right = &app.panes[1].active().panel;
+    assert!(right.entries().iter().all(|e| e.name == ".."));
+    // Again: what was hidden is compared too, not taken for missing.
+    let _ = app.update(Message::Key(Action::CompareLists));
+    assert_eq!(app.panes[1].active().panel.marked_names().len(), 0);
 }

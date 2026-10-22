@@ -440,14 +440,17 @@ pub fn compare_lists(
     }
     mr.extend(r.keys().filter(|n| !l.contains_key(*n)).cloned());
     if dirs {
-        let names = |v: &[Entry]| -> BTreeSet<OsString> {
-            (v.iter().filter(|e| e.is_dir() && e.name != ".."))
+        // Missing opposite: no entry of that name there at all (a file `x` vs a dir `x` is a
+        // conflict for F5, not something to copy).
+        let missing = |v: &[Entry], other: &[Entry]| {
+            let there: BTreeSet<&OsString> = other.iter().map(|e| &e.os_name).collect();
+            (v.iter())
+                .filter(|e| e.is_dir() && e.name != ".." && !there.contains(&e.os_name))
                 .map(|e| e.os_name.clone())
-                .collect()
+                .collect::<Vec<_>>()
         };
-        let (ld, rd) = (names(left), names(right));
-        ml.extend(ld.difference(&rd).cloned());
-        mr.extend(rd.difference(&ld).cloned());
+        ml.extend(missing(left, right));
+        mr.extend(missing(right, left));
         ml.sort();
     }
     mr.sort();
@@ -807,10 +810,12 @@ mod tests {
         let (ml, mr) = compare_lists(&left, &right, false);
         assert_eq!(ml, ["a", "only", "size"].map(OsString::from));
         assert_eq!(mr, ["ronly", "size"].map(OsString::from));
-        // With subdirs: `d` is not on the right; `..` never.
+        // With subdirs: `d` is not on the right; `..` never; a dir vs a file of its name neither.
         let (ml, mr) = compare_lists(&left, &right, true);
         assert_eq!(ml, ["a", "d", "only", "size"].map(OsString::from));
         assert_eq!(mr, ["ronly", "size"].map(OsString::from));
+        let (ml, _) = compare_lists(&left, &[entry("d", 1, 1, false)], true);
+        assert!(!ml.contains(&OsString::from("d")));
     }
 
     #[test]
