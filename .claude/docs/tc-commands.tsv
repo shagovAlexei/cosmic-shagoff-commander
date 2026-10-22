@@ -1,0 +1,373 @@
+# TC 11.57 internal commands (ghisler.ch wiki «List of internal commands»), Left/Right/Src/Trg merged into cm_*
+command	category	description
+cm_*Comments	Active panel	Active panel: Enable/disable showing comments instead of file details (Ctrl+Shift+F2)
+cm_*Short	Active panel	Active panel: Show only filenames (Ctrl+F1)
+cm_*Long	Active panel	Active panel: Show all file details (Ctrl+F2)
+cm_*Tree	Active panel	Active panel: Show folder tree (Ctrl+F8)
+cm_*Quickview	Active panel	Active panel: Enable/disable Quick view
+cm_*QuickInternalOnly	Active panel	Active panel: Enable/disable Quick view without plugins/multimedia
+cm_*HideQuickview	Active panel	Active panel: Disable Quick view
+cm_*Execs	Active panel	Active panel: Show only programs (Ctrl+F11)
+cm_*AllFiles	Active panel	Active panel: Show all files (Ctrl+F10)
+cm_*UserSpec	Active panel	Active panel: Enable last chosen custom filter, or temporarily save current filter (parameter 8), or load temporarily saved filter (parameter 9)
+cm_*UserDef	Active panel	Active panel: Set custom filter (show only certain files/folders) (Ctrl+F12)
+cm_*ByName	Active panel	Active panel: Sort by name
+cm_*ByExt	Active panel	Active panel: Sort by extension
+cm_*BySize	Active panel	Active panel: Sort by size
+cm_*ByDateTime	Active panel	Active panel: Sort by date-time
+cm_*Unsorted	Active panel	Active panel: Change sorting to unsorted
+cm_*NegOrder	Active panel	Active panel: Reverse sort order; use "8" to save sort order, use "9" to restore sort order
+cm_*OpenDrives	Active panel	Active panel: Open drive list or go to drive; parameters: <drive_letter> (drive), \ (root of drive), . (parent folder), [ or = (Network), <char_code> (character code of mentioned parameters)
+cm_*Thumbs	Active panel	Active panel: Thumbnail view (Ctrl+Shift+F1)
+cm_*CustomViewMenu	Active panel	Active panel: Show custom columns menu
+cm_*PathFocus	Active panel	Focus the path of the active panel
+cm_*ViewModeList	Active panel	Active panel: Show custom views menu or switch to specified custom view
+cm_*DirBranch	Left panel	Left panel: Branch view
+cm_*DirBranchSel	Left panel	Left panel: Branch view, only selected
+cm_List	File operation	View with Lister
+cm_ListInternalOnly	File operation	View single file with Lister without plugins/multimedia
+cm_ListInternalMulti	File operation	View selected files with Lister without plugins/multimedia
+cm_ListOnly	File operation	View single file with Lister with plugins/multimedia
+cm_ListMulti	File operation	View selected files with Lister with plugins/multimedia
+cm_ListExternal	File operation	Opens file under cursor or specified file with external viewer defined for this file type, or default external viewer otherwise
+cm_Edit	File operation	Edit files and create new files if they don't exist; options: C (create if not exist), T (templates for new files), N (filenames), G (start immediately), L (launch editor or associated program), V (verb)
+cm_EditNewFile	File operation	Create and edit new text file; parameters: 1 (don't edit the new file)
+cm_EditFileMenu	File operation	Choose from various file types to create a new file
+cm_EditExistingFile	File operation	Edit file under cursor
+cm_Copy	File operation	Copy files/folders; options: P (copy NTFS permissions), V (verify), B (background), O (overwrite), R (preserve paths), S (skip unreadable), H (skip confirmation special files), A (multiple target folders), G (start immediately), T (target file), W (filter files, double all enclosed double quotes)
+cm_CopySamepanel	File operation	Copy files/folders to the same folder
+cm_CopyOtherpanel	File operation	Copy files/folders to inactive panel
+cm_RenMov	File operation	Move or rename files/folders; options: P (copy NTFS permissions), V (verify), B (background), O (overwrite), R (preserve paths), S (skip unreadable), H (skip confirmation special files), G (start immediately), T (target file), W (filter files, double all enclosed double quotes)
+cm_MkDir	File operation	Create new folder(s); options: N (names), G (start immediately), L (move cursor or enter folder), S (base folder), s (base folder, but don't create), W (no warning on failure)
+cm_MkDirOther	File operation	Inactive panel: Create new folder(s)
+cm_Delete	File operation	Delete files/folders
+cm_TestArchive	File operation	Test integrity of selected archives
+cm_PackFiles	File operation	Pack files/folders; options: T (target archive), D (pack paths), R (pack subfolders), S (multiple disk), M (delete after packing), X (self extracting), O (overwrite), A (separate archives), B (leave out base folder), C (Encrypt), P (password), G (start immediately), E (packer), F (additional 7-Zip options), Z (zip compression)
+cm_CopyToArchive	File operation	Pack files/folders
+cm_MoveToArchive	File operation	Pack files/folders and delete the originals
+cm_UnpackFiles	File operation	Unpack archives; options: T (target folder), D (unpack paths), O (overwrite), S (extract archives to separate folders), P (password), A (password for encrypted filenames), G (start immediately), W (filter files, double all enclosed double quotes, /W="" unpacks selection from open archive)
+cm_RenameOnly	File operation	Rename files/folders (Shift+F6)
+cm_RenameSingleFile	File operation	Rename file under cursor
+cm_MoveOnly	File operation	Move files/folders (F6)
+cm_Properties	File operation	Show Properties (single file/folder) or calculate occupied space (multiple files/folders)
+cm_ModernShare	File operation	Share files with contacts, nearby devices, or apps (Windows 10+)
+cm_CreateShortcut	File operation	Create shortcut files (.lnk); options: B (background), O (overwrite), G (start immediately), T (target folder), W (filter files, double all enclosed double quotes)
+cm_Return	File operation	Simulate pressing the Enter key
+cm_OpenAsUser	File operation	Open program under cursor as different user
+cm_Split	File operation	Split a file into multiple parts
+cm_Combine	File operation	Combine file parts into a single file
+cm_Encode	File operation	Encode file using MIME/UUE/XXE
+cm_Decode	File operation	Decode MIME/UUE/XXE/BinHex/yEnc encoded file
+cm_CRCcreate	File operation	Create checksum (hash/digest) file(s) for selected files/folders
+cm_CRCcheck	File operation	Verify selected checksum (hash/digest) file(s)
+cm_SetAttrib	File operation	Change attributes
+cm_Config	Configuration	Open configuration options (opens first page: Layout)
+cm_LayoutConfig	Configuration	Open configuration page Layout
+cm_DisplayConfig	Configuration	Open configuration page Display
+cm_IconConfig	Configuration	Open configuration page Icons
+cm_FontConfig	Configuration	Open configuration page Font
+cm_ColorConfig	Configuration	Open configuration page Colors
+cm_ConfTabChange	Configuration	Open configuration page Tabstops/Data Formats
+cm_DirTabsConfig	Configuration	Open configuration page Folder Tabs
+cm_CustomColumnConfig	Configuration	Open configuration page Custom Columns
+cm_CustomColumnDlg	Configuration	Change current custom columns
+cm_ConfigViewModes	Configuration	Open configuration page View Mode
+cm_ConfigViewModeSwitch	Configuration	Open configuration page Auto Switch Mode (Auto-switch view modes)
+cm_LanguageConfig	Configuration	Open configuration page Language
+cm_Config2	Configuration	Open configuration page Operation
+cm_EditConfig	Configuration	Open configuration page Edit/View (Editor and Viewer)
+cm_ConfigLister	Configuration	Open Lister's configuration options
+cm_CopyConfig	Configuration	Open configuration page Copy/Delete
+cm_RefreshConfig	Configuration	Open configuration page Refresh (auto-refresh file data)
+cm_QuickSearchConfig	Configuration	Open configuration page Quick Search
+cm_FtpConfig	Configuration	Open configuration page FTP
+cm_PluginsConfig	Configuration	Open configuration page Plugins
+cm_ThumbnailsConfig	Configuration	Open configuration page Thumbnails
+cm_LogConfig	Configuration	Open configuration page Log file
+cm_IgnoreConfig	Configuration	Open configuration page Ignore list
+cm_HistoryConfig	Configuration	Open configuration page History
+cm_PackerConfig	Configuration	Open configuration page Packer
+cm_ZipPackerConfig	Configuration	Open configuration page Zip packer
+cm_7ZipPackerConfig	Configuration	Open configuration page 7-Zip packer
+cm_Confirmation	Configuration	Open configuration page Misc. (confirmations, hotkeys, aliases, sounds)
+cm_ConfigSavePos	Configuration	Save position and size of the Total Commander window and column widths of the file panels
+cm_ButtonConfig	Configuration	Change button bar
+cm_ButtonConfig2	Configuration	Change vertical button bar
+cm_ConfigSaveSettings	Configuration	Save settings
+cm_ConfigChangeIniFiles	Configuration	Open the main configuration files in Notepad
+cm_ConfigSaveDirHistory	Configuration	Save folder history and frequently visited folders list
+cm_ChangeStartMenu	Configuration	Change Start menu
+cm_NetConnect	Network	Network connections
+cm_NetDisconnect	Network	Disconnect network drives
+cm_NetShareDir	Network	Share current folder
+cm_NetUnshareDir	Network	Unshare current folder
+cm_AdministerServer	Network	Show administrative shares on the currently accessed server during the Total Commander session (to go to \\server\c$ etc.)
+cm_ShowFileUser	Network	Show which remote user has opened a local file (run as administrator)
+cm_GetFileSpace	Miscellaneous	Calculate occupied space (Ctrl+L)
+cm_VolumeId	Miscellaneous	Set volume label
+cm_VersionInfo	Miscellaneous	Show Properties of selected file(s)/folder(s)
+cm_ExecuteDOS	Miscellaneous	Open command prompt window
+cm_CompareDirs	Miscellaneous	Compare file panels: mark newer files and files unique to one side (Shift+F2); parameters: 0 (same as no parameter), 1 (only mark unique files), 2 (mark files with different sizes and unique files)
+cm_CompareDirsWithSubdirs	Miscellaneous	Compare file panels: mark newer files and files/folders unique to one side; parameters: 0 (same as no parameter), 1 (only mark unique files/folders), 2 (mark files with different sizes and unique files/folders)
+cm_ContextMenu	Miscellaneous	Show context menu (Shift+F10/Menu key)
+cm_DriveContextMenu	Miscellaneous	Show drive context menu
+cm_ContextMenuInternal	Miscellaneous	Show context menu for internal associations
+cm_ContextMenuInternalCursor	Miscellaneous	Show context menu for internal associations for file under cursor
+cm_ShowRemoteMenu	Miscellaneous	Context menu for Media Center remote control (Play/Pause)
+cm_SyncChangeDir	Miscellaneous	Synchronous folder changing (try to go to the same subfolder in the other panel too)
+cm_EditComment	Miscellaneous	Edit file comment
+cm_FocusLeft	Miscellaneous	Focus the left file list
+cm_FocusRight	Miscellaneous	Focus the right file list
+cm_FocusSrc	Miscellaneous	Focus the file list of the active panel
+cm_FocusTrg	Miscellaneous	Focus the file list of the inactive panel
+cm_FocusCmdLine	Miscellaneous	Focus the command line
+cm_FocusButtonBar	Miscellaneous	Focus the button bar (Alt+Shift+F11)
+cm_FocusLeftTree	Miscellaneous	Focus the left separate tree
+cm_FocusRightTree	Miscellaneous	Focus the right separate tree
+cm_FocusSrcTree	Miscellaneous	Focus the separate tree of the active panel
+cm_FocusTrgTree	Miscellaneous	Focus the separate tree of the inactive panel
+cm_FocusMainMenu	Miscellaneous	Focus the main menu (F10)
+cm_FocusButtonBarVertical	Miscellaneous	Focus the vertical button bar (Alt+Shift+F12)
+cm_CountDirContent	Miscellaneous	Active panel: Show sizes of folders instead &lt;DIR> (Alt+Shift+Enter) (Abort with Esc)
+cm_UnloadPlugins	Miscellaneous	Unload plugins
+cm_DirMatch	Miscellaneous	Compare file panels: mark newer files (and unique files), hide files with the same time stamp and file size
+cm_Exchange	Miscellaneous	Swap left and right file list (Ctrl+U)
+cm_MatchSrc	Miscellaneous	Inactive panel: Go to the same folder as active panel
+cm_ReloadSelThumbs	Miscellaneous	Reload selected thumbnails
+cm_ReloadBarIcons	Miscellaneous	Force reload icons in button bars and main menu
+cm_ReloadFileIcons	Miscellaneous	Reload all file list icons and overlays
+cm_DirectCableConnect	Parallel port	Connect to other PC by cable (via USB or parallel port)
+cm_NTinstallDriver	Parallel port	Install parallel port driver on an NT based OS (run as administrator)
+cm_NTremoveDriver	Parallel port	Remove parallel port driver on an NT based OS (run as administrator)
+cm_PrintDir	Print	Print selected files/folders
+cm_PrintDirSub	Print	Print selected files/folders including subfolders
+cm_PrintFile	Print	Print file (Ctrl+F9)
+cm_SpreadSelection	Select / unselect	Select group (Num +) (files only or also folders, depending on configuration)
+cm_SpreadSelectionCurrentExt	Select / unselect	Select group, suggest extension of file under cursor (files only or also folders, depending on configuration)
+cm_SelectBoth	Select / unselect	Select group (files and folders)
+cm_SelectFiles	Select / unselect	Select group (files only)
+cm_SelectFolders	Select / unselect	Select group (folders only)
+cm_ShrinkSelection	Select / unselect	Unselect group (Num -) (files only or also folders, depending on configuration)
+cm_ShrinkSelectionCurrentExt	Select / unselect	Unselect group, suggest extension of file under cursor (files only or also folders, depending on configuration)
+cm_ClearFiles	Select / unselect	Unselect group (files only)
+cm_ClearFolders	Select / unselect	Unselect group (folders only)
+cm_ClearSelCfg	Select / unselect	Unselect group (files only or also folders, depending on configuration)
+cm_SelectAll	Select / unselect	Select all (Ctrl Num +) (files only or also folders, depending on configuration); parameter: select every n-th line downwards from the current position (upwards if negative)
+cm_SelectAllBoth	Select / unselect	Select both files+folders; parameter: select every n-th line downwards from the current position (upwards if negative)
+cm_SelectAllFiles	Select / unselect	Select all files; parameter: select every n-th line downwards from the current position (upwards if negative)
+cm_SelectAllFolders	Select / unselect	Select all folders; parameter: select every n-th line downwards from the current position (upwards if negative)
+cm_ClearAll	Select / unselect	Unselect all (Ctrl Num -) (files and folders); parameter: unselect every n-th line downwards from the current position (upwards if negative)
+cm_ClearAllFiles	Select / unselect	Unselect all files; parameter: unselect every n-th line downwards from the current position (upwards if negative)
+cm_ClearAllFolders	Select / unselect	Unselect all folders; parameter: unselect every n-th line downwards from the current position (upwards if negative)
+cm_ClearAllCfg	Select / unselect	Unselect all (files only or also folders, depending on configuration); parameter: unselect every n-th line downwards from the current position (upwards if negative)
+cm_ExchangeSelection	Select / unselect	Invert selection (Num *) (files only or also folders, depending on configuration)
+cm_ExchangeSelBoth	Select / unselect	Invert selection (files and folders)
+cm_ExchangeSelFiles	Select / unselect	Invert selection (files only)
+cm_ExchangeSelFolders	Select / unselect	Invert selection (folders only)
+cm_SelectCurrentExtension	Select / unselect	Select all files with the same filename extension (Alt Num +)
+cm_UnselectCurrentExtension	Select / unselect	Unselect all files with the same filename extension (Alt Num -)
+cm_SelectCurrentName	Select / unselect	Select all files with the same name
+cm_UnselectCurrentName	Select / unselect	Unselect all files with the same name
+cm_SelectCurrentNameExt	Select / unselect	Select all files with the same name and extension
+cm_UnselectCurrentNameExt	Select / unselect	Unselect all files with the same name and extension
+cm_SelectCurrentPath	Select / unselect	Select all in the same path (for branch view and search results)
+cm_UnselectCurrentPath	Select / unselect	Unselect all in the same path (for branch view and search results)
+cm_RestoreSelection	Select / unselect	Restore file selection (Num /)
+cm_SaveSelection	Select / unselect	Temporarily save selection
+cm_SaveSelectionToFile	Select / unselect	Save file selection to file
+cm_SaveSelectionToFileA	Select / unselect	Save file selection to file (ANSI)
+cm_SaveSelectionToFileW	Select / unselect	Save file selection to file (Unicode)
+cm_SaveDetailsToFile	Select / unselect	Save all shown columns to file
+cm_SaveDetailsToFileA	Select / unselect	Save all shown columns to file (ANSI)
+cm_SaveDetailsToFileW	Select / unselect	Save all shown columns to file (Unicode)
+cm_SaveHdrDetailsToFile	Select / unselect	Save all shown columns to file, with headers
+cm_SaveHdrDetailsToFileA	Select / unselect	Save all shown columns to file, with headers (ANSI)
+cm_SaveHdrDetailsToFileW	Select / unselect	Save all shown columns to file, with headers (Unicode)
+cm_LoadSelectionFromFile	Select / unselect	Read file selection from file
+cm_LoadSelectionFromClip	Select / unselect	Read file selection from clipboard
+cm_Select	Select / unselect	Select a number of files/folders and go to the next one; default is 1 file/folder; any negative parameter selects only current item and the cursor stays in place
+cm_UnSelect	Select / unselect	Remove selection of a number of files/folders and go to the next one; default is 1 file/folder; any negative parameter unselects only current item and the cursor stays in place
+cm_Reverse	Select / unselect	Reverse selection of a number of files/folders and go to the next one; default is 1 file/folder; any negative parameter toggles only current item and the cursor stays in place
+cm_EditPermissionInfo	Security	Permissions dialog (NTFS) (Windows NT/XP)
+cm_EditAuditInfo	Security	File auditing (NTFS) (Windows NT/XP)
+cm_EditOwnerInfo	Security	Take ownership (NTFS) (Windows NT/XP)
+cm_CutToClipboard	Clipboard	Cut selected files/folders to clipboard (Ctrl+X)
+cm_CopyToClipboard	Clipboard	Copy selected files/folders to clipboard (Ctrl+C) (Ctrl+Insert)
+cm_PasteFromClipboard	Clipboard	Paste file(s)/folder(s) in active file panel (Ctrl+V) (Shift+Insert)
+cm_CopyNamesToClip	Clipboard	Copy filenames to clipboard
+cm_CopyFullNamesToClip	Clipboard	Copy filenames with full path to clipboard
+cm_CopyNetNamesToClip	Clipboard	Copy filenames with full UNC path to clipboard
+cm_CopyPathOfFilesToClip	Clipboard	Copy paths of selected files/folders to clipboard
+cm_CopySrcPathToClip	Clipboard	Active panel: Copy path to clipboard
+cm_CopyTrgPathToClip	Clipboard	Inactive panel: Copy path to clipboard
+cm_CopyFileDetailsToClip	Clipboard	Copy file details to clipboard; copy all shown details or only those specified by the parameter
+cm_CopyFpFileDetailsToClip	Clipboard	Copy file details to clipboard with full paths; copy all shown details or only those specified by the parameter
+cm_CopyNetFileDetailsToClip	Clipboard	Copy file details to clipboard with UNC paths; copy all shown details or only those specified by the parameter
+cm_CopyHdrFileDetailsToClip	Clipboard	Copy file details to clipboard with headers; copy all shown details or only those specified by the parameter
+cm_CopyHdrFpFileDetailsToClip	Clipboard	Copy file details to clipboard with headers and full paths; copy all shown details or only those specified by the parameter
+cm_CopyHdrNetFileDetailsToClip	Clipboard	Copy file details to clipboard with headers and UNC paths; copy all shown details or only those specified by the parameter
+cm_FtpConnect	FTP	Open the FTP Connection Manager (Ctrl+F)
+cm_FtpNew	FTP	Connect to an FTP server or download a file (Ctrl+N)
+cm_FtpDisconnect	FTP	Close an FTP connection
+cm_FtpHiddenFiles	FTP	Show/hide hidden FTP files (filenames that start with a dot)
+cm_FtpAbort	FTP	Abort current FTP command
+cm_FtpResumeDownload	FTP	Resume aborted FTP download
+cm_FtpSelectTransferMode	FTP	Select Binary, ASCII or Auto transfer mode
+cm_FtpAddToList	FTP	Add selected files to download list
+cm_FtpDownloadList	FTP	Download files listed in a download list (uploads and some file operations are also supported)
+cm_GotoPreviousDir	Navigation	Go to previous folder in folder history
+cm_GotoNextDir	Navigation	Go to next folder in folder history
+cm_DirectoryHistory	Navigation	Show folder history (filter folders where you didn't stay long) (Alt+Down)
+cm_DirectoryHistoryNoThinning	Navigation	Show folder history (unfiltered) (Alt+Shift+Down)
+cm_GotoPreviousLocalDir	Navigation	Go to previous folder in folder history, no ftp
+cm_GotoNextLocalDir	Navigation	Go to next folder in folder history, no ftp
+cm_DirectoryHotlist	Navigation	Open Directory Hotlist (Ctrl+D); parameter: specifies position of hotlist and whether index numbers are shown
+cm_GoToRoot	Navigation	Go to root folder (Ctrl+\)
+cm_GoToParent	Navigation	Go to parent folder (Ctrl+PgUp)
+cm_GoToDir	Navigation	Open folder or (executable) archive under cursor (Ctrl+PgDn)
+cm_OpenDesktop	Navigation	Go to the virtual folder Desktop
+cm_OpenDrives	Navigation	Go to the virtual folder This PC (My Computer)
+cm_OpenControls	Navigation	Go to the virtual folder Control Panel
+cm_OpenFonts	Navigation	Go to the virtual folder Fonts
+cm_OpenNetwork	Navigation	Go to the virtual folder Network (Network neighborhood)
+cm_OpenPrinters	Navigation	Go to the virtual folder Printers
+cm_OpenRecycled	Navigation	Go to the virtual folder Recycle Bin
+cm_CdTree	Navigation	Open the directory tree dialog to navigate to a folder (Alt+F10)
+cm_TransferLeft	Navigation	Show folder under cursor in left panel (Ctrl+Left)
+cm_TransferRight	Navigation	Show folder under cursor in right panel (Ctrl+Right)
+cm_EditPath	Navigation	Edit path field above file list
+cm_GoToFirstEntry	Navigation	Place cursor on first folder or file and move down the specified number of times
+cm_GoToFirstFile	Navigation	Place cursor on first file and move down the specified number of times
+cm_GotoNextDrive	Navigation	Go one drive up (C->D)
+cm_GotoPreviousDrive	Navigation	Go one drive down (D->C)
+cm_GotoNextSelected	Navigation	Go to next selected file
+cm_GotoPrevSelected	Navigation	Go to previous selected file
+cm_GotoNext	Navigation	Go to next file
+cm_GotoPrev	Navigation	Go to previous file
+cm_GoToLast	Navigation	Go to last file
+cm_GotoDrive[A,C-F,Z]	Navigation	Go to the specified drive
+cm_OpenDriveByIndex	Navigation	Go to drive by index number in drive button bar or drive combo-box
+cm_HelpIndex	Help	Open the Help Index page
+cm_Keyboard	Help	Open Help page "Keyboard layout"
+cm_Register	Help	Open Help page "How to order Total Commander"
+cm_VisitHomepage	Help	Visit https://www.ghisler.com/
+cm_CheckForUpdates	Help	Check for Total Commander updates
+cm_About	Help	Show Total Commander's version information
+cm_Exit	Window	Exit or restart Total Commander
+cm_Minimize	Window	Minimize Total Commander
+cm_Maximize	Window	Maximize Total Commander window
+cm_Restore	Window	Restore Total Commander window (from maximized state)
+cm_ClearCmdLine	Command line	Clear the command line
+cm_NextCommand	Command line	Next command line
+cm_PrevCommand	Command line	Previous command line
+cm_AddPathToCmdline	Command line	Copy path to command line
+cm_AddFileNameToCmdline	Command line	Copy filename to command line (Ctrl+Enter)
+cm_AddPathAndFileNameToCmdline	Command line	Copy full filename (including path) to command line (Ctrl+Shift+Enter)
+cm_ShowCmdLineHistory	Command line	Open/close command line history (ALT+F8)
+cm_MultiRenameFiles	Tools	Open the Multi-Rename Tool
+cm_SysInfo	Tools	System information
+cm_OpenTransferManager	Tools	Open the Background Transfer Manager
+cm_SearchFor	Tools	Open the Search tool (Alt+F7)
+cm_SearchForInCurdir	Tools	Search in folder under the cursor or in specified drive
+cm_SearchStandalone	Tools	Search in separate process (Alt+Shift+F7)
+cm_FileSync	Tools	Synchronize folders
+cm_Associate	Tools	Define associations
+cm_InternalAssociate	Tools	Define internal associations
+cm_CompareFilesByContent	Tools	File comparison
+cm_IntCompareFilesByContent	Tools	Use internal compare tool
+cm_CommandBrowser	Tools	Browse and create internal commands
+cm_SeparateQuickView	Tools	Enable/disable Separate Quick view window
+cm_SeparateQuickInternalOnly	Tools	Enable/disable Separate Quick view window without plugins/multimedia
+cm_UpdateQuickView	Tools	Reload file in Quick view panel
+cm_VisButtonbar	View	Show/hide button bar
+cm_VisButtonbar2	View	Show/hide vertical button bar
+cm_VisDriveButtons	View	Show/hide drive button bars
+cm_VisTwoDriveButtons	View	Show/hide two drive bars
+cm_VisFlatDriveButtons	View	Buttons: Flat/normal mode
+cm_VisFlatInterface	View	Interface: Flat/normal mode
+cm_VisDriveCombo	View	Show/hide drive combobox
+cm_VisCurDir	View	Show/hide current folder
+cm_VisBreadCrumbs	View	Show/hide Breadcrumb bar
+cm_VisTabHeader	View	Show/hide tab header (sorting)
+cm_VisStatusbar	View	Show/hide status bar
+cm_VisCmdLine	View	Show/hide Command line
+cm_VisKeyButtons	View	Show/hide function key buttons
+cm_ShowHint	View	Show full filename of file under cursor in a tooltip (and place mouse cursor on it)
+cm_ShowQuickSearch	View	Start quick search for files in the active panel
+cm_QuickSearch	View	Start quick search for files in the active panel (filter off)
+cm_QuickFilter	View	Start quick search for files in the active panel (filter on); parameter "1" restores last used quick filter (like Ctrl+Shift+S)
+cm_VerticalPanels	View	File windows above each other
+cm_SwitchLongNames	View	Turn long names on and off
+cm_RereadSource	View	Active panel: Refresh contents
+cm_ShowOnlySelected	View	Hide files which aren't selected
+cm_SwitchHidSys	View	Turn hidden/system files on and off
+cm_SwitchHid	View	Turn hidden files on and off
+cm_SwitchSys	View	Turn system files on and off
+cm_Switch83Names	View	Turn 8.3 names lowercase on/off
+cm_SwitchDirSort	View	Turn on/off sorting of folders by name
+cm_DirBranch	View	Show all files in current folder and all subfolders
+cm_DirBranchSel	View	Show selected files and all files in selected folders
+cm_50Percent	View	Active panel: Resize panel to 50% of the available width (or increase/decrease panel width with specified percentage)
+cm_100Percent	View	Active panel: Resize panel to 100% (or specified percentage) of the available width; negative percentage resizes the left panel
+cm_VisDirTabs	View	Show/hide folder tabs
+cm_VisXPthemeBackground	View	Show/hide XP theme background
+cm_SwitchOverlayIcons	View	Switch icon overlays on/off
+cm_VisHistHotButtons	View	Show/hide Directory Hotlist and Folder History buttons
+cm_SwitchWatchDirs	View	Enable/disable auto-refresh file list (setting is not saved)
+cm_SwitchIgnoreList	View	Enable/disable ignore list file to not show filenames
+cm_SwitchX64Redirection	View	32-bit TC on 64-bit Windows: Redirection of system32 folder off/on
+cm_SeparateTreeOff	View	Disable separate tree panel
+cm_SeparateTree1	View	One separate tree panel
+cm_SeparateTree2	View	Two separate tree panels
+cm_SwitchSeparateTree	View	Switch between 0, 1, or 2 separate tree panels (Ctrl+Shift+F8)
+cm_ToggleSeparateTree1	View	One separate tree panel on/off
+cm_ToggleSeparateTree2	View	Two separate tree panels on/off
+cm_ChangeArchiveEncoding	View	Show popup menu to change the encoding of filenames in an archive
+cm_SwitchDarkmode	View	Turn dark mode on and off
+cm_EnableDarkmode	View	Turn dark mode on
+cm_DisableDarkmode	View	Turn dark mode off
+cm_SwitchColorsByFileType	View	Enable/disable color filters
+cm_SwitchFileTipWindows	View	Enable/disable file tooltips
+cm_ZoomIn	View	Enlarge thumbnails or set the size to specified percentage (10-200)
+cm_ZoomOut	View	Make thumbnails smaller or set the size to specified percentage (10-200)
+cm_UserMenu[1-10]	Start menu	Execute Start menu item 1-199
+cm_OpenNewTab	Folder tabs	Create new folder tab (Ctrl+T)
+cm_OpenNewTabBg	Folder tabs	Create new folder tab (stay in current folder tab) (Ctrl+Shift+T)
+cm_OpenNewTabOther	Folder tabs	Create new folder tab in inactive panel (duplicate of current tab in active panel)
+cm_OpenNewTabBgOther	Folder tabs	Create new folder tab in inactive panel (duplicate of current tab in active panel) (stay in current folder tab)
+cm_OpenDirInNewTab	Folder tabs	Create new folder tab for folder under cursor (Ctrl+Up)
+cm_OpenDirInNewTabOther	Folder tabs	Create new folder tab in inactive panel for folder under cursor (Ctrl+Shift+Up)
+cm_SwitchToNextTab	Folder tabs	Switch to next Tab; parameters: 0 or no parameter (if Ctrl is not pressed, always switch to next tab; if Ctrl is pressed, behave as Ctrl+Tab: switch to next tab or last visited tab depending on configuration), 1 (always switch to last visited tab), 2 (always switch to next tab)
+cm_SwitchToPreviousTab	Folder tabs	Switch to previous Tab (Ctrl+Shift+Tab)
+cm_MoveTabLeft	Folder tabs	Move current tab to the left
+cm_MoveTabRight	Folder tabs	Move current tab to the right
+cm_CloseCurrentTab	Folder tabs	Close tab; parameters: 1 (disable confirmation when closing a locked tab), 2 (switch to tab left of the closed tab)
+cm_CloseAllTabs	Folder tabs	Close all tabs; parameter disables various confirmations
+cm_CloseDuplicateTabs	Folder tabs	Close duplicate tabs
+cm_DirTabsShowMenu	Folder tabs	Show tab menu
+cm_RenameTab	Folder tabs	Rename current tab
+cm_ToggleLockCurrentTab	Folder tabs	Lock/unlock current folder tab
+cm_ToggleLockDcaCurrentTab	Folder tabs	Lock/unlock current folder tab (when locked, folder change allowed)
+cm_SetTabOptionNormal	Folder tabs	Unlock current folder tab
+cm_SetTabOptionPathLocked	Folder tabs	Lock current folder tab
+cm_SetTabOptionPathResets	Folder tabs	Lock current folder tab (folder change allowed)
+cm_SetAllTabsOptionNormal	Folder tabs	Unlock all folder tabs
+cm_SetAllTabsOptionPathLocked	Folder tabs	Lock all folder tabs
+cm_SetAllTabsOptionPathResets	Folder tabs	Lock all folder tabs (folder change allowed)
+cm_ExchangeWithTabs	Folder tabs	Swap left and right panel (all folder tabs) (Ctrl+Shift+U)
+cm_GoToLockedDir	Folder tabs	Go to the base folder of the locked folder tab
+cm_*TabsList	Folder tabs	Show a list of all folder tabs (Ctrl+Shift+A); parameters: 0 or none (show tab titles), add 1 (show paths), add 2 (open quick search)
+cm_*ActivateTab[1-10]	Folder tabs	Active panel: Activate folder tab 1-99 (or tab number specified by parameter, negative means counting from the end)
+cm_*SortByCol[1-10,99]	Sort	Active panel: Sort by column 1-99
+cm_*SortByCol&lt;1-10,99>	Sort	Left panel: Sort by column 1-99
+cm_*CustomView[1-9]	Custom columns	Active panel: Activate custom columns view 1-29
+cm_*NextCustomView	Custom columns	Active panel: Next custom columns view
+cm_*PrevCustomView	Custom columns	Active panel: Previous custom columns view
+cm_LoadAllOnDemandFields	Custom columns	Load on demand fields for all files
+cm_LoadSelOnDemandFields	Custom columns	Load on demand fields for selected files
+cm_ContentStopLoadFields	Custom columns	Stop loading on demand fields or delayed fields in custom columns view or thumbnails view
+cm_*SwitchToThisCustomView	Custom columns	Left panel: Activate custom columns view 0-99<br />(for scripting, lparam=view no.)
+cm_ToggleAutoViewModeSwitch	Custom view	Turn automatic view mode switching on/off
+cm_*ViewMode0	Custom view	Active panel: Activate default view mode
+cm_*ViewMode[1-9]	Custom view	Active panel: Activate custom view 1-249
+cm_Wait	Has parameters	Wait x milliseconds
