@@ -97,6 +97,10 @@ impl App {
                 (self.split, self.wide) = (0.5, false);
                 return Task::none();
             }
+            Action::VerticalPanels => {
+                self.vertical = !self.vertical;
+                return Task::none();
+            }
             Action::Wide => {
                 self.wide = !self.wide;
                 return Task::none();
@@ -789,6 +793,7 @@ impl App {
             | Action::ReloadThumbs
             | Action::Split50
             | Action::Wide
+            | Action::VerticalPanels
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::ToggleTerminal

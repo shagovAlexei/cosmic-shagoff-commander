@@ -381,12 +381,14 @@ impl App {
     ) -> (
         Option<Option<usize>>,
         Option<usize>,
+        bool,
         [bool; config::Part::ALL.len()],
     ) {
         let c = &self.config;
         (
             self.viewer_shown(),
             self.wide.then_some(self.active),
+            self.vertical,
             config::Part::ALL.map(|p| c.shows(p)),
         )
     }

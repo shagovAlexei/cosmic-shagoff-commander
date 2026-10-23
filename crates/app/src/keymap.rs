@@ -185,6 +185,8 @@ pub enum Action {
     Split50,
     /// View → «Panel at 100 %» (TC `cm_100Percent`): only the active panel; again: both back.
     Wide,
+    /// View → «Panels one above the other» (TC `cm_VerticalPanels`).
+    VerticalPanels,
     /// Menu only: about the program.
     About,
     /// Menu only: support the project.
