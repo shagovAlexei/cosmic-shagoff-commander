@@ -304,7 +304,7 @@ mod tests {
         let to = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
         let m = |p: PathBuf| fs::symlink_metadata(p).unwrap().modified().unwrap();
         // Not recursive: the dir itself only.
-        assert!(set_mtime(&[sub.clone()], to, false).is_empty());
+        assert!(set_mtime(std::slice::from_ref(&sub), to, false).is_empty());
         assert_eq!(m(sub.clone()), to);
         assert_ne!(m(sub.join("f")), to);
         // Recursive; a link is skipped.
