@@ -60,16 +60,20 @@ impl App {
             }
             Action::SetDate => {
                 let paths = panel.targets();
-                // The date offered is the one of the first file.
-                let first = paths.first()?;
-                let mtime = std::fs::symlink_metadata(first)
-                    .and_then(|m| m.modified())
-                    .ok()?;
-                Some(input(
-                    InputOp::SetDate,
+                // The times offered are the first file's.
+                let meta = std::fs::symlink_metadata(paths.first()?).ok()?;
+                let show = |t: std::io::Result<std::time::SystemTime>| {
+                    t.map(|t| format::date_edit(t, &self.tz))
+                        .unwrap_or_default()
+                };
+                let has_dir = paths.iter().any(|p| p.is_dir());
+                Some(Dialog::SetDate {
                     paths,
-                    format::date_edit(mtime, &self.tz),
-                ))
+                    text: [show(meta.modified()), show(meta.accessed())],
+                    change: [true, false],
+                    recursive: false,
+                    has_dir,
+                })
             }
             Action::Properties => {
                 let paths = panel.targets();
@@ -655,17 +659,22 @@ impl App {
                     }
                 }
             }
-            Dialog::Input {
-                op: InputOp::SetDate,
-                sources,
-                input,
+            Dialog::SetDate {
+                paths,
+                text,
+                change,
+                recursive,
                 ..
             } => {
-                let Some(to) = format::parse_date(&input, &self.tz) else {
+                // Each ticked time must be a date, or nothing is changed.
+                let parse = |i: usize| change[i].then(|| format::parse_date(&text[i], &self.tz));
+                let (m, a) = (parse(0), parse(1));
+                if m == Some(None) || a == Some(None) {
                     self.say(StatusKind::Error, fl!("set-date-bad"));
                     return Task::none();
-                };
-                let failed = shagoff_core::props::set_mtime(&sources, to, false);
+                }
+                let failed =
+                    shagoff_core::props::set_times(&paths, m.flatten(), a.flatten(), recursive);
                 if let Some((p, e)) = failed.first() {
                     let name = p.file_name().unwrap_or_default().to_string_lossy();
                     let more = failed.len() - 1;

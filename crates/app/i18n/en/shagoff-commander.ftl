@@ -901,3 +901,7 @@ mode-names-only = Names only
 # Files → Change date and time
 menu-set-date = Change date and time…
 set-date-bad = Date not understood: write 2026-10-23 14:05:07 or 23.10.2026 14:05
+date-modified = Modified
+date-accessed = Accessed
+date-now = Current date and time
+date-note = Creation and status-change times cannot be set on Linux
