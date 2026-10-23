@@ -11,7 +11,8 @@ impl App {
         let covered = self.viewer_shown();
         for side in 0..2 {
             let t = self.panes[side].active();
-            let hidden = covered.is_some_and(|q| q.is_none_or(|s| s == side));
+            let hidden = covered.is_some_and(|q| q.is_none_or(|s| s == side))
+                || (self.wide && side != self.active);
             if !t.thumbs || hidden || archive::within(t.panel.cwd()) {
                 continue;
             }

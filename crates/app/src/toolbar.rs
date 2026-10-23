@@ -24,14 +24,18 @@ pub struct Builtin {
 pub fn builtins() -> &'static [Builtin] {
     macro_rules! b {
         ($cm:literal, $a:ident, $icon:literal, $key:literal) => {
+            b!($cm, (Action::$a), $icon, $key)
+        };
+        ($cm:literal, ($a:expr), $icon:literal, $key:literal) => {
             Builtin {
                 cm: $cm,
-                action: Action::$a,
+                action: $a,
                 icon: $icon,
                 label: || fl!($key),
             }
         };
     }
+    use crate::config::Part;
     const LIST: &[Builtin] = &[
         b!(
             "cm_RereadSource",
@@ -95,6 +99,66 @@ pub fn builtins() -> &'static [Builtin] {
             CompareListsSubdirs,
             "folder-symbolic",
             "menu-compare-subdirs"
+        ),
+        b!(
+            "cm_VisButtonBar",
+            (Action::Vis(Part::Toolbar)),
+            "view-more-horizontal-symbolic",
+            "vis-toolbar"
+        ),
+        b!(
+            "cm_VisDriveButtons",
+            (Action::Vis(Part::Drives)),
+            "drive-harddisk-symbolic",
+            "vis-drives"
+        ),
+        b!(
+            "cm_VisDirTabs",
+            (Action::Vis(Part::Tabs)),
+            "tab-new-symbolic",
+            "vis-tabs"
+        ),
+        b!(
+            "cm_VisCurDir",
+            (Action::Vis(Part::Path)),
+            "folder-symbolic",
+            "vis-path"
+        ),
+        b!(
+            "cm_VisTabHeader",
+            (Action::Vis(Part::Header)),
+            "view-list-symbolic",
+            "vis-header"
+        ),
+        b!(
+            "cm_VisStatusBar",
+            (Action::Vis(Part::Status)),
+            "dialog-information-symbolic",
+            "vis-status"
+        ),
+        b!(
+            "cm_VisCmdLine",
+            (Action::Vis(Part::Cmdline)),
+            "utilities-terminal-symbolic",
+            "vis-cmdline"
+        ),
+        b!(
+            "cm_VisKeyButtons",
+            (Action::Vis(Part::Fkeys)),
+            "input-keyboard-symbolic",
+            "vis-fkeys"
+        ),
+        b!(
+            "cm_50Percent",
+            Split50,
+            "view-dual-symbolic",
+            "menu-split-50"
+        ),
+        b!(
+            "cm_100Percent",
+            Wide,
+            "view-fullscreen-symbolic",
+            "menu-wide"
         ),
         b!(
             "cm_SwitchIgnoreList",

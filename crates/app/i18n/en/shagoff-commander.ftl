@@ -866,3 +866,16 @@ why-no-sums = No checksum lines in the file
 err-not-permitted = Operation not permitted (an immutable file, or not yours)
 err-quota = Disk quota exceeded
 err-cross-device = Not possible across file systems
+
+# View → Window parts (TC cm_Vis*), panel width
+menu-window-parts = Window parts
+vis-toolbar = Button bar
+vis-drives = Drive buttons
+vis-tabs = Folder tabs
+vis-path = Current dir
+vis-header = Column headers
+vis-status = Status bar
+vis-cmdline = Command line
+vis-fkeys = Function key buttons
+menu-split-50 = Panels at 50 %
+menu-wide = Panel at 100 %

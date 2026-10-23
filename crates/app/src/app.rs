@@ -418,6 +418,8 @@ pub struct App {
     /// is being dragged.
     pub(crate) split: f32,
     splitting: bool,
+    /// View → «Panel at 100 %»: only the active pane shown (kept in `State`).
+    pub(crate) wide: bool,
     /// Where the pointer was when the held divider first moved: a click without a drag (a pixel
     /// or two of jitter) leaves the split alone.
     split_from: Option<f32>,
@@ -999,7 +1001,7 @@ impl Application for App {
         if let Message::ListerWake = message {
             return Task::none();
         }
-        let shown = self.viewer_shown();
+        let shown = self.layout_key();
         let task = self.handle(message);
         if self.dialog.is_none() {
             self.dialog = self.held.take();
@@ -1024,7 +1026,7 @@ impl Application for App {
         self.save_state();
         // The viewer came, went or moved to the other pane: the lists it replaced are new
         // widgets at the top, while the tabs keep their offsets (the rows drawn are those).
-        let back = match self.viewer_shown() == shown {
+        let back = match self.layout_key() == shown {
             true => Task::none(),
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
@@ -1194,6 +1196,8 @@ impl Application for App {
         let checks = crate::menu::Checks {
             hidden: c.show_hidden,
             divider_line: c.divider_line,
+            parts: config::Part::ALL.map(|p| c.shows(p)),
+            wide: self.wide,
             human_sizes: c.human_sizes(),
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
@@ -1311,6 +1315,7 @@ impl App {
             sync: state.sync.clone(),
             split: state.split,
             splitting: false,
+            wide: state.wide,
             split_from: None,
             win_w: 0.0,
             drives: Vec::new(),

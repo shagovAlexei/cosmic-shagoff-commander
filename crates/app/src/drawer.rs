@@ -79,11 +79,10 @@ pub enum Setting {
     Theme(usize),
     /// Index into `Skin::ALL`.
     Skin(usize),
-    ShowFkeys(bool),
+    Show(crate::config::Part, bool),
     DividerLine(bool),
     HumanSizes(bool),
     ActiveFrame(bool),
-    ShowCmdline(bool),
     KeepHistory(bool),
     InternalViewer(bool),
     ShowHidden(bool),
@@ -330,11 +329,13 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             }))
             .add(settings::item(
                 fl!("settings-fkeys"),
-                widget::toggler(c.show_fkeys).on_toggle(move |b| set(Setting::ShowFkeys(b))),
+                widget::toggler(c.show_fkeys)
+                    .on_toggle(move |b| set(Setting::Show(crate::config::Part::Fkeys, b))),
             ))
             .add(settings::item(
                 fl!("settings-cmdline"),
-                widget::toggler(c.show_cmdline).on_toggle(move |b| set(Setting::ShowCmdline(b))),
+                widget::toggler(c.show_cmdline)
+                    .on_toggle(move |b| set(Setting::Show(crate::config::Part::Cmdline, b))),
             ))
             .add(settings::item(
                 fl!("settings-keep-history"),

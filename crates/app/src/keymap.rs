@@ -179,6 +179,12 @@ pub enum Action {
     /// Sizes in bytes or in KB / MB / GB (Show menu).
     ToggleHumanSizes,
     ToggleActiveFrame,
+    /// View → Window parts: one shown or hidden (TC `cm_VisButtonBar`, `cm_VisCurDir`, …).
+    Vis(crate::config::Part),
+    /// View → «Panels at 50 %» (TC `cm_50Percent`): the divider in the middle, both panels shown.
+    Split50,
+    /// View → «Panel at 100 %» (TC `cm_100Percent`): only the active panel; again: both back.
+    Wide,
     /// Menu only: about the program.
     About,
     /// Menu only: support the project.

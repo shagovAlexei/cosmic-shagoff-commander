@@ -86,6 +86,7 @@ impl App {
             find: self.find.clone(),
             sync: self.sync.clone(),
             split: self.split,
+            wide: self.wide,
             commands: keep(&self.commands),
             masks: keep(&self.masks),
             other_cmds: keep(&self.other_cmds),

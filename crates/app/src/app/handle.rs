@@ -2043,7 +2043,12 @@ impl App {
                     self.panes[0].active().width,
                     self.config.active_frame,
                 );
-                self.pane_hover = Some(usize::from(x > split));
+                // «Panel at 100 %»: the one pane shown is the only one to hold it over.
+                self.pane_hover = Some(if self.wide {
+                    self.active
+                } else {
+                    usize::from(x > split)
+                });
             }
             Message::TabDragAt(..) => {}
             Message::ColDragEnd => {
