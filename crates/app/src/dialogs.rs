@@ -966,7 +966,7 @@ pub fn view<'a>(
                 MaskOp::Select => fl!("select-group"),
                 MaskOp::Unselect => fl!("unselect-group"),
                 MaskOp::Show => fl!("show-mask"),
-                MaskOp::Shrink => fl!("shrink-selection").replace('…', ""),
+                MaskOp::Shrink => fl!("shrink-selection"),
             })
             .control(field(input))
             .primary_action(ok)

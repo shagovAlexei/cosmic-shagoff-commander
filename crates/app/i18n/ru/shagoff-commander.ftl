@@ -916,5 +916,5 @@ menu-focus = Фокус
 
 # Mark → shrink / exchange selection
 menu-shrink-selection = Сузить выделение…
-shrink-selection = Сузить выделение…
+shrink-selection = Сузить выделение
 menu-exchange-selection = Обменять выделение с другой панелью

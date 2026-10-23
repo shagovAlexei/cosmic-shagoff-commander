@@ -32,6 +32,10 @@ impl App {
                 self.term_blur = self.term.is_some();
                 return unfocus();
             }
+            // Not under a tree (Ctrl+F8): the files whose marks these are are not on screen.
+            Action::ExchangeSelection if (0..2).any(|s| self.panes[s].active().tree.is_some()) => {
+                return Task::none();
+            }
             Action::ExchangeSelection => {
                 let [a, b] = &mut self.panes;
                 shagoff_core::panel::Panel::exchange_marks(

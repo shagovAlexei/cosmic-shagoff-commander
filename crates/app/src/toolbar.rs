@@ -193,13 +193,13 @@ pub fn builtins() -> &'static [Builtin] {
         b!(
             "cm_ShrinkSelection",
             ShrinkSelection,
-            "edit-select-all-symbolic",
+            "list-remove-symbolic",
             "menu-shrink-selection"
         ),
         b!(
             "cm_ExchangeSelection",
             ExchangeSelection,
-            "view-dual-symbolic",
+            "emblem-synchronizing-symbolic",
             "menu-exchange-selection"
         ),
         b!(

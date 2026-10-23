@@ -365,6 +365,7 @@ impl Panel {
     /// TC «Shrink selection»: of the marked files only those matching `mask` stay marked (dirs keep
     /// theirs: masks are for files).
     pub fn shrink_marks(&mut self, mask: &Mask) {
+        self.keep_marks(); // «Restore selection» undoes it
         for e in self
             .entries
             .iter()
@@ -378,6 +379,8 @@ impl Panel {
     /// TC «Exchange selection»: what is marked in `a` is marked in `b` (by name, where there is
     /// such an entry) and the other way round.
     pub fn exchange_marks(a: &mut Panel, b: &mut Panel) {
+        a.keep_marks();
+        b.keep_marks();
         let marked = |p: &Panel| -> Vec<OsString> {
             (p.entries.iter())
                 .filter(|e| p.marked.contains(&e.os_name))
