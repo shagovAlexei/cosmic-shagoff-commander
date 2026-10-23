@@ -32,6 +32,14 @@ impl App {
                 self.term_blur = self.term.is_some();
                 return unfocus();
             }
+            Action::ExchangeSelection => {
+                let [a, b] = &mut self.panes;
+                shagoff_core::panel::Panel::exchange_marks(
+                    &mut a.active_mut().panel,
+                    &mut b.active_mut().panel,
+                );
+                return Task::none();
+            }
             Action::FocusCmdLine if self.cmd_ready() => return self.cmd_focus(),
             Action::FocusCmdLine => return Task::none(),
             _ => {}
@@ -976,6 +984,8 @@ impl App {
             | Action::Properties
             | Action::SetDate
             | Action::TransferLeft
+            | Action::ShrinkSelection
+            | Action::ExchangeSelection
             | Action::TransferRight
             | Action::FocusLeft
             | Action::FocusRight

@@ -466,6 +466,8 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
             vec![
                 b(fl!("menu-select-group"), Action::SelectGroup),
                 b(fl!("menu-unselect-group"), Action::UnselectGroup),
+                b(fl!("menu-shrink-selection"), Action::ShrinkSelection),
+                b(fl!("menu-exchange-selection"), Action::ExchangeSelection),
                 b(fl!("menu-select-all"), Action::SelectAll),
                 b(fl!("menu-unselect-all"), Action::UnselectAll),
                 b(fl!("menu-invert"), Action::Invert),
@@ -1197,6 +1199,8 @@ mod tests {
                             | Action::ViewMode(_)
                             | Action::SetDate
                             | Action::TransferLeft
+                            | Action::ShrinkSelection
+                            | Action::ExchangeSelection
                             | Action::TransferRight
                             | Action::FocusLeft
                             | Action::FocusRight

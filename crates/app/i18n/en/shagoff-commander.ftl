@@ -915,3 +915,8 @@ menu-focus-left = Focus the left panel
 menu-focus-right = Focus the right panel
 menu-focus-cmdline = Focus the command line
 menu-focus = Focus
+
+# Mark → shrink / exchange selection
+menu-shrink-selection = Shrink selection…
+shrink-selection = Shrink selection…
+menu-exchange-selection = Exchange selection with the other panel

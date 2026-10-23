@@ -339,6 +339,7 @@ pub(super) fn on_files(a: Action) -> bool {
             | A::CombineFiles
             | A::Properties
             | A::SetDate
+            | A::ShrinkSelection
             | A::Occupied
             | A::CountDirs
             | A::Mark

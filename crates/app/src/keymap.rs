@@ -197,6 +197,11 @@ pub enum Action {
     /// Files → «Copy to the left / right panel» (TC `cm_TransferLeft` / `cm_TransferRight`): the
     /// F5 dialog from the other panel to that one, whichever is active.
     TransferLeft,
+    /// Mark → «Shrink selection» (TC `cm_ShrinkSelection`): of the marked files only those matching
+    /// a mask stay marked.
+    ShrinkSelection,
+    /// Mark → «Exchange selection» (TC `cm_ExchangeSelection`): the two panels' marks swapped.
+    ExchangeSelection,
     TransferRight,
     /// Commands → focus: the left / right panel, the command line (TC `cm_FocusLeft`,
     /// `cm_FocusRight`, `cm_FocusCmdLine`).

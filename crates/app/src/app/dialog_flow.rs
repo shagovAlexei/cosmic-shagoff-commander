@@ -30,11 +30,15 @@ impl App {
                 Vec::new(),
                 offered_file(panel, DETAILS_FILE),
             )),
-            Action::SelectGroup | Action::UnselectGroup | Action::ShowMask => Some(Dialog::Mask {
+            Action::SelectGroup
+            | Action::UnselectGroup
+            | Action::ShrinkSelection
+            | Action::ShowMask => Some(Dialog::Mask {
                 side,
                 op: match action {
                     Action::SelectGroup => MaskOp::Select,
                     Action::UnselectGroup => MaskOp::Unselect,
+                    Action::ShrinkSelection => MaskOp::Shrink,
                     _ => MaskOp::Show,
                 },
                 input: match panel.show() {
@@ -508,6 +512,7 @@ impl App {
                 let panel = &mut self.panes[side].active_mut().panel;
                 match op {
                     MaskOp::Show => panel.set_show(Show::Mask(input)),
+                    MaskOp::Shrink => panel.shrink_marks(&Mask::parse(&input)),
                     _ => panel.mark_by_mask(&Mask::parse(&input), op == MaskOp::Select),
                 }
                 Task::none()
