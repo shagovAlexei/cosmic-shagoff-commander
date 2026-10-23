@@ -886,3 +886,4 @@ menu-thumb-zoom-out = Thumbnails smaller
 menu-thumb-reload = Reload thumbnails of selected files
 menu-thumbs-sub = Thumbnails
 menu-vertical = Panels one above the other
+menu-panels = Panels

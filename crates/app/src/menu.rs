@@ -651,18 +651,23 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         })
                         .collect(),
                 ),
-                b(fl!("menu-split-50"), Action::Split50),
-                menu::Item::CheckBox(
-                    fl!("menu-vertical"),
-                    None,
-                    checks.vertical,
-                    MenuAct::Key(Action::VerticalPanels),
-                ),
-                menu::Item::CheckBox(
-                    fl!("menu-wide"),
-                    None,
-                    checks.wide,
-                    MenuAct::Key(Action::Wide),
+                menu::Item::Folder(
+                    fl!("menu-panels"),
+                    vec![
+                        b(fl!("menu-split-50"), Action::Split50),
+                        menu::Item::CheckBox(
+                            fl!("menu-vertical"),
+                            None,
+                            checks.vertical,
+                            MenuAct::Key(Action::VerticalPanels),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("menu-wide"),
+                            None,
+                            checks.wide,
+                            MenuAct::Key(Action::Wide),
+                        ),
+                    ],
                 ),
                 menu::Item::Divider,
                 b(fl!("menu-term-full"), Action::TermFull),
