@@ -3,7 +3,7 @@
 //! which file and which mtime it was made from (`Thumb::URI`, `Thumb::MTime`, `Thumb::Size`).
 
 use md5::{Digest, Md5};
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
