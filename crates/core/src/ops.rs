@@ -1134,7 +1134,7 @@ mod tests {
             &mut Script::default(),
         );
         set_verify(false);
-        assert_eq!(r.completed, [a.clone()]);
+        assert_eq!(r.completed, std::slice::from_ref(&a));
         assert_eq!(fs::read(&b).unwrap(), fs::read(&a).unwrap());
         // Nothing left of the part file.
         assert_eq!(fs::read_dir(d.path()).unwrap().count(), 2);
