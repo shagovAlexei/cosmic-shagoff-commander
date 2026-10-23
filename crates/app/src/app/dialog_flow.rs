@@ -657,9 +657,9 @@ impl App {
             }
             Dialog::Input {
                 op: InputOp::SetDate,
-                side,
                 sources,
                 input,
+                ..
             } => {
                 let Some(to) = format::parse_date(&input, &self.tz) else {
                     self.say(StatusKind::Error, fl!("set-date-bad"));
@@ -668,13 +668,18 @@ impl App {
                 let failed = shagoff_core::props::set_mtime(&sources, to, false);
                 if let Some((p, e)) = failed.first() {
                     let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    let more = failed.len() - 1;
+                    let tail = if more > 0 {
+                        format!(" (+{more})")
+                    } else {
+                        String::new()
+                    };
                     self.say(
                         StatusKind::Error,
-                        format!("{name}: {}", crate::why::text(e)),
+                        format!("{name}: {}{tail}", crate::why::text(e)),
                     );
                 }
                 // Both panes show the files' dates: read again.
-                let _ = side;
                 let tasks: Vec<_> = (0..2)
                     .map(|s| {
                         let cwd = self.panes[s].active().target();

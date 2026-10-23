@@ -39,8 +39,8 @@ pub fn usage(paths: &[PathBuf], stop: &AtomicBool) -> Option<Usage> {
 }
 
 /// Set the modification time of `paths` to `to`, and of everything under dirs when `recursive`
-/// (a dir after its contents: writing into it would move its time again). Symlinks are left
-/// alone (the time would be the target's). Returns what failed.
+/// (a dir after its contents: writing into it would move its time again); a symlink gets its own
+/// time. Returns what failed.
 pub fn set_mtime(
     paths: &[PathBuf],
     to: std::time::SystemTime,
@@ -55,10 +55,7 @@ pub fn set_mtime(
         let Ok(meta) = fs::symlink_metadata(p) else {
             return;
         };
-        if meta.file_type().is_symlink() {
-            return;
-        }
-        if recursive && meta.is_dir() {
+        if recursive && meta.is_dir() && !meta.file_type().is_symlink() {
             match fs::read_dir(p) {
                 Ok(rd) => {
                     for e in rd.flatten() {
@@ -68,8 +65,27 @@ pub fn set_mtime(
                 Err(e) => failed.push((p.to_path_buf(), e)),
             }
         }
-        if let Err(e) = fs::File::open(p).and_then(|f| f.set_modified(to)) {
-            failed.push((p.to_path_buf(), e));
+        // By path, not through an open file (a file we own but cannot read is fine); a link's own
+        // time, not its target's.
+        let since = to.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        let ts = rustix::fs::Timestamps {
+            last_access: rustix::fs::Timespec {
+                tv_sec: 0,
+                tv_nsec: rustix::fs::UTIME_OMIT,
+            },
+            last_modification: rustix::fs::Timespec {
+                tv_sec: since.as_secs() as _,
+                tv_nsec: since.subsec_nanos() as _,
+            },
+        };
+        let done = rustix::fs::utimensat(
+            rustix::fs::CWD,
+            p,
+            &ts,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        );
+        if let Err(e) = done {
+            failed.push((p.to_path_buf(), e.into()));
         }
     }
     let mut failed = Vec::new();
@@ -293,7 +309,7 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     #[test]
-    fn mtime_is_set_on_files_and_under_dirs_but_not_on_links() {
+    fn mtime_is_set_on_files_and_under_dirs_and_on_a_link_itself() {
         use std::time::{Duration, UNIX_EPOCH};
         let d = tempfile::tempdir().unwrap();
         let sub = d.path().join("sub");
@@ -307,11 +323,11 @@ mod tests {
         assert!(set_mtime(std::slice::from_ref(&sub), to, false).is_empty());
         assert_eq!(m(sub.clone()), to);
         assert_ne!(m(sub.join("f")), to);
-        // Recursive; a link is skipped.
+        // Recursive; a link gets its own time, its target keeps its.
         let l = d.path().join("l");
         assert!(set_mtime(&[sub.clone(), l.clone()], to, true).is_empty());
-        assert_eq!((m(sub.join("f")), m(sub.clone())), (to, to));
-        assert_ne!(m(l), to);
+        assert_eq!((m(sub.join("f")), m(sub.clone()), m(l)), (to, to, to));
+        assert_ne!(m(d.path().join("g")), to);
     }
 
     fn mode_of(p: &Path) -> u32 {
