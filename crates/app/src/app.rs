@@ -420,6 +420,8 @@ pub struct App {
     splitting: bool,
     /// View → «Panel at 100 %»: only the active pane shown (kept in `State`).
     pub(crate) wide: bool,
+    /// View → «Panels one above the other»: the left pane on top (kept in `State`).
+    pub(crate) vertical: bool,
     /// Where the pointer was when the held divider first moved: a click without a drag (a pixel
     /// or two of jitter) leaves the split alone.
     split_from: Option<f32>,
@@ -1198,6 +1200,7 @@ impl Application for App {
             divider_line: c.divider_line,
             parts: config::Part::ALL.map(|p| c.shows(p)),
             wide: self.wide,
+            vertical: self.vertical,
             human_sizes: c.human_sizes(),
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
@@ -1316,6 +1319,7 @@ impl App {
             split: state.split,
             splitting: false,
             wide: state.wide,
+            vertical: state.vertical,
             split_from: None,
             win_w: 0.0,
             drives: Vec::new(),

@@ -402,6 +402,8 @@ pub struct State {
     pub split: f32,
     /// View → «Panel at 100 %» (TC `cm_100Percent`): only the active panel, the whole width.
     pub wide: bool,
+    /// View → «Panels one above the other» (TC `cm_VerticalPanels`).
+    pub vertical: bool,
     /// Command line history, last first.
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first.

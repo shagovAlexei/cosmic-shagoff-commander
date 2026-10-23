@@ -222,6 +222,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("", fl!("settings-ignore-on"), Action::SwitchIgnoreList),
                 r("", fl!("menu-split-50"), Action::Split50),
                 r("", fl!("menu-wide"), Action::Wide),
+                r("", fl!("menu-vertical"), Action::VerticalPanels),
                 r("", fl!("settings-watch-dirs"), Action::SwitchWatchDirs),
                 r("", fl!("settings-dirs-by-name"), Action::SwitchDirSort),
                 r("", fl!("settings-type-colors"), Action::SwitchTypeColors),

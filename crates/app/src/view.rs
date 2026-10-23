@@ -165,6 +165,18 @@ fn main_view(app: &App) -> Element<'_, Message> {
         ]
     }
     .height(Length::Fill);
+    // View → «Panels one above the other»: the same, stacked, half and half (no divider to drag).
+    let panes: Element<'_, Message> = if app.vertical && !app.wide {
+        column![
+            container(side(0)).height(Length::FillPortion(1)),
+            widget::Space::new().height(Length::Fixed(gap)),
+            container(side(1)).height(Length::FillPortion(1)),
+        ]
+        .height(Length::Fill)
+        .into()
+    } else {
+        panes.into()
+    };
     match app.config.skin {
         Skin::Classic => column![]
             .push_maybe(
@@ -173,7 +185,11 @@ fn main_view(app: &App) -> Element<'_, Message> {
             )
             .push(panes)
             .into(),
-        Skin::Modern => panes.padding([4.0, MODERN_PAD, 0.0, MODERN_PAD]).into(),
+        Skin::Modern => container(panes)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding([4.0, MODERN_PAD, 0.0, MODERN_PAD])
+            .into(),
     }
 }
 
@@ -1221,7 +1237,10 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         };
         // A gap at the right: the active half's details would run into the other half's totals.
         // Each half under its pane: the divider's share.
-        let (left, right) = viewport::split_portions(app.split);
+        let (left, right) = match app.vertical {
+            true => (500, 500), // stacked: the divider's share means nothing
+            false => viewport::split_portions(app.split),
+        };
         line.spacing(12)
             .padding([0, 24, 0, 0])
             .align_y(Alignment::Center)

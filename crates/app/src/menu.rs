@@ -391,6 +391,7 @@ pub struct Checks {
     /// View → Window parts: shown or not, in `Part::ALL` order.
     pub parts: [bool; crate::config::Part::ALL.len()],
     pub wide: bool,
+    pub vertical: bool,
     pub human_sizes: bool,
     pub active_frame: bool,
     /// The classic look: only there is «Frame around the active panel» offered (the modern
@@ -651,6 +652,12 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         .collect(),
                 ),
                 b(fl!("menu-split-50"), Action::Split50),
+                menu::Item::CheckBox(
+                    fl!("menu-vertical"),
+                    None,
+                    checks.vertical,
+                    MenuAct::Key(Action::VerticalPanels),
+                ),
                 menu::Item::CheckBox(
                     fl!("menu-wide"),
                     None,
@@ -1131,6 +1138,7 @@ mod tests {
                             | Action::Vis(_)
                             | Action::Split50
                             | Action::Wide
+                            | Action::VerticalPanels
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar

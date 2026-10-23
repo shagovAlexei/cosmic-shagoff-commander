@@ -5758,6 +5758,16 @@ mod drawer_tests {
     }
 
     #[test]
+    fn view_menu_stacks_the_panels_and_keeps_it() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::VerticalPanels));
+        assert!(app.vertical && app.saved.vertical);
+        assert!(app_with(Config::default(), app.saved.clone()).vertical);
+        let _ = app.update(Message::Key(Action::VerticalPanels));
+        assert!(!app.vertical);
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.

@@ -2044,11 +2044,12 @@ impl App {
                     self.config.active_frame,
                 );
                 // «Panel at 100 %»: the one pane shown is the only one to hold it over.
-                self.pane_hover = Some(if self.wide {
-                    self.active
-                } else {
-                    usize::from(x > split)
-                });
+                // Stacked panes: x says nothing, a tab is not dropped on the other pane.
+                self.pane_hover = match (self.wide, self.vertical) {
+                    (true, _) => Some(self.active),
+                    (_, true) => None,
+                    _ => Some(usize::from(x > split)),
+                };
             }
             Message::TabDragAt(..) => {}
             Message::ColDragEnd => {

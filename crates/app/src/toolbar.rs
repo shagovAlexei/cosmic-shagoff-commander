@@ -155,6 +155,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-split-50"
         ),
         b!(
+            "cm_VerticalPanels",
+            VerticalPanels,
+            "view-continuous-symbolic",
+            "menu-vertical"
+        ),
+        b!(
             "cm_100Percent",
             Wide,
             "view-fullscreen-symbolic",
