@@ -143,6 +143,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         ),
         (vec![Alt], K::Named(Named::F10), a(Action::TreeDialog)),
         (vec![Ctrl], K::Named(Named::F8), a(Action::TreePanel)),
+        (vec![Ctrl, Shift], K::Named(Named::F8), a(Action::SideTree)),
         (vec![Ctrl], K::Named(Named::F10), a(Action::ShowAll)),
         (vec![Ctrl], K::Named(Named::F11), a(Action::ShowPrograms)),
         (vec![Ctrl], K::Named(Named::F12), a(Action::ShowMask)),
@@ -392,6 +393,7 @@ pub struct Checks {
     pub parts: [bool; crate::config::Part::ALL.len()],
     pub wide: bool,
     pub vertical: bool,
+    pub side_tree: bool,
     pub human_sizes: bool,
     pub active_frame: bool,
     /// The classic look: only there is «Frame around the active panel» offered (the modern
@@ -654,6 +656,12 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Folder(
                     fl!("menu-panels"),
                     vec![
+                        menu::Item::CheckBox(
+                            fl!("menu-side-tree"),
+                            None,
+                            checks.side_tree,
+                            MenuAct::Key(Action::SideTree),
+                        ),
                         b(fl!("menu-split-50"), Action::Split50),
                         menu::Item::CheckBox(
                             fl!("menu-vertical"),

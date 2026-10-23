@@ -1193,6 +1193,31 @@ impl App {
                 };
                 return Task::batch([reload(self, 0), reload(self, 1)]);
             }
+            Message::SideTreeRow(i) => {
+                let active = self.active;
+                self.click_pane(active);
+                if let Some(st) = &mut self.side_tree {
+                    st.tree.cursor = i.min(st.tree.rows.len().saturating_sub(1));
+                    if let Some(n) = st.tree.current() {
+                        let dir = n.path.clone();
+                        // A locked tab there would open a tab at every click: it stays.
+                        if self.panes[active].active().locked {
+                            return Task::none();
+                        }
+                        st.synced = Some(dir.clone());
+                        return self.load(active, dir, None);
+                    }
+                }
+            }
+            Message::SideTreeToggle(i) => {
+                let hidden = self.panes[self.active].active().panel.show_hidden();
+                if let Some(st) = &mut self.side_tree {
+                    st.tree.cursor = i.min(st.tree.rows.len().saturating_sub(1));
+                    if let Some(dir) = st.tree.toggle() {
+                        return tree_read(st.id, vec![dir], hidden, None);
+                    }
+                }
+            }
             Message::TreeRow(side, i) => {
                 self.click_pane(side);
                 if let Some(pt) = &mut self.panes[side].active_mut().tree {
@@ -1226,6 +1251,23 @@ impl App {
                     }
                     tree.cursor = i.min(tree.rows.len().saturating_sub(1));
                 }
+            }
+            Message::TreeFilled(from, read, select)
+                if self.side_tree.as_ref().is_some_and(|s| s.id == from) =>
+            {
+                if let Some(st) = &mut self.side_tree {
+                    for (dir, names) in read {
+                        st.tree.fill(&dir, names);
+                    }
+                    if let Some(p) = &select {
+                        st.tree.select(p);
+                    }
+                }
+                // Only a read that put the cursor somewhere moves the view (not a toggle's).
+                return match select {
+                    Some(_) => self.side_tree_scroll(),
+                    None => Task::none(),
+                };
             }
             Message::TreeFilled(from, read, select) => {
                 // A panel's tree (Ctrl+F8): filled, its cursor kept in view, the other panel

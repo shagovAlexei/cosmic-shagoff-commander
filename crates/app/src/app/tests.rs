@@ -5768,6 +5768,28 @@ mod drawer_tests {
     }
 
     #[test]
+    fn side_tree_follows_the_active_panel_and_a_click_goes_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::SideTree));
+        assert!(app.side_tree.is_some() && app.saved.side_tree);
+        // The tree shows the panel's dir after its read; a click on a row sends the panel there.
+        let root = std::path::Path::new("/");
+        let tree = &mut app.side_tree.as_mut().unwrap().tree;
+        tree.fill(root, vec![dir.path().file_name().unwrap().into()]);
+        let i = app.side_tree.as_ref().unwrap().tree.rows.len() - 1;
+        let _ = app.update(Message::SideTreeRow(i));
+        assert_eq!(
+            app.panes[app.active].active().target(),
+            app.side_tree.as_ref().unwrap().tree.rows[i].path
+        );
+        let _ = app.update(Message::Key(Action::SideTree));
+        assert!(app.side_tree.is_none());
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.

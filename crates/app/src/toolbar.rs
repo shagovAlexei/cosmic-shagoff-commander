@@ -155,6 +155,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-split-50"
         ),
         b!(
+            "cm_SeparateTreeSwitch",
+            SideTree,
+            "view-list-symbolic",
+            "menu-side-tree"
+        ),
+        b!(
             "cm_VerticalPanels",
             VerticalPanels,
             "view-continuous-symbolic",

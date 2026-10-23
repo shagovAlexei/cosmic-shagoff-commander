@@ -404,6 +404,8 @@ pub struct State {
     pub wide: bool,
     /// View → «Panels one above the other» (TC `cm_VerticalPanels`).
     pub vertical: bool,
+    /// Ctrl+Shift+F8: the tree beside the panels.
+    pub side_tree: bool,
     /// Command line history, last first.
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first.

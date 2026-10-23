@@ -97,6 +97,17 @@ impl App {
                 (self.split, self.wide) = (0.5, false);
                 return Task::none();
             }
+            Action::SideTree => {
+                self.side_tree = match self.side_tree {
+                    Some(_) => None,
+                    None => Some(SideTree {
+                        id: 0,
+                        tree: shagoff_core::tree::Tree::new(Path::new("/")),
+                        synced: None,
+                    }),
+                };
+                return Task::none(); // `update` puts it on the active panel's dir
+            }
             Action::VerticalPanels => {
                 self.vertical = !self.vertical;
                 return Task::none();
@@ -794,6 +805,7 @@ impl App {
             | Action::Split50
             | Action::Wide
             | Action::VerticalPanels
+            | Action::SideTree
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::ToggleTerminal

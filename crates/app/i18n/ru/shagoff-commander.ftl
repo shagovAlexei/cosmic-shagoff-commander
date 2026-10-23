@@ -885,3 +885,4 @@ menu-thumb-reload = Перечитать эскизы выделенных фа�
 menu-thumbs-sub = Эскизы
 menu-vertical = Панели одна над другой
 menu-panels = Панели
+menu-side-tree = Отдельное дерево

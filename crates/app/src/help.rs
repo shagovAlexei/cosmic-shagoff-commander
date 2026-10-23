@@ -26,6 +26,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+D", fl!("menu-hotlist"), Action::Hotlist),
                 r("Alt+F10", fl!("menu-tree"), Action::TreeDialog),
                 r("Ctrl+F8", fl!("menu-tree-panel"), Action::TreePanel),
+                r("Ctrl+Shift+F8", fl!("menu-side-tree"), Action::SideTree),
                 r("Ctrl+F10", fl!("menu-show-all"), Action::ShowAll),
                 r("Ctrl+F11", fl!("menu-show-programs"), Action::ShowPrograms),
                 r("Ctrl+F12", fl!("menu-show-mask"), Action::ShowMask),
