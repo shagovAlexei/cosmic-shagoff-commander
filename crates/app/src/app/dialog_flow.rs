@@ -655,7 +655,9 @@ impl App {
                 let mut modes = self.config.view_modes.clone();
                 let mode = config::ViewMode {
                     name: name.to_string(),
-                    cols: self.config.col_set.clone(),
+                    cols: (self.shown_cols().into_iter())
+                        .map(|c| c.key().to_string())
+                        .collect(),
                 };
                 match modes.iter_mut().find(|m| m.name == name) {
                     Some(m) => *m = mode,

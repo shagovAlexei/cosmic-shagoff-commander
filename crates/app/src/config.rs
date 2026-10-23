@@ -292,7 +292,7 @@ pub fn default_view_modes() -> Vec<ViewMode> {
         ),
         m(&crate::fl!("mode-short"), &["size", "date"]),
         m(
-            "Detailed",
+            &crate::fl!("mode-detailed"),
             &["ext", "size", "date", "attr", "owner", "group"],
         ),
         m(&crate::fl!("mode-names-only"), &[]),
