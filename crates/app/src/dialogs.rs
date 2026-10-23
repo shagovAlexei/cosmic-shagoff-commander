@@ -46,8 +46,6 @@ pub enum InputOp {
     Combine,
     /// View → Columns → «Save as view mode…»: its name.
     ViewMode,
-    /// Files → «Change date and time…»: `sources` get this modification time.
-    SetDate,
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -102,6 +100,17 @@ pub enum Dialog {
     },
     /// An encrypted archive read without its password (or with a wrong one): OK keeps the typed
     /// one (`archive::set_password`) and the job retries.
+    /// Files → «Change date and time…» (TC's attribute dialog, its date fields): the modification
+    /// and access times of `paths`; a time is changed only when its box is ticked.
+    SetDate {
+        paths: Vec<PathBuf>,
+        /// Modified, accessed: the text of each field and whether it is to be changed.
+        text: [String; 2],
+        change: [bool; 2],
+        recursive: bool,
+        /// A dir is among the paths: «inside folders» is offered.
+        has_dir: bool,
+    },
     Password {
         archive: PathBuf,
         password: String,
@@ -973,7 +982,6 @@ pub fn view<'a>(
                 InputOp::Combine => fl!("combine"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
-                InputOp::SetDate => fl!("menu-set-date").replace('…', ""),
                 InputOp::ViewMode => fl!("menu-save-view-mode").replace('…', ""),
                 InputOp::OpenWith => fl!("open-with-other-title"),
                 // The menu items' names, without their «…».
@@ -2398,6 +2406,46 @@ pub fn view<'a>(
                     ]
                     .spacing(10),
                 )
+                .into()
+        }
+        Dialog::SetDate {
+            text,
+            change,
+            recursive,
+            has_dir,
+            ..
+        } => {
+            let titles = [fl!("date-modified"), fl!("date-accessed")];
+            let mut col = column![].spacing(10);
+            for i in 0..2 {
+                col = col.push(
+                    row![
+                        widget::checkbox(change[i])
+                            .label(titles[i].clone())
+                            .on_toggle(move |b| Message::DateChange(i, b))
+                            .width(Length::Fixed(190.0)),
+                        widget::text_input("", text[i].as_str())
+                            .on_input(move |s| Message::DateText(i, s))
+                            .on_submit(|_| Message::DialogSubmit),
+                    ]
+                    .spacing(8)
+                    .align_y(cosmic::iced::Alignment::Center),
+                );
+            }
+            col = col.push(widget::button::standard(fl!("date-now")).on_press(Message::DateNow));
+            if *has_dir {
+                col = col.push(
+                    widget::checkbox(*recursive)
+                        .label(fl!("props-recursive"))
+                        .on_toggle(Message::DateRecursive),
+                );
+            }
+            col = col.push(widget::text::caption(fl!("date-note")));
+            widget::dialog()
+                .title(fl!("menu-set-date").replace('…', ""))
+                .control(col)
+                .primary_action(ok)
+                .secondary_action(cancel)
                 .into()
         }
         Dialog::Password {

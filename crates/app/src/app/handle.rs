@@ -556,6 +556,28 @@ impl App {
                     *password = s;
                 }
             }
+            Message::DateText(i, s) => {
+                if let Some(Dialog::SetDate { text, change, .. }) = &mut self.dialog {
+                    text[i] = s;
+                    change[i] = true; // typed into: meant
+                }
+            }
+            Message::DateChange(i, b) => {
+                if let Some(Dialog::SetDate { change, .. }) = &mut self.dialog {
+                    change[i] = b;
+                }
+            }
+            Message::DateNow => {
+                let now = format::date_edit(std::time::SystemTime::now(), &self.tz);
+                if let Some(Dialog::SetDate { text, change, .. }) = &mut self.dialog {
+                    (*text, *change) = ([now.clone(), now], [true, true]);
+                }
+            }
+            Message::DateRecursive(b) => {
+                if let Some(Dialog::SetDate { recursive, .. }) = &mut self.dialog {
+                    *recursive = b;
+                }
+            }
             Message::PackPassword(again, s) => {
                 if let Some(Dialog::Pack(p)) = &mut self.dialog {
                     *if again { &mut p.again } else { &mut p.password } = s;

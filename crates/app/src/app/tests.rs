@@ -5831,7 +5831,7 @@ mod drawer_tests {
     }
 
     #[test]
-    fn set_date_changes_the_mtime_of_the_file_under_the_cursor() {
+    fn set_date_changes_the_ticked_times_of_the_file_under_the_cursor() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("a.txt");
         std::fs::write(&f, "x").unwrap();
@@ -5842,26 +5842,23 @@ mod drawer_tests {
             Some("a.txt"),
         );
         let _ = app.update(Message::Key(Action::SetDate));
-        let Some(Dialog::Input {
-            op: InputOp::SetDate,
-            input,
-            ..
-        }) = &mut app.dialog
-        else {
-            panic!("no dialog")
-        };
-        *input = "2001-09-09 01:46:40".into();
+        let _ = app.update(Message::DateText(0, "2001-09-09 01:46:40".into()));
+        let _ = app.update(Message::DateText(1, "2002-01-01 00:00:00".into()));
+        let _ = app.update(Message::DateChange(1, false)); // the access time stays
         let _ = app.update(Message::DialogSubmit);
-        let at = std::fs::metadata(&f).unwrap().modified().unwrap();
+        let meta = std::fs::metadata(&f).unwrap();
         let want = format::parse_date("2001-09-09 01:46:40", &app.tz).unwrap();
-        assert_eq!(at, want);
-        // Not a date: the file stays, an error is said.
+        assert_eq!(meta.modified().unwrap(), want);
+        assert_ne!(
+            meta.accessed().unwrap(),
+            format::parse_date("2002-01-01 00:00:00", &app.tz).unwrap()
+        );
+        // Not a date: nothing is changed, an error is said.
         let _ = app.update(Message::Key(Action::SetDate));
-        if let Some(Dialog::Input { input, .. }) = &mut app.dialog {
-            *input = "soon".into();
-        }
+        let _ = app.update(Message::DateText(0, "soon".into()));
         let _ = app.update(Message::DialogSubmit);
         assert_eq!(std::fs::metadata(&f).unwrap().modified().unwrap(), want);
+        assert!(app.status.is_some());
     }
 
     #[test]

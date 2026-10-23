@@ -702,6 +702,11 @@ pub enum Message {
     TrashListed(usize, Result<Vec<PathBuf>, String>),
     /// Alt+F5's password field (`true`: the second one).
     PackPassword(bool, String),
+    /// Change date and time: a field's text / a time's box / «Now» / «inside folders».
+    DateText(usize, String),
+    DateChange(usize, bool),
+    DateNow,
+    DateRecursive(bool),
     /// The encrypted archive's password field.
     ArchivePassword(String),
     /// Pack / unpack dialog checkboxes.

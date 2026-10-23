@@ -899,3 +899,7 @@ mode-names-only = Только имена
 # Files → Change date and time
 menu-set-date = Изменить дату и время…
 set-date-bad = Дата не понята: напишите 2026-10-23 14:05:07 или 23.10.2026 14:05
+date-modified = Изменения
+date-accessed = Доступа
+date-now = Текущие дата и время
+date-note = Время создания и смены статуса в Linux задать нельзя
