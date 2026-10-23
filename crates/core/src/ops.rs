@@ -1147,17 +1147,15 @@ mod tests {
 
     #[test]
     fn a_verified_copy_is_read_back_and_succeeds() {
-        // The global switch: set only around this copy, and put back.
         let d = tempfile::tempdir().unwrap();
         let (a, b) = (d.path().join("a"), d.path().join("b"));
         fs::write(&a, vec![7u8; (3 << 20) + 5]).unwrap();
-        set_verify(true);
-        let r = transfer(
+        let r = transfer_checked(
             Method::Copy,
             &[(a.clone(), b.clone())],
             &mut Script::default(),
+            true,
         );
-        set_verify(false);
         assert_eq!(r.completed, std::slice::from_ref(&a));
         assert_eq!(fs::read(&b).unwrap(), fs::read(&a).unwrap());
         // Nothing left of the part file.
