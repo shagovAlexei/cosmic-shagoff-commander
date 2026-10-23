@@ -53,6 +53,7 @@ impl App {
             Setting::DirsByName(b) => c.dirs_by_name = b,
             Setting::TypeColors(b) => c.type_colors = b,
             Setting::ThumbSize(px) => c.thumb_size = px,
+            Setting::ColSet(k) => c.col_set = k,
             // 0: own program (typed below), else `builtins()[i - 1]`.
             Setting::F12(0) => {
                 if crate::toolbar::builtin(&c.f12.cmd).is_some() {

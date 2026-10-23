@@ -34,6 +34,16 @@ impl Owners {
         }
     }
 
+    /// The user's name, the number where unknown.
+    pub fn user(&self, uid: u32) -> String {
+        (self.users.get(&uid).cloned()).unwrap_or_else(|| uid.to_string())
+    }
+
+    /// The group's name, the number where unknown.
+    pub fn group(&self, gid: u32) -> String {
+        (self.groups.get(&gid).cloned()).unwrap_or_else(|| gid.to_string())
+    }
+
     /// `user:group`, numbers where the name is unknown.
     pub fn name(&self, uid: u32, gid: u32) -> String {
         let user = self

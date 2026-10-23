@@ -1,6 +1,7 @@
 //! Tabs and directory changes: `load` / `reload` / `load_tab`, locked tabs, the Ctrl+F8 tree.
 
 use super::*;
+use shagoff_core::columns::Col;
 
 impl App {
     pub(super) fn new_tab(&mut self, path: PathBuf) -> Tab {
@@ -221,8 +222,16 @@ impl App {
 
     /// The columns' widths on screen: as kept (for the default text size) grown or shrunk with
     /// the panel's text, so a bigger font does not cut the dates (162).
-    pub fn col_widths(&self) -> [f32; 4] {
-        self.cols.map(|w| w * self.config.text_scale())
+    pub fn col_widths(&self) -> Vec<f32> {
+        let k = self.config.text_scale();
+        (self.shown_cols().into_iter())
+            .map(|c| c.slot().map_or(Col::FIXED_W, |s| self.cols[s]) * k)
+            .collect()
+    }
+
+    /// The columns after Name the full view shows (View → Columns).
+    pub fn shown_cols(&self) -> Vec<Col> {
+        shagoff_core::columns::parse(&self.config.col_set)
     }
 
     /// A tab locked with dir changes allowed that is no longer the shown one is read in its dir

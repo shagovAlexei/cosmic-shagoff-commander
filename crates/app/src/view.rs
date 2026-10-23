@@ -11,6 +11,7 @@ use cosmic::iced::{Alignment, Color, Font, Length};
 use cosmic::widget::{self, button, container, mouse_area, scrollable, text};
 use cosmic::{Element, theme};
 use shagoff_core::colors::{self, Paint};
+use shagoff_core::columns::Col;
 use shagoff_core::drives;
 use shagoff_core::format;
 use shagoff_core::listing::Entry;
@@ -357,8 +358,9 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
                 side,
                 p.panel.sort(),
                 skin,
-                app.col_widths(),
-                viewport::visible_cols(p.width, app.col_widths()),
+                &app.shown_cols(),
+                &app.col_widths(),
+                viewport::visible_cols(p.width, &app.col_widths()),
             ))
             .class(panel_style())
         }))
@@ -963,7 +965,8 @@ fn header(
     side: usize,
     sort: Sort,
     skin: Skin,
-    w: [f32; 4],
+    set: &[Col],
+    w: &[f32],
     shown: usize,
 ) -> Element<'static, Message> {
     let cell = |label: String, key: SortKey, width: Length, align: Alignment| {
@@ -976,21 +979,18 @@ fn header(
             .on_press(Message::PaneKey(side, Action::Sort(key)))
     };
     let start = Alignment::Start;
-    let cells: Vec<Element<'static, Message>> = vec![
-        cell(fl!("col-name"), SortKey::Name, Length::Fill, start).into(),
-        cell(fl!("col-ext"), SortKey::Ext, Length::Fixed(w[0]), start).into(),
-        cell(
-            fl!("col-size"),
-            SortKey::Size,
-            Length::Fixed(w[1]),
-            Alignment::End,
-        )
-        .into(),
-        cell(fl!("col-date"), SortKey::Date, Length::Fixed(w[2]), start).into(),
-        self::cell(fl!("col-attr"))
-            .width(Length::Fixed(w[3]))
-            .into(),
-    ];
+    let mut cells: Vec<Element<'static, Message>> =
+        vec![cell(fl!("col-name"), SortKey::Name, Length::Fill, start).into()];
+    for (&c, &w) in set.iter().zip(w) {
+        let width = Length::Fixed(w);
+        cells.push(match c {
+            Col::Ext => cell(col_label(c), SortKey::Ext, width, start).into(),
+            Col::Size => cell(col_label(c), SortKey::Size, width, Alignment::End).into(),
+            Col::Date => cell(col_label(c), SortKey::Date, width, start).into(),
+            // Not sorted by.
+            Col::Attr | Col::Owner | Col::Group => self::cell(col_label(c)).width(width).into(),
+        });
+    }
     // A narrow pane: the columns on the right that don't fit are left out, as in the rows.
     let cells: Vec<_> = cells.into_iter().take(1 + shown).collect();
     // The 6 px gaps are the grabbable edges (TC: drag to resize the column on their right);
@@ -1025,6 +1025,18 @@ fn header(
     }
 }
 
+/// A column's title (the header, View → Columns).
+pub fn col_label(c: Col) -> String {
+    match c {
+        Col::Ext => fl!("col-ext"),
+        Col::Size => fl!("col-size"),
+        Col::Date => fl!("col-date"),
+        Col::Attr => fl!("col-attr"),
+        Col::Owner => fl!("col-owner"),
+        Col::Group => fl!("col-group"),
+    }
+}
+
 /// Classic header bar: the theme's component (button) background.
 fn header_style() -> theme::Container<'static> {
     theme::Container::custom(|t| container::Style {
@@ -1044,18 +1056,14 @@ fn file_row<'a>(
 ) -> Element<'a, Message> {
     let is_parent = e.name == PARENT;
     let size = size_cell(app, &app.panes[side].active().panel, e);
-    let (date, attrs) = if is_parent || e.unknown() {
-        (String::new(), String::new())
-    } else {
-        (format::date(e.mtime, &app.tz), format::attrs(e))
-    };
+    let blank = is_parent || e.unknown();
     let look = app.scheme.pick(e, std::time::SystemTime::now());
     let font = app.panel_font();
     let cell = |s| panel_cell(s, font);
     // A narrow pane keeps Name readable: fixed columns that don't fit go, rightmost first.
-    let cols = app.col_widths();
-    let shown = viewport::visible_cols(app.panes[side].active().width, cols);
-    let cells = row![
+    let (set, cols) = (app.shown_cols(), app.col_widths());
+    let shown = viewport::visible_cols(app.panes[side].active().width, &cols);
+    let mut cells = row![
         // Empty style: the default (Transparent) sets its own text colour over the cursor's.
         container(name_cell(
             e,
@@ -1068,16 +1076,24 @@ fn file_row<'a>(
         .width(Length::Fill)
         .class(theme::Container::custom(|_| container::Style::default())),
     ]
-    .push_maybe((shown > 0).then(|| cell(e.ext.clone()).width(Length::Fixed(cols[0]))))
-    .push_maybe((shown > 1).then(|| {
-        cell(size)
-            .width(Length::Fixed(cols[1]))
-            .align_x(Alignment::End)
-    }))
-    .push_maybe((shown > 2).then(|| cell(date).width(Length::Fixed(cols[2]))))
-    .push_maybe((shown > 3).then(|| cell(attrs).width(Length::Fixed(cols[3]))))
     .spacing(6)
     .align_y(Alignment::Center);
+    for (&c, &w) in set.iter().zip(&cols).take(shown) {
+        let text = match (c, blank) {
+            (Col::Ext, _) => e.ext.clone(),
+            (Col::Size, _) => size.clone(),
+            (_, true) => String::new(),
+            (Col::Date, _) => format::date(e.mtime, &app.tz),
+            (Col::Attr, _) => format::attrs(e),
+            (Col::Owner, _) => (e.owner).map_or(String::new(), |(u, _)| app.owners.user(u)),
+            (Col::Group, _) => (e.owner).map_or(String::new(), |(_, g)| app.owners.group(g)),
+        };
+        let cell = cell(text).width(Length::Fixed(w));
+        cells = cells.push(match c {
+            Col::Size => cell.align_x(Alignment::End),
+            _ => cell,
+        });
+    }
     let row = container(cells)
         .padding([0, 6])
         .height(Length::Fixed(app.row_h()))

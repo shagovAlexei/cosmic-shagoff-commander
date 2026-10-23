@@ -2070,12 +2070,17 @@ impl App {
             Message::ColDragStart(side, edge) => self.col_drag = Some((side, edge, None)),
             Message::ColDrag(x) => {
                 if let Some((_, edge, start)) = &mut self.col_drag {
-                    let col = viewport::drag_target(*edge);
-                    // On screen the widths are scaled with the text (`col_widths`); kept unscaled.
-                    let scale = self.config.text_scale();
-                    let &mut (x0, w0) = start.get_or_insert((x, self.cols[col] * scale));
-                    let (col, w) = viewport::drag_col(*edge, w0, x0, x);
-                    self.cols[col] = w / scale;
+                    // The edge's column in the set shown; one with no stored width stays.
+                    let slot = shagoff_core::columns::parse(&self.config.col_set)
+                        .get(viewport::drag_target(*edge))
+                        .and_then(|c| c.slot());
+                    if let Some(slot) = slot {
+                        // On screen the widths are scaled with the text (`col_widths`); kept unscaled.
+                        let scale = self.config.text_scale();
+                        let &mut (x0, w0) = start.get_or_insert((x, self.cols[slot] * scale));
+                        let (_, w) = viewport::drag_col(*edge, w0, x0, x);
+                        self.cols[slot] = w / scale;
+                    }
                 }
             }
             // The main window's only (a context menu popup has its own coordinates).

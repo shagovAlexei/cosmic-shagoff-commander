@@ -394,6 +394,8 @@ pub struct Checks {
     pub wide: bool,
     pub vertical: bool,
     pub side_tree: bool,
+    /// View → Columns: shown or not, in `Col::ALL` order.
+    pub cols: [bool; shagoff_core::columns::Col::ALL.len()],
     pub human_sizes: bool,
     pub active_frame: bool,
     /// The classic look: only there is «Frame around the active panel» offered (the modern
@@ -694,6 +696,19 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                     ],
                 ),
                 b(fl!("menu-tree-panel"), Action::TreePanel),
+                menu::Item::Folder(
+                    fl!("menu-columns"),
+                    (shagoff_core::columns::Col::ALL.into_iter().zip(checks.cols))
+                        .map(|(c, on)| {
+                            menu::Item::CheckBox(
+                                crate::view::col_label(c),
+                                None,
+                                on,
+                                MenuAct::Key(Action::ToggleCol(c)),
+                            )
+                        })
+                        .collect(),
+                ),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),
                 menu::Item::Divider,
                 menu::Item::CheckBox(
@@ -1152,6 +1167,7 @@ mod tests {
                             | Action::Split50
                             | Action::Wide
                             | Action::VerticalPanels
+                            | Action::ToggleCol(_)
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar

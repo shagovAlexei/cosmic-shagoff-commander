@@ -97,6 +97,10 @@ impl App {
                 (self.split, self.wide) = (0.5, false);
                 return Task::none();
             }
+            Action::ToggleCol(c) => {
+                let keys = shagoff_core::columns::toggled(&self.config.col_set, c);
+                return self.set(Setting::ColSet(keys));
+            }
             Action::SideTree => {
                 self.side_tree = match self.side_tree {
                     Some(_) => None,
@@ -338,7 +342,8 @@ impl App {
             Action::ResetColumns => {
                 self.cols = Config::default().columns;
                 self.save_columns();
-                return Task::none();
+                // TC's default four, too.
+                return self.set(Setting::ColSet(shagoff_core::columns::default_keys()));
             }
             Action::ViewBrief | Action::ViewFull | Action::ViewThumbs => {
                 let t = self.panes[side].active_mut();
@@ -806,6 +811,7 @@ impl App {
             | Action::Wide
             | Action::VerticalPanels
             | Action::SideTree
+            | Action::ToggleCol(_)
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::ToggleTerminal

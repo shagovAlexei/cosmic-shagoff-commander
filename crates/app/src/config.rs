@@ -153,6 +153,8 @@ pub struct Config {
     pub f12: ToolButton,
     /// Full view widths of Ext, Size, Date, Attributes (Name takes the rest); dragged in the header.
     pub columns: [f32; 4],
+    /// Which columns the full view shows after Name (`shagoff_core::columns`, by key).
+    pub col_set: Vec<String>,
     /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
     pub toolbar: Vec<ToolButton>,
     /// TC's Start menu: its items as buttons (`tip` the item's name; a separator is `toolbar::SEP`).
@@ -302,6 +304,7 @@ impl Default for Config {
             active_frame: false,
             f12: ToolButton::default(),
             columns: [60.0, 90.0, 130.0, 80.0],
+            col_set: shagoff_core::columns::default_keys(),
             toolbar: crate::toolbar::default_bar(),
             start_menu: Vec::new(),
             hotkeys: Vec::new(),
