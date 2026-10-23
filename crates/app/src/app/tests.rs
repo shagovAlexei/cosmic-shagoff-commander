@@ -6780,3 +6780,31 @@ fn compare_with_subdirs_marks_dirs_and_diff_only_hides_the_same() {
     let _ = app.update(Message::Key(Action::CompareLists));
     assert_eq!(app.panes[1].active().panel.marked_names().len(), 0);
 }
+
+#[test]
+fn switches_flip_their_settings_and_the_ignore_list_hides_its_names() {
+    let d = tempfile::tempdir().unwrap();
+    for f in ["keep.txt", "ignored-188.tmp"] {
+        std::fs::write(d.path().join(f), "").unwrap();
+    }
+    let config = Config {
+        // A name no other test has: the list is program-wide.
+        ignore_list: "ignored-188.tmp".into(),
+        ..Config::default()
+    };
+    let mut app = app_with(config, State::default());
+    let tab = app.panes[0].active_mut();
+    tab.pending = None;
+    let entries = listing::scan(d.path(), false).unwrap();
+    tab.panel.set_listing(d.path().to_path_buf(), entries, None);
+    let names = |app: &App| app.panes[0].active().panel.entries().len();
+    let all = names(&app);
+    let _ = app.update(Message::Key(Action::SwitchIgnoreList));
+    assert!(app.config.ignore_on);
+    assert_eq!(names(&app), all - 1);
+    let _ = app.update(Message::Key(Action::SwitchIgnoreList));
+    assert_eq!(names(&app), all);
+    let _ = app.update(Message::Key(Action::SwitchWatchDirs));
+    let _ = app.update(Message::Key(Action::SwitchTypeColors));
+    assert!(!app.config.watch_dirs && !app.config.type_colors);
+}

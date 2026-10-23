@@ -34,6 +34,11 @@ impl App {
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::RightMarks(b) => c.right_marks = b,
             Setting::ListerWindow(b) => c.lister_window = b,
+            Setting::IgnoreOn(b) => c.ignore_on = b,
+            Setting::IgnoreList(s) => c.ignore_list = s,
+            Setting::WatchDirs(b) => c.watch_dirs = b,
+            Setting::DirsByName(b) => c.dirs_by_name = b,
+            Setting::TypeColors(b) => c.type_colors = b,
             // 0: own program (typed below), else `builtins()[i - 1]`.
             Setting::F12(0) => {
                 if crate::toolbar::builtin(&c.f12.cmd).is_some() {
@@ -104,8 +109,16 @@ impl App {
         if old.hotkeys != self.config.hotkeys {
             keymap::set_own(crate::hotkeys::resolve(&self.config.hotkeys));
         }
-        self.scheme =
-            shagoff_core::colors::Scheme::new(&self.config.colors).with_panel(&self.config.panel);
+        self.scheme = self.config.scheme();
+        let switches = |c: &Config| (c.ignore_on, c.ignore_list.clone(), c.dirs_by_name);
+        if switches(&old) != switches(&self.config) {
+            self.config.set_core_switches();
+            for pane in &mut self.panes {
+                for tab in pane.items_mut() {
+                    tab.panel.refresh();
+                }
+            }
+        }
         self.cols = self.config.columns;
         let mut tasks = Vec::new();
         if old.language != self.config.language {

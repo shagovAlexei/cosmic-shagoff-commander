@@ -5,8 +5,16 @@ use crate::sort::{Sort, SortKey, sort_entries};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::UNIX_EPOCH;
+
+/// TC ignore list (`cm_SwitchIgnoreList`): names never shown while it is on, program-wide like
+/// the setting (`set_ignore` from the config).
+static IGNORE: RwLock<Option<Mask>> = RwLock::new(None);
+
+pub fn set_ignore(mask: Option<Mask>) {
+    *IGNORE.write().unwrap_or_else(|e| e.into_inner()) = mask;
+}
 
 /// Name of the synthetic "go up" row.
 pub const PARENT: &str = "..";
@@ -154,12 +162,14 @@ impl Panel {
                 })
             }
         };
+        let ignore = IGNORE.read().unwrap_or_else(|e| e.into_inner()).clone();
         let mut entries: Vec<Entry> = (self.all.iter())
             .filter(|e| shown(e))
             .filter(|e| {
                 (self.filter.as_ref()).is_none_or(|f| quicksearch::matches(f, base(&e.name)))
             })
             .filter(|e| !self.hidden.contains(&e.os_name))
+            .filter(|e| ignore.as_ref().is_none_or(|m| !m.matches(base(&e.name))))
             .cloned()
             .collect();
         if self.cwd.parent().is_some() {
@@ -205,6 +215,12 @@ impl Panel {
     pub fn set_sort_key(&mut self, key: SortKey) {
         let asc = self.sort.key != key || !self.sort.asc;
         self.sort = Sort { key, asc };
+    }
+
+    /// Sorted and filtered again after a program-wide switch (dirs by name, the ignore list).
+    pub fn refresh(&mut self) {
+        let name = self.current().map(|e| e.name.clone());
+        self.resort(name);
     }
 
     fn resort(&mut self, keep: Option<String>) {

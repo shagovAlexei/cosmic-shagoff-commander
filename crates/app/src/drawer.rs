@@ -84,6 +84,11 @@ pub enum Setting {
     KeepHistory(bool),
     InternalViewer(bool),
     ShowHidden(bool),
+    IgnoreOn(bool),
+    IgnoreList(String),
+    WatchDirs(bool),
+    DirsByName(bool),
+    TypeColors(bool),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),
@@ -336,6 +341,26 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-hidden"),
                 widget::toggler(c.show_hidden).on_toggle(move |b| set(Setting::ShowHidden(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-ignore-on"),
+                widget::toggler(c.ignore_on).on_toggle(move |b| set(Setting::IgnoreOn(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-ignore-list"),
+                input(&c.ignore_list, "*.bak; __pycache__", Setting::IgnoreList),
+            ))
+            .add(settings::item(
+                fl!("settings-watch-dirs"),
+                widget::toggler(c.watch_dirs).on_toggle(move |b| set(Setting::WatchDirs(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-dirs-by-name"),
+                widget::toggler(c.dirs_by_name).on_toggle(move |b| set(Setting::DirsByName(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-type-colors"),
+                widget::toggler(c.type_colors).on_toggle(move |b| set(Setting::TypeColors(b))),
             ))
             .add(settings::item(
                 fl!("settings-last-tab"),

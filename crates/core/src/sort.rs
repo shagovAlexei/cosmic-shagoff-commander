@@ -2,6 +2,7 @@ use crate::listing::Entry;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SortKey {
@@ -10,6 +11,8 @@ pub enum SortKey {
     Ext,
     Size,
     Date,
+    /// Ctrl+F7 (TC `cm_SrcUnsorted`): as the dir lists them; dirs still first.
+    Unsorted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,19 +75,35 @@ fn digits<'a>(s: &'a [u8], k: &mut usize) -> &'a [u8] {
     &run[run.iter().take_while(|&&b| b == b'0').count()..]
 }
 
+/// TC `cm_SwitchDirSort`: dirs always by name, ascending, whatever the files go by. Program-wide,
+/// like the setting (`set_dirs_by_name` from the config).
+static DIRS_BY_NAME: AtomicBool = AtomicBool::new(false);
+
+pub fn set_dirs_by_name(on: bool) {
+    DIRS_BY_NAME.store(on, AtomicOrdering::Relaxed);
+}
+
 /// TC order: dirs above files in both directions. By size, dirs go by their counted size
 /// (`dir_sizes`, Space / Alt+Shift+Enter; uncounted as 0), so by name until counted.
 pub fn sort_entries(entries: &mut [Entry], sort: Sort, dir_sizes: &HashMap<OsString, u64>) {
-    entries.sort_by(|a, b| entry_cmp(a, b, sort, dir_sizes));
+    let by_name = DIRS_BY_NAME.load(AtomicOrdering::Relaxed);
+    entries.sort_by(|a, b| entry_cmp(a, b, sort, dir_sizes, by_name));
 }
 
 /// Already in `sort` order: a listing sorted in the background needs no second sort on the UI
 /// thread (a 400 000-file branch takes a second to sort, one pass to check).
 pub fn is_sorted(entries: &[Entry], sort: Sort, dir_sizes: &HashMap<OsString, u64>) -> bool {
-    entries.is_sorted_by(|a, b| entry_cmp(a, b, sort, dir_sizes) != Ordering::Greater)
+    let by_name = DIRS_BY_NAME.load(AtomicOrdering::Relaxed);
+    entries.is_sorted_by(|a, b| entry_cmp(a, b, sort, dir_sizes, by_name) != Ordering::Greater)
 }
 
-fn entry_cmp(a: &Entry, b: &Entry, sort: Sort, dir_sizes: &HashMap<OsString, u64>) -> Ordering {
+fn entry_cmp(
+    a: &Entry,
+    b: &Entry,
+    mut sort: Sort,
+    dir_sizes: &HashMap<OsString, u64>,
+    dirs_by_name: bool,
+) -> Ordering {
     let size = |e: &Entry| match e.is_dir() {
         true => dir_sizes.get(&e.os_name).copied().unwrap_or(0),
         false => e.size,
@@ -92,9 +111,12 @@ fn entry_cmp(a: &Entry, b: &Entry, sort: Sort, dir_sizes: &HashMap<OsString, u64
     match (a.is_dir(), b.is_dir()) {
         (true, false) => return Ordering::Less,
         (false, true) => return Ordering::Greater,
+        (true, true) if dirs_by_name => sort = Sort::default(),
         _ => {}
     }
     let ord = match sort.key {
+        // Stable sort: the order they came in.
+        SortKey::Unsorted => return Ordering::Equal,
         SortKey::Name => Ordering::Equal,
         SortKey::Ext => natural_cmp(&a.ext, &b.ext),
         SortKey::Size => size(a).cmp(&size(b)),
@@ -315,5 +337,27 @@ mod tests {
             &HashMap::new(),
         );
         assert_eq!(names(&v), ["x.rs", "a.rs", "y.md"]);
+    }
+
+    #[test]
+    fn unsorted_keeps_the_dir_order_and_dirs_may_go_by_name() {
+        let mut v = vec![
+            e("b", Kind::File, 1, 1),
+            e("z", Kind::Dir, 0, 1),
+            e("a", Kind::File, 9, 1),
+            e("c", Kind::Dir, 0, 2),
+        ];
+        let un = Sort {
+            key: SortKey::Unsorted,
+            asc: true,
+        };
+        v.sort_by(|a, b| entry_cmp(a, b, un, &HashMap::new(), false));
+        assert_eq!(names(&v), ["z", "c", "b", "a"]);
+        let size_desc = Sort {
+            key: SortKey::Size,
+            asc: false,
+        };
+        v.sort_by(|a, b| entry_cmp(a, b, size_desc, &HashMap::new(), true));
+        assert_eq!(names(&v), ["c", "z", "a", "b"]);
     }
 }

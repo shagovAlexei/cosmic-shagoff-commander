@@ -158,6 +158,12 @@ pub enum Action {
     CompareListsSubdirs,
     /// Shift+F2, then only what differs is shown in both panels (TC `cm_DirMatch`).
     CompareListsDiffOnly,
+    /// View → switches (TC `cm_SwitchIgnoreList`, `cm_SwitchWatchDirs`, `cm_SwitchDirSort`,
+    /// `cm_SwitchColorsByFileType`): the settings of those names flipped.
+    SwitchIgnoreList,
+    SwitchWatchDirs,
+    SwitchDirSort,
+    SwitchTypeColors,
     /// Ctrl+Shift+S: synchronize the two panels' dirs.
     SyncDirs,
     /// Ctrl+Shift+D: compare two files by content.
@@ -417,6 +423,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F5, true, false) => Action::Sort(SortKey::Date),
             (Named::F5, true, true) => Action::Link,
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
+            (Named::F7, true, false) => Action::Sort(SortKey::Unsorted),
             (Named::F8, true, false) => Action::TreePanel,
             (Named::F10, true, false) => Action::ShowAll,
             (Named::F11, true, false) => Action::ShowPrograms,
@@ -609,6 +616,10 @@ mod tests {
         assert_eq!(named(Named::F3, CTRL), Some(Action::Sort(SortKey::Name)));
         assert_eq!(named(Named::F4, CTRL), Some(Action::Sort(SortKey::Ext)));
         assert_eq!(named(Named::F5, CTRL), Some(Action::Sort(SortKey::Date)));
+        assert_eq!(
+            named(Named::F7, CTRL),
+            Some(Action::Sort(SortKey::Unsorted))
+        );
         assert_eq!(
             named(Named::F5, CTRL | Modifiers::SHIFT),
             Some(Action::Link)

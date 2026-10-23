@@ -199,6 +199,15 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                     fl!("menu-sort-size"),
                     Action::Sort(SortKey::Size),
                 ),
+                r(
+                    "Ctrl+F7",
+                    fl!("menu-sort-unsorted"),
+                    Action::Sort(SortKey::Unsorted),
+                ),
+                r("", fl!("settings-ignore-on"), Action::SwitchIgnoreList),
+                r("", fl!("settings-watch-dirs"), Action::SwitchWatchDirs),
+                r("", fl!("settings-dirs-by-name"), Action::SwitchDirSort),
+                r("", fl!("settings-type-colors"), Action::SwitchTypeColors),
             ],
         ),
         (

@@ -163,6 +163,15 @@ pub struct Config {
     pub panel_size: u16,
     /// F3 viewer's text size (its font stays monospaced: hex and wrap count its columns).
     pub lister_size: u16,
+    /// TC ignore list (`cm_SwitchIgnoreList`): `ignore_list` names / masks (`;`, as Ctrl+F12) hidden.
+    pub ignore_on: bool,
+    pub ignore_list: String,
+    /// Dirs watched for changes (TC `cm_SwitchWatchDirs`); off: Ctrl+R reads them again.
+    pub watch_dirs: bool,
+    /// Dirs always by name (TC `cm_SwitchDirSort`).
+    pub dirs_by_name: bool,
+    /// The colors by file type in force (TC `cm_SwitchColorsByFileType`); off: plain rows.
+    pub type_colors: bool,
 }
 
 /// Text sizes offered in the settings.
@@ -181,6 +190,23 @@ pub const PANEL_SIZE: u16 = 13;
 pub const LISTER_SIZE: u16 = 14;
 
 impl Config {
+    /// The row colors: by file type unless switched off, the panel's own either way.
+    pub fn scheme(&self) -> shagoff_core::colors::Scheme {
+        let rules: &[shagoff_core::colors::Rule] = match self.type_colors {
+            true => &self.colors,
+            false => &[],
+        };
+        shagoff_core::colors::Scheme::new(rules).with_panel(&self.panel)
+    }
+
+    /// The program-wide switches core keeps (`sort::set_dirs_by_name`, `panel::set_ignore`).
+    pub fn set_core_switches(&self) {
+        shagoff_core::sort::set_dirs_by_name(self.dirs_by_name);
+        let list = self.ignore_list.trim();
+        let on = self.ignore_on && !list.is_empty();
+        shagoff_core::panel::set_ignore(on.then(|| shagoff_core::mask::Mask::parse(list)));
+    }
+
     /// Sizes in KB / MB / GB: as chosen, else as the skin has them.
     pub fn human_sizes(&self) -> bool {
         shagoff_core::format::human_size(0, self.human_sizes, self.skin == Skin::Modern)
@@ -265,6 +291,11 @@ impl Default for Config {
             panel_font: String::new(),
             panel_size: PANEL_SIZE,
             lister_size: LISTER_SIZE,
+            ignore_on: false,
+            ignore_list: String::new(),
+            watch_dirs: true,
+            dirs_by_name: false,
+            type_colors: true,
         }
     }
 }
