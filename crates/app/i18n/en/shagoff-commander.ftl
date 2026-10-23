@@ -884,3 +884,4 @@ menu-wide = Panel at 100 %
 menu-thumb-zoom-in = Thumbnails bigger
 menu-thumb-zoom-out = Thumbnails smaller
 menu-thumb-reload = Reload thumbnails of selected files
+menu-thumbs-sub = Thumbnails
