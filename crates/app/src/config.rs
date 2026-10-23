@@ -179,7 +179,7 @@ pub struct Config {
     pub dirs_by_name: bool,
     /// The colors by file type in force (TC `cm_SwitchColorsByFileType`); off: plain rows.
     pub type_colors: bool,
-    /// Thumbnails view: the picture's side, px (Ctrl+Num+ / Ctrl+Num−, TC `cm_ZoomIn` / `cm_ZoomOut`).
+    /// Thumbnails view: the picture's side, px (View menu, TC `cm_ZoomIn` / `cm_ZoomOut`; no key).
     pub thumb_size: u32,
 }
 

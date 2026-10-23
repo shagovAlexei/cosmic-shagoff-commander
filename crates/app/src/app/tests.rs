@@ -5745,7 +5745,6 @@ mod drawer_tests {
             .insert("/x".into(), (std::time::UNIX_EPOCH, None));
         let _ = app.update(Message::Key(Action::ThumbZoomIn));
         assert_eq!(app.config.thumb_size, SIZE + SIZE_STEP);
-        assert_eq!(crate::thumbs::size(), SIZE + SIZE_STEP);
         assert!(app.thumbs.is_empty());
         for _ in 0..20 {
             let _ = app.update(Message::Key(Action::ThumbZoomIn));

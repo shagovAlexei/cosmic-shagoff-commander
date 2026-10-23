@@ -126,9 +126,12 @@ impl App {
         self.scheme = self.config.scheme();
         let mut tasks = Vec::new();
         let ignore = |c: &Config| (c.ignore_on, c.ignore_list.clone());
+        // A hand edit may name any size.
+        self.config.thumb_size =
+            (self.config.thumb_size).clamp(crate::thumbs::SIZE_MIN, crate::thumbs::SIZE_MAX);
         let zoomed = old.thumb_size != self.config.thumb_size;
         if zoomed {
-            self.config.set_core_switches();
+            crate::thumbs::set_size(self.config.thumb_size);
             self.thumbs.clear(); // made at the old size
         }
         let resort = old.dirs_by_name != self.config.dirs_by_name;
