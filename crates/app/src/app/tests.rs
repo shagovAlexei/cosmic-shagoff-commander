@@ -5862,6 +5862,42 @@ mod drawer_tests {
     }
 
     #[test]
+    fn transfer_and_focus_actions_pick_the_side_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        app.panes[1].active_mut().panel.set_listing(
+            dir.path().to_path_buf(),
+            shagoff_core::listing::scan(dir.path(), true).unwrap(),
+            Some("a.txt"),
+        );
+        // Right panel active or not, «to the left» copies from the right one.
+        app.active = 0;
+        let _ = app.update(Message::Key(Action::TransferLeft));
+        assert_eq!(app.active, 1);
+        assert!(matches!(
+            &app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::Copy,
+                side: 1,
+                ..
+            })
+        ));
+        let _ = app.update(Message::DialogCancel);
+        let _ = app.update(Message::Key(Action::FocusLeft));
+        assert_eq!(app.active, 0);
+        let _ = app.update(Message::Key(Action::FocusRight));
+        assert_eq!(app.active, 1);
+        // «To the right» copies from the left one; nothing there: refused, the active pane kept.
+        let _ = app.update(Message::Key(Action::TransferRight));
+        assert_eq!(app.active, 1);
+        assert!(app.dialog.is_none());
+        app.active = 1;
+        // Not asked for while a dialog is up.
+        let _ = app.update(Message::Key(Action::FocusCmdLine));
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.

@@ -907,3 +907,11 @@ date-now = Current date and time
 date-note = Creation and status-change times cannot be set on Linux
 why-verify-failed = The copy read back differs from the original
 settings-verify-copy = Verify copies (read them back after copying: slower)
+
+# Copy to the other panel by side, focus
+menu-copy-left = Copy to the left panel…
+menu-copy-right = Copy to the right panel…
+menu-focus-left = Focus the left panel
+menu-focus-right = Focus the right panel
+menu-focus-cmdline = Focus the command line
+menu-focus = Focus

@@ -387,6 +387,21 @@ pub fn symlinks(pairs: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, io::Error)> {
 }
 
 pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handler) -> Report {
+    transfer_checked(
+        method,
+        pairs,
+        h,
+        VERIFY.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
+/// `transfer`, the copies read back and compared (`verify`) or not.
+fn transfer_checked(
+    method: Method,
+    pairs: &[(PathBuf, PathBuf)],
+    h: &mut dyn Handler,
+    verify: bool,
+) -> Report {
     // Walked once: the total, and each source's own share (a move's rename needs no second walk).
     let sizes: Vec<u64> = pairs.iter().map(|(s, _)| tree_size(s)).collect();
     let total = sizes.iter().sum();
@@ -398,7 +413,7 @@ pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handle
         policy: None,
         approved: None,
         aside: None,
-        verify: VERIFY.load(std::sync::atomic::Ordering::Relaxed),
+        verify,
     };
     let mut report = Report::default();
     for ((src, dst), size) in pairs.iter().zip(sizes) {
@@ -662,7 +677,7 @@ impl Transfer<'_> {
         let start = self.done;
         let part = loop {
             self.done = start;
-            let result = create_part(dst).and_then(|(part, w)| {
+            let result = create_part_for(dst, self.verify).and_then(|(part, w)| {
                 let done = self.copy_contents(src, w, meta);
                 if !matches!(done, Ok(true)) {
                     let _ = fs::remove_file(&part); // only ever our own, freshly created part
@@ -925,12 +940,16 @@ fn part_name(dst: &Path, n: u32) -> PathBuf {
 
 /// Create a part file that did not exist before (O_EXCL), so it can never be the source or a user file.
 pub(crate) fn create_part(dst: &Path) -> io::Result<(PathBuf, File)> {
+    create_part_for(dst, false)
+}
+
+/// `create_part`, readable too when the copy is to be read back (`verify`).
+fn create_part_for(dst: &Path, verify: bool) -> io::Result<(PathBuf, File)> {
     let mut n = 0;
     loop {
         let part = part_name(dst, n);
-        // Read too, only when verifying: the copy reads itself back.
         match File::options()
-            .read(VERIFY.load(std::sync::atomic::Ordering::Relaxed))
+            .read(verify)
             .write(true)
             .create_new(true)
             .open(&part)
@@ -1128,17 +1147,15 @@ mod tests {
 
     #[test]
     fn a_verified_copy_is_read_back_and_succeeds() {
-        // The global switch: set only around this copy, and put back.
         let d = tempfile::tempdir().unwrap();
         let (a, b) = (d.path().join("a"), d.path().join("b"));
         fs::write(&a, vec![7u8; (3 << 20) + 5]).unwrap();
-        set_verify(true);
-        let r = transfer(
+        let r = transfer_checked(
             Method::Copy,
             &[(a.clone(), b.clone())],
             &mut Script::default(),
+            true,
         );
-        set_verify(false);
         assert_eq!(r.completed, std::slice::from_ref(&a));
         assert_eq!(fs::read(&b).unwrap(), fs::read(&a).unwrap());
         // Nothing left of the part file.

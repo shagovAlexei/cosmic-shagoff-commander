@@ -430,6 +430,8 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-edit"), Action::Edit),
                 b(fl!("menu-copy"), Action::Copy),
                 b(fl!("menu-copy-same"), Action::CopySame),
+                b(fl!("menu-copy-left"), Action::TransferLeft),
+                b(fl!("menu-copy-right"), Action::TransferRight),
                 b(fl!("menu-link"), Action::Link),
                 b(fl!("menu-move"), Action::Move),
                 b(fl!("menu-rename"), Action::Rename),
@@ -532,6 +534,14 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-tree"), Action::TreeDialog),
                 b(fl!("menu-history"), Action::HistoryList),
                 b(fl!("menu-swap"), Action::SwapPanes),
+                menu::Item::Folder(
+                    fl!("menu-focus"),
+                    vec![
+                        b(fl!("menu-focus-left"), Action::FocusLeft),
+                        b(fl!("menu-focus-right"), Action::FocusRight),
+                        b(fl!("menu-focus-cmdline"), Action::FocusCmdLine),
+                    ],
+                ),
                 b(fl!("menu-match-src"), Action::MatchSrc),
                 menu::Item::CheckBox(
                     fl!("menu-sync-change-dir"),
@@ -1186,6 +1196,11 @@ mod tests {
                             | Action::ToggleCol(_)
                             | Action::ViewMode(_)
                             | Action::SetDate
+                            | Action::TransferLeft
+                            | Action::TransferRight
+                            | Action::FocusLeft
+                            | Action::FocusRight
+                            | Action::FocusCmdLine
                             | Action::SaveViewMode
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame

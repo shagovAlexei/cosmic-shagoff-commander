@@ -14,6 +14,28 @@ impl App {
         {
             self.status = None;
         }
+        match action {
+            // The panel the files are in becomes the active one (TC), and F5 goes on from it.
+            Action::TransferLeft | Action::TransferRight => {
+                let (was, from) = (self.active, usize::from(action == Action::TransferLeft));
+                self.active = from;
+                let task = self.act(from, Action::Copy);
+                // Refused (nothing to copy, an archive that cannot be written): stay where we were.
+                if self.dialog.is_none() {
+                    self.active = was;
+                }
+                return task;
+            }
+            Action::FocusLeft | Action::FocusRight => {
+                self.active = usize::from(action == Action::FocusRight);
+                // The keys go to the panel, not to the command line or the terminal.
+                self.term_blur = self.term.is_some();
+                return unfocus();
+            }
+            Action::FocusCmdLine if self.cmd_ready() => return self.cmd_focus(),
+            Action::FocusCmdLine => return Task::none(),
+            _ => {}
+        }
         if let Some(task) = self.tree_act(side, action) {
             return task;
         }
@@ -953,6 +975,11 @@ impl App {
             | Action::Link
             | Action::Properties
             | Action::SetDate
+            | Action::TransferLeft
+            | Action::TransferRight
+            | Action::FocusLeft
+            | Action::FocusRight
+            | Action::FocusCmdLine
             | Action::Move
             | Action::Rename
             | Action::MultiRename

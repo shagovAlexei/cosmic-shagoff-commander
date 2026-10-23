@@ -905,3 +905,11 @@ date-now = Текущие дата и время
 date-note = Время создания и смены статуса в Linux задать нельзя
 why-verify-failed = Копия, прочитанная заново, не совпала с оригиналом
 settings-verify-copy = Проверять копии (читать заново после копирования: медленнее)
+
+# Copy to the other panel by side, focus
+menu-copy-left = Копировать в левую панель…
+menu-copy-right = Копировать в правую панель…
+menu-focus-left = Фокус на левую панель
+menu-focus-right = Фокус на правую панель
+menu-focus-cmdline = Фокус на командную строку
+menu-focus = Фокус
