@@ -437,6 +437,32 @@ fn build_restores_tabs_and_active_pane() {
 }
 
 #[test]
+fn regression_sort_is_kept_per_tab_across_runs() {
+    // Every start sorted by name: the tab's sort was never saved.
+    use shagoff_core::sort::{Sort, SortKey};
+    let by_date = Sort {
+        key: SortKey::Date,
+        asc: false,
+    };
+    let state = State {
+        panes: [
+            PaneState {
+                tabs: vec!["/".into(), "/".into()],
+                sort: vec![by_date],
+                ..PaneState::default()
+            },
+            PaneState::default(),
+        ],
+        ..State::default()
+    };
+    let mut app = app_with(Config::default(), state);
+    assert_eq!(app.panes[0].items()[0].panel.sort(), by_date);
+    assert_eq!(app.panes[0].items()[1].panel.sort(), Sort::default());
+    app.save_state();
+    assert_eq!(app.saved.panes[0].sort, [by_date, Sort::default()]);
+}
+
+#[test]
 fn regression_gvfs_dir_is_never_read_on_the_ui_thread() {
     // A hung network mount blocks the gvfs dir: listing it in `update` froze the window.
     let mut app = app_with(Config::default(), State::default());

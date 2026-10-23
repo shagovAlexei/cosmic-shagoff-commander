@@ -1395,6 +1395,9 @@ impl App {
                     t.home = Some(t.panel.cwd().to_path_buf());
                 }
                 t.thumbs = saved.thumbs.get(i).copied().unwrap_or(false);
+                if let Some(&s) = saved.sort.get(i) {
+                    t.panel.set_sort_order(s);
+                }
                 t.brief = !t.thumbs && saved.brief.get(i).copied().unwrap_or(false);
                 t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
                 t.history = saved.history.get(i).cloned().unwrap_or_default();

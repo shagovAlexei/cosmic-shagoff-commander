@@ -66,6 +66,9 @@ impl App {
                 locked: self.panes[s].items().iter().map(|t| t.locked).collect(),
                 brief: self.panes[s].items().iter().map(|t| t.brief).collect(),
                 thumbs: self.panes[s].items().iter().map(|t| t.thumbs).collect(),
+                sort: (self.panes[s].items().iter())
+                    .map(|t| t.panel.sort())
+                    .collect(),
                 names: (self.panes[s].items().iter())
                     .map(|t| t.name.clone().unwrap_or_default())
                     .collect(),

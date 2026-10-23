@@ -21,6 +21,9 @@ pub struct PaneState {
     /// Per tab: Thumbnails view (Ctrl+Shift+F1); wins over `brief`.
     #[serde(default)]
     pub thumbs: Vec<bool>,
+    /// Per tab: its sort (TC keeps each panel's).
+    #[serde(default)]
+    pub sort: Vec<crate::sort::Sort>,
     /// Per tab: dir history (Alt+← / → / ↓); empty when "Remember history" is off.
     #[serde(default)]
     pub history: Vec<crate::history::History>,

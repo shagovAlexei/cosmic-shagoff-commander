@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SortKey {
     #[default]
     Name,
@@ -15,7 +15,7 @@ pub enum SortKey {
     Unsorted,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Sort {
     pub key: SortKey,
     pub asc: bool,
