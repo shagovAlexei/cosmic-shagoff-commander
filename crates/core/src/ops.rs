@@ -398,6 +398,7 @@ pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handle
         policy: None,
         approved: None,
         aside: None,
+        verify: VERIFY.load(std::sync::atomic::Ordering::Relaxed),
     };
     let mut report = Report::default();
     for ((src, dst), size) in pairs.iter().zip(sizes) {
@@ -446,6 +447,8 @@ struct Transfer<'a> {
     approved: Option<PathBuf>,
     /// «Rename old» answered for this target: moved aside only once the new one is ready.
     aside: Option<PathBuf>,
+    /// Copies are read back and compared: as set when the job started, so one job is all alike.
+    verify: bool,
 }
 
 impl Transfer<'_> {
@@ -752,7 +755,7 @@ impl Transfer<'_> {
     fn copy_contents(&mut self, src: &Path, mut w: File, meta: &Metadata) -> io::Result<bool> {
         let mut r = File::open(src)?;
         let mut buf = vec![0; 1 << 20];
-        let verify = VERIFY.load(std::sync::atomic::Ordering::Relaxed);
+        let verify = self.verify;
         let mut crc = crc32fast::Hasher::new();
         let mut written = 0u64;
         loop {
@@ -773,7 +776,7 @@ impl Transfer<'_> {
             self.done += n as u64;
             self.h.progress(self.done, self.total, src);
         }
-        if verify && !self.read_back(&mut w, written, crc.finalize())? {
+        if verify && !self.read_back(src, &mut w, written, crc.finalize())? {
             return Ok(false);
         }
         w.set_modified(meta.modified()?)?;
@@ -783,7 +786,7 @@ impl Transfer<'_> {
 
     /// The copy in `w` read again from the start (the disk, not the cache) and compared with the
     /// `len` bytes and CRC of what was read from the source. `Ok(false)` = cancelled.
-    fn read_back(&mut self, w: &mut File, len: u64, crc: u32) -> io::Result<bool> {
+    fn read_back(&mut self, src: &Path, w: &mut File, len: u64, crc: u32) -> io::Result<bool> {
         use std::io::{Seek, SeekFrom};
         w.sync_all()?;
         // Not from the page cache: that would hold what was written, right or not.
@@ -801,6 +804,8 @@ impl Transfer<'_> {
                 Ok(n) => {
                     sum.update(&buf[..n]);
                     got += n as u64;
+                    // The bar stays where the writing ended, but the dialog is told it lives.
+                    self.h.progress(self.done, self.total, src);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
@@ -923,9 +928,9 @@ pub(crate) fn create_part(dst: &Path) -> io::Result<(PathBuf, File)> {
     let mut n = 0;
     loop {
         let part = part_name(dst, n);
-        // Read too: a verified copy reads itself back.
+        // Read too, only when verifying: the copy reads itself back.
         match File::options()
-            .read(true)
+            .read(VERIFY.load(std::sync::atomic::Ordering::Relaxed))
             .write(true)
             .create_new(true)
             .open(&part)
