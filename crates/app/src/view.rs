@@ -1237,7 +1237,10 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         };
         // A gap at the right: the active half's details would run into the other half's totals.
         // Each half under its pane: the divider's share.
-        let (left, right) = viewport::split_portions(app.split);
+        let (left, right) = match app.vertical {
+            true => (500, 500), // stacked: the divider's share means nothing
+            false => viewport::split_portions(app.split),
+        };
         line.spacing(12)
             .padding([0, 24, 0, 0])
             .align_y(Alignment::Center)
