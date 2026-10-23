@@ -108,7 +108,10 @@ pub fn write(
         .recursive(true)
         .mode(0o700)
         .create(dir)?;
-    let part = dir.join(format!(".{}.{}.part", std::process::id(), mtime));
+    // Several pictures are written at once: each its own part file.
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let part = dir.join(format!(".{}.{n}.part", std::process::id()));
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
