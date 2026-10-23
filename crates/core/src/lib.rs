@@ -37,6 +37,7 @@ pub mod sync;
 pub mod tabs;
 pub mod templates;
 pub mod terminals;
+pub mod thumbcache;
 pub mod thumbnailer;
 pub mod trashcan;
 pub mod tree;
