@@ -54,6 +54,7 @@ impl App {
             Setting::TypeColors(b) => c.type_colors = b,
             Setting::ThumbSize(px) => c.thumb_size = px,
             Setting::ThumbCache(b) => c.thumb_cache = b,
+            Setting::VerifyCopy(b) => c.verify_copy = b,
             Setting::ColSet(k) => c.col_set = k,
             Setting::ViewModes(m) => c.view_modes = m,
             // 0: own program (typed below), else `builtins()[i - 1]`.
@@ -132,6 +133,9 @@ impl App {
         // A hand edit may name any size.
         self.config.thumb_size =
             (self.config.thumb_size).clamp(crate::thumbs::SIZE_MIN, crate::thumbs::SIZE_MAX);
+        if old.verify_copy != self.config.verify_copy {
+            shagoff_core::ops::set_verify(self.config.verify_copy);
+        }
         let zoomed = old.thumb_size != self.config.thumb_size;
         if zoomed {
             crate::thumbs::set_size(self.config.thumb_size);

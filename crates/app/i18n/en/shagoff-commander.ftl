@@ -905,3 +905,5 @@ date-modified = Modified
 date-accessed = Accessed
 date-now = Current date and time
 date-note = Creation and status-change times cannot be set on Linux
+why-verify-failed = The copy read back differs from the original
+settings-verify-copy = Verify copies (read them back after copying: slower)

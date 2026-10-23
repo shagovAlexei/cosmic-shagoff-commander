@@ -187,6 +187,8 @@ pub struct Config {
     pub thumb_size: u32,
     /// Thumbnails are kept in the shared disk cache (`~/.cache/thumbnails`); off: made each time.
     pub thumb_cache: bool,
+    /// Copies are read back from the disk and compared with the source (slower).
+    pub verify_copy: bool,
 }
 
 /// Text sizes offered in the settings.
@@ -217,6 +219,7 @@ impl Config {
     /// The program-wide switches core keeps (`sort::set_dirs_by_name`, `panel::set_ignore`).
     pub fn set_core_switches(&self) {
         crate::thumbs::set_size(self.thumb_size);
+        shagoff_core::ops::set_verify(self.verify_copy);
         shagoff_core::sort::set_dirs_by_name(self.dirs_by_name);
         let list = self.ignore_list.trim();
         // Only exclusions (`|*.tmp`), or `;` alone: `Mask` reads that as `*`, i.e. all hidden.
@@ -353,6 +356,7 @@ impl Default for Config {
             type_colors: true,
             thumb_size: crate::thumbs::SIZE,
             thumb_cache: true,
+            verify_copy: false,
         }
     }
 }

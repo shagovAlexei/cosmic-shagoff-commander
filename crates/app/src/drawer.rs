@@ -95,6 +95,7 @@ pub enum Setting {
     TypeColors(bool),
     ThumbSize(u32),
     ThumbCache(bool),
+    VerifyCopy(bool),
     ColSet(Vec<String>),
     ViewModes(Vec<crate::config::ViewMode>),
     /// Ctrl+W on the last tab goes home.
@@ -372,6 +373,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-type-colors"),
                 widget::toggler(c.type_colors).on_toggle(move |b| set(Setting::TypeColors(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-verify-copy"),
+                widget::toggler(c.verify_copy).on_toggle(move |b| set(Setting::VerifyCopy(b))),
             ))
             .add(settings::item(
                 fl!("settings-thumb-cache"),
