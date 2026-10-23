@@ -920,3 +920,4 @@ menu-focus = Focus
 menu-shrink-selection = Shrink selection…
 shrink-selection = Shrink selection
 menu-exchange-selection = Exchange selection with the other panel
+menu-view-other = View with the other viewer

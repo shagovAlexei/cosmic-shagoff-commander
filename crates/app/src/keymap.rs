@@ -197,6 +197,9 @@ pub enum Action {
     /// Files → «Copy to the left / right panel» (TC `cm_TransferLeft` / `cm_TransferRight`): the
     /// F5 dialog from the other panel to that one, whichever is active.
     TransferLeft,
+    /// Alt+F3 (TC `cm_ListExternal`): view with the other viewer than F3 does (the external one
+    /// when F3 opens the built-in, and the other way round).
+    ViewOther,
     /// Mark → «Shrink selection» (TC `cm_ShrinkSelection`): of the marked files only those matching
     /// a mask stay marked.
     ShrinkSelection,
@@ -390,6 +393,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         return match key {
             Key::Named(Named::F1) if mods == Modifiers::ALT => Some(Action::Drives(0)),
             Key::Named(Named::F2) if mods == Modifiers::ALT => Some(Action::Drives(1)),
+            Key::Named(Named::F3) if mods == Modifiers::ALT => Some(Action::ViewOther),
             Key::Named(Named::F5) if mods == Modifiers::ALT => Some(Action::Pack),
             Key::Named(Named::F7) if mods == Modifiers::ALT => Some(Action::FindFiles),
             Key::Named(Named::F8) if mods == Modifiers::ALT => Some(Action::CmdHistory),
@@ -720,6 +724,7 @@ mod tests {
         assert_eq!(named(Named::Enter, CTRL.union(ALT)), None);
         assert_eq!(named(Named::PageDown, SHIFT), None);
         assert_eq!(named(Named::F3, CTRL.union(ALT)), None);
+        assert_eq!(named(Named::F3, ALT), Some(Action::ViewOther));
         assert_eq!(
             chr("R", Code::KeyR, CTRL.union(SHIFT)),
             Some(Action::ReloadThumbs)

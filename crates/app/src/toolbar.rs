@@ -203,6 +203,12 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-exchange-selection"
         ),
         b!(
+            "cm_ListExternal",
+            ViewOther,
+            "document-open-symbolic",
+            "menu-view-other"
+        ),
+        b!(
             "cm_TransferLeft",
             TransferLeft,
             "edit-copy-symbolic",

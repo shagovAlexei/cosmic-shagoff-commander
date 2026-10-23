@@ -918,3 +918,4 @@ menu-focus = Фокус
 menu-shrink-selection = Сузить выделение…
 shrink-selection = Сузить выделение
 menu-exchange-selection = Обменять выделение с другой панелью
+menu-view-other = Просмотр другой программой

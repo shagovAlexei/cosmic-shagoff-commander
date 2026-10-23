@@ -5930,6 +5930,26 @@ mod drawer_tests {
     }
 
     #[test]
+    fn alt_f3_opens_the_built_in_viewer_when_f3_runs_the_external_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello").unwrap();
+        // F3 set to an external program: Alt+F3 is the built-in viewer, and the setting stays.
+        let cfg = Config {
+            internal_viewer: false,
+            ..Config::default()
+        };
+        let mut app = app_with(cfg, State::default());
+        app.panes[0].active_mut().panel.set_listing(
+            dir.path().to_path_buf(),
+            shagoff_core::listing::scan(dir.path(), true).unwrap(),
+            Some("a.txt"),
+        );
+        let _ = app.update(Message::Key(Action::ViewOther));
+        assert!(app.lister.is_some());
+        assert!(!app.config.internal_viewer);
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.

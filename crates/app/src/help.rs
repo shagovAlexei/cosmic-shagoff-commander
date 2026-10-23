@@ -81,6 +81,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("F3", fl!("menu-view"), Action::View),
                 r("F4", fl!("menu-edit"), Action::Edit),
                 r("F5", fl!("menu-copy"), Action::Copy),
+                r("Alt+F3", fl!("menu-view-other"), Action::ViewOther),
                 r("Shift+F5", fl!("menu-copy-same"), Action::CopySame),
                 r("", fl!("menu-copy-left"), Action::TransferLeft),
                 r("", fl!("menu-copy-right"), Action::TransferRight),
