@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
+use shagoff_core::thumbcache;
 use shagoff_core::thumbnailer::{self, Registry};
 
 use cosmic::widget::image::Handle;
@@ -84,6 +85,12 @@ pub fn wanted(name: &str, size: u64) -> bool {
 
 /// `path`'s picture shrunk into `size()`², proportions kept; `None` if unreadable.
 pub fn make(path: &Path) -> Option<Handle> {
+    make_in(path, thumbcache::base_dir().as_deref())
+}
+
+/// `make` with the shared cache (`thumbcache`) in `cache`: its picture of the file if it is the
+/// file's current one, else made and put there; `None`: no cache.
+fn make_in(path: &Path, cache: Option<&Path>) -> Option<Handle> {
     // Not a FIFO or a device named `*.png`: reading one would never end.
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() {
@@ -93,15 +100,55 @@ pub fn make(path: &Path) -> Option<Handle> {
     if !wanted(&name, meta.len()) {
         return None;
     }
-    let bytes = match shagoff_core::lister::thumb_wanted(&name, meta.len()) {
-        true => std::fs::read(path).ok()?,
-        false => external(path, &name)?,
+    let class = thumbcache::Class::for_px(size());
+    let mtime = (meta.modified().ok())
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    let key = (cache.zip(mtime)).map(|(base, mtime)| {
+        let uri = thumbcache::uri(path);
+        (thumbcache::cache_file(base, class, &uri), uri, mtime)
+    });
+    let cached = key.as_ref().and_then(|(file, uri, mtime)| {
+        let bytes = thumbcache::read(file, uri, *mtime, meta.len())?;
+        crate::lister::decode(&bytes, MAX_ALLOC)
+    });
+    let img = match cached {
+        Some(img) => img,
+        None => {
+            let bytes = match shagoff_core::lister::thumb_wanted(&name, meta.len()) {
+                true => std::fs::read(path).ok()?,
+                false => external(path, &name)?,
+            };
+            let made = crate::lister::decode(&bytes, MAX_ALLOC)?;
+            // The cache keeps the class's size, shared with the others; ours is shrunk from it.
+            // Shrunk only: the spec has no blurred upscales in the shared folder.
+            let made = match made.width().max(made.height()) > class.px() {
+                true => made.thumbnail(class.px(), class.px()),
+                false => made,
+            };
+            if let Some((file, uri, mtime)) = &key {
+                let rgba = made.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                // ponytail: a failed write (read-only home, full disk) just means no cache.
+                let _ = thumbcache::write(file, (w, h, rgba.as_raw()), uri, *mtime, meta.len());
+            }
+            made
+        }
     };
-    let px = crate::lister::decode(&bytes, MAX_ALLOC)?
-        .thumbnail(size(), size())
-        .into_rgba8();
+    let px = img.thumbnail(size(), size()).into_rgba8();
     let (w, h) = px.dimensions();
     Some(Handle::from_rgba(w, h, px.into_raw()))
+}
+
+/// Drops `path`'s pictures from the shared cache (both classes).
+pub fn forget(path: &Path) {
+    let Some(base) = thumbcache::base_dir() else {
+        return;
+    };
+    let uri = thumbcache::uri(path);
+    for class in [thumbcache::Class::Normal, thumbcache::Class::Large] {
+        let _ = std::fs::remove_file(thumbcache::cache_file(&base, class, &uri));
+    }
 }
 
 /// The PNG the desktop's thumbnailer for `name` makes of `path`.
@@ -150,11 +197,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wide.png");
         image::RgbImage::new(2000, 1000).save(&path).unwrap();
-        let Some(Handle::Rgba { width, height, .. }) = make(&path) else {
+        let cache = tempfile::tempdir().unwrap();
+        let Some(Handle::Rgba { width, height, .. }) = make_in(&path, Some(cache.path())) else {
             panic!("no picture")
         };
         assert_eq!((width, height), (96, 48));
-        assert!(make(&dir.path().join("none.png")).is_none());
-        assert!(make(dir.path()).is_none()); // not a file
+        // Put in the shared cache at its 128 px, and read from there the next time.
+        let uri = thumbcache::uri(&path);
+        let file = thumbcache::cache_file(cache.path(), thumbcache::Class::Normal, &uri);
+        assert!(file.is_file());
+        std::fs::remove_file(&path).unwrap_or(());
+        assert!(make_in(&path, Some(cache.path())).is_none()); // no file, no picture
+        image::RgbImage::new(2000, 1000).save(&path).unwrap();
+        assert!(make_in(&path, Some(cache.path())).is_some());
+        assert!(make_in(&dir.path().join("none.png"), None).is_none());
+        assert!(make_in(dir.path(), None).is_none()); // not a file
     }
 }

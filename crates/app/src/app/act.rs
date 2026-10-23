@@ -76,6 +76,8 @@ impl App {
                 let p = &self.panes[side].active().panel;
                 for path in p.targets() {
                     self.thumbs.remove(&path);
+                    // Also the shared cache's: it knows files by mtime, which `cp -p` keeps.
+                    crate::thumbs::forget(&path);
                 }
                 return Task::none();
             }
