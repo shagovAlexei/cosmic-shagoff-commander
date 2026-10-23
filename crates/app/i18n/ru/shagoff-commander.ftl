@@ -884,3 +884,4 @@ menu-thumb-zoom-out = Эскизы мельче
 menu-thumb-reload = Перечитать эскизы выделенных файлов
 menu-thumbs-sub = Эскизы
 menu-vertical = Панели одна над другой
+menu-panels = Панели
