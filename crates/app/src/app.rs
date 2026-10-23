@@ -1134,7 +1134,7 @@ impl Application for App {
                     .map(|_| Message::EditTick),
             );
         }
-        if self.job.is_none() {
+        if self.job.is_none() && self.config.watch_dirs {
             // Paused during file operations: finish_job rescans both panes anyway.
             for side in 0..2 {
                 let cwd = self.panes[side].active().panel.cwd().to_path_buf();
@@ -1200,6 +1200,10 @@ impl Application for App {
             terminal: c.term_builtin,
             sync_dirs: self.sync_dirs,
             only_marked: self.panes[self.active].active().panel.only_marked(),
+            ignore: c.ignore_on,
+            watch: c.watch_dirs,
+            dirs_by_name: c.dirs_by_name,
+            type_colors: c.type_colors,
             start: (c.start_menu.iter())
                 .map(|b| (b.cmd != crate::toolbar::SEP).then(|| crate::toolbar::tip(b)))
                 .collect(),
@@ -1266,6 +1270,10 @@ impl App {
         home: PathBuf,
     ) -> (Self, Task<Message>) {
         let home_fallback = home.clone();
+        // Off by default as core starts: so tests building their app leave another's alone.
+        if config.ignore_on || config.dirs_by_name {
+            config.set_core_switches();
+        }
         let cols = config.columns;
         let mut app = Self {
             core,
@@ -1285,7 +1293,7 @@ impl App {
             job: None,
             queue: VecDeque::new(),
             held: None,
-            scheme: shagoff_core::colors::Scheme::new(&config.colors).with_panel(&config.panel),
+            scheme: config.scheme(),
             face: font_named(&config.panel_font),
             right_drag: None,
             right_hold: None,

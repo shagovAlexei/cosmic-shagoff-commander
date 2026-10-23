@@ -69,6 +69,16 @@ impl App {
             Action::ToggleDividerLine => {
                 return self.set(Setting::DividerLine(!self.config.divider_line));
             }
+            Action::SwitchIgnoreList => return self.set(Setting::IgnoreOn(!self.config.ignore_on)),
+            Action::SwitchWatchDirs => {
+                return self.set(Setting::WatchDirs(!self.config.watch_dirs));
+            }
+            Action::SwitchDirSort => {
+                return self.set(Setting::DirsByName(!self.config.dirs_by_name));
+            }
+            Action::SwitchTypeColors => {
+                return self.set(Setting::TypeColors(!self.config.type_colors));
+            }
             Action::ToggleActiveFrame => {
                 return self.set(Setting::ActiveFrame(!self.config.active_frame));
             }
@@ -304,7 +314,11 @@ impl App {
             Action::Home => panel.cursor_home(),
             Action::End => panel.cursor_end(),
             // 100 000 rows take ~0.1 s to sort: a big list is sorted by a background read.
-            Action::Sort(key) if panel.entries().len() > SORT_HERE_MAX => {
+            // Unsorted: read again, the rows here are in the last sort's order.
+            Action::Sort(key)
+                if key == shagoff_core::sort::SortKey::Unsorted
+                    || panel.entries().len() > SORT_HERE_MAX =>
+            {
                 panel.set_sort_key(key);
                 return self.reload(side, target, None);
             }
@@ -742,6 +756,10 @@ impl App {
             | Action::About
             | Action::Settings
             | Action::F12
+            | Action::SwitchIgnoreList
+            | Action::SwitchWatchDirs
+            | Action::SwitchDirSort
+            | Action::SwitchTypeColors
             | Action::ToggleDividerLine
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame

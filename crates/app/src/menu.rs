@@ -250,6 +250,11 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         ),
         (
             vec![Ctrl],
+            K::Named(Named::F7),
+            a(Action::Sort(SortKey::Unsorted)),
+        ),
+        (
+            vec![Ctrl],
             K::Named(Named::F6),
             a(Action::Sort(SortKey::Size)),
         ),
@@ -377,6 +382,11 @@ pub struct Checks {
     pub sync_dirs: bool,
     /// View → «Only selected files» in force in the active panel.
     pub only_marked: bool,
+    /// View → switches: the ignore list, watching dirs, dirs by name, colors by type.
+    pub ignore: bool,
+    pub watch: bool,
+    pub dirs_by_name: bool,
+    pub type_colors: bool,
     /// The Start menu's item names (`None`: a line).
     pub start: Vec<Option<String>>,
     /// Ctrl+F10 / F11 / F12 in force in the active panel (0 / 1 / 2): its item checked.
@@ -653,6 +663,36 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 sort(fl!("menu-sort-ext"), SortKey::Ext),
                 sort(fl!("menu-sort-date"), SortKey::Date),
                 sort(fl!("menu-sort-size"), SortKey::Size),
+                sort(fl!("menu-sort-unsorted"), SortKey::Unsorted),
+                menu::Item::Folder(
+                    fl!("menu-switches"),
+                    vec![
+                        menu::Item::CheckBox(
+                            fl!("settings-ignore-on"),
+                            None,
+                            checks.ignore,
+                            MenuAct::Key(Action::SwitchIgnoreList),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("settings-watch-dirs"),
+                            None,
+                            checks.watch,
+                            MenuAct::Key(Action::SwitchWatchDirs),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("settings-dirs-by-name"),
+                            None,
+                            checks.dirs_by_name,
+                            MenuAct::Key(Action::SwitchDirSort),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("settings-type-colors"),
+                            None,
+                            checks.type_colors,
+                            MenuAct::Key(Action::SwitchTypeColors),
+                        ),
+                    ],
+                ),
             ])
             .collect(),
         ),

@@ -30,6 +30,9 @@ pub struct SettingsForm {
     pub viewer: String,
     pub editor: String,
     pub home: String,
+    /// The ignore list as typed: into the config by Enter (each half-typed mask would hide rows,
+    /// dropping their marks, in every tab).
+    pub ignore: String,
     /// Installed font families, read when the settings open (not on every frame).
     pub fonts: Vec<String>,
     /// «Find a font»: the families listed are those holding every word (any case).
@@ -84,6 +87,13 @@ pub enum Setting {
     KeepHistory(bool),
     InternalViewer(bool),
     ShowHidden(bool),
+    IgnoreOn(bool),
+    IgnoreList(String),
+    /// Enter in the ignore list: the typed one in force.
+    IgnoreApply,
+    WatchDirs(bool),
+    DirsByName(bool),
+    TypeColors(bool),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),
@@ -336,6 +346,27 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-hidden"),
                 widget::toggler(c.show_hidden).on_toggle(move |b| set(Setting::ShowHidden(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-ignore-on"),
+                widget::toggler(c.ignore_on).on_toggle(move |b| set(Setting::IgnoreOn(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-ignore-list"),
+                input(&form.ignore, "*.bak; __pycache__", Setting::IgnoreList)
+                    .on_submit(|_| Message::Setting(Setting::IgnoreApply)),
+            ))
+            .add(settings::item(
+                fl!("settings-watch-dirs"),
+                widget::toggler(c.watch_dirs).on_toggle(move |b| set(Setting::WatchDirs(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-dirs-by-name"),
+                widget::toggler(c.dirs_by_name).on_toggle(move |b| set(Setting::DirsByName(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-type-colors"),
+                widget::toggler(c.type_colors).on_toggle(move |b| set(Setting::TypeColors(b))),
             ))
             .add(settings::item(
                 fl!("settings-last-tab"),

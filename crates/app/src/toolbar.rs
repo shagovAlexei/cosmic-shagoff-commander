@@ -97,6 +97,30 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-compare-subdirs"
         ),
         b!(
+            "cm_SwitchIgnoreList",
+            SwitchIgnoreList,
+            "view-conceal-symbolic",
+            "settings-ignore-on"
+        ),
+        b!(
+            "cm_SwitchWatchDirs",
+            SwitchWatchDirs,
+            "view-refresh-symbolic",
+            "settings-watch-dirs"
+        ),
+        b!(
+            "cm_SwitchDirSort",
+            SwitchDirSort,
+            "view-sort-ascending-symbolic",
+            "settings-dirs-by-name"
+        ),
+        b!(
+            "cm_SwitchColorsByFileType",
+            SwitchTypeColors,
+            "applications-graphics-symbolic",
+            "settings-type-colors"
+        ),
+        b!(
             "cm_DirMatch",
             CompareListsDiffOnly,
             "view-conceal-symbolic",

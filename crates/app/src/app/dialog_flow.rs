@@ -813,8 +813,7 @@ impl App {
                     }
                     None => (self.config.colors, self.config.panel) = (c.list, c.panel),
                 }
-                self.scheme = shagoff_core::colors::Scheme::new(&self.config.colors)
-                    .with_panel(&self.config.panel);
+                self.scheme = self.config.scheme();
                 Task::none()
             }
             Dialog::Toolbar(mut t) if t.menu => {
