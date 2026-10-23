@@ -244,7 +244,7 @@
 - [x] 187. Сравнение каталогов с подкаталогами и «скрыть одинаковые» (`cm_CompareDirsWithSubdirs`, `cm_DirMatch`)
 - [x] 188. Список исключений — имена, которые не показывать (`cm_SwitchIgnoreList`); переключатели: автообновление (`cm_SwitchWatchDirs`), каталоги всегда по имени (`cm_SwitchDirSort`), цвета по типам (`cm_SwitchColorsByFileType`), без сортировки (`cm_*Unsorted`)
 - [x] 189. Показ частей окна из меню «Вид» (`cm_Vis*`: панель инструментов, кнопки дисков, вкладки, строка пути, заголовки колонок, строка состояния, командная строка, F-кнопки); ширина панели 50 % / 100 % (`cm_50Percent`, `cm_100Percent`)
-- [ ] 190. Размер эскизов +/− (`cm_ZoomIn`, `cm_ZoomOut`), перечитать эскизы отмеченных (`cm_ReloadSelThumbs`)
+- [x] 190. Размер эскизов +/− (`cm_ZoomIn`, `cm_ZoomOut`), перечитать эскизы отмеченных (`cm_ReloadSelThumbs`)
 - [ ] 191. Панели одна над другой (`cm_VerticalPanels`)
 - [ ] 192. Отдельное дерево рядом со списком (`cm_SeparateTree…`, Ctrl+Shift+F8)
 - [ ] 193. Свои колонки и режимы вида (`cm_CustomColumnConfig`, `cm_*CustomView…`, `cm_ConfigViewModes`) — большая

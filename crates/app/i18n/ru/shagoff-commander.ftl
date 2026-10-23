@@ -877,3 +877,8 @@ vis-cmdline = Командная строка
 vis-fkeys = Кнопки F-клавиш
 menu-split-50 = Панели по 50 %
 menu-wide = Панель на 100 %
+
+# Thumbnails: zoom and reload (TC cm_ZoomIn / cm_ZoomOut / cm_ReloadSelThumbs)
+menu-thumb-zoom-in = Эскизы крупнее
+menu-thumb-zoom-out = Эскизы мельче
+menu-thumb-reload = Перечитать эскизы выделенных файлов

@@ -5738,6 +5738,27 @@ mod drawer_tests {
     }
 
     #[test]
+    fn thumbnail_zoom_steps_within_its_range_and_drops_the_pictures() {
+        use crate::thumbs::{SIZE, SIZE_MAX, SIZE_MIN, SIZE_STEP};
+        let mut app = app_with(Config::default(), State::default());
+        app.thumbs
+            .insert("/x".into(), (std::time::UNIX_EPOCH, None));
+        let _ = app.update(Message::Key(Action::ThumbZoomIn));
+        assert_eq!(app.config.thumb_size, SIZE + SIZE_STEP);
+        assert_eq!(crate::thumbs::size(), SIZE + SIZE_STEP);
+        assert!(app.thumbs.is_empty());
+        for _ in 0..20 {
+            let _ = app.update(Message::Key(Action::ThumbZoomIn));
+        }
+        assert_eq!(app.config.thumb_size, SIZE_MAX);
+        for _ in 0..20 {
+            let _ = app.update(Message::Key(Action::ThumbZoomOut));
+        }
+        assert_eq!(app.config.thumb_size, SIZE_MIN);
+        crate::thumbs::set_size(SIZE); // a global: the other tests expect the default
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.

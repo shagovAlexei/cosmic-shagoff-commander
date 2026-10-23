@@ -650,6 +650,9 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-brief"), Action::ViewBrief),
                 b(fl!("menu-full"), Action::ViewFull),
                 b(fl!("menu-thumbs"), Action::ViewThumbs),
+                b(fl!("menu-thumb-zoom-in"), Action::ThumbZoomIn),
+                b(fl!("menu-thumb-zoom-out"), Action::ThumbZoomOut),
+                b(fl!("menu-thumb-reload"), Action::ReloadThumbs),
                 b(fl!("menu-tree-panel"), Action::TreePanel),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),
                 menu::Item::Divider,
@@ -1106,6 +1109,9 @@ mod tests {
                             | Action::ResetColumns
                             | Action::ToggleDividerLine
                             | Action::Vis(_)
+                            | Action::ThumbZoomIn
+                            | Action::ThumbZoomOut
+                            | Action::ReloadThumbs
                             | Action::Split50
                             | Action::Wide
                             | Action::ToggleHumanSizes

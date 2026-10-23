@@ -183,6 +183,9 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Ctrl+F1", fl!("menu-brief"), Action::ViewBrief),
                 r("Ctrl+F2", fl!("menu-full"), Action::ViewFull),
                 r("Ctrl+Shift+F1", fl!("menu-thumbs"), Action::ViewThumbs),
+                r("", fl!("menu-thumb-zoom-in"), Action::ThumbZoomIn),
+                r("", fl!("menu-thumb-zoom-out"), Action::ThumbZoomOut),
+                r("", fl!("menu-thumb-reload"), Action::ReloadThumbs),
                 r(
                     "Ctrl+F3",
                     fl!("menu-sort-name"),

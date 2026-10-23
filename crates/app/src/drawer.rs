@@ -93,6 +93,7 @@ pub enum Setting {
     WatchDirs(bool),
     DirsByName(bool),
     TypeColors(bool),
+    ThumbSize(u32),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),

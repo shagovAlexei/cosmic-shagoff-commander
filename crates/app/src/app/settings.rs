@@ -52,6 +52,7 @@ impl App {
             Setting::WatchDirs(b) => c.watch_dirs = b,
             Setting::DirsByName(b) => c.dirs_by_name = b,
             Setting::TypeColors(b) => c.type_colors = b,
+            Setting::ThumbSize(px) => c.thumb_size = px,
             // 0: own program (typed below), else `builtins()[i - 1]`.
             Setting::F12(0) => {
                 if crate::toolbar::builtin(&c.f12.cmd).is_some() {
@@ -125,6 +126,11 @@ impl App {
         self.scheme = self.config.scheme();
         let mut tasks = Vec::new();
         let ignore = |c: &Config| (c.ignore_on, c.ignore_list.clone());
+        let zoomed = old.thumb_size != self.config.thumb_size;
+        if zoomed {
+            self.config.set_core_switches();
+            self.thumbs.clear(); // made at the old size
+        }
         let resort = old.dirs_by_name != self.config.dirs_by_name;
         if resort || ignore(&old) != ignore(&self.config) {
             self.config.set_core_switches();
@@ -198,11 +204,11 @@ impl App {
             let (x, y) = (l.offset.0, row * l.row_h());
             tasks.push(lister_scroll(l, x, y));
         }
-        if old.row_h() != self.config.row_h() {
+        if old.row_h() != self.config.row_h() || zoomed {
             // Offsets are in pixels of the old row height: bring each cursor back into view.
             let scale = self.config.row_h() / old.row_h();
-            let cells =
-                crate::thumbs::cell_h(self.config.row_h()) / crate::thumbs::cell_h(old.row_h());
+            let cells = crate::thumbs::cell_h(self.config.row_h())
+                / crate::thumbs::cell_h_for(old.thumb_size, old.row_h());
             for side in 0..2 {
                 // Hidden tabs too: they are shown with their stored offset.
                 for t in self.panes[side].items_mut() {
