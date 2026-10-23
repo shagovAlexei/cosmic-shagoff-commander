@@ -887,3 +887,4 @@ menu-thumb-reload = Reload thumbnails of selected files
 menu-thumbs-sub = Thumbnails
 menu-vertical = Panels one above the other
 menu-panels = Panels
+menu-side-tree = Separate tree

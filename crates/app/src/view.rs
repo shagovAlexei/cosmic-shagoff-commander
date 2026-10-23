@@ -177,6 +177,11 @@ fn main_view(app: &App) -> Element<'_, Message> {
     } else {
         panes.into()
     };
+    // Ctrl+Shift+F8: the tree beside the panels.
+    let panes: Element<'_, Message> = match &app.side_tree {
+        Some(st) => row![side_tree(app, st), panes].into(),
+        None => panes,
+    };
     match app.config.skin {
         Skin::Classic => column![]
             .push_maybe(
@@ -573,6 +578,47 @@ fn tree_list<'a>(
         .height(Length::Fill)
         .into()
 }
+
+/// Ctrl+Shift+F8: the dirs as an outline in a column of its own; a click goes there, a double
+/// click opens / closes.
+// ponytail: all rows are built, not just the visible ones; virtualize if open trees grow to thousands.
+fn side_tree<'a>(app: &'a App, st: &'a crate::app::SideTree) -> Element<'a, Message> {
+    let row_h = app.row_h();
+    let font = app.panel_font();
+    let mut list = column![];
+    for (i, n) in st.tree.rows.iter().enumerate() {
+        let mark = if n.open { "▾" } else { "▸" };
+        let label = format!("{}{mark} {}", "  ".repeat(n.depth), n.name);
+        let row = container(panel_cell(label, font))
+            .padding([0, 6])
+            .height(Length::Fixed(row_h))
+            .width(Length::Fill)
+            .clip(true)
+            .align_y(Alignment::Center)
+            .class(cursor_style(
+                i == st.tree.cursor,
+                true,
+                false,
+                app.config.skin,
+                None,
+                false,
+                app.scheme.paint(),
+            ));
+        list = list.push(
+            mouse_area(row)
+                .on_press(Message::SideTreeRow(i))
+                .on_double_click(Message::SideTreeToggle(i)),
+        );
+    }
+    scrollable(list)
+        .id(app.side_scroll.clone())
+        .width(Length::Fixed(SIDE_TREE_W))
+        .height(Length::Fill)
+        .into()
+}
+
+/// Width of the side tree, px.
+const SIDE_TREE_W: f32 = 220.0;
 
 /// Brief view (TC): names only, top to bottom then left to right; scrolled by whole columns.
 fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Element<'a, Message> {

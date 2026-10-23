@@ -187,6 +187,8 @@ pub enum Action {
     Wide,
     /// View → «Panels one above the other» (TC `cm_VerticalPanels`).
     VerticalPanels,
+    /// Ctrl+Shift+F8: the tree beside the panels (TC `cm_SeparateTreeSwitch`).
+    SideTree,
     /// Menu only: about the program.
     About,
     /// Menu only: support the project.
@@ -438,6 +440,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
             (Named::F6, true, false) => Action::Sort(SortKey::Size),
             (Named::F7, true, false) => Action::Sort(SortKey::Unsorted),
             (Named::F8, true, false) => Action::TreePanel,
+            (Named::F8, true, true) => Action::SideTree,
             (Named::F10, true, false) => Action::ShowAll,
             (Named::F11, true, false) => Action::ShowPrograms,
             (Named::F12, true, false) => Action::ShowMask,

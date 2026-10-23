@@ -88,6 +88,7 @@ impl App {
             split: self.split,
             wide: self.wide,
             vertical: self.vertical,
+            side_tree: self.side_tree.is_some(),
             commands: keep(&self.commands),
             masks: keep(&self.masks),
             other_cmds: keep(&self.other_cmds),
@@ -332,6 +333,53 @@ impl App {
             self.restore_scroll(side),
             tree_read(id, dirs, hidden, Some(here)),
         ])
+    }
+
+    /// Ctrl+Shift+F8: the side tree put on the active panel's dir when that has changed: its row if
+    /// shown, else the dirs down to it read.
+    pub(super) fn side_tree_sync(&mut self) -> Task<Message> {
+        if self.side_tree.is_none() {
+            return Task::none();
+        }
+        let hidden = self.panes[self.active].active().panel.show_hidden();
+        let cwd = self.panes[self.active].active().target();
+        let cwd = self.shown(&cwd);
+        let here = match archive::split_path(&cwd) {
+            Some((a, _)) => a.parent().map_or(cwd.clone(), Path::to_path_buf),
+            None => cwd,
+        };
+        let id = self.next_id();
+        let st = self.side_tree.as_mut().expect("checked above");
+        if st.synced.as_deref() == Some(here.as_path()) {
+            return Task::none();
+        }
+        st.synced = Some(here.clone());
+        if st.tree.rows.iter().any(|n| n.path == here) {
+            st.tree.select(&here);
+            return self.side_tree_scroll();
+        }
+        st.id = id;
+        let root = PathBuf::from("/");
+        if st.tree.rows.len() <= 1 {
+            st.tree = shagoff_core::tree::Tree::new(&root);
+        }
+        let dirs = shagoff_core::tree::chain(&root, &here);
+        tree_read(id, dirs, hidden, Some(here))
+    }
+
+    /// The side tree scrolled so its cursor row is in view (a few rows of what is above it).
+    pub(super) fn side_tree_scroll(&self) -> Task<Message> {
+        let Some(st) = &self.side_tree else {
+            return Task::none();
+        };
+        let y = (st.tree.cursor.saturating_sub(3)) as f32 * self.row_h();
+        scrollable::scroll_to(
+            self.side_scroll.clone(),
+            AbsoluteOffset {
+                x: None,
+                y: Some(y),
+            },
+        )
     }
 
     /// `reveal` for the active tab of `side`.

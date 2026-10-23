@@ -94,6 +94,16 @@ pub struct PanelTree {
     files_offset: f32,
 }
 
+/// Ctrl+Shift+F8's tree beside the panels: it follows the active panel's dir, a click goes there.
+#[derive(Debug)]
+pub struct SideTree {
+    /// Its reads' id (`Message::TreeFilled`).
+    pub id: u64,
+    pub tree: shagoff_core::tree::Tree,
+    /// The dir the tree was last put on (the active panel's), so only a change moves it.
+    pub synced: Option<PathBuf>,
+}
+
 pub struct Tab {
     /// Stable id: scan results are routed by it, so they land in the right tab even after switching.
     pub id: u64,
@@ -366,6 +376,9 @@ pub struct App {
     /// One scroll widget id per pane, not per tab: iced's tree diff keeps the first id it saw at a
     /// position (`Tree::diff` → `set_id` for `Internal::Set` ids), so per-tab ids would never match.
     pub scroll_ids: [widget::Id; 2],
+    /// Ctrl+Shift+F8: the tree beside the panels, if on (kept in `State`).
+    pub side_tree: Option<SideTree>,
+    pub side_scroll: widget::Id,
     pub active: usize,
     pub tz: TimeZone,
     next_id: u64,
@@ -585,6 +598,9 @@ pub enum Message {
     /// Ctrl+F8: a click on row i of side's tree (the other panel follows) / a double click
     /// (open / close it).
     TreeRow(usize, usize),
+    /// Ctrl+Shift+F8: a click on row i of the side tree / a double click (open / close it).
+    SideTreeRow(usize),
+    SideTreeToggle(usize),
     TreeRowToggle(usize, usize),
     /// Alt+F10: a click on row i (on the row under the cursor: open / close it).
     TreePick(usize),
@@ -1032,7 +1048,7 @@ impl Application for App {
             true => Task::none(),
             false => Task::batch([self.restore_scroll(0), self.restore_scroll(1)]),
         };
-        let back = Task::batch([back, self.roam_back()]);
+        let back = Task::batch([back, self.roam_back(), self.side_tree_sync()]);
         self.term_follow();
         let waiting = matches!(&self.dialog, Some(Dialog::Keys(k)) if k.capturing);
         keymap::CAPTURE.store(waiting, Ordering::Relaxed);
@@ -1201,6 +1217,7 @@ impl Application for App {
             parts: config::Part::ALL.map(|p| c.shows(p)),
             wide: self.wide,
             vertical: self.vertical,
+            side_tree: self.side_tree.is_some(),
             human_sizes: c.human_sizes(),
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,
@@ -1289,6 +1306,12 @@ impl App {
                 Tabs::new(Tab::new(0, home.clone())),
             ],
             scroll_ids: [widget::Id::unique(), widget::Id::unique()],
+            side_tree: state.side_tree.then(|| SideTree {
+                id: 0,
+                tree: shagoff_core::tree::Tree::new(std::path::Path::new("/")),
+                synced: None,
+            }),
+            side_scroll: widget::Id::unique(),
             active: state.active.min(1),
             tz: TimeZone::system(),
             next_id: 0,
