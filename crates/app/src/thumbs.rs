@@ -121,7 +121,11 @@ fn make_in(path: &Path, cache: Option<&Path>) -> Option<Handle> {
             };
             let made = crate::lister::decode(&bytes, MAX_ALLOC)?;
             // The cache keeps the class's size, shared with the others; ours is shrunk from it.
-            let made = made.thumbnail(class.px(), class.px());
+            // Shrunk only: the spec has no blurred upscales in the shared folder.
+            let made = match made.width().max(made.height()) > class.px() {
+                true => made.thumbnail(class.px(), class.px()),
+                false => made,
+            };
             if let Some((file, uri, mtime)) = &key {
                 let rgba = made.to_rgba8();
                 let (w, h) = rgba.dimensions();

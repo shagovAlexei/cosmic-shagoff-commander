@@ -38,13 +38,27 @@ impl Class {
     }
 }
 
-/// What a URI keeps unescaped: unreserved characters and the slashes.
+/// What a URI keeps unescaped, as GLib's `g_filename_to_uri` (the others' hash must be ours):
+/// unreserved characters, the sub-delimiters, `:` `@` and the slashes.
 const URI_KEEP: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'.')
     .remove(b'_')
     .remove(b'~')
-    .remove(b'/');
+    .remove(b'/')
+    .remove(b'!')
+    .remove(b'$')
+    .remove(b'&')
+    .remove(b'\'')
+    .remove(b'(')
+    .remove(b')')
+    .remove(b'*')
+    .remove(b'+')
+    .remove(b',')
+    .remove(b';')
+    .remove(b'=')
+    .remove(b':')
+    .remove(b'@');
 
 /// `file:///home/u/a%20b.png` for an absolute `path`.
 pub fn uri(path: &Path) -> String {
@@ -149,8 +163,8 @@ mod tests {
     #[test]
     fn uris_are_escaped_and_the_name_is_the_md5_of_the_uri() {
         assert_eq!(
-            uri(Path::new("/home/u/a b+é.png")),
-            "file:///home/u/a%20b%2B%C3%A9.png"
+            uri(Path::new("/home/u/a b+é#.png")),
+            "file:///home/u/a%20b+%C3%A9%23.png"
         );
         // The spec's own example.
         let f = cache_file(
