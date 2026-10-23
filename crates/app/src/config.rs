@@ -183,6 +183,8 @@ pub struct Config {
     pub type_colors: bool,
     /// Thumbnails view: the picture's side, px (View menu, TC `cm_ZoomIn` / `cm_ZoomOut`; no key).
     pub thumb_size: u32,
+    /// Thumbnails are kept in the shared disk cache (`~/.cache/thumbnails`); off: made each time.
+    pub thumb_cache: bool,
 }
 
 /// Text sizes offered in the settings.
@@ -319,6 +321,7 @@ impl Default for Config {
             dirs_by_name: false,
             type_colors: true,
             thumb_size: crate::thumbs::SIZE,
+            thumb_cache: true,
         }
     }
 }

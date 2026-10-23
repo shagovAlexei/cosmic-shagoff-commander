@@ -8,6 +8,7 @@ impl App {
     pub(super) fn want_thumbs(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         let cell_h = crate::thumbs::cell_h(self.row_h());
+        let cache = self.config.thumb_cache;
         let covered = self.viewer_shown();
         for side in 0..2 {
             let t = self.panes[side].active();
@@ -42,7 +43,7 @@ impl App {
                 let p = path.clone();
                 tasks.push(Task::perform(
                     async move {
-                        (tokio::task::spawn_blocking(move || crate::thumbs::make(&p)).await)
+                        (tokio::task::spawn_blocking(move || crate::thumbs::make(&p, cache)).await)
                             .ok()
                             .flatten()
                     },
