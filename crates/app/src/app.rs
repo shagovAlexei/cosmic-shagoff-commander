@@ -1218,6 +1218,7 @@ impl Application for App {
             wide: self.wide,
             vertical: self.vertical,
             side_tree: self.side_tree.is_some(),
+            cols: shagoff_core::columns::Col::ALL.map(|c| self.shown_cols().contains(&c)),
             human_sizes: c.human_sizes(),
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,

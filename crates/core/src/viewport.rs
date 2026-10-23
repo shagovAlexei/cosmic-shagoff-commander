@@ -56,11 +56,11 @@ pub const NAME_MIN: f32 = 100.0;
 /// How many of the fixed columns (Ext, Size, Date, Attributes) fit beside a Name of at least
 /// `NAME_MIN` in a list `list_w` wide (rows: 6 px padding each side, 6 px between cells).
 /// 0 before the first layout shows them all.
-pub fn visible_cols(list_w: f32, cols: [f32; 4]) -> usize {
+pub fn visible_cols(list_w: f32, cols: &[f32]) -> usize {
     if list_w <= 0.0 {
-        return 4;
+        return cols.len();
     }
-    (0..=4)
+    (0..=cols.len())
         .rev()
         .find(|&n| list_w - 12.0 - cols[..n].iter().map(|w| w + 6.0).sum::<f32>() >= NAME_MIN)
         .unwrap_or(0)
@@ -168,11 +168,11 @@ mod tests {
     #[test]
     fn narrow_lists_drop_columns_from_the_right() {
         let cols = [50.0, 80.0, 120.0, 80.0]; // all four + gaps: 354
-        assert_eq!(visible_cols(0.0, cols), 4);
-        assert_eq!(visible_cols(12.0 + 354.0 + 100.0, cols), 4);
-        assert_eq!(visible_cols(12.0 + 354.0 + 99.0, cols), 3); // attributes go first
-        assert_eq!(visible_cols(300.0, cols), 2);
-        assert_eq!(visible_cols(50.0, cols), 0);
+        assert_eq!(visible_cols(0.0, &cols), 4);
+        assert_eq!(visible_cols(12.0 + 354.0 + 100.0, &cols), 4);
+        assert_eq!(visible_cols(12.0 + 354.0 + 99.0, &cols), 3); // attributes go first
+        assert_eq!(visible_cols(300.0, &cols), 2);
+        assert_eq!(visible_cols(50.0, &cols), 0);
     }
 
     #[test]

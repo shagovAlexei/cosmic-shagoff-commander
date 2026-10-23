@@ -3050,7 +3050,7 @@ fn columns_grow_with_the_text_and_are_kept_for_the_default_size() {
     app.config.panel_size = 20;
     let k = app.config.text_scale();
     assert!(k > 1.0);
-    assert_eq!(app.col_widths(), base.map(|w| w * k));
+    assert_eq!(app.col_widths(), base.map(|w| w * k).to_vec());
     // A drag of 20 px on screen at the bigger size: 20 / k kept.
     let _ = app.update(Message::ColDragStart(0, 3));
     let _ = app.update(Message::ColDrag(100.0));
@@ -5787,6 +5787,23 @@ mod drawer_tests {
         );
         let _ = app.update(Message::Key(Action::SideTree));
         assert!(app.side_tree.is_none());
+    }
+
+    #[test]
+    fn view_menu_picks_the_columns_of_the_full_view() {
+        use shagoff_core::columns::Col;
+        let mut app = app_with(Config::default(), State::default());
+        assert_eq!(app.shown_cols().len(), 4);
+        let _ = app.update(Message::Key(Action::ToggleCol(Col::Owner)));
+        let _ = app.update(Message::Key(Action::ToggleCol(Col::Ext)));
+        assert_eq!(
+            app.shown_cols(),
+            [Col::Size, Col::Date, Col::Attr, Col::Owner]
+        );
+        // One width a column: those without a stored one are fixed.
+        assert_eq!(app.col_widths().len(), 4);
+        let _ = app.update(Message::Key(Action::ToggleCol(Col::Owner)));
+        assert_eq!(app.shown_cols().len(), 3);
     }
 
     #[test]

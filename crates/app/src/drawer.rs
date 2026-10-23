@@ -94,6 +94,7 @@ pub enum Setting {
     DirsByName(bool),
     TypeColors(bool),
     ThumbSize(u32),
+    ColSet(Vec<String>),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),

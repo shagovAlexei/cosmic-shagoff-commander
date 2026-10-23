@@ -187,6 +187,8 @@ pub enum Action {
     Wide,
     /// View → «Panels one above the other» (TC `cm_VerticalPanels`).
     VerticalPanels,
+    /// View → Columns: one column of the full view shown or hidden.
+    ToggleCol(shagoff_core::columns::Col),
     /// Ctrl+Shift+F8: the tree beside the panels (TC `cm_SeparateTreeSwitch`).
     SideTree,
     /// Menu only: about the program.
