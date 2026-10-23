@@ -58,6 +58,38 @@ pub fn date(t: SystemTime, tz: &TimeZone) -> String {
         .unwrap_or_default()
 }
 
+/// A date as the «change date» field takes it: `2026-10-23 14:05:07`.
+pub fn date_edit(t: SystemTime, tz: &TimeZone) -> String {
+    jiff::Timestamp::try_from(t)
+        .map(|ts| {
+            ts.to_zoned(tz.clone())
+                .strftime("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// `date_edit`'s text back (seconds optional; `DD.MM.YYYY` as the panels show it also), in `tz`.
+pub fn parse_date(text: &str, tz: &TimeZone) -> Option<SystemTime> {
+    let text = text.trim();
+    let parse = |fmt: &str| {
+        jiff::fmt::strtime::parse(fmt, text)
+            .ok()?
+            .to_datetime()
+            .ok()
+    };
+    let dt = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M",
+    ]
+    .iter()
+    .find_map(|f| parse(f))?;
+    let ts = dt.to_zoned(tz.clone()).ok()?.timestamp();
+    Some(SystemTime::from(ts))
+}
+
 /// Permission bits as `rwxr-xr-x` (file type bits ignored).
 pub fn perms(mode: u32) -> String {
     (0..9)
@@ -399,6 +431,19 @@ mod tests {
         t.target = Some("/home/u/docs/a.txt".into());
         let line = details(&t, &TimeZone::UTC, &o, self::size);
         assert_eq!(line, "a.txt ← /home/u/docs/a.txt");
+    }
+
+    #[test]
+    fn dates_are_edited_and_read_back() {
+        let tz = TimeZone::fixed(jiff::tz::offset(3));
+        let t = parse_date("2026-10-23 14:05:07", &tz).unwrap();
+        assert_eq!(date_edit(t, &tz), "2026-10-23 14:05:07");
+        assert_eq!(
+            parse_date("23.10.2026 14:05", &tz),
+            parse_date("2026-10-23 14:05:00", &tz)
+        );
+        assert_eq!(parse_date("2026-13-40 99:99", &tz), None);
+        assert_eq!(parse_date("tomorrow", &tz), None);
     }
 
     #[test]

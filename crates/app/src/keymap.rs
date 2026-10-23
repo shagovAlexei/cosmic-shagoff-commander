@@ -191,6 +191,9 @@ pub enum Action {
     ToggleCol(shagoff_core::columns::Col),
     /// View → Columns: mode `i` of `config.view_modes` (TC `cm_*CustomView…`).
     ViewMode(usize),
+    /// Files → «Change date and time…»: the modification time of the marked files or the one under
+    /// the cursor (TC `cm_SetAttrib` with its date fields).
+    SetDate,
     /// View → Columns: the columns shown now, saved as a mode with a name (TC `cm_ConfigViewModes`).
     SaveViewMode,
     /// Ctrl+Shift+F8: the tree beside the panels (TC `cm_SeparateTreeSwitch`).

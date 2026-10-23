@@ -952,6 +952,7 @@ impl App {
             | Action::CopySame
             | Action::Link
             | Action::Properties
+            | Action::SetDate
             | Action::Move
             | Action::Rename
             | Action::MultiRename

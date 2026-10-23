@@ -46,6 +46,8 @@ pub enum InputOp {
     Combine,
     /// View → Columns → «Save as view mode…»: its name.
     ViewMode,
+    /// Files → «Change date and time…»: `sources` get this modification time.
+    SetDate,
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -971,6 +973,7 @@ pub fn view<'a>(
                 InputOp::Combine => fl!("combine"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
+                InputOp::SetDate => fl!("menu-set-date").replace('…', ""),
                 InputOp::ViewMode => fl!("menu-save-view-mode").replace('…', ""),
                 InputOp::OpenWith => fl!("open-with-other-title"),
                 // The menu items' names, without their «…».

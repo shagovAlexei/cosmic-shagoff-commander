@@ -895,3 +895,7 @@ mode-standard = Обычный
 mode-short = Короткий
 mode-detailed = Подробный
 mode-names-only = Только имена
+
+# Files → Change date and time
+menu-set-date = Изменить дату и время…
+set-date-bad = Дата не понята: напишите 2026-10-23 14:05:07 или 23.10.2026 14:05

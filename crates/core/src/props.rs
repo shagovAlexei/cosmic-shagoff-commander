@@ -38,6 +38,47 @@ pub fn usage(paths: &[PathBuf], stop: &AtomicBool) -> Option<Usage> {
     Some(u)
 }
 
+/// Set the modification time of `paths` to `to`, and of everything under dirs when `recursive`
+/// (a dir after its contents: writing into it would move its time again). Symlinks are left
+/// alone (the time would be the target's). Returns what failed.
+pub fn set_mtime(
+    paths: &[PathBuf],
+    to: std::time::SystemTime,
+    recursive: bool,
+) -> Vec<(PathBuf, io::Error)> {
+    fn one(
+        p: &Path,
+        to: std::time::SystemTime,
+        recursive: bool,
+        failed: &mut Vec<(PathBuf, io::Error)>,
+    ) {
+        let Ok(meta) = fs::symlink_metadata(p) else {
+            return;
+        };
+        if meta.file_type().is_symlink() {
+            return;
+        }
+        if recursive && meta.is_dir() {
+            match fs::read_dir(p) {
+                Ok(rd) => {
+                    for e in rd.flatten() {
+                        one(&e.path(), to, true, failed);
+                    }
+                }
+                Err(e) => failed.push((p.to_path_buf(), e)),
+            }
+        }
+        if let Err(e) = fs::File::open(p).and_then(|f| f.set_modified(to)) {
+            failed.push((p.to_path_buf(), e));
+        }
+    }
+    let mut failed = Vec::new();
+    for p in paths {
+        one(p, to, recursive, &mut failed);
+    }
+    failed
+}
+
 /// Mode bits of `p` itself (`None` for a symlink: its own bits mean nothing on Linux).
 pub fn mode(p: &Path) -> Option<u32> {
     let m = fs::symlink_metadata(p).ok()?;
@@ -250,6 +291,28 @@ pub fn run_helper(args: &[std::ffi::OsString]) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn mtime_is_set_on_files_and_under_dirs_but_not_on_links() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let d = tempfile::tempdir().unwrap();
+        let sub = d.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("f"), "x").unwrap();
+        fs::write(d.path().join("g"), "x").unwrap();
+        symlink(d.path().join("g"), d.path().join("l")).unwrap();
+        let to = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        let m = |p: PathBuf| fs::symlink_metadata(p).unwrap().modified().unwrap();
+        // Not recursive: the dir itself only.
+        assert!(set_mtime(&[sub.clone()], to, false).is_empty());
+        assert_eq!(m(sub.clone()), to);
+        assert_ne!(m(sub.join("f")), to);
+        // Recursive; a link is skipped.
+        let l = d.path().join("l");
+        assert!(set_mtime(&[sub.clone(), l.clone()], to, true).is_empty());
+        assert_eq!((m(sub.join("f")), m(sub.clone())), (to, to));
+        assert_ne!(m(l), to);
+    }
 
     fn mode_of(p: &Path) -> u32 {
         fs::metadata(p).unwrap().permissions().mode() & 0o7777

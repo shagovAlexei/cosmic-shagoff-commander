@@ -5831,6 +5831,40 @@ mod drawer_tests {
     }
 
     #[test]
+    fn set_date_changes_the_mtime_of_the_file_under_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, "x").unwrap();
+        let mut app = app_with(Config::default(), State::default());
+        app.panes[0].active_mut().panel.set_listing(
+            dir.path().to_path_buf(),
+            shagoff_core::listing::scan(dir.path(), true).unwrap(),
+            Some("a.txt"),
+        );
+        let _ = app.update(Message::Key(Action::SetDate));
+        let Some(Dialog::Input {
+            op: InputOp::SetDate,
+            input,
+            ..
+        }) = &mut app.dialog
+        else {
+            panic!("no dialog")
+        };
+        *input = "2001-09-09 01:46:40".into();
+        let _ = app.update(Message::DialogSubmit);
+        let at = std::fs::metadata(&f).unwrap().modified().unwrap();
+        let want = format::parse_date("2001-09-09 01:46:40", &app.tz).unwrap();
+        assert_eq!(at, want);
+        // Not a date: the file stays, an error is said.
+        let _ = app.update(Message::Key(Action::SetDate));
+        if let Some(Dialog::Input { input, .. }) = &mut app.dialog {
+            *input = "soon".into();
+        }
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(std::fs::metadata(&f).unwrap().modified().unwrap(), want);
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.
