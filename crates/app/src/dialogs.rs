@@ -44,6 +44,8 @@ pub enum InputOp {
     FromTemplate,
     /// Files → «Combine files»: where the parts (`sources`) are joined.
     Combine,
+    /// View → Columns → «Save as view mode…»: its name.
+    ViewMode,
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -969,6 +971,7 @@ pub fn view<'a>(
                 InputOp::Combine => fl!("combine"),
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
+                InputOp::ViewMode => fl!("menu-save-view-mode").replace('…', ""),
                 InputOp::OpenWith => fl!("open-with-other-title"),
                 // The menu items' names, without their «…».
                 InputOp::SaveMarks => fl!("menu-save-marks-file").replace('…', ""),

@@ -5807,6 +5807,30 @@ mod drawer_tests {
     }
 
     #[test]
+    fn view_modes_apply_their_columns_and_a_saved_one_joins_the_list() {
+        let mut app = app_with(Config::default(), State::default());
+        let n = app.config.view_modes.len();
+        let _ = app.update(Message::Key(Action::ViewMode(1)));
+        assert_eq!(app.shown_cols().len(), 2); // Short: size, date
+        let _ = app.update(Message::Key(Action::ViewMode(n))); // not there: nothing
+        assert_eq!(app.shown_cols().len(), 2);
+        let _ = app.update(Message::Key(Action::SaveViewMode));
+        assert!(matches!(
+            &app.dialog,
+            Some(Dialog::Input {
+                op: InputOp::ViewMode,
+                ..
+            })
+        ));
+        if let Some(Dialog::Input { input, .. }) = &mut app.dialog {
+            *input = "Mine".into();
+        }
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(app.config.view_modes.len(), n + 1);
+        assert_eq!(app.config.view_modes[n].cols, ["size", "date"]);
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.

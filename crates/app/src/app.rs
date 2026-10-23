@@ -1219,6 +1219,14 @@ impl Application for App {
             vertical: self.vertical,
             side_tree: self.side_tree.is_some(),
             cols: shagoff_core::columns::Col::ALL.map(|c| self.shown_cols().contains(&c)),
+            modes: (c.view_modes.iter())
+                .map(|m| {
+                    (
+                        m.name.clone(),
+                        shagoff_core::columns::parse(&m.cols) == self.shown_cols(),
+                    )
+                })
+                .collect(),
             human_sizes: c.human_sizes(),
             active_frame: c.active_frame,
             classic: c.skin == config::Skin::Classic,

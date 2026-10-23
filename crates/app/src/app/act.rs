@@ -103,6 +103,16 @@ impl App {
                 let keys = shagoff_core::columns::toggled(&self.config.col_set, c);
                 return self.set(Setting::ColSet(keys));
             }
+            Action::ViewMode(i) => {
+                if let Some(m) = self.config.view_modes.get(i) {
+                    let cols = shagoff_core::columns::parse(&m.cols)
+                        .into_iter()
+                        .map(|c| c.key().to_string())
+                        .collect();
+                    return self.set(Setting::ColSet(cols));
+                }
+                return Task::none();
+            }
             Action::SideTree => {
                 self.side_tree = match self.side_tree {
                     Some(_) => None,
@@ -814,6 +824,8 @@ impl App {
             | Action::VerticalPanels
             | Action::SideTree
             | Action::ToggleCol(_)
+            | Action::ViewMode(_)
+            | Action::SaveViewMode
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::ToggleTerminal

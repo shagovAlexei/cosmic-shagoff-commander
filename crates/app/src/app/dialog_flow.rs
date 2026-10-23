@@ -94,6 +94,7 @@ impl App {
                 }))
             }
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
+            Action::SaveViewMode => Some(input(InputOp::ViewMode, Vec::new(), String::new())),
             // TC offers the file under the cursor (an existing one is just opened).
             Action::NewFile => {
                 let name = panel
@@ -640,6 +641,29 @@ impl App {
                         Task::none()
                     }
                 }
+            }
+            Dialog::Input {
+                op: InputOp::ViewMode,
+                input,
+                ..
+            } => {
+                let name = input.trim();
+                if name.is_empty() {
+                    return Task::none();
+                }
+                // The same name: replaced; the columns are those shown now.
+                let mut modes = self.config.view_modes.clone();
+                let mode = config::ViewMode {
+                    name: name.to_string(),
+                    cols: (self.shown_cols().into_iter())
+                        .map(|c| c.key().to_string())
+                        .collect(),
+                };
+                match modes.iter_mut().find(|m| m.name == name) {
+                    Some(m) => *m = mode,
+                    None => modes.push(mode),
+                }
+                self.set(Setting::ViewModes(modes))
             }
             Dialog::Input {
                 op: InputOp::TabName,
