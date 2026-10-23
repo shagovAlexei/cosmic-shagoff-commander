@@ -54,6 +54,8 @@ pub enum MaskOp {
     Select,
     Unselect,
     Show,
+    /// Shrink selection: the marked files not taking the mask are unmarked.
+    Shrink,
 }
 
 pub enum Dialog {
@@ -964,6 +966,7 @@ pub fn view<'a>(
                 MaskOp::Select => fl!("select-group"),
                 MaskOp::Unselect => fl!("unselect-group"),
                 MaskOp::Show => fl!("show-mask"),
+                MaskOp::Shrink => fl!("shrink-selection"),
             })
             .control(field(input))
             .primary_action(ok)

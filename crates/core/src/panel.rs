@@ -362,6 +362,43 @@ impl Panel {
         self.touched();
     }
 
+    /// TC «Shrink selection»: of the marked files only those matching `mask` stay marked (dirs keep
+    /// theirs: masks are for files).
+    pub fn shrink_marks(&mut self, mask: &Mask) {
+        self.keep_marks(); // «Restore selection» undoes it
+        for e in self
+            .entries
+            .iter()
+            .filter(|e| !e.is_dir() && !mask.matches(base(&e.name)))
+        {
+            self.marked.remove(&e.os_name);
+        }
+        self.touched();
+    }
+
+    /// TC «Exchange selection»: what is marked in `a` is marked in `b` (by name, where there is
+    /// such an entry) and the other way round.
+    pub fn exchange_marks(a: &mut Panel, b: &mut Panel) {
+        a.keep_marks();
+        b.keep_marks();
+        let marked = |p: &Panel| -> Vec<OsString> {
+            (p.entries.iter())
+                .filter(|e| p.marked.contains(&e.os_name))
+                .map(|e| e.os_name.clone())
+                .collect()
+        };
+        let (from_a, from_b) = (marked(a), marked(b));
+        let present = |p: &Panel, names: Vec<OsString>| -> Vec<OsString> {
+            names
+                .into_iter()
+                .filter(|n| p.entries.iter().any(|e| e.os_name == *n))
+                .collect()
+        };
+        let (to_a, to_b) = (present(a, from_b), present(b, from_a));
+        a.mark_names(&to_a);
+        b.mark_names(&to_b);
+    }
+
     /// Shift+F2: exactly these names marked (never `..`).
     pub fn mark_names(&mut self, names: &[OsString]) {
         self.marked = names.iter().filter(|n| *n != PARENT).cloned().collect();
@@ -1379,6 +1416,20 @@ mod tests {
         assert_eq!(p.current().unwrap().name, "b");
         p.set_listing("/x".into(), vec![d("a"), d("b"), f("f", 10)], None); // rescan keeps the order
         assert_eq!(p.entries()[2].name, "a");
+    }
+
+    #[test]
+    fn shrink_keeps_only_matching_marks_and_exchange_swaps_them_by_name() {
+        let mut a = loaded("/x", vec![f("a.txt", 1), f("b.rs", 1), f("c.txt", 1)]);
+        a.mark_all(true);
+        a.shrink_marks(&Mask::parse("*.txt"));
+        assert_eq!(a.marked_names(), ["a.txt", "c.txt"]);
+        let mut b = loaded("/y", vec![f("a.txt", 1), f("b.rs", 1), f("z", 1)]);
+        b.mark_names(&["b.rs".into(), "z".into()]);
+        Panel::exchange_marks(&mut a, &mut b);
+        // a gets b's (only those it has), b gets a's.
+        assert_eq!(a.marked_names(), ["b.rs"]);
+        assert_eq!(b.marked_names(), ["a.txt"]);
     }
 
     #[test]

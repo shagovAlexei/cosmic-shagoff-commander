@@ -5898,6 +5898,38 @@ mod drawer_tests {
     }
 
     #[test]
+    fn shrink_and_exchange_selection_work_on_the_panels_marks() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in ["a.txt", "b.rs", "c.txt"] {
+            std::fs::write(dir.path().join(n), "x").unwrap();
+        }
+        let mut app = app_with(Config::default(), State::default());
+        for s in 0..2 {
+            app.panes[s].active_mut().panel.set_listing(
+                dir.path().to_path_buf(),
+                shagoff_core::listing::scan(dir.path(), true).unwrap(),
+                None,
+            );
+        }
+        app.panes[0].active_mut().panel.mark_all(true);
+        let _ = app.update(Message::Key(Action::ShrinkSelection));
+        if let Some(Dialog::Mask { input, .. }) = &mut app.dialog {
+            *input = "*.txt".into();
+        }
+        let _ = app.update(Message::DialogSubmit);
+        assert_eq!(
+            app.panes[0].active().panel.marked_names(),
+            ["a.txt", "c.txt"]
+        );
+        let _ = app.update(Message::Key(Action::ExchangeSelection));
+        assert_eq!(
+            app.panes[1].active().panel.marked_names(),
+            ["a.txt", "c.txt"]
+        );
+        assert!(app.panes[0].active().panel.marked_names().is_empty());
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.

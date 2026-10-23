@@ -50,6 +50,12 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 o("Space", fl!("help-mark")),
                 r("Num +", fl!("menu-select-group"), Action::SelectGroup),
                 r("Num −", fl!("menu-unselect-group"), Action::UnselectGroup),
+                r("", fl!("menu-shrink-selection"), Action::ShrinkSelection),
+                r(
+                    "",
+                    fl!("menu-exchange-selection"),
+                    Action::ExchangeSelection,
+                ),
                 r(
                     "Ctrl+A, Ctrl+Num +",
                     fl!("menu-select-all"),

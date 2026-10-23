@@ -191,6 +191,18 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-thumb-reload"
         ),
         b!(
+            "cm_ShrinkSelection",
+            ShrinkSelection,
+            "list-remove-symbolic",
+            "menu-shrink-selection"
+        ),
+        b!(
+            "cm_ExchangeSelection",
+            ExchangeSelection,
+            "emblem-synchronizing-symbolic",
+            "menu-exchange-selection"
+        ),
+        b!(
             "cm_TransferLeft",
             TransferLeft,
             "edit-copy-symbolic",
