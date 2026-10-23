@@ -161,6 +161,24 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-wide"
         ),
         b!(
+            "cm_ZoomIn",
+            ThumbZoomIn,
+            "zoom-in-symbolic",
+            "menu-thumb-zoom-in"
+        ),
+        b!(
+            "cm_ZoomOut",
+            ThumbZoomOut,
+            "zoom-out-symbolic",
+            "menu-thumb-zoom-out"
+        ),
+        b!(
+            "cm_ReloadSelThumbs",
+            ReloadThumbs,
+            "view-refresh-symbolic",
+            "menu-thumb-reload"
+        ),
+        b!(
             "cm_SwitchIgnoreList",
             SwitchIgnoreList,
             "view-conceal-symbolic",

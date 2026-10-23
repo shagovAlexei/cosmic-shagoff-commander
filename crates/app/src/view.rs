@@ -616,7 +616,7 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
     let mut list = column![widget::Space::new().height(first as f32 * cell_h)];
     let marked = OnceCell::new();
     let inner = shagoff_core::archive::within(p.panel.cwd());
-    let size = crate::thumbs::SIZE as f32;
+    let size = crate::thumbs::size() as f32;
     for start in range.clone().step_by(cols) {
         let mut line = row![];
         for (i, e) in entries
@@ -656,7 +656,7 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
             .align_x(Alignment::Center);
             let cell = container(cell)
                 .padding(4)
-                .width(Length::Fixed(crate::thumbs::CELL_W))
+                .width(Length::Fixed(crate::thumbs::cell_w()))
                 .height(Length::Fixed(cell_h))
                 .clip(true)
                 .class(cursor_style(

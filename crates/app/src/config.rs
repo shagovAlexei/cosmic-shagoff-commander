@@ -179,6 +179,8 @@ pub struct Config {
     pub dirs_by_name: bool,
     /// The colors by file type in force (TC `cm_SwitchColorsByFileType`); off: plain rows.
     pub type_colors: bool,
+    /// Thumbnails view: the picture's side, px (View menu, TC `cm_ZoomIn` / `cm_ZoomOut`; no key).
+    pub thumb_size: u32,
 }
 
 /// Text sizes offered in the settings.
@@ -208,6 +210,7 @@ impl Config {
 
     /// The program-wide switches core keeps (`sort::set_dirs_by_name`, `panel::set_ignore`).
     pub fn set_core_switches(&self) {
+        crate::thumbs::set_size(self.thumb_size);
         shagoff_core::sort::set_dirs_by_name(self.dirs_by_name);
         let list = self.ignore_list.trim();
         // Only exclusions (`|*.tmp`), or `;` alone: `Mask` reads that as `*`, i.e. all hidden.
@@ -312,6 +315,7 @@ impl Default for Config {
             watch_dirs: true,
             dirs_by_name: false,
             type_colors: true,
+            thumb_size: crate::thumbs::SIZE,
         }
     }
 }

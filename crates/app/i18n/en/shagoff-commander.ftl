@@ -879,3 +879,8 @@ vis-cmdline = Command line
 vis-fkeys = Function key buttons
 menu-split-50 = Panels at 50 %
 menu-wide = Panel at 100 %
+
+# Thumbnails: zoom and reload (TC cm_ZoomIn / cm_ZoomOut / cm_ReloadSelThumbs)
+menu-thumb-zoom-in = Thumbnails bigger
+menu-thumb-zoom-out = Thumbnails smaller
+menu-thumb-reload = Reload thumbnails of selected files

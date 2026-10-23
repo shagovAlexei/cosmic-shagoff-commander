@@ -2,17 +2,41 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use shagoff_core::thumbnailer::{self, Registry};
 
 use cosmic::widget::image::Handle;
 
-/// Side of the square a picture is shrunk into, px.
+/// Side of the square a picture is shrunk into, px: the default, and the range of
+/// View → thumbnail zoom (`Config.thumb_size`, kept here as `size()`).
 pub const SIZE: u32 = 96;
+pub const SIZE_MIN: u32 = 48;
+pub const SIZE_MAX: u32 = 256;
+pub const SIZE_STEP: u32 = 32;
+static CURRENT: AtomicU32 = AtomicU32::new(SIZE);
+
+pub fn set_size(px: u32) {
+    CURRENT.store(px.clamp(SIZE_MIN, SIZE_MAX), Ordering::Relaxed);
+}
+
+pub fn size() -> u32 {
+    CURRENT.load(Ordering::Relaxed)
+}
+
+/// `px` one step bigger (`up`) or smaller, within the range.
+pub fn zoomed(px: u32, up: bool) -> u32 {
+    match up {
+        true => (px + SIZE_STEP).min(SIZE_MAX),
+        false => px.saturating_sub(SIZE_STEP).max(SIZE_MIN),
+    }
+}
+
 /// Cell width: the square and its padding.
-pub const CELL_W: f32 = SIZE as f32 + 16.0;
+pub fn cell_w() -> f32 {
+    size() as f32 + 16.0
+}
 /// Pictures made at once.
 pub const BUSY_MAX: usize = 4;
 /// A picture needing more to decode gets its type's icon (`BUSY_MAX` of them at once).
@@ -22,12 +46,21 @@ pub const CACHE_MAX: usize = 2000;
 
 /// Cell height: the square, the name line under it and padding.
 pub fn cell_h(row_h: f32) -> f32 {
-    SIZE as f32 + row_h + 8.0
+    cell_h_for(size(), row_h)
+}
+
+pub fn cell_h_for(px: u32, row_h: f32) -> f32 {
+    px as f32 + row_h + 8.0
 }
 
 /// The size asked of a desktop thumbnailer (the spec's "normal"), shrunk to ours after; its
 /// picture is read up to `EXTERNAL_MAX` bytes.
 const EXTERNAL_SIZE: u32 = 128;
+
+/// Asked of a thumbnailer: 128 (the spec's "normal"), more when the cells are bigger.
+fn external_size() -> u32 {
+    EXTERNAL_SIZE.max(size())
+}
 const EXTERNAL_MAX: u64 = 16 << 20;
 /// A desktop thumbnailer gets this long before it is killed (a video read over the network…).
 const EXTERNAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -49,7 +82,7 @@ pub fn wanted(name: &str, size: u64) -> bool {
     }
 }
 
-/// `path`'s picture shrunk into `SIZE`², proportions kept; `None` if unreadable.
+/// `path`'s picture shrunk into `size()`², proportions kept; `None` if unreadable.
 pub fn make(path: &Path) -> Option<Handle> {
     // Not a FIFO or a device named `*.png`: reading one would never end.
     let meta = std::fs::metadata(path).ok()?;
@@ -65,7 +98,7 @@ pub fn make(path: &Path) -> Option<Handle> {
         false => external(path, &name)?,
     };
     let px = crate::lister::decode(&bytes, MAX_ALLOC)?
-        .thumbnail(SIZE, SIZE)
+        .thumbnail(size(), size())
         .into_rgba8();
     let (w, h) = px.dimensions();
     Some(Handle::from_rgba(w, h, px.into_raw()))
@@ -85,7 +118,7 @@ fn external(path: &Path, name: &str) -> Option<Vec<u8>> {
             use std::os::unix::fs::DirBuilderExt;
             let dir = std::env::temp_dir().join(format!("shagoff-thumb.{pid}.{n}"));
             std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?;
-            let (args, out) = thumbnailer::sandboxed(&t.exec, path, &dir, EXTERNAL_SIZE);
+            let (args, out) = thumbnailer::sandboxed(&t.exec, path, &dir, external_size());
             (args, out, dir)
         } else {
             // GNOME's name in /tmp itself (not $TMPDIR): AppArmor lets evince-thumbnailer write only
@@ -94,7 +127,7 @@ fn external(path: &Path, name: &str) -> Option<Vec<u8>> {
                 "/tmp/.gnome_desktop_thumbnail.shagoff.{pid}.{n}.png"
             ));
             std::fs::File::create_new(&out).ok()?;
-            let args = thumbnailer::argv(&t.exec, path, &out, EXTERNAL_SIZE);
+            let args = thumbnailer::argv(&t.exec, path, &out, external_size());
             (args, out.clone(), out)
         };
     let ok = thumbnailer::run(&args, EXTERNAL_TIMEOUT);

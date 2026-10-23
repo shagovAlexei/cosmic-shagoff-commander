@@ -216,7 +216,7 @@ impl Tab {
 
     /// Thumbnails view: cells per row.
     pub fn thumb_cols(&self) -> usize {
-        viewport::brief_cols(self.width, crate::thumbs::CELL_W)
+        viewport::brief_cols(self.width, crate::thumbs::cell_w())
     }
 
     /// Where the tab is going: the dir being scanned, else the shown one. Rescans use this so they

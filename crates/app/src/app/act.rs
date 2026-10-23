@@ -66,6 +66,19 @@ impl App {
             Action::ToggleHumanSizes => {
                 return self.set(Setting::HumanSizes(!self.config.human_sizes()));
             }
+            Action::ThumbZoomIn | Action::ThumbZoomOut => {
+                let px =
+                    crate::thumbs::zoomed(self.config.thumb_size, action == Action::ThumbZoomIn);
+                return self.set(Setting::ThumbSize(px));
+            }
+            Action::ReloadThumbs => {
+                // The pictures of the marked files, or of the one under the cursor.
+                let p = &self.panes[side].active().panel;
+                for path in p.targets() {
+                    self.thumbs.remove(&path);
+                }
+                return Task::none();
+            }
             Action::ToggleDividerLine => {
                 return self.set(Setting::DividerLine(!self.config.divider_line));
             }
@@ -771,6 +784,9 @@ impl App {
             | Action::SwitchTypeColors
             | Action::ToggleDividerLine
             | Action::Vis(_)
+            | Action::ThumbZoomIn
+            | Action::ThumbZoomOut
+            | Action::ReloadThumbs
             | Action::Split50
             | Action::Wide
             | Action::ToggleHumanSizes

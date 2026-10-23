@@ -248,6 +248,11 @@ pub enum Action {
     ViewFull,
     /// Ctrl+Shift+F1: Thumbnails view of the active tab.
     ViewThumbs,
+    /// Thumbnails view: bigger / smaller pictures (TC `cm_ZoomIn` / `cm_ZoomOut`).
+    ThumbZoomIn,
+    ThumbZoomOut,
+    /// The marked files' pictures made again (TC `cm_ReloadSelThumbs`).
+    ReloadThumbs,
     /// Column widths back to the defaults (menu, double click on a header edge).
     ResetColumns,
     /// Shift+F4: create a file (if missing) and edit it.
