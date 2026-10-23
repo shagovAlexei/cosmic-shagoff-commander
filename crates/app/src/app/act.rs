@@ -79,6 +79,15 @@ impl App {
             Action::SwitchTypeColors => {
                 return self.set(Setting::TypeColors(!self.config.type_colors));
             }
+            Action::Vis(p) => return self.set(Setting::Show(p, !self.config.shows(p))),
+            Action::Split50 => {
+                (self.split, self.wide) = (0.5, false);
+                return Task::none();
+            }
+            Action::Wide => {
+                self.wide = !self.wide;
+                return Task::none();
+            }
             Action::ToggleActiveFrame => {
                 return self.set(Setting::ActiveFrame(!self.config.active_frame));
             }
@@ -761,6 +770,9 @@ impl App {
             | Action::SwitchDirSort
             | Action::SwitchTypeColors
             | Action::ToggleDividerLine
+            | Action::Vis(_)
+            | Action::Split50
+            | Action::Wide
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::ToggleTerminal
@@ -842,6 +854,7 @@ impl App {
                     Some(_) => {} // the full viewer is up: not from there
                     None => {
                         let mut l = Lister::new(side, String::new(), 0, self.config.lister_size());
+                        self.wide = false; // the viewer takes the other pane: both must be shown
                         // Nothing yet: `quick_follow` loads it.
                         l.quick = Some((PathBuf::new(), 0, std::time::UNIX_EPOCH));
                         self.lister = Some(Box::new(l));

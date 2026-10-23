@@ -373,6 +373,9 @@ type Item = menu::Item<MenuAct, String>;
 pub struct Checks {
     pub hidden: bool,
     pub divider_line: bool,
+    /// View → Window parts: shown or not, in `Part::ALL` order.
+    pub parts: [bool; crate::config::Part::ALL.len()],
+    pub wide: bool,
     pub human_sizes: bool,
     pub active_frame: bool,
     /// The classic look: only there is «Frame around the active panel» offered (the modern
@@ -623,6 +626,22 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 )
             }))
             .chain([
+                menu::Item::Folder(
+                    fl!("menu-window-parts"),
+                    (crate::config::Part::ALL.into_iter().zip(checks.parts))
+                        .filter(|(p, _)| checks.classic || *p != crate::config::Part::Toolbar)
+                        .map(|(p, on)| {
+                            menu::Item::CheckBox(p.label(), None, on, MenuAct::Key(Action::Vis(p)))
+                        })
+                        .collect(),
+                ),
+                b(fl!("menu-split-50"), Action::Split50),
+                menu::Item::CheckBox(
+                    fl!("menu-wide"),
+                    None,
+                    checks.wide,
+                    MenuAct::Key(Action::Wide),
+                ),
                 menu::Item::Divider,
                 b(fl!("menu-term-full"), Action::TermFull),
                 b(fl!("menu-quick-view"), Action::QuickView),
@@ -1086,6 +1105,9 @@ mod tests {
                             | Action::TabRename
                             | Action::ResetColumns
                             | Action::ToggleDividerLine
+                            | Action::Vis(_)
+                            | Action::Split50
+                            | Action::Wide
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar

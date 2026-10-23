@@ -374,6 +374,23 @@ impl App {
         Some(l.quick.is_some().then_some(1 - self.active))
     }
 
+    /// What decides which widget sits where: the viewer, the 100 % pane, the parts shown. When it
+    /// changes the lists are new widgets at the top, so the scroll is put back (`restore_scroll`).
+    pub(super) fn layout_key(
+        &self,
+    ) -> (
+        Option<Option<usize>>,
+        Option<usize>,
+        [bool; config::Part::ALL.len()],
+    ) {
+        let c = &self.config;
+        (
+            self.viewer_shown(),
+            self.wide.then_some(self.active),
+            config::Part::ALL.map(|p| c.shows(p)),
+        )
+    }
+
     /// A right press while the right button marks: held for `HOLD` it arms the menu.
     pub(super) fn right_press(&mut self, side: usize, row: Option<usize>) -> Task<Message> {
         const HOLD: std::time::Duration = std::time::Duration::from_millis(500);

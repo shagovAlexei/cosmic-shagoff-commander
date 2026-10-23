@@ -864,3 +864,16 @@ why-no-sums = В файле нет строк контрольных сумм
 err-not-permitted = Операция не разрешена (неизменяемый файл или не ваш)
 err-quota = Превышена дисковая квота
 err-cross-device = Между разными файловыми системами так нельзя
+
+# View → Window parts (TC cm_Vis*), panel width
+menu-window-parts = Части окна
+vis-toolbar = Панель инструментов
+vis-drives = Кнопки дисков
+vis-tabs = Вкладки папок
+vis-path = Текущий каталог
+vis-header = Заголовки колонок
+vis-status = Строка состояния
+vis-cmdline = Командная строка
+vis-fkeys = Кнопки F-клавиш
+menu-split-50 = Панели по 50 %
+menu-wide = Панель на 100 %

@@ -154,18 +154,25 @@ fn main_view(app: &App) -> Element<'_, Message> {
     .interaction(cosmic::iced::mouse::Interaction::ResizingHorizontally)
     .on_press(Message::SplitStart)
     .on_double_click(Message::SplitReset);
-    let panes = row![
-        container(side(0)).width(Length::FillPortion(left)),
-        divider,
-        container(side(1)).width(Length::FillPortion(right)),
-    ]
+    // View → «Panel at 100 %»: the active pane alone.
+    let panes = if app.wide {
+        row![container(side(app.active)).width(Length::Fill)]
+    } else {
+        row![
+            container(side(0)).width(Length::FillPortion(left)),
+            divider,
+            container(side(1)).width(Length::FillPortion(right)),
+        ]
+    }
     .height(Length::Fill);
     match app.config.skin {
-        Skin::Classic => column![
-            crate::toolbar::bar(&app.config.toolbar, app.tool_drag.grab),
-            panes
-        ]
-        .into(),
+        Skin::Classic => column![]
+            .push_maybe(
+                (app.config.show_toolbar)
+                    .then(|| crate::toolbar::bar(&app.config.toolbar, app.tool_drag.grab)),
+            )
+            .push(panes)
+            .into(),
         Skin::Modern => panes.padding([4.0, MODERN_PAD, 0.0, MODERN_PAD]).into(),
     }
 }
@@ -238,11 +245,14 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             .into(),
     };
     // A click on the line where no part of the path is (those take their own) edits it (TC).
-    let path: Element<'_, Message> = match editing {
-        Some(_) => path,
-        None => mouse_area(path)
-            .on_press(Message::PathEditStart(side))
-            .into(),
+    // Hidden (View → Window parts), it is still shown while edited.
+    let path: Option<Element<'_, Message>> = match editing {
+        Some(_) => Some(path),
+        None => (app.config.show_path || p.results.is_some()).then(|| {
+            mouse_area(path)
+                .on_press(Message::PathEditStart(side))
+                .into()
+        }),
     };
 
     let list = if let Some(pt) = &p.tree {
@@ -304,12 +314,12 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         .height(Length::Fill)
         .class(panel_style());
 
-    let drives = match app.config.skin {
+    let drives = (app.config.show_drives).then(|| match app.config.skin {
         Skin::Classic => drive_list(app, side),
         Skin::Modern => drive_bar(app, side),
-    };
-    let mut col = column![drives];
-    if tabs.items().len() > 1 {
+    });
+    let mut col = column![].push_maybe(drives);
+    if tabs.items().len() > 1 && app.config.show_tabs {
         col = col.push(tab_bar(
             side,
             tabs,
@@ -319,9 +329,9 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
         ));
     }
     let col = col
-        .push(path)
+        .push_maybe(path)
         // The tree (Ctrl+F8) has no columns.
-        .push_maybe(p.tree.is_none().then(|| {
+        .push_maybe((p.tree.is_none() && app.config.show_header).then(|| {
             container(header(
                 side,
                 p.panel.sort(),
@@ -1218,11 +1228,14 @@ pub fn footer(app: &App) -> Element<'_, Message> {
             .width(Length::FillPortion(if side == 0 { left } else { right }))
             .into()
     };
-    let mut col = column![].push_maybe(job_line(app)).push(
+    // «Panel at 100 %»: only the shown pane's half, the whole width.
+    let halves = if app.wide {
+        row![half(app.active)]
+    } else {
         row![half(0), half(1)]
-            .spacing(4)
-            .padding([2, 6])
-            .height(Length::Shrink),
+    };
+    let mut col = column![].push_maybe(job_line(app)).push_maybe(
+        (app.config.show_status).then(|| halves.spacing(4).padding([2, 6]).height(Length::Shrink)),
     );
     // The built-in terminal takes the command line's place (TC has none; Double Commander's).
     if app.config.term_builtin && !app.term_full {

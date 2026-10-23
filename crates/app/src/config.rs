@@ -115,6 +115,13 @@ pub struct Config {
     pub connections: Vec<String>,
     /// Command line under the panels (TC `path>`).
     pub show_cmdline: bool,
+    /// View → Window parts (TC `cm_Vis*`); the F-keys and the command line are the two above.
+    pub show_toolbar: bool,
+    pub show_drives: bool,
+    pub show_tabs: bool,
+    pub show_path: bool,
+    pub show_header: bool,
+    pub show_status: bool,
     /// Command line, "Other program…" and mask histories survive a restart (off: kept in memory only).
     pub keep_history: bool,
     /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
@@ -272,6 +279,12 @@ impl Default for Config {
             internal_viewer: true,
             connections: Vec::new(),
             show_cmdline: true,
+            show_toolbar: true,
+            show_drives: true,
+            show_tabs: true,
+            show_path: true,
+            show_header: true,
+            show_status: true,
             keep_history: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
             terminal_app: String::new(),
@@ -303,6 +316,74 @@ impl Default for Config {
     }
 }
 
+/// A part of the window View → Window parts shows or hides (TC `cm_Vis*`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Toolbar,
+    Drives,
+    Tabs,
+    Path,
+    Header,
+    Status,
+    Cmdline,
+    Fkeys,
+}
+
+impl Part {
+    pub const ALL: [Part; 8] = [
+        Part::Toolbar,
+        Part::Drives,
+        Part::Tabs,
+        Part::Path,
+        Part::Header,
+        Part::Status,
+        Part::Cmdline,
+        Part::Fkeys,
+    ];
+
+    pub fn label(self) -> String {
+        match self {
+            Part::Toolbar => crate::fl!("vis-toolbar"),
+            Part::Drives => crate::fl!("vis-drives"),
+            Part::Tabs => crate::fl!("vis-tabs"),
+            Part::Path => crate::fl!("vis-path"),
+            Part::Header => crate::fl!("vis-header"),
+            Part::Status => crate::fl!("vis-status"),
+            Part::Cmdline => crate::fl!("vis-cmdline"),
+            Part::Fkeys => crate::fl!("vis-fkeys"),
+        }
+    }
+}
+
+impl Config {
+    pub fn shows(&self, p: Part) -> bool {
+        let c = self;
+        match p {
+            Part::Toolbar => c.show_toolbar,
+            Part::Drives => c.show_drives,
+            Part::Tabs => c.show_tabs,
+            Part::Path => c.show_path,
+            Part::Header => c.show_header,
+            Part::Status => c.show_status,
+            Part::Cmdline => c.show_cmdline,
+            Part::Fkeys => c.show_fkeys,
+        }
+    }
+
+    pub fn shown(&mut self, p: Part) -> &mut bool {
+        match p {
+            Part::Toolbar => &mut self.show_toolbar,
+            Part::Drives => &mut self.show_drives,
+            Part::Tabs => &mut self.show_tabs,
+            Part::Path => &mut self.show_path,
+            Part::Header => &mut self.show_header,
+            Part::Status => &mut self.show_status,
+            Part::Cmdline => &mut self.show_cmdline,
+            Part::Fkeys => &mut self.show_fkeys,
+        }
+    }
+}
+
 /// `~/.local/state/cosmic/<APP_ID>/v1/<field>`.
 #[derive(Clone, Debug, Default, PartialEq, CosmicConfigEntry)]
 #[version = 1]
@@ -315,6 +396,8 @@ pub struct State {
     pub sync: SyncPrefs,
     /// The left pane's share of the width (the divider); 0 = never moved: half.
     pub split: f32,
+    /// View → «Panel at 100 %» (TC `cm_100Percent`): only the active panel, the whole width.
+    pub wide: bool,
     /// Command line history, last first.
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first.

@@ -5714,6 +5714,30 @@ mod drawer_tests {
     }
 
     #[test]
+    fn view_menu_hides_window_parts_and_widens_a_panel() {
+        let mut app = app_with(Config::default(), State::default());
+        assert!(config::Part::ALL.iter().all(|&p| app.config.shows(p)));
+        for p in config::Part::ALL {
+            let _ = app.update(Message::Key(Action::Vis(p)));
+        }
+        assert!(config::Part::ALL.iter().all(|&p| !app.config.shows(p)));
+        assert!(!app.config.show_fkeys && !app.config.show_cmdline && !app.config.show_path);
+        let _ = app.update(Message::Key(Action::Vis(config::Part::Path)));
+        assert!(app.config.show_path);
+        // 100 %: kept in the state; 50 %: both panes back, the divider in the middle.
+        app.split = 0.3;
+        let _ = app.update(Message::Key(Action::Wide));
+        assert!(app.wide && app.saved.wide);
+        let _ = app.update(Message::Key(Action::Wide));
+        assert!(!app.wide);
+        let _ = app.update(Message::Key(Action::Wide));
+        let _ = app.update(Message::Key(Action::Split50));
+        assert!(!app.wide && app.split == 0.5 && app.saved.split == 0.5);
+        let back = app_with(Config::default(), app.saved.clone());
+        assert!(!back.wide);
+    }
+
+    #[test]
     fn show_menu_switches_sizes_between_bytes_and_kb_mb_gb() {
         let mut app = app_with(Config::default(), State::default());
         // Not chosen: as the skin has them.
@@ -5738,7 +5762,7 @@ mod drawer_tests {
         let set = |app: &mut App, s| {
             let _ = app.update(Message::Setting(s));
         };
-        set(&mut app, Setting::ShowFkeys(false));
+        set(&mut app, Setting::Show(crate::config::Part::Fkeys, false));
         set(&mut app, Setting::ShowHidden(true));
         set(&mut app, Setting::LastTabHome(true));
         set(&mut app, Setting::PackFormat(1));
