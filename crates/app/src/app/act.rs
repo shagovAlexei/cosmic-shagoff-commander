@@ -17,15 +17,23 @@ impl App {
         match action {
             // The panel the files are in becomes the active one (TC), and F5 goes on from it.
             Action::TransferLeft | Action::TransferRight => {
-                let from = usize::from(action == Action::TransferLeft);
+                let (was, from) = (self.active, usize::from(action == Action::TransferLeft));
                 self.active = from;
-                return self.act(from, Action::Copy);
+                let task = self.act(from, Action::Copy);
+                // Refused (nothing to copy, an archive that cannot be written): stay where we were.
+                if self.dialog.is_none() {
+                    self.active = was;
+                }
+                return task;
             }
             Action::FocusLeft | Action::FocusRight => {
                 self.active = usize::from(action == Action::FocusRight);
-                return Task::none();
+                // The keys go to the panel, not to the command line or the terminal.
+                self.term_blur = self.term.is_some();
+                return unfocus();
             }
-            Action::FocusCmdLine => return self.cmd_focus(),
+            Action::FocusCmdLine if self.cmd_ready() => return self.cmd_focus(),
+            Action::FocusCmdLine => return Task::none(),
             _ => {}
         }
         if let Some(task) = self.tree_act(side, action) {

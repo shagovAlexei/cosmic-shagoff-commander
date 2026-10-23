@@ -193,25 +193,25 @@ pub fn builtins() -> &'static [Builtin] {
         b!(
             "cm_TransferLeft",
             TransferLeft,
-            "go-previous-symbolic",
+            "edit-copy-symbolic",
             "menu-copy-left"
         ),
         b!(
             "cm_TransferRight",
             TransferRight,
-            "go-next-symbolic",
+            "edit-copy-symbolic",
             "menu-copy-right"
         ),
         b!(
             "cm_FocusLeft",
             FocusLeft,
-            "go-first-symbolic",
+            "view-list-symbolic",
             "menu-focus-left"
         ),
         b!(
             "cm_FocusRight",
             FocusRight,
-            "go-last-symbolic",
+            "view-list-symbolic",
             "menu-focus-right"
         ),
         b!(

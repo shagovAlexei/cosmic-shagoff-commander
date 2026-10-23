@@ -5888,6 +5888,13 @@ mod drawer_tests {
         assert_eq!(app.active, 0);
         let _ = app.update(Message::Key(Action::FocusRight));
         assert_eq!(app.active, 1);
+        // «To the right» copies from the left one; nothing there: refused, the active pane kept.
+        let _ = app.update(Message::Key(Action::TransferRight));
+        assert_eq!(app.active, 1);
+        assert!(app.dialog.is_none());
+        app.active = 1;
+        // Not asked for while a dialog is up.
+        let _ = app.update(Message::Key(Action::FocusCmdLine));
     }
 
     #[test]
