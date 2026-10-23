@@ -889,3 +889,4 @@ menu-vertical = Панели одна над другой
 menu-panels = Панели
 menu-side-tree = Отдельное дерево
 menu-columns = Колонки
+settings-thumb-cache = Кэш эскизов на диске (~/.cache/thumbnails)

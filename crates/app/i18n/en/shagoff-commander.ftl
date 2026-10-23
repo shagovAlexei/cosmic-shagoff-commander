@@ -891,3 +891,4 @@ menu-vertical = Panels one above the other
 menu-panels = Panels
 menu-side-tree = Separate tree
 menu-columns = Columns
+settings-thumb-cache = Thumbnail cache on disk (~/.cache/thumbnails)

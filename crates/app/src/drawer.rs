@@ -94,6 +94,7 @@ pub enum Setting {
     DirsByName(bool),
     TypeColors(bool),
     ThumbSize(u32),
+    ThumbCache(bool),
     ColSet(Vec<String>),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
@@ -370,6 +371,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-type-colors"),
                 widget::toggler(c.type_colors).on_toggle(move |b| set(Setting::TypeColors(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-thumb-cache"),
+                widget::toggler(c.thumb_cache).on_toggle(move |b| set(Setting::ThumbCache(b))),
             ))
             .add(settings::item(
                 fl!("settings-last-tab"),

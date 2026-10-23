@@ -84,8 +84,8 @@ pub fn wanted(name: &str, size: u64) -> bool {
 }
 
 /// `path`'s picture shrunk into `size()`², proportions kept; `None` if unreadable.
-pub fn make(path: &Path) -> Option<Handle> {
-    make_in(path, thumbcache::base_dir().as_deref())
+pub fn make(path: &Path, cache: bool) -> Option<Handle> {
+    make_in(path, thumbcache::base_dir().filter(|_| cache).as_deref())
 }
 
 /// `make` with the shared cache (`thumbcache`) in `cache`: its picture of the file if it is the
