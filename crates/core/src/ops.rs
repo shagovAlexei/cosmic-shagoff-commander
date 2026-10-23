@@ -398,6 +398,7 @@ pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handle
         policy: None,
         approved: None,
         aside: None,
+        verify: VERIFY.load(std::sync::atomic::Ordering::Relaxed),
     };
     let mut report = Report::default();
     for ((src, dst), size) in pairs.iter().zip(sizes) {
@@ -446,6 +447,8 @@ struct Transfer<'a> {
     approved: Option<PathBuf>,
     /// «Rename old» answered for this target: moved aside only once the new one is ready.
     aside: Option<PathBuf>,
+    /// Copies are read back and compared: as set when the job started, so one job is all alike.
+    verify: bool,
 }
 
 impl Transfer<'_> {
@@ -752,6 +755,9 @@ impl Transfer<'_> {
     fn copy_contents(&mut self, src: &Path, mut w: File, meta: &Metadata) -> io::Result<bool> {
         let mut r = File::open(src)?;
         let mut buf = vec![0; 1 << 20];
+        let verify = self.verify;
+        let mut crc = crc32fast::Hasher::new();
+        let mut written = 0u64;
         loop {
             if self.h.cancelled() {
                 return Ok(false);
@@ -762,13 +768,53 @@ impl Transfer<'_> {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e),
             };
+            if verify {
+                crc.update(&buf[..n]);
+                written += n as u64;
+            }
             w.write_all(&buf[..n])?;
             self.done += n as u64;
             self.h.progress(self.done, self.total, src);
         }
+        if verify && !self.read_back(src, &mut w, written, crc.finalize())? {
+            return Ok(false);
+        }
         w.set_modified(meta.modified()?)?;
         w.set_permissions(meta.permissions())?;
         Ok(true)
+    }
+
+    /// The copy in `w` read again from the start (the disk, not the cache) and compared with the
+    /// `len` bytes and CRC of what was read from the source. `Ok(false)` = cancelled.
+    fn read_back(&mut self, src: &Path, w: &mut File, len: u64, crc: u32) -> io::Result<bool> {
+        use std::io::{Seek, SeekFrom};
+        w.sync_all()?;
+        // Not from the page cache: that would hold what was written, right or not.
+        let _ = rustix::fs::fadvise(&*w, 0, None, rustix::fs::Advice::DontNeed);
+        w.seek(SeekFrom::Start(0))?;
+        let mut sum = crc32fast::Hasher::new();
+        let mut buf = vec![0; 1 << 20];
+        let mut got = 0u64;
+        loop {
+            if self.h.cancelled() {
+                return Ok(false);
+            }
+            match w.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    sum.update(&buf[..n]);
+                    got += n as u64;
+                    // The bar stays where the writing ended, but the dialog is told it lives.
+                    self.h.progress(self.done, self.total, src);
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        match got == len && sum.finalize() == crc {
+            true => Ok(true),
+            false => Err(io::Error::other(crate::why::VERIFY_FAILED)),
+        }
     }
 
     fn decide(&mut self, src: &Path, sm: &Metadata, dst: &Path, dm: &Metadata) -> Decision {
@@ -861,6 +907,14 @@ fn info(path: &Path, m: &Metadata) -> FileInfo {
     }
 }
 
+/// Whether a copied file is read back and compared with what was read from its source
+/// (Settings «Verify copies»; set by the app).
+static VERIFY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_verify(on: bool) {
+    VERIFY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Hidden temp name next to `dst`: `.<name>.<pid>.<n>.shagoff-part`.
 fn part_name(dst: &Path, n: u32) -> PathBuf {
     let mut name = OsString::from(".");
@@ -874,7 +928,13 @@ pub(crate) fn create_part(dst: &Path) -> io::Result<(PathBuf, File)> {
     let mut n = 0;
     loop {
         let part = part_name(dst, n);
-        match File::options().write(true).create_new(true).open(&part) {
+        // Read too, only when verifying: the copy reads itself back.
+        match File::options()
+            .read(VERIFY.load(std::sync::atomic::Ordering::Relaxed))
+            .write(true)
+            .create_new(true)
+            .open(&part)
+        {
             Ok(f) => return Ok((part, f)),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
             Err(e) => return Err(e),
@@ -1064,6 +1124,25 @@ mod tests {
         );
         assert_eq!(r.completed, [a]);
         assert_eq!(read(&d.path().join("newdir/a")), "hello");
+    }
+
+    #[test]
+    fn a_verified_copy_is_read_back_and_succeeds() {
+        // The global switch: set only around this copy, and put back.
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("a"), d.path().join("b"));
+        fs::write(&a, vec![7u8; (3 << 20) + 5]).unwrap();
+        set_verify(true);
+        let r = transfer(
+            Method::Copy,
+            &[(a.clone(), b.clone())],
+            &mut Script::default(),
+        );
+        set_verify(false);
+        assert_eq!(r.completed, std::slice::from_ref(&a));
+        assert_eq!(fs::read(&b).unwrap(), fs::read(&a).unwrap());
+        // Nothing left of the part file.
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 2);
     }
 
     #[test]
