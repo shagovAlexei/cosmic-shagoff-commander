@@ -162,7 +162,7 @@ impl Panel {
                 })
             }
         };
-        let ignore = IGNORE.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let ignore = IGNORE.read().unwrap_or_else(|e| e.into_inner());
         let mut entries: Vec<Entry> = (self.all.iter())
             .filter(|e| shown(e))
             .filter(|e| {
@@ -217,10 +217,18 @@ impl Panel {
         self.sort = Sort { key, asc };
     }
 
-    /// Sorted and filtered again after a program-wide switch (dirs by name, the ignore list).
-    pub fn refresh(&mut self) {
+    /// Filtered again after a program-wide switch (the ignore list), sorted too with `resort`
+    /// (dirs by name).
+    // ponytail: sorted here on the UI thread, a big branch view takes a second; a background
+    // read as `Action::Sort` does past `SORT_HERE_MAX` if that matters.
+    pub fn refresh(&mut self, resort: bool) {
         let name = self.current().map(|e| e.name.clone());
-        self.resort(name);
+        if resort {
+            self.resort(name);
+        } else {
+            let old = self.cursor;
+            self.rebuild(name, old);
+        }
     }
 
     fn resort(&mut self, keep: Option<String>) {

@@ -190,6 +190,7 @@ impl App {
                     .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default(),
+                ignore: self.config.ignore_list.clone(),
                 fonts: drawer::font_families(),
                 font_filter: String::new(),
             })

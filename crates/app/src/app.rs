@@ -1270,7 +1270,10 @@ impl App {
         home: PathBuf,
     ) -> (Self, Task<Message>) {
         let home_fallback = home.clone();
-        config.set_core_switches();
+        // Off by default as core starts: so tests building their app leave another's alone.
+        if config.ignore_on || config.dirs_by_name {
+            config.set_core_switches();
+        }
         let cols = config.columns;
         let mut app = Self {
             core,

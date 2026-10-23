@@ -203,7 +203,10 @@ impl Config {
     pub fn set_core_switches(&self) {
         shagoff_core::sort::set_dirs_by_name(self.dirs_by_name);
         let list = self.ignore_list.trim();
-        let on = self.ignore_on && !list.is_empty();
+        // Only exclusions (`|*.tmp`), or `;` alone: `Mask` reads that as `*`, i.e. all hidden.
+        let names = list.split('|').next().unwrap_or("");
+        let names = names.trim_matches(|c: char| c == ';' || c == '"' || c.is_whitespace());
+        let on = self.ignore_on && !names.is_empty();
         shagoff_core::panel::set_ignore(on.then(|| shagoff_core::mask::Mask::parse(list)));
     }
 

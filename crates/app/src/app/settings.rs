@@ -34,8 +34,22 @@ impl App {
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::RightMarks(b) => c.right_marks = b,
             Setting::ListerWindow(b) => c.lister_window = b,
-            Setting::IgnoreOn(b) => c.ignore_on = b,
-            Setting::IgnoreList(s) => c.ignore_list = s,
+            Setting::IgnoreOn(b) => {
+                c.ignore_on = b;
+                if let Some(f) = form {
+                    c.ignore_list = f.ignore.clone();
+                }
+            }
+            Setting::IgnoreList(s) => {
+                if let Some(f) = form {
+                    f.ignore = s;
+                }
+            }
+            Setting::IgnoreApply => {
+                if let Some(f) = form {
+                    c.ignore_list = f.ignore.clone();
+                }
+            }
             Setting::WatchDirs(b) => c.watch_dirs = b,
             Setting::DirsByName(b) => c.dirs_by_name = b,
             Setting::TypeColors(b) => c.type_colors = b,
@@ -110,17 +124,25 @@ impl App {
             keymap::set_own(crate::hotkeys::resolve(&self.config.hotkeys));
         }
         self.scheme = self.config.scheme();
-        let switches = |c: &Config| (c.ignore_on, c.ignore_list.clone(), c.dirs_by_name);
-        if switches(&old) != switches(&self.config) {
+        let mut tasks = Vec::new();
+        let ignore = |c: &Config| (c.ignore_on, c.ignore_list.clone());
+        let resort = old.dirs_by_name != self.config.dirs_by_name;
+        if resort || ignore(&old) != ignore(&self.config) {
             self.config.set_core_switches();
             for pane in &mut self.panes {
                 for tab in pane.items_mut() {
-                    tab.panel.refresh();
+                    tab.panel.refresh(resort);
                 }
             }
         }
+        // Back on: what changed meanwhile is shown.
+        if !old.watch_dirs && self.config.watch_dirs {
+            for side in 0..2 {
+                let to = self.panes[side].active().target();
+                tasks.push(self.reload(side, to, None));
+            }
+        }
         self.cols = self.config.columns;
-        let mut tasks = Vec::new();
         if old.language != self.config.language {
             let system = i18n_embed::DesktopLanguageRequester::requested_languages();
             crate::i18n::init(&config::languages(&self.config.language, system));
