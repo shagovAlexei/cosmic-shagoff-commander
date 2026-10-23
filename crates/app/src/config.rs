@@ -155,6 +155,8 @@ pub struct Config {
     pub columns: [f32; 4],
     /// Which columns the full view shows after Name (`shagoff_core::columns`, by key).
     pub col_set: Vec<String>,
+    /// View → Columns: sets of columns to pick from, saved by name.
+    pub view_modes: Vec<ViewMode>,
     /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
     pub toolbar: Vec<ToolButton>,
     /// TC's Start menu: its items as buttons (`tip` the item's name; a separator is `toolbar::SEP`).
@@ -269,6 +271,34 @@ pub struct HotEntry {
     pub path: PathBuf,
 }
 
+/// A named set of columns of the full view (View → Columns → modes).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewMode {
+    pub name: String,
+    /// `shagoff_core::columns::Col::key`s.
+    pub cols: Vec<String>,
+}
+
+/// The modes a new install has: TC's default four, a short one, a long one, names only.
+pub fn default_view_modes() -> Vec<ViewMode> {
+    let m = |name: &str, cols: &[&str]| ViewMode {
+        name: name.into(),
+        cols: cols.iter().map(|c| c.to_string()).collect(),
+    };
+    vec![
+        m(
+            &crate::fl!("mode-standard"),
+            &["ext", "size", "date", "attr"],
+        ),
+        m(&crate::fl!("mode-short"), &["size", "date"]),
+        m(
+            "Detailed",
+            &["ext", "size", "date", "attr", "owner", "group"],
+        ),
+        m(&crate::fl!("mode-names-only"), &[]),
+    ]
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -307,6 +337,7 @@ impl Default for Config {
             f12: ToolButton::default(),
             columns: [60.0, 90.0, 130.0, 80.0],
             col_set: shagoff_core::columns::default_keys(),
+            view_modes: default_view_modes(),
             toolbar: crate::toolbar::default_bar(),
             start_menu: Vec::new(),
             hotkeys: Vec::new(),

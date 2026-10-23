@@ -96,6 +96,7 @@ pub enum Setting {
     ThumbSize(u32),
     ThumbCache(bool),
     ColSet(Vec<String>),
+    ViewModes(Vec<crate::config::ViewMode>),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),

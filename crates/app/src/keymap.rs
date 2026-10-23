@@ -189,6 +189,10 @@ pub enum Action {
     VerticalPanels,
     /// View → Columns: one column of the full view shown or hidden.
     ToggleCol(shagoff_core::columns::Col),
+    /// View → Columns: mode `i` of `config.view_modes` (TC `cm_*CustomView…`).
+    ViewMode(usize),
+    /// View → Columns: the columns shown now, saved as a mode with a name (TC `cm_ConfigViewModes`).
+    SaveViewMode,
     /// Ctrl+Shift+F8: the tree beside the panels (TC `cm_SeparateTreeSwitch`).
     SideTree,
     /// Menu only: about the program.

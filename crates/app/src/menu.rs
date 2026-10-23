@@ -396,6 +396,8 @@ pub struct Checks {
     pub side_tree: bool,
     /// View → Columns: shown or not, in `Col::ALL` order.
     pub cols: [bool; shagoff_core::columns::Col::ALL.len()],
+    /// The view modes' names, and whether the columns shown are that mode's.
+    pub modes: Vec<(String, bool)>,
     pub human_sizes: bool,
     pub active_frame: bool,
     /// The classic look: only there is «Frame around the active panel» offered (the modern
@@ -707,6 +709,19 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                                 MenuAct::Key(Action::ToggleCol(c)),
                             )
                         })
+                        .chain((!checks.modes.is_empty()).then_some(menu::Item::Divider))
+                        .chain(checks.modes.iter().enumerate().map(|(i, (name, on))| {
+                            menu::Item::CheckBox(
+                                name.clone(),
+                                None,
+                                *on,
+                                MenuAct::Key(Action::ViewMode(i)),
+                            )
+                        }))
+                        .chain([
+                            menu::Item::Divider,
+                            b(fl!("menu-save-view-mode"), Action::SaveViewMode),
+                        ])
                         .collect(),
                 ),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),
@@ -1168,6 +1183,8 @@ mod tests {
                             | Action::Wide
                             | Action::VerticalPanels
                             | Action::ToggleCol(_)
+                            | Action::ViewMode(_)
+                            | Action::SaveViewMode
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar
