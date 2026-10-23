@@ -348,11 +348,15 @@ impl App {
             Some((a, _)) => a.parent().map_or(cwd.clone(), Path::to_path_buf),
             None => cwd,
         };
-        let id = self.next_id();
-        let st = self.side_tree.as_mut().expect("checked above");
+        let st = self.side_tree.as_ref().expect("checked above");
         if st.synced.as_deref() == Some(here.as_path()) {
             return Task::none();
         }
+        let id = match st.id {
+            0 => self.next_id(), // its reads' id, kept so a toggle's reply is never dropped
+            id => id,
+        };
+        let st = self.side_tree.as_mut().expect("checked above");
         st.synced = Some(here.clone());
         if st.tree.rows.iter().any(|n| n.path == here) {
             st.tree.select(&here);

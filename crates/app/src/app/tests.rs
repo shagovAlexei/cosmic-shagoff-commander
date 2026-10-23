@@ -5776,11 +5776,9 @@ mod drawer_tests {
         let _ = app.update(Message::Key(Action::SideTree));
         assert!(app.side_tree.is_some() && app.saved.side_tree);
         // The tree shows the panel's dir after its read; a click on a row sends the panel there.
-        let id = app.side_tree.as_ref().unwrap().id;
         let root = std::path::Path::new("/");
         let tree = &mut app.side_tree.as_mut().unwrap().tree;
         tree.fill(root, vec![dir.path().file_name().unwrap().into()]);
-        let _ = id;
         let i = app.side_tree.as_ref().unwrap().tree.rows.len() - 1;
         let _ = app.update(Message::SideTreeRow(i));
         assert_eq!(

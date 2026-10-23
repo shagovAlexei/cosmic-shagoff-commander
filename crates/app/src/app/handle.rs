@@ -1200,11 +1200,11 @@ impl App {
                     st.tree.cursor = i.min(st.tree.rows.len().saturating_sub(1));
                     if let Some(n) = st.tree.current() {
                         let dir = n.path.clone();
-                        st.synced = Some(dir.clone());
                         // A locked tab there would open a tab at every click: it stays.
                         if self.panes[active].active().locked {
                             return Task::none();
                         }
+                        st.synced = Some(dir.clone());
                         return self.load(active, dir, None);
                     }
                 }
@@ -1263,7 +1263,11 @@ impl App {
                         st.tree.select(p);
                     }
                 }
-                return self.side_tree_scroll();
+                // Only a read that put the cursor somewhere moves the view (not a toggle's).
+                return match select {
+                    Some(_) => self.side_tree_scroll(),
+                    None => Task::none(),
+                };
             }
             Message::TreeFilled(from, read, select) => {
                 // A panel's tree (Ctrl+F8): filled, its cursor kept in view, the other panel

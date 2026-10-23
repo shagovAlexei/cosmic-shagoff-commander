@@ -157,7 +157,7 @@ pub fn builtins() -> &'static [Builtin] {
         b!(
             "cm_SeparateTreeSwitch",
             SideTree,
-            "view-list-tree-symbolic",
+            "view-list-symbolic",
             "menu-side-tree"
         ),
         b!(
