@@ -434,6 +434,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-move"), Action::Move),
                 b(fl!("menu-rename"), Action::Rename),
                 b(fl!("menu-properties"), Action::Properties),
+                b(fl!("menu-set-date"), Action::SetDate),
                 b(fl!("menu-count-dirs"), Action::CountDirs),
                 b(fl!("menu-occupied"), Action::Occupied),
                 b(fl!("menu-mkdir"), Action::Mkdir),
@@ -1184,6 +1185,7 @@ mod tests {
                             | Action::VerticalPanels
                             | Action::ToggleCol(_)
                             | Action::ViewMode(_)
+                            | Action::SetDate
                             | Action::SaveViewMode
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame

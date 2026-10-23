@@ -58,6 +58,19 @@ impl App {
                     dir_input(self.panes[1 - side].active().panel.cwd()),
                 ))
             }
+            Action::SetDate => {
+                let paths = panel.targets();
+                // The date offered is the one of the first file.
+                let first = paths.first()?;
+                let mtime = std::fs::symlink_metadata(first)
+                    .and_then(|m| m.modified())
+                    .ok()?;
+                Some(input(
+                    InputOp::SetDate,
+                    paths,
+                    format::date_edit(mtime, &self.tz),
+                ))
+            }
             Action::Properties => {
                 let paths = panel.targets();
                 if let Some((arc, _)) = archive::split_path(panel.cwd()) {
@@ -641,6 +654,39 @@ impl App {
                         Task::none()
                     }
                 }
+            }
+            Dialog::Input {
+                op: InputOp::SetDate,
+                sources,
+                input,
+                ..
+            } => {
+                let Some(to) = format::parse_date(&input, &self.tz) else {
+                    self.say(StatusKind::Error, fl!("set-date-bad"));
+                    return Task::none();
+                };
+                let failed = shagoff_core::props::set_mtime(&sources, to, false);
+                if let Some((p, e)) = failed.first() {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    let more = failed.len() - 1;
+                    let tail = if more > 0 {
+                        format!(" (+{more})")
+                    } else {
+                        String::new()
+                    };
+                    self.say(
+                        StatusKind::Error,
+                        format!("{name}: {}{tail}", crate::why::text(e)),
+                    );
+                }
+                // Both panes show the files' dates: read again.
+                let tasks: Vec<_> = (0..2)
+                    .map(|s| {
+                        let cwd = self.panes[s].active().target();
+                        self.reload(s, cwd, None)
+                    })
+                    .collect();
+                Task::batch(tasks)
             }
             Dialog::Input {
                 op: InputOp::ViewMode,
