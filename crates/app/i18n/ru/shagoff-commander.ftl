@@ -882,3 +882,4 @@ menu-wide = Панель на 100 %
 menu-thumb-zoom-in = Эскизы крупнее
 menu-thumb-zoom-out = Эскизы мельче
 menu-thumb-reload = Перечитать эскизы выделенных файлов
+menu-thumbs-sub = Эскизы

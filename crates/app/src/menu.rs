@@ -91,6 +91,21 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         ),
         (vec![Ctrl], K::Letter(Code::KeyA, "a"), a(Action::SelectAll)),
         (
+            vec![Ctrl, Shift],
+            K::Num(Code::NumpadAdd, "Num +"),
+            a(Action::ThumbZoomIn),
+        ),
+        (
+            vec![Ctrl, Shift],
+            K::Num(Code::NumpadSubtract, "Num −"),
+            a(Action::ThumbZoomOut),
+        ),
+        (
+            vec![Ctrl, Shift],
+            K::Letter(Code::KeyR, "r"),
+            a(Action::ReloadThumbs),
+        ),
+        (
             vec![Ctrl],
             K::Num(Code::NumpadSubtract, "Num −"),
             a(Action::UnselectAll),
@@ -649,10 +664,15 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-branch-sel"), Action::BranchSel),
                 b(fl!("menu-brief"), Action::ViewBrief),
                 b(fl!("menu-full"), Action::ViewFull),
-                b(fl!("menu-thumbs"), Action::ViewThumbs),
-                b(fl!("menu-thumb-zoom-in"), Action::ThumbZoomIn),
-                b(fl!("menu-thumb-zoom-out"), Action::ThumbZoomOut),
-                b(fl!("menu-thumb-reload"), Action::ReloadThumbs),
+                menu::Item::Folder(
+                    fl!("menu-thumbs-sub"),
+                    vec![
+                        b(fl!("menu-thumbs"), Action::ViewThumbs),
+                        b(fl!("menu-thumb-zoom-in"), Action::ThumbZoomIn),
+                        b(fl!("menu-thumb-zoom-out"), Action::ThumbZoomOut),
+                        b(fl!("menu-thumb-reload"), Action::ReloadThumbs),
+                    ],
+                ),
                 b(fl!("menu-tree-panel"), Action::TreePanel),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),
                 menu::Item::Divider,
@@ -1109,9 +1129,6 @@ mod tests {
                             | Action::ResetColumns
                             | Action::ToggleDividerLine
                             | Action::Vis(_)
-                            | Action::ThumbZoomIn
-                            | Action::ThumbZoomOut
-                            | Action::ReloadThumbs
                             | Action::Split50
                             | Action::Wide
                             | Action::ToggleHumanSizes

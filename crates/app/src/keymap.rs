@@ -497,6 +497,9 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyL), true, false) => Some(Action::Occupied),
         (Physical::Code(Code::NumpadAdd | Code::KeyA), true, false) => Some(Action::SelectAll),
         (Physical::Code(Code::NumpadSubtract), true, false) => Some(Action::UnselectAll),
+        (Physical::Code(Code::NumpadAdd), true, true) => Some(Action::ThumbZoomIn),
+        (Physical::Code(Code::NumpadSubtract), true, true) => Some(Action::ThumbZoomOut),
+        (Physical::Code(Code::KeyR), true, true) => Some(Action::ReloadThumbs),
         _ => None,
     }
 }
@@ -689,7 +692,10 @@ mod tests {
         assert_eq!(named(Named::Enter, CTRL.union(ALT)), None);
         assert_eq!(named(Named::PageDown, SHIFT), None);
         assert_eq!(named(Named::F3, CTRL.union(ALT)), None);
-        assert_eq!(chr("R", Code::KeyR, CTRL.union(SHIFT)), None);
+        assert_eq!(
+            chr("R", Code::KeyR, CTRL.union(SHIFT)),
+            Some(Action::ReloadThumbs)
+        );
     }
 
     #[test]
