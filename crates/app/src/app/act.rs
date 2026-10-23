@@ -14,6 +14,20 @@ impl App {
         {
             self.status = None;
         }
+        match action {
+            // The panel the files are in becomes the active one (TC), and F5 goes on from it.
+            Action::TransferLeft | Action::TransferRight => {
+                let from = usize::from(action == Action::TransferLeft);
+                self.active = from;
+                return self.act(from, Action::Copy);
+            }
+            Action::FocusLeft | Action::FocusRight => {
+                self.active = usize::from(action == Action::FocusRight);
+                return Task::none();
+            }
+            Action::FocusCmdLine => return self.cmd_focus(),
+            _ => {}
+        }
         if let Some(task) = self.tree_act(side, action) {
             return task;
         }
@@ -953,6 +967,11 @@ impl App {
             | Action::Link
             | Action::Properties
             | Action::SetDate
+            | Action::TransferLeft
+            | Action::TransferRight
+            | Action::FocusLeft
+            | Action::FocusRight
+            | Action::FocusCmdLine
             | Action::Move
             | Action::Rename
             | Action::MultiRename

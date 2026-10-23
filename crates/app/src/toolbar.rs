@@ -191,6 +191,36 @@ pub fn builtins() -> &'static [Builtin] {
             "menu-thumb-reload"
         ),
         b!(
+            "cm_TransferLeft",
+            TransferLeft,
+            "go-previous-symbolic",
+            "menu-copy-left"
+        ),
+        b!(
+            "cm_TransferRight",
+            TransferRight,
+            "go-next-symbolic",
+            "menu-copy-right"
+        ),
+        b!(
+            "cm_FocusLeft",
+            FocusLeft,
+            "go-first-symbolic",
+            "menu-focus-left"
+        ),
+        b!(
+            "cm_FocusRight",
+            FocusRight,
+            "go-last-symbolic",
+            "menu-focus-right"
+        ),
+        b!(
+            "cm_FocusCmdLine",
+            FocusCmdLine,
+            "utilities-terminal-symbolic",
+            "menu-focus-cmdline"
+        ),
+        b!(
             "cm_SwitchIgnoreList",
             SwitchIgnoreList,
             "view-conceal-symbolic",

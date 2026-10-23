@@ -194,6 +194,15 @@ pub enum Action {
     /// Files → «Change date and time…»: the modification time of the marked files or the one under
     /// the cursor (TC `cm_SetAttrib` with its date fields).
     SetDate,
+    /// Files → «Copy to the left / right panel» (TC `cm_TransferLeft` / `cm_TransferRight`): the
+    /// F5 dialog from the other panel to that one, whichever is active.
+    TransferLeft,
+    TransferRight,
+    /// Commands → focus: the left / right panel, the command line (TC `cm_FocusLeft`,
+    /// `cm_FocusRight`, `cm_FocusCmdLine`).
+    FocusLeft,
+    FocusRight,
+    FocusCmdLine,
     /// View → Columns: the columns shown now, saved as a mode with a name (TC `cm_ConfigViewModes`).
     SaveViewMode,
     /// Ctrl+Shift+F8: the tree beside the panels (TC `cm_SeparateTreeSwitch`).
