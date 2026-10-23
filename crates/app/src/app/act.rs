@@ -342,7 +342,8 @@ impl App {
             Action::ResetColumns => {
                 self.cols = Config::default().columns;
                 self.save_columns();
-                return Task::none();
+                // TC's default four, too.
+                return self.set(Setting::ColSet(shagoff_core::columns::default_keys()));
             }
             Action::ViewBrief | Action::ViewFull | Action::ViewThumbs => {
                 let t = self.panes[side].active_mut();
