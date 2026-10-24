@@ -49,6 +49,7 @@ assets = [
     { source = "../../res/io.github.shagovAlexei.cosmic-shagoff-commander.desktop", dest = "/usr/share/applications/io.github.shagovAlexei.cosmic-shagoff-commander.desktop", mode = "644" },
     { source = "../../res/io.github.shagovAlexei.cosmic-shagoff-commander.metainfo.xml", dest = "/usr/share/metainfo/io.github.shagovAlexei.cosmic-shagoff-commander.metainfo.xml", mode = "644" },
     { source = "../../res/icons/io.github.shagovAlexei.cosmic-shagoff-commander.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.shagovAlexei.cosmic-shagoff-commander.svg", mode = "644" },
+    { source = "../../res/apparmor/usr.bin.shagoff-commander", dest = "/usr/share/doc/shagoff-commander/apparmor/usr.bin.shagoff-commander", mode = "644", doc = true },
     { source = "target/man/shagoff-commander.1.gz", dest = "/usr/share/man/man1/shagoff-commander.1.gz", mode = "644", doc = true },
 ]
 

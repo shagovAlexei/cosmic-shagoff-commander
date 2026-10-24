@@ -29,6 +29,7 @@ install:
     install -Dm0644 res/{{appid}}.desktop {{dest}}/share/applications/{{appid}}.desktop
     install -Dm0644 res/{{appid}}.metainfo.xml {{dest}}/share/metainfo/{{appid}}.metainfo.xml
     install -Dm0644 res/icons/{{appid}}.svg {{dest}}/share/icons/hicolor/scalable/apps/{{appid}}.svg
+    install -Dm0644 res/apparmor/usr.bin.{{name}} {{dest}}/share/doc/{{name}}/apparmor/usr.bin.{{name}}
     install -d {{dest}}/share/man/man1
     gzip -9nc res/{{name}}.1 > {{dest}}/share/man/man1/{{name}}.1.gz
     chmod 0644 {{dest}}/share/man/man1/{{name}}.1.gz

@@ -121,6 +121,13 @@ git pull && sudo just install
 
 Then close the running Shagoff Commander and start it again.
 
+## AppArmor profile (optional)
+
+An opt-in profile ships in `/usr/share/doc/shagoff-commander/apparmor/`. It confines the program itself
+(no ptrace or capabilities, writes only to home, media, mounts and temp, none to the system); the programs it
+starts are left alone. It is in complain mode, so it only logs; see the header of the file for how to try it
+and `sudo aa-enforce /usr/bin/shagoff-commander` to enforce it.
+
 ## Build
 
 ```sh
