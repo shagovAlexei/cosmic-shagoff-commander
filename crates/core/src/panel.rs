@@ -743,9 +743,11 @@ pub fn drop_is_noop(sources: &[PathBuf], dir: &Path) -> bool {
 /// Without paths that lie inside another one of them (search results can hold a dir and its
 /// files: F6 / F8 / pack would act on those twice).
 pub fn outermost(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    // Each path's ancestors against a set of all of them: O(n · depth), not O(n²) (Ctrl+A on 100k).
+    let all: std::collections::HashSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
     paths
         .iter()
-        .filter(|p| !paths.iter().any(|q| q != *p && p.starts_with(q)))
+        .filter(|p| !p.ancestors().skip(1).any(|a| all.contains(a)))
         .cloned()
         .collect()
 }

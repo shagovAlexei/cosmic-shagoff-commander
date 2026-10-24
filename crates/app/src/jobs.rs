@@ -147,6 +147,22 @@ pub struct Control {
     pub pause: Arc<AtomicBool>,
 }
 
+/// A job thread that panics (a bug in a zip / 7z / tar library) still ends its event stream: the
+/// panels stay blocked while `App::job` is set, and only `Finished` clears it.
+struct Ends(Option<fmpsc::UnboundedSender<Event>>);
+
+impl Drop for Ends {
+    fn drop(&mut self) {
+        if let Some(tx) = self.0.take() {
+            let report = Report {
+                cancelled: true,
+                ..Report::default()
+            };
+            let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
+        }
+    }
+}
+
 /// Start `job` on its own thread. Returns its controls and the event stream (ends after `Finished`).
 pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
     let (tx, rx) = fmpsc::unbounded();
@@ -158,6 +174,7 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
         last: None,
     };
     std::thread::spawn(move || {
+        let mut ends = Ends(Some(tx.clone()));
         let report = match job {
             Job::Transfer { method, pairs } => ops::transfer(method, &pairs, &mut h),
             Job::Delete { paths, permanent } => ops::delete(&paths, permanent, &mut h),
@@ -273,6 +290,7 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
             // F6 into it deletes what went in (`Change::Add::move_sources`), not whole sources.
             Job::Repack { archive, change } => repack::modify(&archive, &change, &mut h),
         };
+        ends.0 = None;
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });
     (control, rx)

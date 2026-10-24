@@ -26,7 +26,7 @@ pub fn parse(line: &str, cwd: &Path, home: &Path) -> Option<Cmd> {
         _ => return Some(Cmd::Run(line.into())),
     };
     // `cd x && ls` and the like: the shell's business.
-    if arg.contains(|c| ";&|<>$`()".contains(c)) {
+    if !whole_quoted(arg) && arg.contains(|c| ";&|<>$`()".contains(c)) {
         return Some(Cmd::Run(line.into()));
     }
     Some(Cmd::Cd(resolve(arg, cwd, home)))
@@ -42,6 +42,15 @@ pub fn resolve(arg: &str, cwd: &Path, home: &Path) -> PathBuf {
         _ => cwd.join(arg),
     };
     fold(&path)
+}
+
+/// `"Movies (2020)"`: one quoted word, whose characters are all the name's own.
+fn whole_quoted(s: &str) -> bool {
+    ['"', '\''].into_iter().any(|q| {
+        s.strip_prefix(q)
+            .and_then(|r| r.strip_suffix(q))
+            .is_some_and(|inner| !inner.contains(q))
+    })
 }
 
 fn unquote(s: &str) -> &str {
@@ -351,6 +360,23 @@ mod tests {
         // Not `cd`: a program whose name starts with it.
         assert_eq!(cd("cdrecord x"), Some(Cmd::Run("cdrecord x".into())));
         assert_eq!(cd("cd x && ls"), Some(Cmd::Run("cd x && ls".into())));
+    }
+
+    #[test]
+    fn regression_cd_into_a_quoted_name_with_shell_characters() {
+        let (cwd, home) = (Path::new("/w"), Path::new("/h"));
+        let cd = |l: &str| parse(l, cwd, home);
+        assert_eq!(
+            cd("cd \"Movies (2020)\""),
+            Some(Cmd::Cd("/w/Movies (2020)".into()))
+        );
+        assert_eq!(
+            cd("cd 'Tom & Jerry'"),
+            Some(Cmd::Cd("/w/Tom & Jerry".into()))
+        );
+        // Two quoted words with an operator between are still the shell's.
+        assert!(matches!(cd("cd \"a\" && \"b\""), Some(Cmd::Run(_))));
+        assert!(matches!(cd("cd x && ls"), Some(Cmd::Run(_))));
     }
 
     #[test]

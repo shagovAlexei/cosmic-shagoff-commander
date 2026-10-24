@@ -158,6 +158,9 @@ fn list(dir: &Path, hidden: bool) -> Option<(BTreeMap<OsString, Info>, BTreeSet<
                 link: ft.is_symlink(),
             };
             map.insert(name, info);
+        } else {
+            // A fifo, socket or device is not nothing: a mirror must not delete its namesake.
+            unknown.insert(name);
         }
     }
     Some((map, unknown))

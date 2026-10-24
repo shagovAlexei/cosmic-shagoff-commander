@@ -20,7 +20,7 @@ pub(super) fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
 pub(super) fn changes_nested(job: &Job) -> bool {
     let tmp = archive::temp_root();
     match job {
-        Job::Repack { archive, .. } => archive.starts_with(&tmp),
+        Job::Repack { archive, .. } | Job::ExtractMove { archive, .. } => archive.starts_with(&tmp),
         Job::Cross {
             from,
             to,

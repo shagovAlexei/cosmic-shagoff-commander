@@ -126,7 +126,10 @@ pub fn follow(pane: &mut Pane, dir: &Path) {
             .is_ok_and(|stat| at_prompt(&stat, canonical(pid), &pane.shell))
     });
     if idle {
-        t.input_no_scroll(shagoff_core::shell::cd_line(dir).into_bytes());
+        // A name that cannot be typed safely: the terminal stays where it is.
+        if let Some(line) = shagoff_core::shell::cd_line(dir) {
+            t.input_no_scroll(line.into_bytes());
+        }
         drop(t);
         (pane.dir, pane.busy_at) = (Some(dir.to_path_buf()), None);
     } else {

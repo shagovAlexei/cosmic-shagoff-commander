@@ -976,6 +976,8 @@ impl App {
                 return Task::none();
             }
             Action::MatchSrc => return self.load(1 - side, target, None),
+            // A job, its queue and their dialogs hold pane indices: no swapping under them.
+            Action::SwapPanes if self.job.is_some() => {}
             Action::SwapPanes => {
                 self.panes.swap(0, 1);
                 self.space.swap(0, 1);

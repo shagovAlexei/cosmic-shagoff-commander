@@ -240,6 +240,8 @@ pub fn find(
             && q.archives
             && !q.attrs.is_some_and(|a| a.need_mode())
             && crate::archive::Format::detect(&name).is_some_and(|f| f.is_tree())
+            // Not a fifo named x.zip: opening it would block, deaf to `stop`.
+            && fs::metadata(&path).is_ok_and(|m| m.is_file())
         {
             q.in_archive(&path, stop, found);
         }

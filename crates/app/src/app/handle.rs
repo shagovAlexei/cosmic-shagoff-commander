@@ -2552,6 +2552,9 @@ impl App {
                 let Some(Dialog::Update { tag, stage }) = &mut self.dialog else {
                     return Task::none();
                 };
+                if matches!(stage, UpdateStage::Working) {
+                    return Task::none(); // a second press must not start a second install
+                }
                 *stage = UpdateStage::Working;
                 let tag = tag.clone();
                 if !shagoff_core::update::can_install() {
