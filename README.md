@@ -128,6 +128,10 @@ just build-release
 sudo just install   # or: just deb → target/deb/…deb, just rpm → target/generate-rpm/…rpm (cargo install cargo-generate-rpm)
 ```
 
+## Support the project
+
+Shagoff Commander is free and GPL-3.0. If it saves you time, you can support it: [donate](https://donate.stripe.com/6oU28s8Ff7cR1342J967S00) — an amount of your choice, about one lunch at McDonald's or a couple of cups of coffee. This is the only official donation link; the same one is behind the button in the update window and in About.
+
 ## License
 
 GPL-3.0-only. Some parts are adapted from [cosmic-files](https://github.com/pop-os/cosmic-files) (GPL-3.0-only).
