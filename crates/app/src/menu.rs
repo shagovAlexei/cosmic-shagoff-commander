@@ -574,14 +574,10 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         ),
                         b(fl!("menu-open-left"), Action::OpenLeft),
                         b(fl!("menu-open-right"), Action::OpenRight),
-                        menu::Item::Folder(
-                            fl!("menu-focus"),
-                            vec![
-                                b(fl!("menu-focus-left"), Action::FocusLeft),
-                                b(fl!("menu-focus-right"), Action::FocusRight),
-                                b(fl!("menu-focus-cmdline"), Action::FocusCmdLine),
-                            ],
-                        ),
+                        menu::Item::Divider,
+                        b(fl!("menu-focus-left"), Action::FocusLeft),
+                        b(fl!("menu-focus-right"), Action::FocusRight),
+                        b(fl!("menu-focus-cmdline"), Action::FocusCmdLine),
                     ],
                 ),
                 menu::Item::Divider,
@@ -699,50 +695,43 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         )
                     }))
                     .chain([
-                        menu::Item::Folder(
-                            fl!("menu-window-parts"),
-                            (crate::config::Part::ALL.into_iter().zip(checks.parts))
-                                .filter(|(p, _)| {
-                                    checks.classic || *p != crate::config::Part::Toolbar
-                                })
-                                .map(|(p, on)| {
-                                    menu::Item::CheckBox(
-                                        p.label(),
-                                        None,
-                                        on,
-                                        MenuAct::Key(Action::Vis(p)),
-                                    )
-                                })
-                                .collect(),
-                        ),
-                        menu::Item::Folder(
-                            fl!("menu-panels"),
-                            vec![
-                                menu::Item::CheckBox(
-                                    fl!("menu-side-tree"),
-                                    None,
-                                    checks.side_tree,
-                                    MenuAct::Key(Action::SideTree),
-                                ),
-                                b(fl!("menu-split-50"), Action::Split50),
-                                menu::Item::CheckBox(
-                                    fl!("menu-vertical"),
-                                    None,
-                                    checks.vertical,
-                                    MenuAct::Key(Action::VerticalPanels),
-                                ),
-                                menu::Item::CheckBox(
-                                    fl!("menu-wide"),
-                                    None,
-                                    checks.wide,
-                                    MenuAct::Key(Action::Wide),
-                                ),
-                            ],
-                        ),
                         b(fl!("menu-term-full"), Action::TermFull),
                         b(fl!("menu-tree-panel"), Action::TreePanel),
                     ])
                     .collect(),
+                ),
+                menu::Item::Folder(
+                    fl!("menu-window-parts"),
+                    (crate::config::Part::ALL.into_iter().zip(checks.parts))
+                        .filter(|(p, _)| checks.classic || *p != crate::config::Part::Toolbar)
+                        .map(|(p, on)| {
+                            menu::Item::CheckBox(p.label(), None, on, MenuAct::Key(Action::Vis(p)))
+                        })
+                        .collect(),
+                ),
+                menu::Item::Folder(
+                    fl!("menu-panels"),
+                    vec![
+                        menu::Item::CheckBox(
+                            fl!("menu-side-tree"),
+                            None,
+                            checks.side_tree,
+                            MenuAct::Key(Action::SideTree),
+                        ),
+                        b(fl!("menu-split-50"), Action::Split50),
+                        menu::Item::CheckBox(
+                            fl!("menu-vertical"),
+                            None,
+                            checks.vertical,
+                            MenuAct::Key(Action::VerticalPanels),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("menu-wide"),
+                            None,
+                            checks.wide,
+                            MenuAct::Key(Action::Wide),
+                        ),
+                    ],
                 ),
                 menu::Item::Divider,
                 b(fl!("menu-quick-view"), Action::QuickView),
@@ -1215,6 +1204,32 @@ mod tests {
             .filter(|a| *a != MenuAct::Open && !items.contains(a))
             .collect();
         assert!(missing.is_empty(), "no menu item: {missing:?}");
+    }
+
+    #[test]
+    fn no_submenu_inside_a_submenu() {
+        fn nested(path: &str, items: &[Item], depth: u8, out: &mut Vec<String>) {
+            for i in items {
+                if let menu::Item::Folder(l, sub) = i {
+                    let here = format!("{path} → {l}");
+                    if depth > 0 {
+                        out.push(here.clone());
+                    }
+                    nested(&here, sub, depth + 1, out);
+                }
+            }
+        }
+        for classic in [true, false] {
+            let checks = Checks {
+                classic,
+                ..Checks::default()
+            };
+            let mut found = Vec::new();
+            for (title, items) in menus(checks, Lock::default()) {
+                nested(&title, &items, 0, &mut found);
+            }
+            assert!(found.is_empty(), "a submenu in a submenu: {found:#?}");
+        }
     }
 
     #[test]
