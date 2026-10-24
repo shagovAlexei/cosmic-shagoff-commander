@@ -11,6 +11,9 @@ pub enum SortKey {
     Ext,
     Size,
     Date,
+    /// The Owner / Group column headers: by name, the number where unknown.
+    Owner,
+    Group,
     /// Ctrl+F7 (TC `cm_SrcUnsorted`): as the dir lists them; dirs still first.
     Unsorted,
 }
@@ -27,6 +30,15 @@ impl Default for Sort {
             key: SortKey::Name,
             asc: true,
         }
+    }
+}
+
+fn owner_name(e: &Entry, user: bool) -> String {
+    let o = crate::owners::shared();
+    match (e.owner, user) {
+        (Some((u, _)), true) => o.user(u),
+        (Some((_, g)), false) => o.group(g),
+        (None, _) => String::new(),
     }
 }
 
@@ -121,6 +133,8 @@ fn entry_cmp(
         SortKey::Ext => natural_cmp(&a.ext, &b.ext),
         SortKey::Size => size(a).cmp(&size(b)),
         SortKey::Date => a.mtime.cmp(&b.mtime),
+        SortKey::Owner => owner_name(a, true).cmp(&owner_name(b, true)),
+        SortKey::Group => owner_name(a, false).cmp(&owner_name(b, false)),
     }
     .then_with(|| natural_cmp(&a.name, &b.name))
     // lossy names can collide; the real name keeps the order total
@@ -155,6 +169,31 @@ mod tests {
 
     fn names(v: &[Entry]) -> Vec<&str> {
         v.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn sorts_by_owner_and_group_names() {
+        let mut v = vec![
+            e("a", Kind::File, 0, 0),
+            e("b", Kind::File, 0, 0),
+            e("c", Kind::File, 0, 0),
+        ];
+        v[0].owner = Some((0, 0));
+        v[1].owner = None;
+        v[2].owner = Some((0, 0));
+        let s = Sort {
+            key: SortKey::Owner,
+            asc: false,
+        };
+        sort_entries(&mut v, s, &HashMap::new());
+        // `root` before nobody-known: unowned (empty name) last when descending.
+        assert_eq!(names(&v), ["c", "a", "b"]);
+        let g = Sort {
+            key: SortKey::Group,
+            asc: true,
+        };
+        sort_entries(&mut v, g, &HashMap::new());
+        assert_eq!(names(&v), ["b", "a", "c"]);
     }
 
     #[test]
