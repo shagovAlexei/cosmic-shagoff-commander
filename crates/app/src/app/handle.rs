@@ -2532,10 +2532,7 @@ impl App {
             }
             Message::UpdateChecked(s) => self.update_check = Some(s),
             Message::StartupUpdate(s) => {
-                // A failed check is not worth a word at start (no network); the day is not spent.
-                if !matches!(s, shagoff_core::update::Status::Failed(_)) {
-                    self.update_checked = unix_now();
-                }
+                // A failed check is not worth a word at start (no network).
                 if let shagoff_core::update::Status::Available(tag) = s
                     && tag != self.update_skip
                     && self.dialog.is_none()

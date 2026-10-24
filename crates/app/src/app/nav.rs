@@ -90,7 +90,6 @@ impl App {
             wide: self.wide,
             vertical: self.vertical,
             side_tree: self.side_tree.is_some(),
-            update_checked: self.update_checked,
             update_skip: self.update_skip.clone(),
             commands: keep(&self.commands),
             masks: keep(&self.masks),
