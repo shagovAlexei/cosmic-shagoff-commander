@@ -98,7 +98,7 @@ Download the latest `.deb` and `SHA256SUMS` with `curl`, check the hash, install
 
 ```sh
 v=$(curl -sLI -o /dev/null -w '%{url_effective}' https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/latest | sed 's|.*/v||')
-cd "$(mktemp -d)" && B=https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/download/v$v
+cd ~/Downloads && B=https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/download/v$v
 curl -LO "$B/shagoff-commander_${v}_amd64.deb" -LO "$B/SHA256SUMS"
 sha256sum -c --ignore-missing SHA256SUMS && sudo apt install ./shagoff-commander_${v}_amd64.deb
 ```
