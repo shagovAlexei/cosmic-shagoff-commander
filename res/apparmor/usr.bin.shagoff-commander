@@ -1,0 +1,73 @@
+# AppArmor profile for Shagoff Commander (opt-in, ships in complain mode).
+#
+# A file manager has to reach the whole home folder, removable media and network mounts, and it
+# starts other programs (gio, terminals, the user's own commands), so this confines the
+# application itself, not what it launches: no ptrace, no capabilities, no writes outside the
+# places a file manager is meant to write, and no writes to the system. Children run unconfined (Ux).
+#
+# Try it:   sudo install -m0644 usr.bin.shagoff-commander /etc/apparmor.d/
+#           sudo apparmor_parser -r /etc/apparmor.d/usr.bin.shagoff-commander
+#           use the program for a while, then look at what it would have been denied:
+#           sudo aa-logprof        (or: journalctl -k | grep 'apparmor="ALLOWED"')
+# Enforce:  sudo aa-enforce /usr/bin/shagoff-commander      (back: sudo aa-complain …)
+# Own rules go to /etc/apparmor.d/local/usr.bin.shagoff-commander.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile shagoff-commander /usr/bin/shagoff-commander flags=(complain) {
+  include <abstractions/base>
+  include <abstractions/fonts>
+  include <abstractions/freedesktop.org>
+  include <abstractions/dbus-session>
+  include <abstractions/mesa>
+  include <abstractions/vulkan>
+  include <abstractions/nameservice>
+  include <abstractions/ssl_certs>
+  include <abstractions/wayland>
+  include <abstractions/X>
+
+  network,
+  # the GPU probe (wgpu), mounted volumes, the USB drive list
+  /dev/dri/** rw,
+  /sys/** r,
+  /run/udev/data/* r,
+  @{PROC}/** r,
+  # a pty for the built-in terminal
+  /dev/ptmx rw,
+  /dev/pts/* rw,
+
+  # read everything a file manager can be asked to show
+  / r,
+  /** r,
+
+  # write where files are managed: home, media, network mounts, temp
+  owner @{HOME}/** rwkl,
+  /media/** rwkl,
+  /mnt/** rwkl,
+  /run/media/** rwkl,
+  owner /run/user/*/** rwkl,
+  /tmp/** rwkl,
+  /var/tmp/** rwkl,
+
+  # the system is read-only for us
+  deny /etc/** wl,
+  deny /usr/** wl,
+  deny /boot/** wl,
+  deny /{,s}bin/** wl,
+  deny /lib*/** wl,
+
+  deny ptrace,
+  deny capability,
+  # thumbnailers run in bwrap, which makes a user namespace
+  userns,
+
+  # programs we start (gio, bwrap, terminals) are not ours to confine; scripts run from the home
+  # folder need a line of your own in the local file: owner @{HOME}/bin/** Ux,
+  /usr/{bin,sbin,libexec,lib}/** Ux,
+  /{bin,sbin}/** Ux,
+  /opt/** Ux,
+  /snap/** Ux,
+
+  include if exists <local/usr.bin.shagoff-commander>
+}
