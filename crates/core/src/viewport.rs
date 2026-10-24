@@ -50,6 +50,15 @@ pub fn split_ratio(left: f32, total: f32, x: f32) -> f32 {
     ((x - left) / total).clamp(0.15, 0.85)
 }
 
+/// The share after the divider of stacked panes was dragged `dy` px from where it was at `start`
+/// (`total`: the height the two panes share), kept within 15 %…85 %.
+pub fn split_ratio_by(start: f32, dy: f32, total: f32) -> f32 {
+    if total <= 0.0 {
+        return 0.5;
+    }
+    (split_or_half(start) + dy / total).clamp(0.15, 0.85)
+}
+
 /// The narrowest Name column: past it the fixed columns on the right are left out, last first.
 pub const NAME_MIN: f32 = 100.0;
 
@@ -163,6 +172,15 @@ mod tests {
             (split_or_half(0.0), split_or_half(0.3), split_or_half(0.9)),
             (0.5, 0.3, 0.5)
         );
+    }
+
+    #[test]
+    fn a_dragged_stacked_divider_moves_by_its_share_of_the_height() {
+        assert_eq!(split_ratio_by(0.5, 100.0, 1000.0), 0.6);
+        assert_eq!(split_ratio_by(0.0, -100.0, 1000.0), 0.4); // never set: half
+        assert_eq!(split_ratio_by(0.5, 9000.0, 1000.0), 0.85);
+        assert_eq!(split_ratio_by(0.5, -9000.0, 1000.0), 0.15);
+        assert_eq!(split_ratio_by(0.3, 10.0, 0.0), 0.5);
     }
 
     #[test]

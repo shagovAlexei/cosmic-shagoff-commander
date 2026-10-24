@@ -166,12 +166,38 @@ fn main_view(app: &App) -> Element<'_, Message> {
         ]
     }
     .height(Length::Fill);
-    // View → «Panels one above the other»: the same, stacked, half and half (no divider to drag).
+    // View → «Panels one above the other»: the same, stacked; the divider is dragged by its height.
     let panes: Element<'_, Message> = if app.vertical && !app.wide {
+        let rule: Element<'_, Message> = if app.config.divider_line {
+            container(
+                widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0)),
+            )
+            .class(theme::Container::custom(|t| container::Style {
+                background: Some(
+                    Color::from(t.cosmic().on_bg_color())
+                        .scale_alpha(0.4)
+                        .into(),
+                ),
+                ..Default::default()
+            }))
+            .into()
+        } else {
+            widget::Space::new().into()
+        };
+        let bar = widget::mouse_area(
+            container(rule)
+                .center_y(Length::Fixed(gap))
+                .width(Length::Fill),
+        )
+        .interaction(cosmic::iced::mouse::Interaction::ResizingVertically)
+        .on_press(Message::SplitStart)
+        .on_double_click(Message::SplitReset);
         column![
-            container(side(0)).height(Length::FillPortion(1)),
-            widget::Space::new().height(Length::Fixed(gap)),
-            container(side(1)).height(Length::FillPortion(1)),
+            container(side(0)).height(Length::FillPortion(left)),
+            bar,
+            container(side(1)).height(Length::FillPortion(right)),
         ]
         .height(Length::Fill)
         .into()
