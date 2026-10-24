@@ -57,7 +57,10 @@ jobs:
 
       # Check a download: `sha256sum -c SHA256SUMS`, or `gh attestation verify FILE --repo shagovAlexei/cosmic-shagoff-commander`.
       - name: Checksums
-        run: (cd target && sha256sum deb/*.deb generate-rpm/*.rpm | sed 's# [a-z-]*/# #') > SHA256SUMS
+        run: |
+          (cd target/deb && sha256sum *.deb) > SHA256SUMS
+          (cd target/generate-rpm && sha256sum *.rpm) >> SHA256SUMS
+          cat SHA256SUMS
 
       - name: Attest build provenance
         if: startsWith(github.ref, 'refs/tags/')
