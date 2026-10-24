@@ -891,6 +891,7 @@ menu-side-tree = Отдельное дерево
 menu-columns = Колонки
 settings-thumb-cache = Кэш эскизов на диске (~/.cache/thumbnails)
 menu-save-view-mode = Сохранить колонки как режим вида…
+menu-delete-view-mode = Удалить режим вида
 mode-standard = Обычный
 mode-short = Короткий
 mode-detailed = Подробный

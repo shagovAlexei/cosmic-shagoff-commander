@@ -213,6 +213,8 @@ pub enum Action {
     FocusCmdLine,
     /// View → Columns: the columns shown now, saved as a mode with a name (TC `cm_ConfigViewModes`).
     SaveViewMode,
+    /// View → Columns → Delete view mode: the saved mode at this index.
+    DeleteViewMode(usize),
     /// Ctrl+Shift+F8: the tree beside the panels (TC `cm_SeparateTreeSwitch`).
     SideTree,
     /// Menu only: about the program.

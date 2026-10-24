@@ -893,6 +893,7 @@ menu-side-tree = Separate tree
 menu-columns = Columns
 settings-thumb-cache = Thumbnail cache on disk (~/.cache/thumbnails)
 menu-save-view-mode = Save columns as a view mode…
+menu-delete-view-mode = Delete view mode
 mode-standard = Standard
 mode-short = Short
 mode-detailed = Detailed

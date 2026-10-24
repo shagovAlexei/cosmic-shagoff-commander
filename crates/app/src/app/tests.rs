@@ -5807,6 +5807,16 @@ mod drawer_tests {
     }
 
     #[test]
+    fn a_saved_view_mode_is_deleted_from_the_menu() {
+        let mut app = app_with(Config::default(), State::default());
+        let n = app.config.view_modes.len();
+        let _ = app.update(Message::Key(Action::DeleteViewMode(0)));
+        assert_eq!(app.config.view_modes.len(), n - 1);
+        let _ = app.update(Message::Key(Action::DeleteViewMode(n)));
+        assert_eq!(app.config.view_modes.len(), n - 1);
+    }
+
+    #[test]
     fn view_modes_apply_their_columns_and_a_saved_one_joins_the_list() {
         let mut app = app_with(Config::default(), State::default());
         let n = app.config.view_modes.len();

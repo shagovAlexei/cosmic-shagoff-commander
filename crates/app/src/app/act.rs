@@ -147,6 +147,14 @@ impl App {
                 }
                 return Task::none();
             }
+            Action::DeleteViewMode(i) => {
+                let mut modes = self.config.view_modes.clone();
+                if i < modes.len() {
+                    modes.remove(i);
+                    return self.set(Setting::ViewModes(modes));
+                }
+                return Task::none();
+            }
             Action::SideTree => {
                 self.side_tree = match self.side_tree {
                     Some(_) => None,
@@ -868,6 +876,7 @@ impl App {
             | Action::ToggleCol(_)
             | Action::ViewMode(_)
             | Action::SaveViewMode
+            | Action::DeleteViewMode(_)
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::ToggleTerminal
