@@ -1,0 +1,21 @@
+# `cargo deny check advisories sources`: known vulnerabilities, and crates only from crates.io and
+# the pop-os / iced git repositories libcosmic needs.
+[advisories]
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/iced-rs/cryoglyph",
+    "https://github.com/jackpot51/rust-atomicwrites",
+    "https://github.com/pop-os/cosmic-protocols",
+    "https://github.com/pop-os/dbus-settings-bindings",
+    "https://github.com/pop-os/freedesktop-icons",
+    "https://github.com/pop-os/libcosmic",
+    "https://github.com/pop-os/smithay-clipboard",
+    "https://github.com/pop-os/softbuffer",
+    "https://github.com/pop-os/window_clipboard",
+    "https://github.com/pop-os/winit",
+    "https://github.com/wash2/accesskit",
+]
