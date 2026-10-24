@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   deb:
@@ -17,7 +19,7 @@ jobs:
     # newer (Ubuntu 24.04, Pop!_OS 24.04, Mint 21 / 22, Debian 12…). Built on 24.04 it needed 2.39.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install system dependencies
         run: |
@@ -27,10 +29,10 @@ jobs:
             libgbm-dev libegl1-mesa-dev libssl-dev pkg-config \
             dpkg-dev
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # `just` is not packaged in 22.04.
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: just,cargo-generate-rpm
 
@@ -53,13 +55,28 @@ jobs:
           test "$(printf '%s\nGLIBC_2.35\n' "$need" | sort -V | tail -1)" = GLIBC_2.35
           dpkg-deb -f target/deb/*.deb Depends
 
+      # Check a download: `sha256sum -c SHA256SUMS`, or `gh attestation verify FILE --repo shagovAlexei/cosmic-shagoff-commander`.
+      - name: Checksums
+        run: |
+          (cd target/deb && sha256sum *.deb) > SHA256SUMS
+          (cd target/generate-rpm && sha256sum *.rpm) >> SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            target/deb/*.deb
+            target/generate-rpm/*.rpm
+
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" target/deb/*.deb target/generate-rpm/*.rpm --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" target/deb/*.deb target/generate-rpm/*.rpm SHA256SUMS --generate-notes
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: github.event_name == 'pull_request'
         with:
           name: packages

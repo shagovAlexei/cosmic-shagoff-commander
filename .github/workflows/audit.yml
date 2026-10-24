@@ -1,0 +1,25 @@
+name: audit
+
+# Known vulnerabilities and unexpected sources in the dependency tree: when the lock file changes,
+# and weekly (an advisory appears without any change of ours).
+on:
+  push:
+    branches: [main]
+    paths: ['Cargo.lock', 'deny.toml']
+  pull_request:
+    paths: ['Cargo.lock', 'deny.toml', '.github/workflows/audit.yml']
+  schedule:
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check advisories sources

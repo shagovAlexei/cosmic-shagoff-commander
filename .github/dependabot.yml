@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    # libcosmic is bumped by hand in its own PR (CLAUDE.md); patch / minor updates one at a time.
+    ignore:
+      - dependency-name: libcosmic
+    open-pull-requests-limit: 3
