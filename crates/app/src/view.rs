@@ -1013,8 +1013,10 @@ fn header(
             Col::Ext => cell(col_label(c), SortKey::Ext, width, start).into(),
             Col::Size => cell(col_label(c), SortKey::Size, width, Alignment::End).into(),
             Col::Date => cell(col_label(c), SortKey::Date, width, start).into(),
+            Col::Owner => cell(col_label(c), SortKey::Owner, width, start).into(),
+            Col::Group => cell(col_label(c), SortKey::Group, width, start).into(),
             // Not sorted by.
-            Col::Attr | Col::Owner | Col::Group => self::cell(col_label(c)).width(width).into(),
+            Col::Attr => self::cell(col_label(c)).width(width).into(),
         });
     }
     // A narrow pane: the columns on the right that don't fit are left out, as in the rows.

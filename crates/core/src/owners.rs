@@ -20,6 +20,12 @@ pub fn parse(text: &str) -> HashMap<u32, String> {
         .collect()
 }
 
+/// The names read once for the whole program (sorting has no `App` to ask).
+pub fn shared() -> &'static Owners {
+    static O: std::sync::OnceLock<Owners> = std::sync::OnceLock::new();
+    O.get_or_init(Owners::load)
+}
+
 impl Owners {
     /// Read once at start. ponytail: local files only; LDAP/NIS users show as numbers.
     pub fn load() -> Self {
