@@ -737,6 +737,16 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                             menu::Item::Divider,
                             b(fl!("menu-save-view-mode"), Action::SaveViewMode),
                         ])
+                        .chain((!checks.modes.is_empty()).then(|| {
+                            menu::Item::Folder(
+                                fl!("menu-delete-view-mode"),
+                                (checks.modes.iter().enumerate())
+                                    .map(|(i, (name, _))| {
+                                        b(name.clone(), Action::DeleteViewMode(i))
+                                    })
+                                    .collect(),
+                            )
+                        }))
                         .collect(),
                 ),
                 b(fl!("menu-reset-columns"), Action::ResetColumns),
@@ -1208,6 +1218,7 @@ mod tests {
                             | Action::FocusRight
                             | Action::FocusCmdLine
                             | Action::SaveViewMode
+                            | Action::DeleteViewMode(_)
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar
