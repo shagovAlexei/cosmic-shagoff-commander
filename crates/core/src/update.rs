@@ -67,15 +67,6 @@ pub fn check(current: &str) -> Status {
     status(current, &String::from_utf8_lossy(&out.stdout))
 }
 
-/// The check at start runs at most once a day.
-const DAY: u64 = 86_400;
-
-/// A check is due: `last` (unix seconds, 0 = never) is a day or more before `now`; a clock set
-/// back counts as due too.
-pub fn due(last: u64, now: u64) -> bool {
-    now < last || now - last >= DAY
-}
-
 /// The `.deb` a release carries, by its tag.
 pub fn deb_name(tag: &str) -> String {
     format!(
@@ -174,14 +165,6 @@ mod tests {
         assert!(!newer("0.17.1", "v0.17.0"));
         assert!(!newer("0.17.0", "nightly"));
         assert!(!newer("0.18.0", "v0.18.0.0"));
-    }
-
-    #[test]
-    fn due_once_a_day() {
-        assert!(due(0, 1_000_000));
-        assert!(!due(1_000_000, 1_000_000 + 86_399));
-        assert!(due(1_000_000, 1_000_000 + 86_400));
-        assert!(due(2_000_000, 1_000_000)); // the clock went back
     }
 
     #[test]

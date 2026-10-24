@@ -395,8 +395,7 @@ pub struct App {
     pub(crate) about: [cosmic::widget::about::About; 2],
     /// About → «Check for updates»: `None` not asked since About opened.
     pub(crate) update_check: Option<shagoff_core::update::Status>,
-    /// The last check at start (unix seconds), and the version the user skipped (both kept in `State`).
-    pub(crate) update_checked: u64,
+    /// The version the user skipped in the update dialog (kept in `State`).
     pub(crate) update_skip: String,
     pub(crate) job: Option<Running>,
     /// TC's background queue: started one after another once `job` ends.
@@ -1025,10 +1024,8 @@ impl Application for App {
         }
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
         let volumes = app.refresh_volumes(true);
-        // Once a day, in the background: a newer release opens the update dialog.
-        let update = (app.config.check_updates
-            && shagoff_core::update::due(app.update_checked, unix_now()))
-        .then(|| {
+        // At every start, in the background: a newer release opens the update dialog.
+        let update = app.config.check_updates.then(|| {
             Task::perform(
                 async {
                     tokio::task::spawn_blocking(|| {
@@ -1362,7 +1359,6 @@ impl App {
             drawer: None,
             about: drawer::about(),
             update_check: None,
-            update_checked: state.update_checked,
             update_skip: state.update_skip.clone(),
             job: None,
             queue: VecDeque::new(),

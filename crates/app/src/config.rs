@@ -450,8 +450,7 @@ pub struct State {
     pub vertical: bool,
     /// Ctrl+Shift+F8: the tree beside the panels.
     pub side_tree: bool,
-    /// The last check for a newer release (unix seconds; 0 = never), and the version «Skip» put aside.
-    pub update_checked: u64,
+    /// The version «Skip» in the update dialog put aside.
     pub update_skip: String,
     /// Command line history, last first.
     pub commands: Vec<String>,
