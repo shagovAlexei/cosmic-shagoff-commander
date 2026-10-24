@@ -123,9 +123,9 @@ pub fn about() -> [About; 2] {
         .name(fl!("app-title"))
         .icon(widget::icon::from_name(APP_ID))
         .version(env!("CARGO_PKG_VERSION"))
-        .author("Shagov Alexei");
+        .author("Shagov Alexei")
+        .comments(fl!("about-comments"));
     let rest = About::default()
-        .comments(fl!("about-comments"))
         .license("GPL-3.0-only")
         .license_url("https://www.gnu.org/licenses/gpl-3.0.html")
         .links([

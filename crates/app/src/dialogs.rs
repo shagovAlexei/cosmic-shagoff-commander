@@ -2499,12 +2499,6 @@ pub fn view<'a>(
             };
             match stage {
                 UpdateStage::Ask => dlg
-                    .control(
-                        widget::column::with_capacity(2)
-                            .spacing(4)
-                            .push(widget::text::title3("Shagoff Commander"))
-                            .push(widget::text::body(fl!("about-comments"))),
-                    )
                     .control(body(fl!("update-available", tag = tag.as_str())))
                     .primary_action(
                         widget::button::suggested(fl!("update-now")).on_press(Message::UpdateNow),
