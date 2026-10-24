@@ -2561,9 +2561,17 @@ impl App {
                 return Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
+                            // Ours alone and new: a dir someone else made in /tmp first would let them
+                            // swap the .deb between the hash check and the root install.
                             let dir = std::env::temp_dir()
                                 .join(format!("shagoff-update.{}", std::process::id()));
-                            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                            {
+                                use std::os::unix::fs::DirBuilderExt;
+                                std::fs::DirBuilder::new()
+                                    .mode(0o700)
+                                    .create(&dir)
+                                    .map_err(|e| e.to_string())?;
+                            }
                             let r = shagoff_core::update::download(&tag, &dir)
                                 .and_then(|deb| shagoff_core::update::install(&deb));
                             let _ = std::fs::remove_dir_all(&dir);
