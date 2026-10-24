@@ -2531,6 +2531,61 @@ impl App {
                 );
             }
             Message::UpdateChecked(s) => self.update_check = Some(s),
+            Message::StartupUpdate(s) => {
+                // A failed check is not worth a word at start (no network); the day is not spent.
+                if !matches!(s, shagoff_core::update::Status::Failed(_)) {
+                    self.update_checked = unix_now();
+                }
+                if let shagoff_core::update::Status::Available(tag) = s
+                    && tag != self.update_skip
+                    && self.dialog.is_none()
+                {
+                    self.dialog = Some(Dialog::Update {
+                        tag,
+                        stage: UpdateStage::Ask,
+                    });
+                }
+            }
+            Message::UpdateSkip => {
+                if let Some(Dialog::Update { tag, .. }) = self.dialog.take() {
+                    self.update_skip = tag;
+                }
+            }
+            Message::UpdateNow => {
+                let Some(Dialog::Update { tag, stage }) = &mut self.dialog else {
+                    return Task::none();
+                };
+                *stage = UpdateStage::Working;
+                let tag = tag.clone();
+                if !shagoff_core::update::can_install() {
+                    *stage = UpdateStage::Failed(fl!("update-manual"));
+                    return Task::none();
+                }
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let dir = std::env::temp_dir()
+                                .join(format!("shagoff-update.{}", std::process::id()));
+                            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                            let r = shagoff_core::update::download(&tag, &dir)
+                                .and_then(|deb| shagoff_core::update::install(&deb));
+                            let _ = std::fs::remove_dir_all(&dir);
+                            r
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    |r| cosmic::Action::App(Message::UpdateDone(r)),
+                );
+            }
+            Message::UpdateDone(r) => {
+                if let Some(Dialog::Update { stage, .. }) = &mut self.dialog {
+                    *stage = match r {
+                        Ok(()) => UpdateStage::Done,
+                        Err(e) => UpdateStage::Failed(e),
+                    };
+                }
+            }
             Message::OpenUrl(url) => {
                 if let Err(e) = spawn_detached(&["xdg-open".into(), url.into()]) {
                     log::warn!("xdg-open: {e}");

@@ -975,7 +975,10 @@ impl App {
                 }
             }
             // Answered with their own buttons, not Enter/OK.
-            d @ (Dialog::Conflict { .. } | Dialog::Error { .. } | Dialog::DropMenu { .. }) => {
+            d @ (Dialog::Conflict { .. }
+            | Dialog::Error { .. }
+            | Dialog::DropMenu { .. }
+            | Dialog::Update { .. }) => {
                 self.dialog = Some(d);
                 Task::none()
             }

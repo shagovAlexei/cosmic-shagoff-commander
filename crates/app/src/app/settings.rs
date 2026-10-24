@@ -29,6 +29,7 @@ impl App {
             Setting::HumanSizes(b) => c.human_sizes = Some(b),
             Setting::ActiveFrame(b) => c.active_frame = b,
             Setting::KeepHistory(b) => c.keep_history = b,
+            Setting::CheckUpdates(b) => c.check_updates = b,
             Setting::InternalViewer(b) => c.internal_viewer = b,
             Setting::ShowHidden(b) => c.show_hidden = b,
             Setting::RightMarks(b) => c.right_marks = b,

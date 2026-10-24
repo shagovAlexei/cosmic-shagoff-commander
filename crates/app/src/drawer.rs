@@ -84,6 +84,7 @@ pub enum Setting {
     HumanSizes(bool),
     ActiveFrame(bool),
     KeepHistory(bool),
+    CheckUpdates(bool),
     InternalViewer(bool),
     ShowHidden(bool),
     IgnoreOn(bool),
@@ -345,6 +346,10 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-keep-history"),
                 widget::toggler(c.keep_history).on_toggle(move |b| set(Setting::KeepHistory(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-check-updates"),
+                widget::toggler(c.check_updates).on_toggle(move |b| set(Setting::CheckUpdates(b))),
             ))
             .into(),
         settings::section()

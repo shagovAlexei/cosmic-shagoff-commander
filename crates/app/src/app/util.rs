@@ -711,3 +711,10 @@ pub(super) fn font_named(name: &str) -> cosmic::iced::Font {
         },
     }
 }
+
+/// Now as unix seconds.
+pub(crate) fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
