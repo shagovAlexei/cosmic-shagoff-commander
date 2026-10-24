@@ -5807,6 +5807,28 @@ mod drawer_tests {
     }
 
     #[test]
+    fn startup_update_check_offers_a_newer_release_once() {
+        use shagoff_core::update::Status;
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::StartupUpdate(Status::Failed("offline".into())));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.update_checked, 0); // a failed check does not spend the day
+        let _ = app.update(Message::StartupUpdate(Status::Latest));
+        assert!(app.update_checked > 0);
+        assert!(app.dialog.is_none());
+        let _ = app.update(Message::StartupUpdate(Status::Available("v9.0.0".into())));
+        assert!(matches!(&app.dialog, Some(Dialog::Update { tag, .. }) if tag == "v9.0.0"));
+        let _ = app.update(Message::UpdateSkip);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.update_skip, "v9.0.0");
+        // The skipped one is not offered again; a later one is.
+        let _ = app.update(Message::StartupUpdate(Status::Available("v9.0.0".into())));
+        assert!(app.dialog.is_none());
+        let _ = app.update(Message::StartupUpdate(Status::Available("v9.1.0".into())));
+        assert!(app.dialog.is_some());
+    }
+
+    #[test]
     fn a_saved_view_mode_is_deleted_from_the_menu() {
         let mut app = app_with(Config::default(), State::default());
         let n = app.config.view_modes.len();

@@ -2,6 +2,7 @@ use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State, ToolButton};
 use crate::dialogs::{
     self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MaskOp, MrField, SyncOpt, Toggle,
+    UpdateStage,
 };
 use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
@@ -394,6 +395,9 @@ pub struct App {
     pub(crate) about: [cosmic::widget::about::About; 2],
     /// About → «Check for updates»: `None` not asked since About opened.
     pub(crate) update_check: Option<shagoff_core::update::Status>,
+    /// The last check at start (unix seconds), and the version the user skipped (both kept in `State`).
+    pub(crate) update_checked: u64,
+    pub(crate) update_skip: String,
     pub(crate) job: Option<Running>,
     /// TC's background queue: started one after another once `job` ends.
     pub(crate) queue: VecDeque<Queued>,
@@ -904,6 +908,12 @@ pub enum Message {
     /// About → «Check for updates», and its answer (the latest tag).
     CheckUpdate,
     UpdateChecked(shagoff_core::update::Status),
+    /// The check at start came back (`Status::Available` opens the dialog).
+    StartupUpdate(shagoff_core::update::Status),
+    /// The update dialog: «Update» (download, check, install) and «Skip this version».
+    UpdateNow,
+    UpdateSkip,
+    UpdateDone(Result<(), String>),
     /// Ctrl+F dialog: the password field.
     ConnectPassword(String),
     /// «Remember the password» in Ctrl+F.
@@ -1015,6 +1025,22 @@ impl Application for App {
         }
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
         let volumes = app.refresh_volumes(true);
+        // Once a day, in the background: a newer release opens the update dialog.
+        let update = (app.config.check_updates
+            && shagoff_core::update::due(app.update_checked, unix_now()))
+        .then(|| {
+            Task::perform(
+                async {
+                    tokio::task::spawn_blocking(|| {
+                        shagoff_core::update::check(env!("CARGO_PKG_VERSION"))
+                    })
+                    .await
+                    .unwrap_or_else(|e| shagoff_core::update::Status::Failed(e.to_string()))
+                },
+                |s| cosmic::Action::App(Message::StartupUpdate(s)),
+            )
+        });
+        let volumes = Task::batch([volumes].into_iter().chain(update));
         let task = Task::batch([task, volumes].into_iter().chain(theme));
         app.saved = saved;
         (app.config_handler, app.state_handler) = (ch, sh);
@@ -1336,6 +1362,8 @@ impl App {
             drawer: None,
             about: drawer::about(),
             update_check: None,
+            update_checked: state.update_checked,
+            update_skip: state.update_skip.clone(),
             job: None,
             queue: VecDeque::new(),
             held: None,

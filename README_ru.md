@@ -94,6 +94,8 @@ Fedora / openSUSE: `.rpm` из того же релиза (`sudo dnf install ./s
 
 К каждому релизу приложены `SHA256SUMS` и подписанная аттестация сборки. Проверьте скачанное: `sha256sum -c SHA256SUMS` или `gh attestation verify ФАЙЛ.deb --repo shagovAlexei/cosmic-shagoff-commander`. Единственное официальное место загрузки — [страница релизов](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases).
 
+Раз в сутки при запуске программа проверяет, нет ли новой версии, и предлагает её в окне («Обновить» / «Позже» / «Пропустить эту версию»); отключается в Настройки → «Проверять обновления при запуске». Обновление скачивает `.deb`, сверяет его с `SHA256SUMS` и ставит через `pkexec apt-get`.
+
 ## Обновление
 
 Какая версия стоит: **Справка → О программе** или `dpkg -s shagoff-commander | grep Version`.

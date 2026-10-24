@@ -124,6 +124,8 @@ pub struct Config {
     pub show_status: bool,
     /// Command line, "Other program…" and mask histories survive a restart (off: kept in memory only).
     pub keep_history: bool,
+    /// At start (once a day): ask GitHub for a newer release and offer it.
+    pub check_updates: bool,
     /// Shift+Enter in the command line: terminal program + args; the command (`sh -c …`) is appended.
     pub terminal: Vec<String>,
     /// Commands → Terminal: the `.desktop` id of the terminal chosen; empty: the system's default.
@@ -326,6 +328,7 @@ impl Default for Config {
             show_header: true,
             show_status: true,
             keep_history: true,
+            check_updates: true,
             terminal: vec!["cosmic-term".into(), "-e".into()],
             terminal_app: String::new(),
             term_builtin: false,
@@ -447,6 +450,9 @@ pub struct State {
     pub vertical: bool,
     /// Ctrl+Shift+F8: the tree beside the panels.
     pub side_tree: bool,
+    /// The last check for a newer release (unix seconds; 0 = never), and the version «Skip» put aside.
+    pub update_checked: u64,
+    pub update_skip: String,
     /// Command line history, last first.
     pub commands: Vec<String>,
     /// Num+ / Num− masks, last first.

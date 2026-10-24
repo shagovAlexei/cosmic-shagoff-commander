@@ -67,6 +67,89 @@ pub fn check(current: &str) -> Status {
     status(current, &String::from_utf8_lossy(&out.stdout))
 }
 
+/// The check at start runs at most once a day.
+const DAY: u64 = 86_400;
+
+/// A check is due: `last` (unix seconds, 0 = never) is a day or more before `now`; a clock set
+/// back counts as due too.
+pub fn due(last: u64, now: u64) -> bool {
+    now < last || now - last >= DAY
+}
+
+/// The `.deb` a release carries, by its tag.
+pub fn deb_name(tag: &str) -> String {
+    format!(
+        "shagoff-commander_{}_amd64.deb",
+        tag.trim_start_matches('v')
+    )
+}
+
+/// Updating in place goes through apt on an x86-64 system; elsewhere the release page opens.
+pub fn can_install() -> bool {
+    cfg!(target_arch = "x86_64")
+        && ["apt-get", "pkexec"].iter().all(|p| {
+            std::env::var_os("PATH")
+                .is_some_and(|path| std::env::split_paths(&path).any(|d| d.join(p).is_file()))
+        })
+}
+
+/// `name`'s hash in the text of a `SHA256SUMS`.
+pub fn expected_sum(sums: &[u8], name: &str) -> Option<String> {
+    crate::checksum::parse(sums)
+        .into_iter()
+        .find(|(_, n)| n.as_os_str() == name)
+        .map(|(h, _)| h)
+}
+
+fn fetch(url: &str, to: &std::path::Path) -> Result<(), String> {
+    let out = Command::new("curl")
+        .args(["-fsSL", "-m", "600", "-o"])
+        .arg(to)
+        .arg(url)
+        .output()
+        .map_err(|e| format!("curl: {e}"))?;
+    match out.status.success() {
+        true => Ok(()),
+        false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+    }
+}
+
+/// The release `tag`'s `.deb` into `dir`, its SHA-256 checked against the release's `SHA256SUMS`
+/// (a release without one, or a file that does not match, is refused). Blocking.
+pub fn download(tag: &str, dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let base =
+        format!("https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/download/{tag}");
+    let name = deb_name(tag);
+    let (deb, sums) = (dir.join(&name), dir.join("SHA256SUMS"));
+    fetch(&format!("{base}/{name}"), &deb)?;
+    fetch(&format!("{base}/SHA256SUMS"), &sums)?;
+    let want = expected_sum(&std::fs::read(&sums).map_err(|e| e.to_string())?, &name)
+        .ok_or_else(|| format!("{name} is not in SHA256SUMS"))?;
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let got = crate::checksum::hash(&deb, crate::checksum::Algo::Sha256, &stop)
+        .map_err(|e| e.to_string())?;
+    match got == want {
+        true => Ok(deb),
+        false => Err(format!("{name}: SHA-256 does not match")),
+    }
+}
+
+/// `pkexec apt-get install` of the downloaded `.deb` (asks for the password itself). Blocking.
+pub fn install(deb: &std::path::Path) -> Result<(), String> {
+    let out = Command::new("pkexec")
+        .args(["apt-get", "install", "-y"])
+        .arg(deb)
+        .output()
+        .map_err(|e| format!("pkexec: {e}"))?;
+    match out.status.success() {
+        true => Ok(()),
+        false => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            Err(err.lines().last().unwrap_or("apt-get failed").to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +174,28 @@ mod tests {
         assert!(!newer("0.17.1", "v0.17.0"));
         assert!(!newer("0.17.0", "nightly"));
         assert!(!newer("0.18.0", "v0.18.0.0"));
+    }
+
+    #[test]
+    fn due_once_a_day() {
+        assert!(due(0, 1_000_000));
+        assert!(!due(1_000_000, 1_000_000 + 86_399));
+        assert!(due(1_000_000, 1_000_000 + 86_400));
+        assert!(due(2_000_000, 1_000_000)); // the clock went back
+    }
+
+    #[test]
+    fn the_deb_and_its_sum() {
+        assert_eq!(deb_name("v0.118.0"), "shagoff-commander_0.118.0_amd64.deb");
+        let sums = format!(
+            "{}  shagoff-commander_0.118.0_amd64.deb\n{}  x.rpm\n",
+            "a".repeat(64),
+            "b".repeat(64)
+        );
+        assert_eq!(
+            expected_sum(sums.as_bytes(), "shagoff-commander_0.118.0_amd64.deb"),
+            Some("a".repeat(64))
+        );
+        assert_eq!(expected_sum(sums.as_bytes(), "other.deb"), None);
     }
 }

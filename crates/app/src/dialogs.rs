@@ -58,7 +58,21 @@ pub enum MaskOp {
     Shrink,
 }
 
+/// Where the update dialog is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdateStage {
+    Ask,
+    Working,
+    Done,
+    Failed(String),
+}
+
 pub enum Dialog {
+    /// A newer release was found at start: update, skip it, or later.
+    Update {
+        tag: String,
+        stage: UpdateStage,
+    },
     /// Alt+F10 (TC «Change directory via tree»): the dirs as an outline; Enter goes there.
     Tree {
         side: usize,
@@ -2475,6 +2489,55 @@ pub fn view<'a>(
             .primary_action(ok)
             .secondary_action(cancel)
             .into(),
+        Dialog::Update { tag, stage } => {
+            let dlg = widget::dialog().title(fl!("update-dialog-title"));
+            let body = |t: String| {
+                widget::column::with_capacity(2)
+                    .spacing(12)
+                    .push(widget::text::body(t))
+                    .push(widget::text::body(fl!("update-support")))
+            };
+            match stage {
+                UpdateStage::Ask => dlg
+                    .control(body(fl!("update-available", tag = tag.as_str())))
+                    .primary_action(
+                        widget::button::suggested(fl!("update-now")).on_press(Message::UpdateNow),
+                    )
+                    .secondary_action(
+                        widget::button::standard(fl!("update-later"))
+                            .on_press(Message::DialogCancel),
+                    )
+                    .tertiary_action(
+                        widget::button::standard(fl!("update-skip")).on_press(Message::UpdateSkip),
+                    )
+                    .control(
+                        widget::button::link(fl!("donate-button"))
+                            .on_press(Message::OpenUrl(crate::drawer::DONATE_URL.to_string())),
+                    )
+                    .into(),
+                UpdateStage::Working => dlg
+                    .control(body(fl!("update-working")))
+                    .secondary_action(
+                        widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
+                    )
+                    .into(),
+                UpdateStage::Done => dlg
+                    .control(body(fl!("update-done")))
+                    .primary_action(
+                        widget::button::suggested(fl!("ok")).on_press(Message::DialogCancel),
+                    )
+                    .into(),
+                UpdateStage::Failed(e) => dlg
+                    .control(body(fl!("update-install-failed", error = e.as_str())))
+                    .primary_action(widget::button::suggested(fl!("update-open")).on_press(
+                        Message::OpenUrl(format!("{}/releases/tag/{tag}", crate::drawer::REPO)),
+                    ))
+                    .secondary_action(
+                        widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
+                    )
+                    .into(),
+            }
+        }
         Dialog::Error { path, error, .. } => widget::dialog()
             .title(fl!("op-error"))
             .body(format!("{}\n{error}", path.display()))
