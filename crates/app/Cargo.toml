@@ -18,7 +18,7 @@ notify = "8.2"
 simple_logger = "5"
 tokio = { version = "1", features = ["rt", "time"] }
 # Startup probe for the renderer (same versions libcosmic's iced uses; features come from it).
-wgpu = { version = "28", default-features = false }
+wgpu = { version = "30", default-features = false }
 pollster = "0.4"
 
 # Codecs for the viewer (F3), on top of png/jpeg/ico that libcosmic enables.
