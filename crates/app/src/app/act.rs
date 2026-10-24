@@ -787,6 +787,14 @@ impl App {
                 }
                 return self.apply_hidden();
             }
+            // The viewer F3 does not use: flipped for this one call, which decides at once.
+            Action::ViewOther => {
+                let was = self.config.internal_viewer;
+                self.config.internal_viewer = !was;
+                let task = self.act(side, Action::View);
+                self.config.internal_viewer = was;
+                return task;
+            }
             Action::View if self.config.internal_viewer => return self.view_current(side),
             Action::View | Action::Edit => {
                 let cwd = panel.cwd().to_path_buf();

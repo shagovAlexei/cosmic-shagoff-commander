@@ -68,6 +68,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         (vec![Shift], K::Named(Named::F4), a(Action::NewFile)),
         (vec![], K::Named(Named::F8), a(Action::Delete)),
         (vec![Shift], K::Named(Named::F8), a(Action::DeletePermanent)),
+        (vec![Alt], K::Named(Named::F3), a(Action::ViewOther)),
         (vec![Alt], K::Named(Named::F5), a(Action::Pack)),
         (vec![Alt], K::Named(Named::F9), a(Action::Unpack)),
         (
@@ -427,6 +428,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
             fl!("menu-files"),
             vec![
                 b(fl!("menu-view"), Action::View),
+                b(fl!("menu-view-other"), Action::ViewOther),
                 b(fl!("menu-edit"), Action::Edit),
                 b(fl!("menu-copy"), Action::Copy),
                 b(fl!("menu-copy-same"), Action::CopySame),
