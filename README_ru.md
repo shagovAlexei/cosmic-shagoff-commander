@@ -92,7 +92,17 @@ sudo apt install ./shagoff-commander_*_amd64.deb
 Fedora / openSUSE: `.rpm` из того же релиза (`sudo dnf install ./shagoff-commander-*.x86_64.rpm`).
 `man shagoff-commander` — запуск, файлы и главные клавиши.
 
-В заметках каждого релиза перечислены суммы SHA-256 файлов, также приложены `SHA256SUMS` и подписанная аттестация сборки. Проверьте скачанное: положите `SHA256SUMS` со страницы релиза рядом с файлами и выполните в этой папке `sha256sum -c --ignore-missing SHA256SUMS` (`--ignore-missing` пропускает файл, который вы не скачивали), или `gh attestation verify ФАЙЛ.deb --repo shagovAlexei/cosmic-shagoff-commander`. Единственное официальное место загрузки — [страница релизов](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases).
+В заметках каждого релиза перечислены суммы SHA-256 файлов, также приложены `SHA256SUMS` и подписанная аттестация сборки.
+
+Скачать `.deb` вместе с `SHA256SUMS` и сразу проверить (`--ignore-missing` пропускает `.rpm` из списка; последняя команда проверяет подписанную аттестацию):
+
+```sh
+gh release download -R shagovAlexei/cosmic-shagoff-commander -p '*.deb' -p SHA256SUMS -D /tmp/shagoff && cd /tmp/shagoff
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify *.deb --repo shagovAlexei/cosmic-shagoff-commander
+```
+
+Единственное официальное место загрузки — [страница релизов](https://github.com/shagovAlexei/cosmic-shagoff-commander/releases).
 
 При каждом запуске программа проверяет, нет ли новой версии, и предлагает её в окне («Обновить» / «Позже» / «Пропустить эту версию»); отключается в Настройки → «Проверять обновления при запуске». Обновление скачивает `.deb`, сверяет его с `SHA256SUMS` и ставит через `pkexec apt-get`.
 
