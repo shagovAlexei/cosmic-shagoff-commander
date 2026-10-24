@@ -4383,18 +4383,18 @@ fn divider_drag_moves_the_split_and_is_kept() {
         let _ = app.update(Message::Resized(side, Size::new(500.0, 300.0)));
     }
     let w = app.window_id();
-    let _ = app.update(Message::SplitAt(w, 300.0)); // not held: nothing
+    let _ = app.update(Message::SplitAt(w, 300.0, 0.0)); // not held: nothing
     assert_eq!(app.split, 0.0);
     let _ = app.update(Message::WindowWidth(w, 1004.0)); // 1000 + the 4 px gap
     let _ = app.update(Message::SplitStart);
-    let _ = app.update(Message::SplitAt(w, 500.0));
-    let _ = app.update(Message::SplitAt(w, 501.0)); // a click's jitter: not moved
+    let _ = app.update(Message::SplitAt(w, 500.0, 0.0));
+    let _ = app.update(Message::SplitAt(w, 501.0, 0.0)); // a click's jitter: not moved
     assert_eq!(app.split, 0.0);
-    let _ = app.update(Message::SplitAt(w, 302.0)); // Classic: left edge + 2 px of the gap
+    let _ = app.update(Message::SplitAt(w, 302.0, 0.0)); // Classic: left edge + 2 px of the gap
     assert_eq!(app.saved.split, 0.0); // not written while held
     let _ = app.update(Message::SplitEnd);
     assert!((app.split - 0.3).abs() < 1e-4, "{}", app.split);
-    let _ = app.update(Message::SplitAt(w, 900.0)); // let go: no more moves
+    let _ = app.update(Message::SplitAt(w, 900.0, 0.0)); // let go: no more moves
     assert!((app.saved.split - 0.3).abs() < 1e-4); // written to the state
     let _ = app.update(Message::SplitReset);
     assert_eq!(app.split, 0.5);
@@ -5947,6 +5947,22 @@ mod drawer_tests {
         let _ = app.update(Message::Key(Action::ViewOther));
         assert!(app.lister.is_some());
         assert!(!app.config.internal_viewer);
+    }
+
+    #[test]
+    fn stacked_panes_divider_follows_the_pointer_height() {
+        let mut app = app_with(Config::default(), State::default());
+        let w = app.window_id();
+        app.vertical = true;
+        let _ = app.update(Message::SplitStart);
+        let _ = app.update(Message::SplitAt(w, 0.0, 300.0)); // grabbed
+        let _ = app.update(Message::SplitAt(w, 0.0, 301.0)); // jitter: not moved
+        assert_eq!(app.split, 0.0);
+        let _ = app.update(Message::SplitAt(w, 0.0, 340.0)); // lower: the top pane grows
+        assert!(app.split > 0.5, "{}", app.split);
+        let _ = app.update(Message::SplitEnd);
+        let _ = app.update(Message::SplitReset);
+        assert_eq!(app.split, 0.5);
     }
 
     #[test]

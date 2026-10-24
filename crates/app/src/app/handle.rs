@@ -2068,8 +2068,27 @@ impl App {
             Message::WindowWidth(..) => {}
             Message::Dismiss(None) => self.status = None,
             Message::Dismiss(Some(side)) => self.panes[side].active_mut().error = None,
-            Message::SplitStart => (self.splitting, self.split_from) = (true, None),
-            Message::SplitAt(window, x) if self.splitting && window == self.window_id() => {
+            Message::SplitStart => {
+                (self.splitting, self.split_from, self.split_y0) = (true, None, None)
+            }
+            // Stacked panes: the divider follows the pointer's height, from where it was grabbed.
+            Message::SplitAt(window, _, y)
+                if self.splitting && self.vertical && !self.wide && window == self.window_id() =>
+            {
+                let (y0, r0) = *self
+                    .split_y0
+                    .get_or_insert((y, viewport::split_or_half(self.split)));
+                if (y - y0).abs() >= 3.0 {
+                    self.split_from = Some(f32::NAN); // moved for real: follow from now on
+                }
+                if self.split_from.is_some_and(f32::is_nan) {
+                    // The lists plus what each pane has above its list (drives, path, header).
+                    let total =
+                        self.panes[0].active().height + self.panes[1].active().height + 160.0;
+                    self.split = viewport::split_ratio_by(r0, y - y0, total);
+                }
+            }
+            Message::SplitAt(window, x, _) if self.splitting && window == self.window_id() => {
                 let from = *self.split_from.get_or_insert(x);
                 if (x - from).abs() >= 3.0 {
                     self.split_from = Some(f32::NAN); // moved for real: follow from now on

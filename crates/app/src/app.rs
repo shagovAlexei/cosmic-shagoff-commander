@@ -439,6 +439,8 @@ pub struct App {
     /// or two of jitter) leaves the split alone.
     split_from: Option<f32>,
     win_w: f32,
+    /// Stacked panes: where the held divider was first seen (y) and the share it had.
+    split_y0: Option<(f32, f32)>,
     pub drives: Vec<Drive>,
     /// Installed terminals and the system's default among them (`terminals::scan`, at start).
     pub terminals: Vec<Terminal>,
@@ -875,7 +877,7 @@ pub enum Message {
     /// The divider between the panes: pressed, the pointer at window x while held, let go,
     /// double-clicked (half and half).
     SplitStart,
-    SplitAt(cosmic::iced::window::Id, f32),
+    SplitAt(cosmic::iced::window::Id, f32, f32),
     /// The main window's width, for the divider (`Opened` / `Resized`).
     WindowWidth(cosmic::iced::window::Id, f32),
     SplitEnd,
@@ -1125,7 +1127,7 @@ impl Application for App {
             match self.splitting {
                 true => event::listen_with(|e, _, window| match e {
                     cosmic::iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                        Some(Message::SplitAt(window, position.x))
+                        Some(Message::SplitAt(window, position.x, position.y))
                     }
                     // Let go, or gone out of the window (the release may never reach us).
                     cosmic::iced::Event::Mouse(
@@ -1359,6 +1361,7 @@ impl App {
             vertical: state.vertical,
             split_from: None,
             win_w: 0.0,
+            split_y0: None,
             drives: Vec::new(),
             terminals: Vec::new(),
             term_default: None,
