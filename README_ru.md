@@ -118,14 +118,11 @@ sha256sum -c --ignore-missing SHA256SUMS && sudo apt install ./shagoff-commander
 `~/.config/cosmic/` и `~/.local/state/cosmic/`):
 
 ```sh
-# скачать .deb последнего релиза
-curl -sL https://api.github.com/repos/shagovAlexei/cosmic-shagoff-commander/releases/latest \
-  | grep -o 'https://[^"]*_amd64\.deb' | xargs curl -L -o /tmp/shagoff-commander.deb
-sudo apt install /tmp/shagoff-commander.deb
-
-# или через GitHub CLI
-gh release download -R shagovAlexei/cosmic-shagoff-commander -p '*.deb' -O /tmp/shagoff-commander.deb --clobber
-sudo apt install /tmp/shagoff-commander.deb
+# скачать последний релиз, проверить хеш, поставить, только если он совпал
+v=$(curl -sLI -o /dev/null -w '%{url_effective}' https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/latest | sed 's|.*/v||')
+cd ~/Downloads && B=https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/download/v$v
+curl -LO "$B/shagoff-commander_${v}_amd64.deb" -LO "$B/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS && sudo apt install ./shagoff-commander_${v}_amd64.deb
 
 # или из клона исходников
 git pull && sudo just install

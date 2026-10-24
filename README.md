@@ -118,14 +118,11 @@ Install the new `.deb` over the old one — settings, tabs and history stay (the
 `~/.config/cosmic/` and `~/.local/state/cosmic/`):
 
 ```sh
-# download the .deb of the latest release
-curl -sL https://api.github.com/repos/shagovAlexei/cosmic-shagoff-commander/releases/latest \
-  | grep -o 'https://[^"]*_amd64\.deb' | xargs curl -L -o /tmp/shagoff-commander.deb
-sudo apt install /tmp/shagoff-commander.deb
-
-# or with the GitHub CLI
-gh release download -R shagovAlexei/cosmic-shagoff-commander -p '*.deb' -O /tmp/shagoff-commander.deb --clobber
-sudo apt install /tmp/shagoff-commander.deb
+# download the latest release, check its hash, install only on a match
+v=$(curl -sLI -o /dev/null -w '%{url_effective}' https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/latest | sed 's|.*/v||')
+cd ~/Downloads && B=https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/download/v$v
+curl -LO "$B/shagoff-commander_${v}_amd64.deb" -LO "$B/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS && sudo apt install ./shagoff-commander_${v}_amd64.deb
 
 # or from a clone of the sources
 git pull && sudo just install
