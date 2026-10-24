@@ -428,37 +428,54 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
             fl!("menu-files"),
             vec![
                 b(fl!("menu-view"), Action::View),
-                b(fl!("menu-view-other"), Action::ViewOther),
                 b(fl!("menu-edit"), Action::Edit),
                 b(fl!("menu-copy"), Action::Copy),
-                b(fl!("menu-copy-same"), Action::CopySame),
-                b(fl!("menu-copy-left"), Action::TransferLeft),
-                b(fl!("menu-copy-right"), Action::TransferRight),
-                b(fl!("menu-link"), Action::Link),
                 b(fl!("menu-move"), Action::Move),
                 b(fl!("menu-rename"), Action::Rename),
-                b(fl!("menu-properties"), Action::Properties),
-                b(fl!("menu-set-date"), Action::SetDate),
-                b(fl!("menu-count-dirs"), Action::CountDirs),
-                b(fl!("menu-occupied"), Action::Occupied),
-                b(fl!("menu-mkdir"), Action::Mkdir),
-                b(fl!("menu-new-file"), Action::NewFile),
-                b(fl!("menu-new-from-template"), Action::NewFromTemplate),
                 b(fl!("menu-delete"), Action::Delete),
-                b(fl!("menu-delete-permanent"), Action::DeletePermanent),
+                b(fl!("menu-mkdir"), Action::Mkdir),
+                b(fl!("menu-properties"), Action::Properties),
                 menu::Item::Divider,
-                b(fl!("menu-pack"), Action::Pack),
-                b(fl!("menu-move-to-archive"), Action::MoveToArchive),
-                b(fl!("menu-unpack"), Action::Unpack),
-                b(fl!("menu-test-archives"), Action::TestArchives),
-                b(fl!("menu-archive-encoding"), Action::ArchiveEncoding),
-                b(fl!("menu-checksum-create"), Action::ChecksumCreate),
-                b(fl!("menu-checksum-verify"), Action::ChecksumVerify),
-                b(fl!("menu-split"), Action::SplitFile),
-                b(fl!("menu-combine"), Action::CombineFiles),
-                menu::Item::Divider,
-                b(fl!("menu-multi-rename"), Action::MultiRename),
-                b(fl!("menu-compare-files"), Action::CompareFiles),
+                // Submenus keep the menu short (a 530 px window shows about 13 rows); labels stay whole.
+                menu::Item::Folder(
+                    fl!("menu-copy-more"),
+                    vec![
+                        b(fl!("menu-view-other"), Action::ViewOther),
+                        b(fl!("menu-copy-same"), Action::CopySame),
+                        b(fl!("menu-copy-left"), Action::TransferLeft),
+                        b(fl!("menu-copy-right"), Action::TransferRight),
+                        b(fl!("menu-link"), Action::Link),
+                        b(fl!("menu-delete-permanent"), Action::DeletePermanent),
+                        b(fl!("menu-new-file"), Action::NewFile),
+                        b(fl!("menu-new-from-template"), Action::NewFromTemplate),
+                    ],
+                ),
+                menu::Item::Folder(
+                    fl!("menu-attrs"),
+                    vec![
+                        b(fl!("menu-set-date"), Action::SetDate),
+                        b(fl!("menu-count-dirs"), Action::CountDirs),
+                        b(fl!("menu-occupied"), Action::Occupied),
+                        menu::Item::Divider,
+                        b(fl!("menu-multi-rename"), Action::MultiRename),
+                        b(fl!("menu-compare-files"), Action::CompareFiles),
+                    ],
+                ),
+                menu::Item::Folder(
+                    fl!("menu-archives"),
+                    vec![
+                        b(fl!("menu-pack"), Action::Pack),
+                        b(fl!("menu-move-to-archive"), Action::MoveToArchive),
+                        b(fl!("menu-unpack"), Action::Unpack),
+                        b(fl!("menu-test-archives"), Action::TestArchives),
+                        b(fl!("menu-archive-encoding"), Action::ArchiveEncoding),
+                        menu::Item::Divider,
+                        b(fl!("menu-checksum-create"), Action::ChecksumCreate),
+                        b(fl!("menu-checksum-verify"), Action::ChecksumVerify),
+                        b(fl!("menu-split"), Action::SplitFile),
+                        b(fl!("menu-combine"), Action::CombineFiles),
+                    ],
+                ),
                 menu::Item::Divider,
                 menu::Item::Button(fl!("menu-exit"), None, MenuAct::Exit),
             ],
@@ -468,12 +485,19 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
             vec![
                 b(fl!("menu-select-group"), Action::SelectGroup),
                 b(fl!("menu-unselect-group"), Action::UnselectGroup),
-                b(fl!("menu-shrink-selection"), Action::ShrinkSelection),
-                b(fl!("menu-exchange-selection"), Action::ExchangeSelection),
                 b(fl!("menu-select-all"), Action::SelectAll),
                 b(fl!("menu-unselect-all"), Action::UnselectAll),
                 b(fl!("menu-invert"), Action::Invert),
-                b(fl!("menu-restore-marks"), Action::RestoreMarks),
+                menu::Item::Folder(
+                    fl!("menu-selection-more"),
+                    vec![
+                        b(fl!("menu-shrink-selection"), Action::ShrinkSelection),
+                        b(fl!("menu-exchange-selection"), Action::ExchangeSelection),
+                        b(fl!("menu-restore-marks"), Action::RestoreMarks),
+                        b(fl!("menu-next-marked"), Action::NextMarked),
+                        b(fl!("menu-prev-marked"), Action::PrevMarked),
+                    ],
+                ),
                 // Submenus: all of it in one column runs off a small screen.
                 menu::Item::Folder(
                     fl!("menu-mark-alike"),
@@ -495,8 +519,6 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         b(fl!("menu-load-marks-clip"), Action::LoadMarksFromClip),
                     ],
                 ),
-                b(fl!("menu-next-marked"), Action::NextMarked),
-                b(fl!("menu-prev-marked"), Action::PrevMarked),
                 menu::Item::Divider,
                 menu::Item::Folder(
                     fl!("menu-compare-lists"),
@@ -537,33 +559,43 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-hotlist"), Action::Hotlist),
                 b(fl!("menu-tree"), Action::TreeDialog),
                 b(fl!("menu-history"), Action::HistoryList),
-                b(fl!("menu-swap"), Action::SwapPanes),
-                menu::Item::Folder(
-                    fl!("menu-focus"),
-                    vec![
-                        b(fl!("menu-focus-left"), Action::FocusLeft),
-                        b(fl!("menu-focus-right"), Action::FocusRight),
-                        b(fl!("menu-focus-cmdline"), Action::FocusCmdLine),
-                    ],
-                ),
-                b(fl!("menu-match-src"), Action::MatchSrc),
-                menu::Item::CheckBox(
-                    fl!("menu-sync-change-dir"),
-                    None,
-                    checks.sync_dirs,
-                    MenuAct::Key(Action::SyncChangeDir),
-                ),
-                b(fl!("menu-open-left"), Action::OpenLeft),
-                b(fl!("menu-open-right"), Action::OpenRight),
                 b(fl!("menu-edit-path"), Action::EditPath),
                 b(fl!("menu-open-trash"), Action::OpenTrash),
+                menu::Item::Folder(
+                    fl!("menu-panels-cmd"),
+                    vec![
+                        b(fl!("menu-swap"), Action::SwapPanes),
+                        b(fl!("menu-match-src"), Action::MatchSrc),
+                        menu::Item::CheckBox(
+                            fl!("menu-sync-change-dir"),
+                            None,
+                            checks.sync_dirs,
+                            MenuAct::Key(Action::SyncChangeDir),
+                        ),
+                        b(fl!("menu-open-left"), Action::OpenLeft),
+                        b(fl!("menu-open-right"), Action::OpenRight),
+                        menu::Item::Folder(
+                            fl!("menu-focus"),
+                            vec![
+                                b(fl!("menu-focus-left"), Action::FocusLeft),
+                                b(fl!("menu-focus-right"), Action::FocusRight),
+                                b(fl!("menu-focus-cmdline"), Action::FocusCmdLine),
+                            ],
+                        ),
+                    ],
+                ),
                 menu::Item::Divider,
                 b(fl!("menu-filter"), Action::QuickFilter),
                 b(fl!("menu-reload"), Action::Reload),
                 menu::Item::Divider,
-                b(fl!("menu-open-terminal"), Action::OpenTerminal),
-                b(fl!("menu-pick-terminal"), Action::PickTerminal),
-                b(fl!("menu-pick-shell"), Action::PickShell),
+                menu::Item::Folder(
+                    fl!("menu-terminals"),
+                    vec![
+                        b(fl!("menu-open-terminal"), Action::OpenTerminal),
+                        b(fl!("menu-pick-terminal"), Action::PickTerminal),
+                        b(fl!("menu-pick-shell"), Action::PickShell),
+                    ],
+                ),
             ],
         ),
         (
@@ -635,72 +667,92 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                     MenuAct::Key(Action::ToggleHidden),
                 ),
                 menu::Item::CheckBox(
-                    fl!("settings-divider-line"),
-                    None,
-                    checks.divider_line,
-                    MenuAct::Key(Action::ToggleDividerLine),
-                ),
-                menu::Item::CheckBox(
-                    fl!("settings-human-sizes"),
-                    None,
-                    checks.human_sizes,
-                    MenuAct::Key(Action::ToggleHumanSizes),
-                ),
-                menu::Item::CheckBox(
                     fl!("menu-builtin-terminal"),
                     None,
                     checks.terminal,
                     MenuAct::Key(Action::ToggleTerminal),
                 ),
-            ]
-            .into_iter()
-            .chain(checks.classic.then(|| {
-                menu::Item::CheckBox(
-                    fl!("settings-active-frame"),
-                    None,
-                    checks.active_frame,
-                    MenuAct::Key(Action::ToggleActiveFrame),
-                )
-            }))
-            .chain([
+                // Submenus keep the menu short (a 530 px window shows about 13 rows); labels stay whole.
                 menu::Item::Folder(
-                    fl!("menu-window-parts"),
-                    (crate::config::Part::ALL.into_iter().zip(checks.parts))
-                        .filter(|(p, _)| checks.classic || *p != crate::config::Part::Toolbar)
-                        .map(|(p, on)| {
-                            menu::Item::CheckBox(p.label(), None, on, MenuAct::Key(Action::Vis(p)))
-                        })
-                        .collect(),
-                ),
-                menu::Item::Folder(
-                    fl!("menu-panels"),
-                    vec![
+                    fl!("menu-window"),
+                    [
                         menu::Item::CheckBox(
-                            fl!("menu-side-tree"),
+                            fl!("settings-divider-line"),
                             None,
-                            checks.side_tree,
-                            MenuAct::Key(Action::SideTree),
-                        ),
-                        b(fl!("menu-split-50"), Action::Split50),
-                        menu::Item::CheckBox(
-                            fl!("menu-vertical"),
-                            None,
-                            checks.vertical,
-                            MenuAct::Key(Action::VerticalPanels),
+                            checks.divider_line,
+                            MenuAct::Key(Action::ToggleDividerLine),
                         ),
                         menu::Item::CheckBox(
-                            fl!("menu-wide"),
+                            fl!("settings-human-sizes"),
                             None,
-                            checks.wide,
-                            MenuAct::Key(Action::Wide),
+                            checks.human_sizes,
+                            MenuAct::Key(Action::ToggleHumanSizes),
                         ),
-                    ],
+                    ]
+                    .into_iter()
+                    .chain(checks.classic.then(|| {
+                        menu::Item::CheckBox(
+                            fl!("settings-active-frame"),
+                            None,
+                            checks.active_frame,
+                            MenuAct::Key(Action::ToggleActiveFrame),
+                        )
+                    }))
+                    .chain([
+                        menu::Item::Folder(
+                            fl!("menu-window-parts"),
+                            (crate::config::Part::ALL.into_iter().zip(checks.parts))
+                                .filter(|(p, _)| {
+                                    checks.classic || *p != crate::config::Part::Toolbar
+                                })
+                                .map(|(p, on)| {
+                                    menu::Item::CheckBox(
+                                        p.label(),
+                                        None,
+                                        on,
+                                        MenuAct::Key(Action::Vis(p)),
+                                    )
+                                })
+                                .collect(),
+                        ),
+                        menu::Item::Folder(
+                            fl!("menu-panels"),
+                            vec![
+                                menu::Item::CheckBox(
+                                    fl!("menu-side-tree"),
+                                    None,
+                                    checks.side_tree,
+                                    MenuAct::Key(Action::SideTree),
+                                ),
+                                b(fl!("menu-split-50"), Action::Split50),
+                                menu::Item::CheckBox(
+                                    fl!("menu-vertical"),
+                                    None,
+                                    checks.vertical,
+                                    MenuAct::Key(Action::VerticalPanels),
+                                ),
+                                menu::Item::CheckBox(
+                                    fl!("menu-wide"),
+                                    None,
+                                    checks.wide,
+                                    MenuAct::Key(Action::Wide),
+                                ),
+                            ],
+                        ),
+                        b(fl!("menu-term-full"), Action::TermFull),
+                        b(fl!("menu-tree-panel"), Action::TreePanel),
+                    ])
+                    .collect(),
                 ),
                 menu::Item::Divider,
-                b(fl!("menu-term-full"), Action::TermFull),
                 b(fl!("menu-quick-view"), Action::QuickView),
-                b(fl!("menu-branch"), Action::Branch),
-                b(fl!("menu-branch-sel"), Action::BranchSel),
+                menu::Item::Folder(
+                    fl!("menu-branch-sub"),
+                    vec![
+                        b(fl!("menu-branch"), Action::Branch),
+                        b(fl!("menu-branch-sel"), Action::BranchSel),
+                    ],
+                ),
                 b(fl!("menu-brief"), Action::ViewBrief),
                 b(fl!("menu-full"), Action::ViewFull),
                 menu::Item::Folder(
@@ -712,7 +764,6 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         b(fl!("menu-thumb-reload"), Action::ReloadThumbs),
                     ],
                 ),
-                b(fl!("menu-tree-panel"), Action::TreePanel),
                 menu::Item::Folder(
                     fl!("menu-columns"),
                     (shagoff_core::columns::Col::ALL.into_iter().zip(checks.cols))
@@ -747,40 +798,52 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                                     .collect(),
                             )
                         }))
+                        .chain([
+                            menu::Item::Divider,
+                            b(fl!("menu-reset-columns"), Action::ResetColumns),
+                        ])
                         .collect(),
                 ),
-                b(fl!("menu-reset-columns"), Action::ResetColumns),
                 menu::Item::Divider,
-                menu::Item::CheckBox(
-                    fl!("menu-show-all"),
-                    None,
-                    checks.show == 0,
-                    MenuAct::Key(Action::ShowAll),
+                menu::Item::Folder(
+                    fl!("menu-show-files"),
+                    vec![
+                        menu::Item::CheckBox(
+                            fl!("menu-show-all"),
+                            None,
+                            checks.show == 0,
+                            MenuAct::Key(Action::ShowAll),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("menu-show-programs"),
+                            None,
+                            checks.show == 1,
+                            MenuAct::Key(Action::ShowPrograms),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("menu-show-mask"),
+                            None,
+                            checks.show == 2,
+                            MenuAct::Key(Action::ShowMask),
+                        ),
+                        menu::Item::CheckBox(
+                            fl!("menu-show-only-marked"),
+                            None,
+                            checks.only_marked,
+                            MenuAct::Key(Action::ShowOnlyMarked),
+                        ),
+                    ],
                 ),
-                menu::Item::CheckBox(
-                    fl!("menu-show-programs"),
-                    None,
-                    checks.show == 1,
-                    MenuAct::Key(Action::ShowPrograms),
+                menu::Item::Folder(
+                    fl!("menu-sort"),
+                    vec![
+                        sort(fl!("menu-sort-name"), SortKey::Name),
+                        sort(fl!("menu-sort-ext"), SortKey::Ext),
+                        sort(fl!("menu-sort-date"), SortKey::Date),
+                        sort(fl!("menu-sort-size"), SortKey::Size),
+                        sort(fl!("menu-sort-unsorted"), SortKey::Unsorted),
+                    ],
                 ),
-                menu::Item::CheckBox(
-                    fl!("menu-show-mask"),
-                    None,
-                    checks.show == 2,
-                    MenuAct::Key(Action::ShowMask),
-                ),
-                menu::Item::CheckBox(
-                    fl!("menu-show-only-marked"),
-                    None,
-                    checks.only_marked,
-                    MenuAct::Key(Action::ShowOnlyMarked),
-                ),
-                menu::Item::Divider,
-                sort(fl!("menu-sort-name"), SortKey::Name),
-                sort(fl!("menu-sort-ext"), SortKey::Ext),
-                sort(fl!("menu-sort-date"), SortKey::Date),
-                sort(fl!("menu-sort-size"), SortKey::Size),
-                sort(fl!("menu-sort-unsorted"), SortKey::Unsorted),
                 menu::Item::Folder(
                     fl!("menu-switches"),
                     vec![
@@ -810,8 +873,7 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         ),
                     ],
                 ),
-            ])
-            .collect(),
+            ],
         ),
         (
             fl!("menu-config"),
@@ -1157,6 +1219,13 @@ mod tests {
 
     #[test]
     fn the_frame_item_only_in_the_classic_look() {
+        fn any_frame(items: &[Item]) -> bool {
+            items.iter().any(|i| match i {
+                menu::Item::CheckBox(_, _, _, MenuAct::Key(Action::ToggleActiveFrame)) => true,
+                menu::Item::Folder(_, sub) => any_frame(sub),
+                _ => false,
+            })
+        }
         let has_frame = |classic| {
             menus(
                 Checks {
@@ -1165,14 +1234,8 @@ mod tests {
                 },
                 Lock::default(),
             )
-            .into_iter()
-            .flat_map(|(_, items)| items)
-            .any(|i| {
-                matches!(
-                    i,
-                    menu::Item::CheckBox(_, _, _, MenuAct::Key(Action::ToggleActiveFrame))
-                )
-            })
+            .iter()
+            .any(|(_, items)| any_frame(items))
         };
         assert!(has_frame(true) && !has_frame(false));
     }
