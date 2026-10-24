@@ -167,7 +167,10 @@ fn legacy_zip_names(archive: &Path) -> io::Result<bool> {
         let e = z.by_index_raw(i)?;
         let raw = e.name_raw();
         // The crate decodes unmarked names as CP437, so they differ from the raw bytes.
-        if !raw.is_ascii() && std::str::from_utf8(raw) != Ok(e.name()) {
+        if !raw.is_ascii()
+            && e.name()
+                .map_or(true, |n| std::str::from_utf8(raw) != Ok(&*n))
+        {
             return Ok(true);
         }
     }
@@ -275,10 +278,13 @@ fn zip_names(archive: &Path) -> io::Result<Option<Vec<String>>> {
     let mut seen = std::collections::HashSet::new();
     for i in 0..z.len() {
         let e = z.by_index_raw(i)?;
-        if e.encrypted() || e.is_symlink() || !seen.insert(e.name().to_string()) {
+        let Ok(name) = e.name().map(|n| n.into_owned()) else {
+            return Ok(None);
+        };
+        if e.encrypted() || e.is_symlink() || !seen.insert(name.clone()) {
             return Ok(None);
         }
-        names.push(e.name().to_string());
+        names.push(name);
     }
     Ok(Some(names))
 }
@@ -714,7 +720,7 @@ mod tests {
         (0..z.len())
             .map(|i| {
                 let e = z.by_index_raw(i).unwrap();
-                (e.name().to_string(), e.compression())
+                (e.name().unwrap().into_owned(), e.compression())
             })
             .collect()
     }

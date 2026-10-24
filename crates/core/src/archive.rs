@@ -596,7 +596,11 @@ fn zip_name(name: &str, raw: &[u8], enc: NameEnc, cyrillic: bool) -> String {
 
 /// `e`'s name in the encoding chosen for its archive.
 fn zip_entry_name<R: Read + ?Sized>(e: &zip::read::ZipFile<'_, R>, enc: NameEnc) -> String {
-    zip_name(e.name(), e.name_raw(), enc, cyrillic_locale())
+    let name = e.name().map_or_else(
+        |_| String::from_utf8_lossy(e.name_raw()).into_owned(),
+        |n| n.into_owned(),
+    );
+    zip_name(&name, e.name_raw(), enc, cyrillic_locale())
 }
 
 fn zip_password_error(e: zip::result::ZipError) -> io::Error {
@@ -2087,13 +2091,17 @@ pub fn zip_rewrite(
             return Ok(None);
         }
         let e = src.by_index_raw(i)?;
-        let Some(name) = keep(e.name()) else {
+        let ename = e.name().map_or_else(
+            |_| String::from_utf8_lossy(e.name_raw()).into_owned(),
+            |n| n.into_owned(),
+        );
+        let Some(name) = keep(&ename) else {
             continue;
         };
         for (at, _) in name.match_indices('/') {
             have.insert(name[..=at].to_string());
         }
-        if name == e.name() {
+        if name == ename {
             z.raw_copy_file(e)?;
         } else {
             z.raw_copy_file_rename(e, &name)?;

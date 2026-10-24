@@ -3,13 +3,6 @@
 [advisories]
 # Unmaintained crates only where we depend on them ourselves: the rest come with libcosmic.
 unmaintained = "workspace"
-ignore = [
-    # zip's `extract` helpers: we never call them (archive.rs unpacks entry by entry through
-    # `safe_path`, never through a symlink). To go away with the update to zip 9 (ROADMAP 209).
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
-]
 
 [sources]
 unknown-registry = "deny"
