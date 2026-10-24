@@ -479,9 +479,11 @@ fn password_error() -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, PASSWORD_ERROR)
 }
 
-/// Passwords typed for archives, kept until the program exits (never written anywhere).
-static PASSWORDS: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, String>>> =
-    std::sync::Mutex::new(None);
+/// Passwords typed for archives, kept until the program exits (never written anywhere; wiped from
+/// memory when forgotten).
+static PASSWORDS: std::sync::Mutex<
+    Option<std::collections::HashMap<PathBuf, zeroize::Zeroizing<String>>>,
+> = std::sync::Mutex::new(None);
 
 fn password_key(archive: &Path) -> PathBuf {
     fs::canonicalize(archive).unwrap_or_else(|_| archive.to_path_buf())
@@ -492,14 +494,16 @@ pub fn set_password(archive: &Path, password: Option<String>) {
     let mut m = PASSWORDS.lock().unwrap_or_else(|e| e.into_inner());
     let m = m.get_or_insert_with(std::collections::HashMap::new);
     match password {
-        Some(p) => m.insert(password_key(archive), p),
+        Some(p) => m.insert(password_key(archive), p.into()),
         None => m.remove(&password_key(archive)),
     };
 }
 
 pub fn password(archive: &Path) -> Option<String> {
     let m = PASSWORDS.lock().unwrap_or_else(|e| e.into_inner());
-    m.as_ref()?.get(&password_key(archive)).cloned()
+    m.as_ref()?
+        .get(&password_key(archive))
+        .map(|p| (**p).clone())
 }
 
 /// How a zip's names not marked UTF-8 are read (TC `cm_ChangeArchiveEncoding`): Windows writes
