@@ -54,6 +54,25 @@ pub fn without_password(url: &str) -> Option<String> {
     Some(format!("{scheme}://{user}{}", &rest[at..]))
 }
 
+/// `url` without the password typed in it, and that password (percent-decoded, as gio would read it):
+/// argv is visible to every user in `ps`, the prompt's stdin is not.
+pub fn split_password(url: &str) -> (String, Option<String>) {
+    let url = url.trim();
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return (url.to_string(), None);
+    };
+    let Some(at) = rest.rfind('@') else {
+        return (url.to_string(), None);
+    };
+    let Some((user, pw)) = rest[..at].split_once(':') else {
+        return (url.to_string(), None);
+    };
+    let pw = percent_encoding::percent_decode_str(pw)
+        .decode_utf8_lossy()
+        .into_owned();
+    (format!("{scheme}://{user}{}", &rest[at..]), Some(pw))
+}
+
 /// The saved addresses after connecting to `url`: it goes first (once), at most `MAX_SAVED`.
 pub fn remember(saved: &[String], url: &str) -> Vec<String> {
     let Some(url) = without_password(url) else {
@@ -400,6 +419,14 @@ pub fn mount_device(device: &str) -> Result<PathBuf, Error> {
 
 /// Mount a network location (`sftp://user@host/dir`, `smb://…`); its local (FUSE) path.
 pub fn connect(url: &str, password: &str, cancel: &Arc<AtomicBool>) -> Result<PathBuf, Error> {
+    let (url, typed) = split_password(url);
+    let (url, password) = (
+        url.as_str(),
+        typed
+            .as_deref()
+            .filter(|_| password.is_empty())
+            .unwrap_or(password),
+    );
     // "Already mounted" is an error to gio but fine for us: the local path decides.
     let mounted = talk_until(gio(["mount", url]), password, Some(cancel));
     if mounted == Err(Error::Cancelled) {
@@ -624,6 +651,22 @@ Mount(0): nas -> sftp://nas/
         assert_eq!(
             talk(sh("printf 'Password: '; read p"), ""),
             Err(Error::NeedPassword)
+        );
+    }
+
+    #[test]
+    fn a_password_typed_in_the_address_is_split_off() {
+        assert_eq!(
+            split_password("sftp://bob:p%40ss@host/dir"),
+            ("sftp://bob@host/dir".to_string(), Some("p@ss".to_string()))
+        );
+        assert_eq!(
+            split_password("sftp://bob@host"),
+            ("sftp://bob@host".into(), None)
+        );
+        assert_eq!(
+            split_password("smb://host:445/x"),
+            ("smb://host:445/x".into(), None)
         );
     }
 

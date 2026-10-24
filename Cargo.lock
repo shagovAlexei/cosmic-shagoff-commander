@@ -4617,7 +4617,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-commander"
-version = "0.119.3"
+version = "0.119.4"
 dependencies = [
  "alacritty_terminal",
  "cosmic-text",
@@ -4641,7 +4641,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-core"
-version = "0.119.3"
+version = "0.119.4"
 dependencies = [
  "bzip2",
  "chardetng",

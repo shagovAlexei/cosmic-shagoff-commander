@@ -421,6 +421,15 @@ pub struct Checks {
 
 /// (title, items) of every menu.
 fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
+    let mut all = all_menus(checks, lock);
+    // A submenu with nothing in it (no saved view modes to delete) is not offered.
+    for (_, items) in &mut all {
+        items.retain(|i| !matches!(i, menu::Item::Folder(_, sub) if sub.is_empty()));
+    }
+    all
+}
+
+fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
     let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
     let sort = |label: String, k: SortKey| b(label, Action::Sort(k));
     vec![
@@ -777,20 +786,17 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                             menu::Item::Divider,
                             b(fl!("menu-save-view-mode"), Action::SaveViewMode),
                         ])
-                        .chain((!checks.modes.is_empty()).then(|| {
-                            menu::Item::Folder(
-                                fl!("menu-delete-view-mode"),
-                                (checks.modes.iter().enumerate())
-                                    .map(|(i, (name, _))| {
-                                        b(name.clone(), Action::DeleteViewMode(i))
-                                    })
-                                    .collect(),
-                            )
-                        }))
                         .chain([
                             menu::Item::Divider,
                             b(fl!("menu-reset-columns"), Action::ResetColumns),
                         ])
+                        .collect(),
+                ),
+                // Beside «Columns», not inside it: a submenu holds no submenu.
+                menu::Item::Folder(
+                    fl!("menu-delete-view-mode"),
+                    (checks.modes.iter().enumerate())
+                        .map(|(i, (name, _))| b(name.clone(), Action::DeleteViewMode(i)))
                         .collect(),
                 ),
                 menu::Item::Divider,
@@ -1222,6 +1228,7 @@ mod tests {
         for classic in [true, false] {
             let checks = Checks {
                 classic,
+                modes: vec![("A".into(), false), ("B".into(), true)],
                 ..Checks::default()
             };
             let mut found = Vec::new();

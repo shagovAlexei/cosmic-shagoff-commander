@@ -33,13 +33,24 @@ pub fn part_name(name: &OsStr, i: usize) -> OsString {
     n
 }
 
+/// The most parts one split makes.
+const MAX_PARTS: u64 = 100_000;
+
 /// Cuts `src` into parts of `size` bytes in `dir`, then writes `name.crc`; nothing is written
 /// over (the first one there stops it, before any part). On an error the parts written go.
 // ponytail: on the caller's thread with no progress or cancel; a progress bar wants `jobs`.
 pub fn split(src: &Path, dir: &Path, size: u64) -> io::Result<Vec<PathBuf>> {
     let name = src.file_name().ok_or(io::ErrorKind::InvalidInput)?;
     let total = fs::metadata(src)?.len();
-    let count = total.div_ceil(size).max(1) as usize;
+    let count = total.div_ceil(size).max(1);
+    // A part size of "1" on a big file would list billions of parts before writing one.
+    if count > MAX_PARTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("more than {MAX_PARTS} parts"),
+        ));
+    }
+    let count = count as usize;
     let crc_file = dir.join(crc_name(name));
     let parts: Vec<PathBuf> = (1..=count).map(|i| dir.join(part_name(name, i))).collect();
     // One past the last, left from a split with a smaller size, would be joined with them.
@@ -225,6 +236,17 @@ fn copy_n(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_a_tiny_part_size_is_refused_before_listing_billions_of_parts() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("big");
+        let f = fs::File::create(&src).unwrap();
+        f.set_len(1 << 30).unwrap(); // sparse: 1 GiB with part size 1 would be 2^30 parts
+        let e = split(&src, d.path(), 1).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 1); // nothing was made
+    }
 
     #[test]
     fn sizes_are_read_as_typed() {

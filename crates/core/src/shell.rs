@@ -87,9 +87,11 @@ pub fn canonical(pid: u32) -> Option<bool> {
 /// What the terminal is sent to follow the panel to `dir`. First Ctrl+E Ctrl+U: a command typed
 /// and not run yet goes (bash / zsh keep it for Ctrl+Y), never runs with `cd` glued to it. A
 /// leading space keeps the line out of bash / zsh history (`ignorespace`); `--` and quoting take
-/// any name.
-pub fn cd_line(dir: &Path) -> String {
-    format!("\x05\x15 cd -- {}\r", quote(&dir.to_string_lossy()))
+/// any name. `None` for a name the terminal cannot be told safely: the line is typed, so a control
+/// character in it (Ctrl+U, Enter…) would act as a key, and a non-UTF-8 byte cannot be quoted.
+pub fn cd_line(dir: &Path) -> Option<String> {
+    let dir = dir.to_str()?;
+    (!dir.chars().any(char::is_control)).then(|| format!("\x05\x15 cd -- {}\r", quote(dir)))
 }
 
 #[cfg(test)]
@@ -146,10 +148,24 @@ mod tests {
     #[test]
     fn cd_line_clears_the_typed_line_quotes_and_stays_out_of_history() {
         assert_eq!(
-            cd_line(Path::new("/tmp/a b")),
+            cd_line(Path::new("/tmp/a b")).unwrap(),
             "\x05\x15 cd -- '/tmp/a b'\r"
         );
         let q = r#" cd -- '/x/it'\''s'"#;
-        assert_eq!(cd_line(Path::new("/x/it's")), format!("\x05\x15{q}\r"));
+        assert_eq!(
+            cd_line(Path::new("/x/it's")).unwrap(),
+            format!("\x05\x15{q}\r")
+        );
+    }
+
+    #[test]
+    fn regression_cd_line_refuses_names_that_would_be_typed_as_keys() {
+        // A dir named `x<Ctrl+U>rm -rf ~<Enter>` must not reach the shell as keystrokes.
+        assert_eq!(cd_line(Path::new("/x/a\x15rm -rf ~\r")), None);
+        assert_eq!(cd_line(Path::new("/x/a\x1b[A")), None);
+        assert_eq!(cd_line(Path::new("/x/a\x7fb")), None);
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = std::ffi::OsStr::from_bytes(b"/x/caf\xe9");
+        assert_eq!(cd_line(Path::new(bytes)), None);
     }
 }
