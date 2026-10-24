@@ -28,7 +28,7 @@ tar = "0.4"
 trash = "5"
 url = "2"
 zbus = "5.19"
-zip = { version = "8", default-features = false, features = ["deflate", "bzip2", "zstd", "aes-crypto"] }
+zip = { version = "9", default-features = false, features = ["deflate", "bzip2", "zstd", "aes-crypto"] }
 zstd = "0.14"
 md-5 = "0.11"
 sha1 = "0.11"
