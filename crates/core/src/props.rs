@@ -106,124 +106,216 @@ pub fn mode(p: &Path) -> Option<u32> {
     (!m.file_type().is_symlink()).then(|| m.permissions().mode() & 0o7777)
 }
 
+/// An entry reached without following links (pkexec runs `chmod` / `chown` as root over other
+/// users' trees: a file swapped for a symlink between the look and the change must not send root
+/// elsewhere). Named relative to its dir's descriptor, held open since that dir was read.
+struct At {
+    /// `None`: a path the user chose (its dirs are theirs); else the dir it was listed in.
+    dir: Option<std::sync::Arc<rustix::fd::OwnedFd>>,
+    name: std::ffi::OsString,
+    /// For the failures shown.
+    path: PathBuf,
+}
+
+impl At {
+    fn top(p: &Path) -> Self {
+        At {
+            dir: None,
+            name: p.as_os_str().to_owned(),
+            path: p.to_path_buf(),
+        }
+    }
+
+    /// `O_PATH | O_NOFOLLOW`: the entry itself (a link is the link), whatever its mode.
+    fn open(&self) -> io::Result<rustix::fd::OwnedFd> {
+        use rustix::fs::{CWD, Mode, OFlags, openat};
+        let flags = OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        Ok(match &self.dir {
+            Some(d) => openat(&**d, &*self.name, flags, Mode::empty())?,
+            None => openat(CWD, &*self.name, flags, Mode::empty())?,
+        })
+    }
+}
+
+/// `chmod` of what `fd` (`O_PATH`) is, through `/proc/self/fd`: no path walked again.
+fn set_mode(fd: &rustix::fd::OwnedFd, mode: u32) -> io::Result<()> {
+    use rustix::fd::AsRawFd;
+    let link = format!("/proc/self/fd/{}", fd.as_raw_fd());
+    Ok(rustix::fs::chmod(
+        link,
+        rustix::fs::Mode::from_raw_mode(mode),
+    )?)
+}
+
+/// The entries of the dir `fd` (`O_PATH`), each relative to it.
+fn kids(fd: &std::sync::Arc<rustix::fd::OwnedFd>, path: &Path) -> io::Result<Vec<At>> {
+    use rustix::fs::{Dir, Mode, OFlags, openat};
+    use std::os::unix::ffi::OsStrExt;
+    let d = openat(
+        &**fd,
+        ".",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    let mut out = Vec::new();
+    for e in Dir::read_from(&d)? {
+        let e = e?;
+        let name = std::ffi::OsStr::from_bytes(e.file_name().to_bytes());
+        if name == "." || name == ".." {
+            continue;
+        }
+        out.push(At {
+            dir: Some(fd.clone()),
+            name: name.to_owned(),
+            path: path.join(name),
+        });
+    }
+    Ok(out)
+}
+
 /// Turn on `set` and off `clear` (only the bits the user changed, so differing files keep the
 /// rest) on `paths`, and under dirs too when `recursive`; setuid / setgid are put only on `paths`
 /// and the dirs under them, never on the files inside (setgid for a tree's dirs must not make
-/// every program in it set-group-id) — sticky and taking bits off reach everything. Symlinks are left alone (chmod would change their
-/// target). Returns what failed, unreadable dirs included, and bits the kernel dropped silently
-/// (setgid when not in the file's group).
+/// every program in it set-group-id) — sticky and taking bits off reach everything. Symlinks are
+/// left alone (chmod would change their target); nothing is reached through one (`At`). Returns
+/// what failed, unreadable dirs included, and bits the kernel dropped silently (setgid when not
+/// in the file's group).
 pub fn chmod(
     paths: &[PathBuf],
     set: u32,
     clear: u32,
     recursive: bool,
 ) -> Vec<(PathBuf, io::Error)> {
+    use rustix::fd::OwnedFd;
+    use std::sync::Arc;
     enum Step {
-        /// The path, and whether it was selected (not found inside a selected dir).
-        Enter(PathBuf, bool),
+        /// The entry, and whether it was selected (not found inside a selected dir).
+        Enter(At, bool),
         /// A dir's final mode, after its contents: taking away r / x first would lock them out.
-        Finish(PathBuf, u32),
+        Finish(Arc<OwnedFd>, PathBuf, u32),
     }
     let mut failed = Vec::new();
-    let apply = |p: &Path, old: u32, new: u32, failed: &mut Vec<(PathBuf, io::Error)>| {
-        if new == old {
-            return;
-        }
-        match fs::set_permissions(p, fs::Permissions::from_mode(new)) {
-            Err(e) => failed.push((p.to_path_buf(), e)),
-            // Linux drops setgid without an error when the user is not in the file's group.
-            Ok(()) if mode(p).is_some_and(|m| m != new) => failed.push((
-                p.to_path_buf(),
-                io::Error::other(format!("mode is {:o}, not {new:o}", mode(p).unwrap_or(0))),
-            )),
-            Ok(()) => {}
-        }
-    };
+    let apply =
+        |fd: &OwnedFd, p: &Path, old: u32, new: u32, failed: &mut Vec<(PathBuf, io::Error)>| {
+            if new == old {
+                return;
+            }
+            let now = || rustix::fs::fstat(fd).map(|st| st.st_mode & 0o7777);
+            match set_mode(fd, new) {
+                Err(e) => failed.push((p.to_path_buf(), e)),
+                // Linux drops setgid without an error when the user is not in the file's group.
+                Ok(()) if now().is_ok_and(|m| m != new) => failed.push((
+                    p.to_path_buf(),
+                    io::Error::other(format!("mode is {:o}, not {new:o}", now().unwrap_or(0))),
+                )),
+                Ok(()) => {}
+            }
+        };
     let mut todo: Vec<Step> = (paths.iter().rev())
-        .map(|p| Step::Enter(p.clone(), true))
+        .map(|p| Step::Enter(At::top(p), true))
         .collect();
     while let Some(step) = todo.pop() {
-        let (p, top) = match step {
-            Step::Enter(p, top) => (p, top),
-            Step::Finish(p, new) => {
-                let old = mode(&p).unwrap_or(new);
-                apply(&p, old, new, &mut failed);
+        let (at, top) = match step {
+            Step::Enter(at, top) => (at, top),
+            Step::Finish(fd, p, new) => {
+                let old = rustix::fs::fstat(&*fd).map_or(new, |st| st.st_mode & 0o7777);
+                apply(&fd, &p, old, new, &mut failed);
                 continue;
             }
         };
-        let m = match fs::symlink_metadata(&p) {
-            Ok(m) => m,
+        let fd = match at.open() {
+            Ok(fd) => fd,
             Err(e) => {
-                failed.push((p, e));
+                failed.push((at.path, e));
                 continue;
             }
         };
-        if m.file_type().is_symlink() {
+        let st = match rustix::fs::fstat(&fd) {
+            Ok(st) => st,
+            Err(e) => {
+                failed.push((at.path, e.into()));
+                continue;
+            }
+        };
+        let kind = rustix::fs::FileType::from_raw_mode(st.st_mode);
+        if kind == rustix::fs::FileType::Symlink {
             continue;
         }
+        let is_dir = kind == rustix::fs::FileType::Directory;
         // Files found inside: no setuid / setgid put on (every program in the tree would run as
         // its owner / group); sticky and taking any of them off are harmless.
-        let set_mask = if top || m.is_dir() { 0o7777 } else { 0o1777 };
+        let set_mask = if top || is_dir { 0o7777 } else { 0o1777 };
         let (set, clear) = (set & set_mask, clear & 0o7777);
-        let old = m.permissions().mode() & 0o7777;
+        let old = st.st_mode & 0o7777;
         let new = (old & !clear) | set;
-        if !(recursive && m.is_dir()) {
-            apply(&p, old, new, &mut failed);
+        if !(recursive && is_dir) {
+            apply(&fd, &at.path, old, new, &mut failed);
             continue;
         }
         // Added bits first (a dir being opened up must be listable), the rest after its contents.
-        apply(&p, old, old | set, &mut failed);
-        let kids = match fs::read_dir(&p) {
-            Ok(rd) => rd.flatten().map(|e| e.path()).collect::<Vec<_>>(),
+        apply(&fd, &at.path, old, old | set, &mut failed);
+        let fd = Arc::new(fd);
+        let inside = match kids(&fd, &at.path) {
+            Ok(k) => k,
             Err(e) => {
-                failed.push((p.clone(), e));
+                failed.push((at.path.clone(), e));
                 Vec::new()
             }
         };
-        todo.push(Step::Finish(p, new));
-        todo.extend(kids.into_iter().map(|k| Step::Enter(k, false)));
+        todo.push(Step::Finish(fd, at.path, new));
+        todo.extend(inside.into_iter().map(|k| Step::Enter(k, false)));
     }
     failed
 }
 
 /// Give `paths` (and with `recursive` everything under the dirs) the owner `uid` and / or the
-/// group `gid`. Links get them themselves, never their targets (`lchown`). Entries that already
-/// have them are left alone. The kernel drops setuid / setgid on a chown: put back (root may, and
-/// a non-root user changes only the group of his own files). Returns what failed (without root:
-/// not the owner, not one of the user's groups; unreadable dirs).
+/// group `gid`. Links get them themselves, never their targets, and nothing is reached through
+/// one (`At`). Entries that already have them are left alone. The kernel drops setuid / setgid on
+/// a chown: put back (root may, and a non-root user changes only the group of his own files).
+/// Returns what failed (without root: not the owner, not one of the user's groups; unreadable
+/// dirs).
 pub fn chown(
     paths: &[PathBuf],
     uid: Option<u32>,
     gid: Option<u32>,
     recursive: bool,
 ) -> Vec<(PathBuf, io::Error)> {
-    use std::os::unix::fs::MetadataExt;
+    use rustix::fs::{AtFlags, FileType, Gid, Uid, chownat, fstat};
     let mut failed = Vec::new();
-    let mut todo: Vec<PathBuf> = paths.iter().rev().cloned().collect();
-    while let Some(p) = todo.pop() {
-        let m = match fs::symlink_metadata(&p) {
-            Ok(m) => m,
+    let mut todo: Vec<At> = paths.iter().rev().map(|p| At::top(p)).collect();
+    while let Some(at) = todo.pop() {
+        let st = at.open().and_then(|fd| Ok((fstat(&fd)?, fd)));
+        let (st, fd) = match st {
+            Ok(s) => s,
             Err(e) => {
-                failed.push((p, e));
+                failed.push((at.path, e));
                 continue;
             }
         };
-        if uid.is_some_and(|u| u != m.uid()) || gid.is_some_and(|g| g != m.gid()) {
-            match std::os::unix::fs::lchown(&p, uid, gid) {
-                Err(e) => failed.push((p.clone(), e)),
-                Ok(()) if !m.file_type().is_symlink() && m.mode() & 0o6000 != 0 => {
-                    let back = fs::Permissions::from_mode(m.mode() & 0o7777);
-                    if let Err(e) = fs::set_permissions(&p, back) {
-                        failed.push((p.clone(), e));
+        let kind = FileType::from_raw_mode(st.st_mode);
+        if uid.is_some_and(|u| u != st.st_uid) || gid.is_some_and(|g| g != st.st_gid) {
+            // `AT_EMPTY_PATH` on the `O_PATH` descriptor: this very entry (a link: the link).
+            let r = chownat(
+                &fd,
+                "",
+                uid.map(Uid::from_raw),
+                gid.map(Gid::from_raw),
+                AtFlags::EMPTY_PATH,
+            );
+            match r {
+                Err(e) => failed.push((at.path.clone(), e.into())),
+                Ok(()) if kind != FileType::Symlink && st.st_mode & 0o6000 != 0 => {
+                    if let Err(e) = set_mode(&fd, st.st_mode & 0o7777) {
+                        failed.push((at.path.clone(), e));
                     }
                 }
                 Ok(()) => {}
             }
         }
-        if recursive && m.is_dir() {
-            match fs::read_dir(&p) {
-                Ok(rd) => todo.extend(rd.flatten().map(|e| e.path())),
-                Err(e) => failed.push((p, e)),
+        if recursive && kind == FileType::Directory {
+            match kids(&std::sync::Arc::new(fd), &at.path) {
+                Ok(k) => todo.extend(k),
+                Err(e) => failed.push((at.path, e)),
             }
         }
     }
@@ -387,6 +479,35 @@ mod tests {
         assert!(chmod(std::slice::from_ref(&top), 0, 0o7000, true).is_empty());
         assert_eq!(mode_of(&top.join("prog")), 0o775);
         assert_eq!(mode_of(&top) & 0o7000, 0);
+    }
+
+    #[test]
+    fn regression_root_chmod_chown_never_go_through_a_link() {
+        use std::os::unix::fs::MetadataExt;
+        let d = tempfile::tempdir().unwrap();
+        let (tree, outside) = (d.path().join("tree"), d.path().join("outside"));
+        fs::create_dir_all(&tree).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret"), "").unwrap();
+        set(&outside.join("secret"), 0o600);
+        set(&outside, 0o700);
+        symlink(&outside, tree.join("dir")).unwrap();
+        symlink(outside.join("secret"), tree.join("file")).unwrap();
+        fs::write(tree.join("own"), "").unwrap();
+        set(&tree.join("own"), 0o600);
+        let failed = chmod(std::slice::from_ref(&tree), 0o066, 0, true);
+        assert!(failed.is_empty(), "{failed:?}");
+        assert_eq!(mode_of(&tree.join("own")), 0o666);
+        assert_eq!(
+            (mode_of(&outside), mode_of(&outside.join("secret"))),
+            (0o700, 0o600)
+        );
+        // chown to what it is already: walks the tree, never into the link.
+        let gid = fs::metadata(&tree).unwrap().gid();
+        assert!(chown(std::slice::from_ref(&tree), None, Some(gid), true).is_empty());
+        // A link given itself is the link: chmod leaves it, the target stays.
+        assert!(chmod(&[tree.join("file")], 0o077, 0, false).is_empty());
+        assert_eq!(mode_of(&outside.join("secret")), 0o600);
     }
 
     #[test]
