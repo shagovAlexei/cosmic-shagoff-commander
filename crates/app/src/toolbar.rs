@@ -622,8 +622,11 @@ fn icon(b: &ToolButton) -> &str {
     }
 }
 
-/// Tooltip: the button's own, else its command's name.
+/// Tooltip: the button's own, else its command's name (a submenu: «Submenu»).
 pub fn tip(b: &ToolButton) -> String {
+    if b.cmd == SUB && b.tip.trim().is_empty() {
+        return fl!("start-menu-sub");
+    }
     match (b.tip.as_str(), builtin(&b.cmd)) {
         ("", Some(c)) => (c.label)(),
         ("", None) => b.cmd.clone(),
@@ -770,6 +773,12 @@ impl ToolEdit {
         self.sel = Some(at);
     }
 
+    /// Lines `a` and `b` are one submenu's start and end.
+    fn bounds(&self, a: usize, b: usize) -> bool {
+        let marks: Vec<_> = self.list.iter().map(mark).collect();
+        shagoff_core::nest::partner(&marks, a) == Some(b)
+    }
+
     pub fn update(&mut self, m: ToolMsg) {
         let sel = self.sel.filter(|&i| i < self.list.len());
         let editable = sel.filter(|&i| has_fields(&self.list[i]));
@@ -834,14 +843,16 @@ impl ToolEdit {
                     self.sel = (!self.list.is_empty()).then(|| i.min(self.list.len() - 1));
                 }
             }
+            // A submenu's start never goes past its own end (nor the end past its start).
             (ToolMsg::Up, _) => {
-                if let Some(i) = sel.filter(|&i| i > 0) {
+                if let Some(i) = sel.filter(|&i| i > 0 && !self.bounds(i, i - 1)) {
                     self.list.swap(i, i - 1);
                     self.sel = Some(i - 1);
                 }
             }
             (ToolMsg::Down, _) => {
-                if let Some(i) = sel.filter(|&i| i + 1 < self.list.len()) {
+                if let Some(i) = sel.filter(|&i| i + 1 < self.list.len() && !self.bounds(i, i + 1))
+                {
                     self.list.swap(i, i + 1);
                     self.sel = Some(i + 1);
                 }
@@ -938,7 +949,7 @@ pub fn view<'a>(
     for (i, b) in t.list.iter().enumerate() {
         let on = msg(ToolMsg::Select(i));
         let (name, cmd) = match b.cmd.as_str() {
-            SUB => (format!("▸ {}", b.tip), String::new()),
+            SUB => (format!("▸ {}", tip(b)), String::new()),
             END => (format!("◂ {}", fl!("start-menu-sub-end")), String::new()),
             _ => (tip(b), b.cmd.clone()),
         };
@@ -1107,7 +1118,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_submenu_is_added_as_its_start_and_end() {
+    fn regression_a_submenu_keeps_its_start_and_end_together() {
         let mut t = ToolEdit::menu(vec![ToolButton {
             cmd: "ls".into(),
             ..Default::default()
@@ -1115,6 +1126,8 @@ mod tests {
         t.update(ToolMsg::AddSub);
         assert_eq!(cmds(&t), ["ls", SUB, END]);
         assert_eq!(t.sel, Some(1));
+        t.update(ToolMsg::Down); // not past its own end
+        assert_eq!(cmds(&t), ["ls", SUB, END]);
         t.update(ToolMsg::Cmd("rm".into())); // its start has only a name
         t.update(ToolMsg::Tip("Tools".into()));
         assert_eq!((&*t.list[1].cmd, &*t.list[1].tip), (SUB, "Tools"));

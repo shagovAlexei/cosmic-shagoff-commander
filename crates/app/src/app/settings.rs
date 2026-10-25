@@ -614,7 +614,11 @@ impl App {
         if let Some(c) = crate::toolbar::builtin(&b.cmd) {
             return self.update(Message::Key(c.action));
         }
-        if b.cmd.trim().is_empty() || b.cmd == crate::toolbar::SEP {
+        // A line or a submenu's bound (Start menu) is not a command.
+        if b.cmd.trim().is_empty()
+            || crate::toolbar::mark(&b) != shagoff_core::nest::Mark::Item
+            || b.cmd == crate::toolbar::SEP
+        {
             return Task::none();
         }
         let (panel, other) = (

@@ -1531,6 +1531,13 @@ impl App {
             }
             Message::Escape(_) => return self.handle(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
+                Some(Dialog::Update {
+                    stage: UpdateStage::Working,
+                    ..
+                }) => {
+                    self.update_stop
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 Some(Dialog::Conflict { reply, .. }) => {
                     let _ = reply.send(Resolution::Cancel);
                 }
@@ -2557,6 +2564,8 @@ impl App {
                 }
                 *stage = UpdateStage::Working;
                 let tag = tag.clone();
+                self.update_stop = Default::default();
+                let stop = self.update_stop.clone();
                 if !shagoff_core::update::can_install() {
                     *stage = UpdateStage::Failed(fl!("update-manual"));
                     return Task::none();
@@ -2564,22 +2573,17 @@ impl App {
                 return Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            // ~/.cache/shagoff-commander/update/<pid>: the user's own, not a shared
-                            // /tmp; one per instance, so another one's clean-up never takes our .deb.
-                            let dir = archive::temp_root()
-                                .join("update")
-                                .join(std::process::id().to_string());
-                            let _ = std::fs::remove_dir_all(&dir); // a dead process's, same pid
-                            {
-                                use std::os::unix::fs::DirBuilderExt;
-                                std::fs::DirBuilder::new()
-                                    .recursive(true)
-                                    .mode(0o700)
-                                    .create(&dir)
-                                    .map_err(|e| e.to_string())?;
-                            }
-                            let r = shagoff_core::update::download(&tag, &dir)
-                                .and_then(|deb| shagoff_core::update::install(&deb));
+                            // A fresh dir of ours in ~/.cache (not a shared /tmp), swept at the
+                            // next start if this run dies.
+                            let dir = archive::fresh_temp_dir(&archive::temp_root())
+                                .map_err(|e| e.to_string())?;
+                            let r =
+                                shagoff_core::update::download(&tag, &dir).and_then(
+                                    |deb| match stop.load(std::sync::atomic::Ordering::Relaxed) {
+                                        true => Err("cancelled".into()),
+                                        false => shagoff_core::update::install(&deb),
+                                    },
+                                );
                             let _ = std::fs::remove_dir_all(&dir);
                             r
                         })

@@ -1405,7 +1405,8 @@ pub fn temp_root() -> PathBuf {
 
 fn temp_root_in(cache: Option<std::ffi::OsString>, home: &Path) -> PathBuf {
     match cache {
-        Some(c) if !c.is_empty() => PathBuf::from(c),
+        // A relative one is ignored, as XDG says (apt under pkexec would take it for a package name).
+        Some(c) if Path::new(&c).is_absolute() => PathBuf::from(c),
         _ => home.join(".cache"),
     }
     .join("shagoff-commander")
@@ -3769,6 +3770,10 @@ mod tests {
         );
         assert_eq!(
             temp_root_in(Some("".into()), home),
+            Path::new("/home/u/.cache/shagoff-commander")
+        );
+        assert_eq!(
+            temp_root_in(Some("cache".into()), home), // relative: ignored
             Path::new("/home/u/.cache/shagoff-commander")
         );
     }
