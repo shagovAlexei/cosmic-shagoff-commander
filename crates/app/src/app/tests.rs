@@ -762,6 +762,7 @@ fn f7_made_in_the_background_rereads_or_says_why() {
         cwd: tmp.clone(),
         name: "new/sub".into(),
         first: Some("new".into()),
+        what: New::Dir,
         made,
     };
     let _ = app.update(made(Err("Permission denied".into())));
@@ -2943,19 +2944,29 @@ fn shift_f4_creates_the_file_and_puts_the_cursor_on_it() {
     assert!(
         matches!(&app.dialog, Some(Dialog::Input { op: InputOp::NewFile, input, .. }) if input == "old.txt")
     );
-    let _ = app.update(Message::DialogSubmit); // exists: opened, not emptied
-    assert_eq!(
-        std::fs::read_to_string(tmp.path().join("old.txt")).unwrap(),
-        "kept"
-    );
-    let _ = app.update(Message::Key(Action::NewFile));
-    let _ = app.update(Message::DialogInput("new.md".into()));
+    // Made in the background (`ops::new_file`, tested in core); its end comes as `Made`.
     let _ = app.update(Message::DialogSubmit);
-    assert!(tmp.path().join("new.md").is_file());
+    assert!(app.dialog.is_none());
+    let made = |made| Message::Made {
+        side: 0,
+        cwd: tmp.path().to_path_buf(),
+        name: "new.md".into(),
+        first: Some("new.md".into()),
+        what: New::File,
+        made,
+    };
+    let _ = app.update(made(Ok(())));
+    assert_eq!(pending_path(&app), Some(tmp.path().to_path_buf())); // read again, onto it
+    let _ = app.update(made(Err("Permission denied".into())));
+    assert!(app.msg().is_some_and(|m| m.contains("Permission denied")));
     let _ = app.update(Message::Key(Action::NewFile));
     let _ = app.update(Message::DialogInput("a/b".into())); // one name only
     let _ = app.update(Message::DialogSubmit);
-    assert!(!tmp.path().join("a").exists());
+    assert!(
+        app.status
+            .as_ref()
+            .is_some_and(|s| s.kind == StatusKind::Error)
+    );
 }
 
 #[test]
@@ -6964,36 +6975,34 @@ fn tabs_listed_opened_behind_and_closed_as_duplicates() {
 }
 
 #[test]
-fn a_new_file_from_a_template_is_its_copy_never_over_a_file() {
+fn a_new_file_from_a_template_is_made_in_the_background_or_says_why() {
     let d = tempfile::tempdir().unwrap();
     let template = d.path().join("tpl.txt");
     std::fs::write(&template, "hello").unwrap();
     let mut app = app_with(Config::default(), State::default());
     let p = &mut app.panes[0].active_mut().panel;
     p.set_listing(d.path().to_path_buf(), Vec::new(), None);
-    let ask = |name: &str| Dialog::Input {
+    // Copied in the background (`templates::create`, never over a file: tested in core).
+    app.dialog = Some(Dialog::Input {
         op: InputOp::FromTemplate,
         side: 0,
         sources: vec![template.clone()],
-        input: name.into(),
-    };
-    app.dialog = Some(ask("note.txt"));
+        input: "note.txt".into(),
+    });
     let _ = app.update(Message::DialogSubmit);
-    assert_eq!(
-        std::fs::read_to_string(d.path().join("note.txt")).unwrap(),
-        "hello"
-    );
-    std::fs::write(d.path().join("note.txt"), "mine").unwrap();
-    app.dialog = Some(ask("note.txt"));
-    let _ = app.update(Message::DialogSubmit);
-    assert_eq!(
-        std::fs::read_to_string(d.path().join("note.txt")).unwrap(),
-        "mine"
-    );
+    assert!(app.dialog.is_none());
+    let _ = app.update(Message::Made {
+        side: 0,
+        cwd: d.path().to_path_buf(),
+        name: "note.txt".into(),
+        first: Some("note.txt".into()),
+        what: New::Copy,
+        made: Err("File exists".into()),
+    });
     assert!(
         app.status
             .as_ref()
-            .is_some_and(|s| s.kind == StatusKind::Error)
+            .is_some_and(|s| s.kind == StatusKind::Error && s.text.contains("File exists"))
     );
 }
 

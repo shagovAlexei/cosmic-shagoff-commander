@@ -584,19 +584,14 @@ impl App {
                     return Task::none();
                 }
                 let cwd = self.panes[side].active().panel.cwd().to_path_buf();
-                let Some(template) = sources.first() else {
+                let Some(template) = sources.into_iter().next() else {
                     return Task::none();
                 };
-                if let Err(e) = templates::create(template, &cwd.join(name)) {
-                    let err = crate::why::text(&e);
-                    self.say(
-                        StatusKind::Error,
-                        fl!("new-file-failed", path = name, err = err),
-                    );
-                    return Task::none();
-                }
-                // `load`: out of search results too, on the new file.
-                self.load(side, cwd, Some(name.to_string()))
+                let file = cwd.join(name);
+                let name = name.to_string();
+                make(side, cwd, name.clone(), Some(name), New::Copy, move || {
+                    templates::create(&template, &file)
+                })
             }
             Dialog::Input {
                 op: op @ (InputOp::SaveMarks | InputOp::LoadMarks),
@@ -999,23 +994,10 @@ impl App {
             return Task::none();
         }
         let cwd = self.panes[side].active().panel.cwd().to_path_buf();
-        let file = cwd.join(name);
-        if let Err(e) = ops::new_file(&file) {
-            let err = crate::why::text(&e);
-            self.say(
-                StatusKind::Error,
-                fl!("new-file-failed", path = name, err = err),
-            );
-            return Task::none();
-        }
-        let argv = launch::command(&self.config.editor, &["cosmic-edit"], &file);
-        if let Err(err) = spawn_detached(&argv) {
-            self.say(
-                StatusKind::Error,
-                fl!("open-failed", err = crate::why::text(&err)),
-            );
-        }
-        self.reload(side, cwd, Some(name.to_string()))
+        let (file, name) = (cwd.join(name), name.to_string());
+        make(side, cwd, name.clone(), Some(name), New::File, move || {
+            ops::new_file(&file).map(|_| ())
+        })
     }
 
     /// F7: create (possibly nested) dirs, then put the cursor on the first created component.
@@ -1041,23 +1023,10 @@ impl App {
             return self.start_job(side, OpKind::Repack, job, first());
         }
         // In the background: on a dead network mount `mkdir` never returns.
-        let (dir, name, first) = (cwd.join(name), name.to_string(), first());
-        Task::perform(
-            async move {
-                let made = tokio::task::spawn_blocking(move || std::fs::create_dir_all(dir))
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| crate::why::text(&e)));
-                Message::Made {
-                    side,
-                    cwd,
-                    name,
-                    first,
-                    made,
-                }
-            },
-            cosmic::Action::App,
-        )
+        let (dir, name) = (cwd.join(name), name.to_string());
+        make(side, cwd, name, first(), New::Dir, move || {
+            std::fs::create_dir_all(dir)
+        })
     }
 
     /// Ctrl+Shift+F5: links placed by F5's rules (`link_all`, in the background); no job, no

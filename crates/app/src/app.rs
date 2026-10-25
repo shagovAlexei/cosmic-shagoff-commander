@@ -590,6 +590,16 @@ pub struct Status {
     pub text: String,
 }
 
+/// What `Message::Made` made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum New {
+    Dir,
+    /// Shift+F4: opened in the editor once there.
+    File,
+    /// From a template.
+    Copy,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Key(Action),
@@ -625,12 +635,14 @@ pub enum Message {
     SplitSize(String),
     /// Split / Combine done: what to say (`Ok`) or the error.
     Pieces(Result<String, String>),
-    /// F7 done (`App::mkdir`): the dir it was typed in, the name as typed and its first part.
+    /// F7, Shift+F4 or a template copy done (`App::make`): the dir it was typed in, the name as
+    /// typed and its first part.
     Made {
         side: usize,
         cwd: PathBuf,
         name: String,
         first: Option<String>,
+        what: New,
         made: Result<(), String>,
     },
     /// The built-in terminal's event channel is up: its shell starts.
