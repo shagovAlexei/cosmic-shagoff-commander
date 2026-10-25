@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.121.3 — 2026-10-25
+
+- fix: built-in terminal: no panic when the cursor's line is not laid out yet ([#288](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/288))
+
 ## 0.121.2 — 2026-10-25
 
 - fix: Cancel while the update downloads stops it before pkexec; its dir is swept at the next start if the run dies; a relative XDG_CACHE_HOME is ignored; Start menu: a submenu's start and end never swap, a submenu of empty ones is hidden, an unnamed one is «Submenu» everywhere, a bound in the toolbar / F12 runs nothing ([#287](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/287))
