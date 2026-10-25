@@ -2293,6 +2293,7 @@ impl App {
             Message::Pieces(done) => {
                 self.clear_busy();
                 match done {
+                    Ok(note) if note.is_empty() => {}
                     Ok(note) => self.say(StatusKind::Info, note),
                     Err(e) => self.say(StatusKind::Error, e),
                 }

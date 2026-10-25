@@ -5861,7 +5861,7 @@ mod drawer_tests {
     }
 
     #[test]
-    fn set_date_changes_the_ticked_times_of_the_file_under_the_cursor() {
+    fn set_date_runs_in_the_background_and_says_what_failed() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("a.txt");
         std::fs::write(&f, "x").unwrap();
@@ -5875,19 +5875,24 @@ mod drawer_tests {
         let _ = app.update(Message::DateText(0, "2001-09-09 01:46:40".into()));
         let _ = app.update(Message::DateText(1, "2002-01-01 00:00:00".into()));
         let _ = app.update(Message::DateChange(1, false)); // the access time stays
+        // Set in the background (`props::set_times`, tested in core); its end comes as `Pieces`.
+        let before = std::fs::metadata(&f).unwrap().modified().unwrap();
         let _ = app.update(Message::DialogSubmit);
-        let meta = std::fs::metadata(&f).unwrap();
-        let want = format::parse_date("2001-09-09 01:46:40", &app.tz).unwrap();
-        assert_eq!(meta.modified().unwrap(), want);
-        assert_ne!(
-            meta.accessed().unwrap(),
-            format::parse_date("2002-01-01 00:00:00", &app.tz).unwrap()
+        assert!(app.dialog.is_none());
+        let _ = app.update(Message::Pieces(Ok(String::new())));
+        assert!(app.status.is_none()); // done: nothing to say
+        let _ = app.update(Message::Pieces(Err("a.txt: denied".into())));
+        assert!(
+            app.status
+                .as_ref()
+                .is_some_and(|s| s.text.contains("denied"))
         );
-        // Not a date: nothing is changed, an error is said.
+        app.status = None;
+        // Not a date: nothing is changed (no task), an error is said.
         let _ = app.update(Message::Key(Action::SetDate));
         let _ = app.update(Message::DateText(0, "soon".into()));
         let _ = app.update(Message::DialogSubmit);
-        assert_eq!(std::fs::metadata(&f).unwrap().modified().unwrap(), want);
+        assert_eq!(std::fs::metadata(&f).unwrap().modified().unwrap(), before);
         assert!(app.status.is_some());
     }
 
