@@ -3,3 +3,5 @@ target/
 .superpowers/
 .agents/
 AGENTS.md
+.claude/local/
+
