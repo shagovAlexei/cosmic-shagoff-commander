@@ -2554,7 +2554,9 @@ impl App {
             Message::Setting(s) => return self.set(s),
             Message::CheckUpdate => {
                 use shagoff_core::update::{Status, check};
-                self.update_check = Some(Status::Checking);
+                if let Some(Dialog::About { check }) = &mut self.dialog {
+                    *check = Some(Status::Checking);
+                }
                 return Task::perform(
                     async {
                         tokio::task::spawn_blocking(|| check(env!("CARGO_PKG_VERSION")))
@@ -2566,14 +2568,16 @@ impl App {
             }
             Message::UpdateChecked(shagoff_core::update::Status::Available(tag)) => {
                 // Asked by hand: the update window, whatever was skipped before.
-                self.update_check = None;
-                self.set_drawer(None);
                 self.dialog = Some(Dialog::Update {
                     tag,
                     stage: UpdateStage::Ask,
                 });
             }
-            Message::UpdateChecked(s) => self.update_check = Some(s),
+            Message::UpdateChecked(s) => {
+                if let Some(Dialog::About { check }) = &mut self.dialog {
+                    *check = Some(s);
+                }
+            }
             Message::StartupUpdate(s) => {
                 // A failed check is not worth a word at start (no network).
                 if let shagoff_core::update::Status::Available(tag) = s

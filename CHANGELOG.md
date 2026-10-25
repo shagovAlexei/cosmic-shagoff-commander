@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.125.0 — 2026-10-25
+
+- feat: About is a dialog as in ShagShell Secure: the support note on top, the version with «Check for updates» under it, the description, the author, «Latest release» and «Report a problem» buttons, «Close»
+
 ## 0.124.0 — 2026-10-25
 
 - feat: About as in ShagShell Secure: «Check for updates» right under the version; a newer release opens the update window (download, hash check, install), «up to date» or the error is said under the button

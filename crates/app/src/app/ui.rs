@@ -158,10 +158,6 @@ impl App {
 
     pub(super) fn set_drawer(&mut self, d: Option<Drawer>) {
         self.core.window.show_context = d.is_some();
-        // A new look at About asks again: an old answer may no longer hold.
-        if d == Some(Drawer::About) {
-            self.update_check = None;
-        }
         self.drawer = d;
     }
 
@@ -169,7 +165,6 @@ impl App {
     pub(super) fn toggle_drawer(&mut self, action: Action) {
         let open = match action {
             Action::Help => Some(Drawer::Help),
-            Action::About => Some(Drawer::About),
             Action::Donate => Some(Drawer::Donate),
             _ => None,
         };
