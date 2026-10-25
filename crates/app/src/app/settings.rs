@@ -163,7 +163,6 @@ impl App {
             let system = i18n_embed::DesktopLanguageRequester::requested_languages();
             crate::i18n::init(&config::languages(&self.config.language, system));
             self.core.window.header_title = fl!("app-title");
-            self.about = drawer::about();
         }
         if old.app_theme != self.config.app_theme {
             tasks.push(cosmic::command::set_theme(self.config.app_theme.theme()));

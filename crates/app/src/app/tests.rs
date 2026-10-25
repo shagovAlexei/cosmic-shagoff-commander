@@ -5597,14 +5597,19 @@ mod drawer_tests {
     }
 
     #[test]
-    fn f1_toggles_help_and_about_replaces_it() {
+    fn f1_toggles_help_and_about_is_a_dialog() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::Key(Action::Help));
         assert_eq!(app.drawer, Some(Drawer::Help));
         let _ = app.update(Message::Key(Action::About));
-        assert_eq!(app.drawer, Some(Drawer::About));
+        assert_eq!(app.drawer, None); // the drawer makes way
+        assert!(matches!(app.dialog, Some(Dialog::About { check: None })));
+        assert!(cosmic::Application::dialog(&app).is_some()); // drawn
+        let _ = app.update(Message::DialogCancel);
+        assert!(app.dialog.is_none());
         let _ = app.update(Message::Key(Action::About));
-        assert_eq!(app.drawer, None);
+        let _ = app.update(Message::DialogSubmit); // Enter: «Close»
+        assert!(app.dialog.is_none());
     }
 
     #[test]
@@ -5843,11 +5848,22 @@ mod drawer_tests {
         let mut app = app_with(Config::default(), State::default());
         app.update_skip = "v9.0.0".into();
         let _ = app.update(Message::Key(Action::About));
+        let _ = app.update(Message::CheckUpdate);
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::About {
+                check: Some(Status::Checking)
+            })
+        ));
         let _ = app.update(Message::UpdateChecked(Status::Latest));
-        assert!(app.dialog.is_none() && app.update_check == Some(Status::Latest));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::About {
+                check: Some(Status::Latest)
+            })
+        ));
         let _ = app.update(Message::UpdateChecked(Status::Available("v9.0.0".into())));
         assert!(matches!(&app.dialog, Some(Dialog::Update { tag, .. }) if tag == "v9.0.0"));
-        assert!(app.drawer.is_none()); // About made way for it
     }
 
     #[test]

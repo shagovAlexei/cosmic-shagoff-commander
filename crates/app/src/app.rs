@@ -388,13 +388,8 @@ pub struct App {
     /// A toolbar button held with Shift, moved to where the pointer goes.
     pub tool_drag: shagoff_core::reorder::Reorder,
     dialog: Option<Dialog>,
-    /// Help / about / settings in the side drawer.
+    /// Help / settings in the side drawer.
     pub(crate) drawer: Option<Drawer>,
-    /// Built once (the widget borrows it), rebuilt when the language changes. Two parts, so
-    /// «Check for updates» sits under the version: [icon … version, links … comments].
-    pub(crate) about: [cosmic::widget::about::About; 2],
-    /// About → «Check for updates»: `None` not asked since About opened.
-    pub(crate) update_check: Option<shagoff_core::update::Status>,
     /// The version the user skipped in the update dialog (kept in `State`).
     pub(crate) update_skip: String,
     /// Set by Cancel while the update downloads: its install is not started.
@@ -1374,8 +1369,6 @@ impl App {
             mods: Modifiers::empty(),
             dialog: None,
             drawer: None,
-            about: drawer::about(),
-            update_check: None,
             update_skip: state.update_skip.clone(),
             update_stop: Default::default(),
             job: None,

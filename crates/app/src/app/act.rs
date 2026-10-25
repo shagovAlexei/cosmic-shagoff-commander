@@ -85,7 +85,12 @@ impl App {
             Action::QuickFilter => return self.quick_filter(side),
             Action::Disconnect => return self.disconnect(side),
             Action::OpenWith => return self.open_with(side),
-            Action::Help | Action::About | Action::Settings | Action::Donate => {
+            Action::About => {
+                self.set_drawer(None);
+                self.dialog = Some(Dialog::About { check: None });
+                return Task::none();
+            }
+            Action::Help | Action::Settings | Action::Donate => {
                 self.toggle_drawer(action);
                 return Task::none();
             }

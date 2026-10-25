@@ -973,6 +973,8 @@ impl App {
                     None => Task::none(),
                 }
             }
+            // Enter: «Close».
+            Dialog::About { .. } => Task::none(),
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. }
             | Dialog::Error { .. }

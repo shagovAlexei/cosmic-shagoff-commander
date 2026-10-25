@@ -1,14 +1,13 @@
 //! Side drawer: help (F1), about, settings (Ctrl+,).
 
-use crate::app::{APP_ID, App, Message};
+use crate::app::{App, Message};
 use crate::config::{AppTheme, LANGUAGES, LastTab, Skin};
 use crate::fl;
 use cosmic::app::context_drawer::{self, ContextDrawer};
 use cosmic::iced::{Alignment, Length};
-use cosmic::widget::{self, about::About, settings};
+use cosmic::widget::{self, settings};
 use cosmic::{Element, theme};
 use shagoff_core::archive::Format;
-use shagoff_core::update::Status;
 
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
@@ -18,7 +17,6 @@ pub const DONATE_URL: &str = "https://donate.stripe.com/6oU28s8Ff7cR1342J967S00"
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Drawer {
     Help,
-    About,
     Donate,
     Settings(SettingsForm),
 }
@@ -118,37 +116,10 @@ pub enum Setting {
     ListerSize(u16),
 }
 
-pub fn about() -> [About; 2] {
-    let head = About::default()
-        .name(fl!("app-title"))
-        .icon(widget::icon::from_name(APP_ID))
-        .version(env!("CARGO_PKG_VERSION"));
-    let rest = About::default()
-        .author("Shagov Alexei")
-        .comments(fl!("about-comments"))
-        .license("GPL-3.0-only")
-        .license_url("https://www.gnu.org/licenses/gpl-3.0.html")
-        .links([
-            (fl!("about-latest"), format!("{REPO}/releases/latest")),
-            (fl!("about-issues"), format!("{REPO}/issues")),
-        ]);
-    [head, rest]
-}
-
 pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
     match d {
         Drawer::Help => {
             context_drawer::context_drawer(help(), Message::CloseDrawer).title(fl!("menu-help"))
-        }
-        Drawer::About => {
-            let content = widget::column::with_children(vec![
-                donate(),
-                widget::about(&app.about[0], |url| Message::OpenUrl(url.to_string())),
-                update_check(app.update_check.as_ref()),
-                widget::about(&app.about[1], |url| Message::OpenUrl(url.to_string())),
-            ])
-            .spacing(24);
-            context_drawer::context_drawer(content, Message::CloseDrawer).title(fl!("menu-about"))
         }
         Drawer::Donate => context_drawer::context_drawer(donate(), Message::CloseDrawer)
             .title(fl!("donate-title")),
@@ -213,29 +184,6 @@ fn help() -> Element<'static, Message> {
             s = s.add(settings::item_row(row));
         }
         col = col.push(s);
-    }
-    col.into()
-}
-
-/// «Check for updates» and what it found: up to date, or why not.
-fn update_check(state: Option<&Status>) -> Element<'static, Message> {
-    let mut button = widget::button::standard(fl!("update-check"));
-    if state != Some(&Status::Checking) {
-        button = button.on_press(Message::CheckUpdate);
-    }
-    let mut col = widget::column::with_capacity(3)
-        .spacing(8)
-        .align_x(Alignment::Center)
-        .width(Length::Fill)
-        .push(button);
-    let text = |s: String| widget::text::body(s);
-    match state {
-        None => {}
-        Some(Status::Checking) => col = col.push(text(fl!("update-checking"))),
-        Some(Status::Latest) => col = col.push(text(fl!("update-latest"))),
-        // A newer release opens the update window instead (`Message::UpdateChecked`).
-        Some(Status::Available(_)) => {}
-        Some(Status::Failed(e)) => col = col.push(text(fl!("update-failed", error = e.as_str()))),
     }
     col.into()
 }

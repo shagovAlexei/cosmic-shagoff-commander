@@ -68,6 +68,11 @@ pub enum UpdateStage {
 }
 
 pub enum Dialog {
+    /// Help → About (as in ShagShell Secure): the support note, the version with the update check
+    /// right under it (its answer: up to date or why not), what the program is, the links.
+    About {
+        check: Option<shagoff_core::update::Status>,
+    },
     /// A newer release was found at start: update, skip it, or later.
     Update {
         tag: String,
@@ -2497,6 +2502,7 @@ pub fn view<'a>(
             .primary_action(ok)
             .secondary_action(cancel)
             .into(),
+        Dialog::About { check } => about(check.as_ref()),
         Dialog::Update { tag, stage } => {
             let dlg = widget::dialog().title(fl!("update-dialog-title"));
             let body = |t: String| {
@@ -2659,5 +2665,73 @@ pub fn progress<'a>(
         .primary_action(widget::button::standard(fl!("cancel")).on_press(Message::CancelJob))
         .secondary_action(widget::button::suggested(fl!("job-hide")).on_press(Message::JobHide))
         .tertiary_action(widget::button::text(pause).on_press(Message::JobPause))
+        .into()
+}
+
+fn about(check: Option<&shagoff_core::update::Status>) -> Element<'_, Message> {
+    use crate::drawer::{DONATE_URL, REPO};
+    use shagoff_core::update::Status;
+    let mut check_btn = widget::button::standard(fl!("update-check"));
+    if check != Some(&Status::Checking) {
+        check_btn = check_btn.on_press(Message::CheckUpdate);
+    }
+    let note = match check {
+        Some(Status::Checking) => Some(fl!("update-checking")),
+        Some(Status::Latest) => Some(fl!("update-latest")),
+        Some(Status::Failed(e)) => Some(fl!("update-failed", error = e.as_str())),
+        // A newer release opens the update window instead (`Message::UpdateChecked`).
+        Some(Status::Available(_)) | None => None,
+    };
+    let link = |label: String, icon: &'static str, url: String| {
+        widget::button::standard(label)
+            .leading_icon(widget::icon::from_name(icon).size(16))
+            .on_press(Message::OpenUrl(url))
+    };
+    let content = widget::column::with_capacity(12)
+        .spacing(16)
+        .align_x(cosmic::iced::Alignment::Center)
+        .push(widget::text::body(fl!("donate-text")))
+        .push(
+            widget::button::suggested(fl!("donate-button"))
+                .on_press(Message::OpenUrl(DONATE_URL.to_string())),
+        )
+        .push(widget::divider::horizontal::default())
+        .push(widget::icon::from_name(crate::app::APP_ID).size(96))
+        .push(widget::text::title3(fl!("app-title")))
+        .push(widget::text::body(format!(
+            "{} {}",
+            fl!("about-version"),
+            env!("CARGO_PKG_VERSION")
+        )))
+        .push(check_btn)
+        .push_maybe(note.map(widget::text::body))
+        .push(widget::text::body(fl!("about-comments")))
+        .push(widget::text::caption(format!(
+            "{} Shagov Alexei · GPL-3.0-only",
+            fl!("about-author")
+        )))
+        .push(
+            widget::row::with_children(vec![
+                link(
+                    fl!("about-latest"),
+                    "software-update-available-symbolic",
+                    format!("{REPO}/releases/latest"),
+                )
+                .into(),
+                link(
+                    fl!("about-issues"),
+                    "dialog-warning-symbolic",
+                    format!("{REPO}/issues"),
+                )
+                .into(),
+            ])
+            .spacing(8),
+        );
+    widget::dialog()
+        .title(fl!("menu-about"))
+        .control(widget::scrollable(content).width(Length::Fill))
+        .primary_action(
+            widget::button::standard(fl!("about-close")).on_press(Message::DialogCancel),
+        )
         .into()
 }
