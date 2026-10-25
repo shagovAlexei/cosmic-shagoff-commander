@@ -2564,6 +2564,15 @@ impl App {
                     |r| cosmic::Action::App(Message::UpdateChecked(r)),
                 );
             }
+            Message::UpdateChecked(shagoff_core::update::Status::Available(tag)) => {
+                // Asked by hand: the update window, whatever was skipped before.
+                self.update_check = None;
+                self.set_drawer(None);
+                self.dialog = Some(Dialog::Update {
+                    tag,
+                    stage: UpdateStage::Ask,
+                });
+            }
             Message::UpdateChecked(s) => self.update_check = Some(s),
             Message::StartupUpdate(s) => {
                 // A failed check is not worth a word at start (no network).

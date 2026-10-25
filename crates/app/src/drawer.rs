@@ -122,10 +122,10 @@ pub fn about() -> [About; 2] {
     let head = About::default()
         .name(fl!("app-title"))
         .icon(widget::icon::from_name(APP_ID))
-        .version(env!("CARGO_PKG_VERSION"))
-        .author("Shagov Alexei")
-        .comments(fl!("about-comments"));
+        .version(env!("CARGO_PKG_VERSION"));
     let rest = About::default()
+        .author("Shagov Alexei")
+        .comments(fl!("about-comments"))
         .license("GPL-3.0-only")
         .license_url("https://www.gnu.org/licenses/gpl-3.0.html")
         .links([
@@ -217,7 +217,7 @@ fn help() -> Element<'static, Message> {
     col.into()
 }
 
-/// «Check for updates» and what it found: up to date, a newer release (with its link), or why not.
+/// «Check for updates» and what it found: up to date, or why not.
 fn update_check(state: Option<&Status>) -> Element<'static, Message> {
     let mut button = widget::button::standard(fl!("update-check"));
     if state != Some(&Status::Checking) {
@@ -233,14 +233,8 @@ fn update_check(state: Option<&Status>) -> Element<'static, Message> {
         None => {}
         Some(Status::Checking) => col = col.push(text(fl!("update-checking"))),
         Some(Status::Latest) => col = col.push(text(fl!("update-latest"))),
-        Some(Status::Available(tag)) => {
-            col = col
-                .push(text(fl!("update-available", tag = tag.as_str())))
-                .push(
-                    widget::button::suggested(fl!("update-open"))
-                        .on_press(Message::OpenUrl(format!("{REPO}/releases/tag/{tag}"))),
-                );
-        }
+        // A newer release opens the update window instead (`Message::UpdateChecked`).
+        Some(Status::Available(_)) => {}
         Some(Status::Failed(e)) => col = col.push(text(fl!("update-failed", error = e.as_str()))),
     }
     col.into()
