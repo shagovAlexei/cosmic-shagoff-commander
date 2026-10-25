@@ -1,7 +1,9 @@
 //! About → «Check for updates»: the latest release tag from GitHub, compared with ours.
 
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 pub const LATEST_API: &str =
     "https://api.github.com/repos/shagovAlexei/cosmic-shagoff-commander/releases/latest";
 
@@ -67,14 +69,6 @@ pub fn check(current: &str) -> Status {
     status(current, &String::from_utf8_lossy(&out.stdout))
 }
 
-/// The `.deb` a release carries, by its tag.
-pub fn deb_name(tag: &str) -> String {
-    format!(
-        "shagoff-commander_{}_amd64.deb",
-        tag.trim_start_matches('v')
-    )
-}
-
 /// Updating in place goes through apt on an x86-64 system; elsewhere the release page opens.
 pub fn can_install() -> bool {
     cfg!(target_arch = "x86_64")
@@ -84,19 +78,50 @@ pub fn can_install() -> bool {
         })
 }
 
-/// `name`'s hash in the text of a `SHA256SUMS`.
-pub fn expected_sum(sums: &[u8], name: &str) -> Option<String> {
-    crate::checksum::parse(sums)
-        .into_iter()
-        .find(|(_, n)| n.as_os_str() == name)
-        .map(|(h, _)| h)
+/// `v0.18.0`: the only shape of a tag we put in a download address.
+pub fn valid_tag(tag: &str) -> bool {
+    newer("0.0.0", tag) || tag == "v0.0.0"
 }
 
-fn fetch(url: &str, to: &std::path::Path) -> Result<(), String> {
+/// The `.deb` a `SHA256SUMS` lists (`<hash>  shagoff-commander_0.18.0_amd64.deb`); a name with a
+/// path or another shape is refused: it goes into a download address.
+pub fn deb_name(sums: &str) -> Option<String> {
+    sums.lines()
+        .filter_map(|l| l.split_whitespace().nth(1))
+        .map(|n| n.trim_start_matches('*'))
+        .find(|n| n.ends_with(".deb"))
+        .filter(|n| {
+            n.starts_with("shagoff-commander_")
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'+'))
+        })
+        .map(String::from)
+}
+
+/// `sha256sum -c --strict` of the `SHA256SUMS` in `dir` (the `.rpm` it lists is not downloaded):
+/// Ok only when the files there match; else the line that says what did not.
+pub fn verify(dir: &Path) -> Result<(), String> {
+    let out = Command::new("sha256sum")
+        .args(["-c", "--strict", "--ignore-missing", "SHA256SUMS"])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| format!("sha256sum: {e}"))?;
+    match out.status.success() {
+        true => Ok(()),
+        false => Err(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .chain(String::from_utf8_lossy(&out.stderr).lines())
+            .find(|l| !l.ends_with(": OK"))
+            .unwrap_or("SHA-256 does not match")
+            .to_string()),
+    }
+}
+
+fn fetch(url: &str, to: &Path) -> Result<(), String> {
     let out = Command::new("curl")
         .args(["-fsSL", "-m", "600", "-o"])
         .arg(to)
-        .arg(url)
+        .args(["--", url])
         .output()
         .map_err(|e| format!("curl: {e}"))?;
     match out.status.success() {
@@ -105,28 +130,27 @@ fn fetch(url: &str, to: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// The release `tag`'s `.deb` into `dir`, its SHA-256 checked against the release's `SHA256SUMS`
-/// (a release without one, or a file that does not match, is refused). Blocking.
-pub fn download(tag: &str, dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
-    let base =
-        format!("https://github.com/shagovAlexei/cosmic-shagoff-commander/releases/download/{tag}");
-    let name = deb_name(tag);
-    let (deb, sums) = (dir.join(&name), dir.join("SHA256SUMS"));
-    fetch(&format!("{base}/{name}"), &deb)?;
-    fetch(&format!("{base}/SHA256SUMS"), &sums)?;
-    let want = expected_sum(&std::fs::read(&sums).map_err(|e| e.to_string())?, &name)
-        .ok_or_else(|| format!("{name} is not in SHA256SUMS"))?;
-    let stop = std::sync::atomic::AtomicBool::new(false);
-    let got = crate::checksum::hash(&deb, crate::checksum::Algo::Sha256, &stop)
-        .map_err(|e| e.to_string())?;
-    match got == want {
-        true => Ok(deb),
-        false => Err(format!("{name}: SHA-256 does not match")),
+/// Release `tag`'s `SHA256SUMS` and the `.deb` it names into `dir` (curl, from this repository
+/// only), then `verify`. A package that does not match is deleted. Blocking.
+pub fn download(tag: &str, dir: &Path) -> Result<PathBuf, String> {
+    if !valid_tag(tag) {
+        return Err(format!("bad tag {tag}"));
     }
+    let base = format!("{REPO}/releases/download/{tag}");
+    fetch(&format!("{base}/SHA256SUMS"), &dir.join("SHA256SUMS"))?;
+    let sums = std::fs::read_to_string(dir.join("SHA256SUMS")).map_err(|e| e.to_string())?;
+    let name = deb_name(&sums).ok_or("SHA256SUMS: no package")?;
+    let deb = dir.join(&name);
+    fetch(&format!("{base}/{name}"), &deb)?;
+    if let Err(e) = verify(dir) {
+        let _ = std::fs::remove_file(&deb);
+        return Err(e);
+    }
+    Ok(deb)
 }
 
 /// `pkexec apt-get install` of the downloaded `.deb` (asks for the password itself). Blocking.
-pub fn install(deb: &std::path::Path) -> Result<(), String> {
+pub fn install(deb: &Path) -> Result<(), String> {
     let out = Command::new("pkexec")
         .args(["apt-get", "install", "-y"])
         .arg(deb)
@@ -168,17 +192,40 @@ mod tests {
     }
 
     #[test]
-    fn the_deb_and_its_sum() {
-        assert_eq!(deb_name("v0.118.0"), "shagoff-commander_0.118.0_amd64.deb");
+    fn deb_name_is_a_plain_package_name() {
+        let h = "a".repeat(64);
         let sums = format!(
-            "{}  shagoff-commander_0.118.0_amd64.deb\n{}  x.rpm\n",
-            "a".repeat(64),
-            "b".repeat(64)
+            "{h}  shagoff-commander_0.118.0_amd64.deb\n{h}  shagoff-commander-0.118.0-1.x86_64.rpm\n"
         );
         assert_eq!(
-            expected_sum(sums.as_bytes(), "shagoff-commander_0.118.0_amd64.deb"),
-            Some("a".repeat(64))
+            deb_name(&sums),
+            Some("shagoff-commander_0.118.0_amd64.deb".into())
         );
-        assert_eq!(expected_sum(sums.as_bytes(), "other.deb"), None);
+        assert_eq!(deb_name(&format!("{h}  ../evil.deb")), None);
+        assert_eq!(deb_name(&format!("{h}  shagoff-commander_/../x.deb")), None);
+        assert_eq!(deb_name(&format!("{h}  other_1.deb")), None);
+        assert_eq!(deb_name(""), None);
+        assert!(valid_tag("v0.118.0") && !valid_tag("v0.118.0/../x") && !valid_tag("latest"));
+    }
+
+    #[test]
+    fn regression_update_refuses_a_package_that_does_not_match_its_hash() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("shagoff-commander_0.1.0_amd64.deb"),
+            b"package",
+        )
+        .unwrap();
+        // sha256 of "package"; the .rpm is listed but not there
+        let ok = "bc4a71180870f7945155fbb02f4b0a2e3faa2a62d6d31b7039013055ed19869a";
+        let sums = |h: &str| {
+            format!(
+                "{h}  shagoff-commander_0.1.0_amd64.deb\n{h}  shagoff-commander-0.1.0-1.x86_64.rpm\n"
+            )
+        };
+        std::fs::write(d.path().join("SHA256SUMS"), sums(ok)).unwrap();
+        assert_eq!(verify(d.path()), Ok(()));
+        std::fs::write(d.path().join("SHA256SUMS"), sums(&"0".repeat(64))).unwrap();
+        assert!(verify(d.path()).unwrap_err().contains("FAILED"));
     }
 }
