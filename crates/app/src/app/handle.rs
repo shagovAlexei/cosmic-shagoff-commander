@@ -2311,14 +2311,39 @@ impl App {
                 cwd,
                 name,
                 first,
+                what,
                 made,
             } => match made {
-                // Still that dir: the cursor goes onto the new one.
-                Ok(()) if self.panes[side].active().target() == cwd => {
-                    return self.reload(side, cwd, first);
+                Ok(()) => {
+                    if what == New::File {
+                        let argv = launch::command(
+                            &self.config.editor,
+                            &["cosmic-edit"],
+                            &cwd.join(&name),
+                        );
+                        if let Err(err) = spawn_detached(&argv) {
+                            self.say(
+                                StatusKind::Error,
+                                fl!("open-failed", err = crate::why::text(&err)),
+                            );
+                        }
+                    }
+                    // Still that dir: the cursor goes onto the new one.
+                    if self.panes[side].active().target() == cwd {
+                        return match what {
+                            // `load`: out of search results too.
+                            New::Copy => self.load(side, cwd, first),
+                            _ => self.reload(side, cwd, first),
+                        };
+                    }
                 }
-                Ok(()) => {}
-                Err(e) => self.say(StatusKind::Error, fl!("mkdir-failed", path = name, err = e)),
+                Err(e) if what == New::Dir => {
+                    self.say(StatusKind::Error, fl!("mkdir-failed", path = name, err = e))
+                }
+                Err(e) => self.say(
+                    StatusKind::Error,
+                    fl!("new-file-failed", path = name, err = e),
+                ),
             },
             Message::Terminals(list, default) => {
                 (self.terminals, self.term_default) = (list, default)

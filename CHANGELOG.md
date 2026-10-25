@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.123.3 — 2026-10-25
+
+- fix: Shift+F4 and «New file from template» create the file in the background: a dead network mount no longer freezes the window ([#294](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/294))
+
 ## 0.123.2 — 2026-10-25
 
 - fix: «Change date and time» runs in the background: «and everything inside» on a big tree, or a dead network mount, no longer freezes the window ([#293](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/293))

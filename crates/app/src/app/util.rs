@@ -596,6 +596,34 @@ pub(super) fn pieces(
     )
 }
 
+/// `f` in the background (on a dead network mount it never returns), then `Message::Made`.
+pub(super) fn make(
+    side: usize,
+    cwd: PathBuf,
+    name: String,
+    first: Option<String>,
+    what: New,
+    f: impl FnOnce() -> std::io::Result<()> + Send + 'static,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let made = tokio::task::spawn_blocking(f)
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r.map_err(|e| crate::why::text(&e)));
+            Message::Made {
+                side,
+                cwd,
+                name,
+                first,
+                what,
+                made,
+            }
+        },
+        cosmic::Action::App,
+    )
+}
+
 /// Default F5/F6 target: the other pane's dir with a trailing `/` (so it reads as "into this dir").
 pub(super) fn dir_input(dir: &Path) -> String {
     let s = dir.display().to_string();
