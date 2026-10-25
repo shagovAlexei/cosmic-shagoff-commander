@@ -264,7 +264,13 @@ where
         let mut cursor_position = Vector::<f32>::ZERO;
         let mut line_height = 0.0;
         terminal.with_buffer(|buffer| {
-            let layout = buffer.layout_runs().nth(line as usize).unwrap();
+            // Not laid out yet (a resize in between): no cursor box this frame rather than a panic.
+            let Some(layout) = usize::try_from(line)
+                .ok()
+                .and_then(|l| buffer.layout_runs().nth(l))
+            else {
+                return;
+            };
             for glyph in layout.glyphs {
                 cursor_position.x += glyph.w;
                 let ch_width = if glyph.w > width { 2 } else { 1 };
