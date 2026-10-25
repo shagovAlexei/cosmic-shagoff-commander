@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn deb_name_is_a_plain_package_name() {
+    fn regression_update_takes_only_the_tags_amd64_deb() {
         let h = "a".repeat(64);
         let sums = format!(
             "{h}  shagoff-commander_0.118.0_arm64.deb\n{h}  shagoff-commander_0.118.0_amd64.deb\n{h}  shagoff-commander-0.118.0-1.x86_64.rpm\n"

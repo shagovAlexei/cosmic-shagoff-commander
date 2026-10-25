@@ -432,10 +432,8 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
 
 /// The Start menu's tree (`nodes` of `start`) as menu items.
 fn start_items(start: &[(Mark, Option<String>)], nodes: &[Node]) -> Vec<Item> {
-    nodes
+    let mut items: Vec<Item> = nodes
         .iter()
-        // An empty submenu is not offered, as the other menus' empty ones.
-        .filter(|n| !matches!(n, Node::Sub(_, sub) if sub.is_empty()))
         .map(|n| match n {
             Node::Item(i) => match &start[*i].1 {
                 Some(l) => menu::Item::Button(l.clone(), None, MenuAct::Key(Action::UserMenu(*i))),
@@ -446,7 +444,10 @@ fn start_items(start: &[(Mark, Option<String>)], nodes: &[Node]) -> Vec<Item> {
                 start_items(start, sub),
             ),
         })
-        .collect()
+        .collect();
+    // An empty submenu (or one of empty ones only) is not offered, as the other menus' empty ones.
+    items.retain(|i| !matches!(i, menu::Item::Folder(_, sub) if sub.is_empty()));
+    items
 }
 
 fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
@@ -1088,14 +1089,16 @@ mod tests {
     use cosmic::iced::keyboard::Modifiers;
 
     #[test]
-    fn the_start_menu_has_submenus() {
+    fn regression_the_start_menu_has_submenus_but_no_empty_ones() {
         let start = [
             (Mark::Item, Some("a".to_string())),
             (Mark::Open, Some("Tools".to_string())),
             (Mark::Item, Some("b".to_string())),
             (Mark::Item, None),
             (Mark::Close, None),
-            (Mark::Open, Some("Empty".to_string())), // not offered
+            (Mark::Open, Some("Empty".to_string())), // not offered, nor one of empty ones
+            (Mark::Open, Some("Inner".to_string())),
+            (Mark::Close, None),
             (Mark::Close, None),
         ];
         let marks: Vec<Mark> = start.iter().map(|s| s.0).collect();

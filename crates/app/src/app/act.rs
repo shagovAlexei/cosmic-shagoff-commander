@@ -381,12 +381,9 @@ impl App {
                 return Task::none();
             }
             Action::UserMenu(i) => {
-                // A submenu's bound is not a command (a hand-made hotkey could point at one).
                 return match self.config.start_menu.get(i) {
-                    Some(b) if crate::toolbar::mark(b) == shagoff_core::nest::Mark::Item => {
-                        self.run_button(b.clone())
-                    }
-                    _ => Task::none(),
+                    Some(b) => self.run_button(b.clone()),
+                    None => Task::none(),
                 };
             }
             Action::ConfigureToolbar => {

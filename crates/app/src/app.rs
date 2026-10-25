@@ -397,6 +397,8 @@ pub struct App {
     pub(crate) update_check: Option<shagoff_core::update::Status>,
     /// The version the user skipped in the update dialog (kept in `State`).
     pub(crate) update_skip: String,
+    /// Set by Cancel while the update downloads: its install is not started.
+    pub(crate) update_stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) job: Option<Running>,
     /// TC's background queue: started one after another once `job` ends.
     pub(crate) queue: VecDeque<Queued>,
@@ -1269,13 +1271,7 @@ impl Application for App {
             type_colors: c.type_colors,
             start: (c.start_menu.iter())
                 .map(|b| {
-                    let name = match b.cmd.as_str() {
-                        crate::toolbar::SEP => None,
-                        crate::toolbar::SUB if b.tip.trim().is_empty() => {
-                            Some(fl!("start-menu-sub"))
-                        }
-                        _ => Some(crate::toolbar::tip(b)),
-                    };
+                    let name = (b.cmd != crate::toolbar::SEP).then(|| crate::toolbar::tip(b));
                     (crate::toolbar::mark(b), name)
                 })
                 .collect(),
@@ -1369,6 +1365,7 @@ impl App {
             about: drawer::about(),
             update_check: None,
             update_skip: state.update_skip.clone(),
+            update_stop: Default::default(),
             job: None,
             queue: VecDeque::new(),
             held: None,
