@@ -241,17 +241,22 @@ pub fn expand(params: &str, v: &Vars) -> String {
             out.push(c);
             continue;
         }
+        // A name starting with `-` would be an option to the program (`rm %S` on `-rf`): `./-rf`.
+        let file = |n: &str| match n.starts_with('-') {
+            true => quote(&format!("./{n}")),
+            false => quote(n),
+        };
         match chars.next() {
             Some('P') => out += &quote(&v.dir.display().to_string()),
             Some('T') => out += &quote(&v.other.display().to_string()),
-            Some('N') => out += &quote(name),
-            Some('O') => out += &quote(stem),
+            Some('N') => out += &file(name),
+            Some('O') => out += &file(stem),
             Some('E') => out += &quote(ext),
             Some('S') => {
                 out += &v
                     .selected
                     .iter()
-                    .map(|s| quote(s))
+                    .map(|s| file(s))
                     .collect::<Vec<_>>()
                     .join(" ")
             }
@@ -377,6 +382,19 @@ mod tests {
         // Two quoted words with an operator between are still the shell's.
         assert!(matches!(cd("cd \"a\" && \"b\""), Some(Cmd::Run(_))));
         assert!(matches!(cd("cd x && ls"), Some(Cmd::Run(_))));
+    }
+
+    #[test]
+    fn regression_a_name_starting_with_a_dash_is_no_option() {
+        let selected = ["-rf".to_string(), "/abs/-x".to_string(), "ok".to_string()];
+        let v = Vars {
+            dir: Path::new("/d"),
+            other: Path::new("/o"),
+            name: Some("-n.txt"),
+            selected: &selected,
+        };
+        assert_eq!(expand("rm %S", &v), "rm ./-rf /abs/-x ok");
+        assert_eq!(expand("%N %O.bak %E", &v), "./-n.txt ./-n.bak txt");
     }
 
     #[test]

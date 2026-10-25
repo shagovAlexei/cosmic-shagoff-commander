@@ -26,7 +26,7 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Find files (masks or regex, text inside, size / date, inside archives), compare and synchronize folders, compare files side by side
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs
 - Terminal of your choice (Commands → Terminal…: the system default or any installed one) opens in the panel's folder and runs Shift+Enter
-- Built-in terminal under the panels in place of the command line (Ctrl+` or View → Built-in terminal, off by default): follows the active panel's folder, Ctrl+O over the whole window, shell from Commands → Shell…
+- Built-in terminal under the panels in place of the command line (Ctrl+` or View → Built-in terminal, off by default): follows the active panel's folder, Ctrl+O over the whole window, shell from Commands → Shell…; selecting with the mouse copies, the middle button pastes
 - View → «Window parts»: hide the button bar, drive buttons, tabs, path line, column headers, status bar, command line, F-key buttons; «Panel at 100 %» — one panel across the whole width, «Panels one above the other»
 - Right button marks files as in Total Commander (drag it across rows to mark them), held it opens the menu (or the menu at once — a setting), full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
 
@@ -74,7 +74,7 @@ Right click on the toolbar (Classic look) or *Configuration → Toolbar…* open
 | `%N` | the name under the cursor; `%O` without its extension, `%E` the extension |
 | `%S` | the selected names |
 
-Each value is quoted as one shell word. The command runs through `sh -c` in the panel's folder, without a terminal. Example, a terminal that lists the file under the cursor and waits for Enter:
+Each value is quoted as one shell word; a name starting with `-` goes in as `./-name`, so a program never takes it for an option. The command runs through `sh -c` in the panel's folder, without a terminal. Example, a terminal that lists the file under the cursor and waits for Enter:
 
 - Command: `cosmic-term -e`
 - Parameters: `sh -c "ls -l %N; read x"`

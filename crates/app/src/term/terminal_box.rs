@@ -1395,6 +1395,13 @@ where
                                 }
                             }
                         } else if *button == Button::Middle {
+                            // As in Linux terminals: the middle button pastes (here the clipboard,
+                            // which a selection fills too).
+                            if let Some(text) =
+                                clipboard.read(cosmic::iced::core::clipboard::Kind::Standard)
+                            {
+                                terminal.paste(text);
+                            }
                             if let Some(on_middle_click) = &self.on_middle_click {
                                 shell.publish(on_middle_click());
                             }
@@ -1416,6 +1423,12 @@ where
                         let mut term = terminal.term.lock();
                         if let Some(selection) = &mut term.selection {
                             selection.update(last_point, last_side);
+                        }
+                        // Selecting copies: into the clipboard and the primary selection.
+                        if let Some(text) = term.selection_to_string() {
+                            use cosmic::iced::core::clipboard::Kind;
+                            clipboard.write(Kind::Primary, text.clone());
+                            clipboard.write(Kind::Standard, text);
                         }
                     }
                     terminal.needs_update = true;
