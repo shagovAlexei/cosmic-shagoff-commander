@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.121.4 — 2026-10-25
+
+- fix: Alt+Enter as root (pkexec): chmod / chown walk by descriptors, never through a symlink swapped in meanwhile ([#289](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/289))
+
 ## 0.121.3 — 2026-10-25
 
 - fix: built-in terminal: no panic when the cursor's line is not laid out yet ([#288](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/288))
