@@ -977,6 +977,15 @@ impl Format {
     }
 }
 
+/// A 7z whose names are encrypted (its header): not listed without the password. A repack keeps
+/// them so.
+pub fn names_encrypted(archive: &Path) -> bool {
+    File::open(archive).is_ok_and(|f| {
+        sevenz_rust2::Archive::read(&mut io::BufReader::new(f), &sevenz_rust2::Password::empty())
+            .is_err_and(|e| needs_password(&sz_password_error(e).to_string()))
+    })
+}
+
 /// A file name that opens as a folder, by the name alone.
 pub fn is_tree_name(name: &str) -> bool {
     Format::detect(name).is_some_and(Format::is_tree)
@@ -1705,8 +1714,9 @@ enum Packer {
 
 impl Packer {
     /// `password`: zip and 7z encrypt the contents with it (AES-256); the names stay readable, as
-    /// 7-Zip does by default. Tar formats have no encryption: ignored (the dialog offers none).
-    fn new(f: Format, w: File, password: Option<&str>) -> io::Result<Packer> {
+    /// 7-Zip does by default, unless `names` (7z only: its header encrypted too). Tar formats have
+    /// no encryption: ignored (the dialog offers none).
+    fn new(f: Format, w: File, password: Option<&str>, names: bool) -> io::Result<Packer> {
         let tar = |e| Packer::Tar(tar::Builder::new(e));
         Ok(match f {
             Format::Zip => Packer::Zip(
@@ -1720,7 +1730,7 @@ impl Packer {
                         sevenz_rust2::encoder_options::AesEncoderOptions::new(pw.into()).into(),
                         sevenz_rust2::EncoderMethod::LZMA2.into(),
                     ]);
-                    sz.set_encrypt_header(false);
+                    sz.set_encrypt_header(names);
                 }
                 Packer::SevenZ(sz)
             }
@@ -1988,10 +1998,22 @@ pub fn pack_with(
     password: Option<&str>,
     h: &mut dyn Handler,
 ) -> Report {
+    pack_secret(f, base, groups, password, false, h)
+}
+
+/// `pack_with`; `names`: a 7z with a password gets its names encrypted too (listed only with it).
+pub fn pack_secret(
+    f: Format,
+    base: &Path,
+    groups: &[(Vec<PathBuf>, PathBuf)],
+    password: Option<&str>,
+    names: bool,
+    h: &mut dyn Handler,
+) -> Report {
     let mut report = Report::default();
     let mut policy: Option<Resolution> = None;
     for (sources, dest) in groups {
-        match pack_one(f, base, sources, dest, password, &mut policy, h) {
+        match pack_one(f, base, sources, dest, (password, names), &mut policy, h) {
             // An archive inside a source dir would be deleted with it by "move to archive".
             Packed::Done { skipped: false } if !inside_any(dest, sources) => {
                 report.completed.extend(sources.iter().cloned())
@@ -2029,7 +2051,7 @@ fn pack_one(
     base: &Path,
     sources: &[PathBuf],
     dest: &Path,
-    password: Option<&str>,
+    (password, names): (Option<&str>, bool),
     policy: &mut Option<Resolution>,
     h: &mut dyn Handler,
 ) -> Packed {
@@ -2051,7 +2073,7 @@ fn pack_one(
             Err(true) => return Packed::Cancel,
             Err(false) => return Packed::Dropped,
         };
-        let outcome = Packer::new(f, w, password)
+        let outcome = Packer::new(f, w, password, names)
             .and_then(|p| write_archive(p, base, sources, dest, &part, h, &Default::default()));
         match outcome {
             Ok(Some(skipped)) => {
@@ -3683,6 +3705,56 @@ mod tests {
                 assert_eq!(open("pw").unwrap(), b"secret");
             }
         }
+    }
+
+    #[test]
+    fn a_7z_with_encrypted_names_lists_only_with_its_password_and_stays_so_when_changed() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("secret-name.txt"), "x").unwrap();
+        let src = vec![d.path().join("secret-name.txt")];
+        let a = d.path().join("n.7z");
+        let r = pack_secret(
+            Format::SevenZ,
+            d.path(),
+            &[(src.clone(), a.clone())],
+            Some("pw"),
+            true,
+            &mut Script::default(),
+        );
+        assert!(!r.cancelled && r.completed == src);
+        let named = |a: &Path| {
+            fs::read(a)
+                .unwrap()
+                .windows(11)
+                .any(|w| w == b"secret-name")
+        };
+        assert!(!named(&a) && names_encrypted(&a));
+        set_password(&a, None);
+        assert!(list(&a, Path::new(""), true).is_err_and(|e| needs_password(&e.to_string())));
+        set_password(&a, Some("pw".into()));
+        let names: Vec<String> = (list(&a, Path::new(""), true).unwrap().into_iter())
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["secret-name.txt"]);
+        // F7 inside: packed again, the names still hidden.
+        let m = crate::repack::modify(
+            &a,
+            &crate::repack::Change::Mkdir("new".into()),
+            &mut Script::default(),
+        );
+        assert!(!m.cancelled && !m.completed.is_empty());
+        assert!(!named(&a) && names_encrypted(&a));
+        // Contents only (the default): the names are not hidden.
+        let b = d.path().join("c.7z");
+        pack_with(
+            Format::SevenZ,
+            d.path(),
+            &[(src, b.clone())],
+            Some("pw"),
+            &mut Script::default(),
+        );
+        assert!(!names_encrypted(&b));
+        set_password(&a, None);
     }
 
     #[test]

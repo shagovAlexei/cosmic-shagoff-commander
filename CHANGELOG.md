@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.123.0 — 2026-10-25
+
+- feat: Alt+F5 7z with a password: «Encrypt file names too»; a change inside keeps them encrypted; the password is kept for the new archive ([#291](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/291))
+
 ## 0.122.0 — 2026-10-25
 
 - feat: built-in terminal: a mouse selection is copied (clipboard and primary), the middle button pastes ([#290](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/290))

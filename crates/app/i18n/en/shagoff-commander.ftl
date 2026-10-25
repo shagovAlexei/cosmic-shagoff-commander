@@ -129,6 +129,7 @@ pack-move = Move to archive (delete the originals)
 archive-password = Archive password
 archive-password-wrong = Wrong password: { $name }
 pack-encrypt = Encrypt (AES-256)
+pack-encrypt-names = Encrypt file names too (7z)
 pack-password = Password
 pack-password-again = Password again
 pack-password-differ = The passwords differ

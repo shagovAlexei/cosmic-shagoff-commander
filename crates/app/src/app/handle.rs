@@ -592,6 +592,7 @@ impl App {
                         return widget::text_input::focus(widget::Id::new("pack-password"));
                     }
                 }
+                (Some(Dialog::Pack(p)), Toggle::EncryptNames) => p.names = !p.names,
                 (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
                 (Some(Dialog::Checksum { separate, .. }), Toggle::SumSeparate) => {
                     *separate = !*separate

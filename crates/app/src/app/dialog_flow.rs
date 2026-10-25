@@ -284,6 +284,7 @@ impl App {
                     encrypt: false,
                     password: String::new(),
                     again: String::new(),
+                    names: false,
                 })))
             }
             Action::FindFiles => {
@@ -805,6 +806,7 @@ impl App {
                     base: p.base,
                     groups,
                     move_after: p.move_after,
+                    names: p.names && p.format == Format::SevenZ && password.is_some(),
                     password,
                 };
                 self.start_job(p.side, OpKind::Pack, job, focus)

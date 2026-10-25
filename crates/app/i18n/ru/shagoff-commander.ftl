@@ -130,6 +130,7 @@ pack-move = Переместить в архив (удалить исходны�
 archive-password = Пароль архива
 archive-password-wrong = Неверный пароль: { $name }
 pack-encrypt = Шифровать (AES-256)
+pack-encrypt-names = Шифровать и имена файлов (7z)
 pack-password = Пароль
 pack-password-again = Пароль ещё раз
 pack-password-differ = Пароли не совпадают
