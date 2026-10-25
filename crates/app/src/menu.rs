@@ -434,6 +434,8 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
 fn start_items(start: &[(Mark, Option<String>)], nodes: &[Node]) -> Vec<Item> {
     nodes
         .iter()
+        // An empty submenu is not offered, as the other menus' empty ones.
+        .filter(|n| !matches!(n, Node::Sub(_, sub) if sub.is_empty()))
         .map(|n| match n {
             Node::Item(i) => match &start[*i].1 {
                 Some(l) => menu::Item::Button(l.clone(), None, MenuAct::Key(Action::UserMenu(*i))),
@@ -1092,6 +1094,8 @@ mod tests {
             (Mark::Open, Some("Tools".to_string())),
             (Mark::Item, Some("b".to_string())),
             (Mark::Item, None),
+            (Mark::Close, None),
+            (Mark::Open, Some("Empty".to_string())), // not offered
             (Mark::Close, None),
         ];
         let marks: Vec<Mark> = start.iter().map(|s| s.0).collect();

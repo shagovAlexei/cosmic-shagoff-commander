@@ -37,6 +37,24 @@ pub fn nest(marks: &[Mark]) -> Vec<Node> {
     stack.pop().unwrap().1
 }
 
+/// The other bound of the submenu whose `Open` or `Close` is line `i` (`None`: an item, or a bound
+/// with no partner).
+pub fn partner(marks: &[Mark], i: usize) -> Option<usize> {
+    let mut open = Vec::new();
+    for (j, m) in marks.iter().enumerate() {
+        match m {
+            Mark::Open => open.push(j),
+            Mark::Close => match open.pop() {
+                Some(o) if o == i => return Some(j),
+                Some(o) if j == i => return Some(o),
+                _ => {}
+            },
+            Mark::Item => {}
+        }
+    }
+    None
+}
+
 /// How deep line `i` sits (an `Open` / `Close` line at its submenu's own level), for the editor.
 pub fn depth(marks: &[Mark], i: usize) -> usize {
     let mut d = 0usize;
@@ -73,6 +91,17 @@ mod tests {
             (0..m.len()).map(|i| depth(&m, i)).collect::<Vec<_>>(),
             [0, 0, 1, 1, 2, 1, 0, 0]
         );
+    }
+
+    #[test]
+    fn a_bound_knows_its_partner() {
+        let m = [Open, Item, Open, Close, Close, Close];
+        assert_eq!(partner(&m, 0), Some(4));
+        assert_eq!(partner(&m, 4), Some(0));
+        assert_eq!(partner(&m, 3), Some(2));
+        assert_eq!(partner(&m, 1), None);
+        assert_eq!(partner(&m, 5), None); // a stray end
+        assert_eq!(partner(&[Open, Item], 0), None);
     }
 
     #[test]

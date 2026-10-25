@@ -821,6 +821,15 @@ impl ToolEdit {
             }
             (ToolMsg::Delete, _) => {
                 if let Some(i) = sel {
+                    // A submenu's bound takes its partner along; what was inside moves a level up.
+                    let marks: Vec<_> = self.list.iter().map(mark).collect();
+                    let i = match shagoff_core::nest::partner(&marks, i) {
+                        Some(j) => {
+                            self.list.remove(i.max(j));
+                            i.min(j)
+                        }
+                        None => i,
+                    };
                     self.list.remove(i);
                     self.sel = (!self.list.is_empty()).then(|| i.min(self.list.len() - 1));
                 }
@@ -1114,6 +1123,13 @@ mod tests {
         t.update(ToolMsg::Select(3));
         t.update(ToolMsg::Tip("x".into())); // its end: nothing to edit
         assert_eq!(t.list[3].tip, "");
+        t.update(ToolMsg::Select(1));
+        t.update(ToolMsg::Delete); // the start takes its end along, the item stays
+        assert_eq!(cmds(&t), ["ls", ""]);
+        t.update(ToolMsg::AddSub); // ls, "", SUB, END
+        t.update(ToolMsg::Select(3));
+        t.update(ToolMsg::Delete); // the end takes its start along
+        assert_eq!(cmds(&t), ["ls", ""]);
         let mut bar = ToolEdit::new(Vec::new());
         bar.update(ToolMsg::AddSub); // not on the button bar
         assert!(bar.list.is_empty());

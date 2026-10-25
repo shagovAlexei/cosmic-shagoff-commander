@@ -80,22 +80,22 @@ pub fn can_install() -> bool {
 
 /// `v0.18.0`: the only shape of a tag we put in a download address.
 pub fn valid_tag(tag: &str) -> bool {
-    newer("0.0.0", tag) || tag == "v0.0.0"
+    tag.strip_prefix('v').is_some_and(|v| {
+        let parts: Vec<&str> = v.split('.').collect();
+        parts.len() == 3
+            && (parts.iter()).all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
-/// The `.deb` a `SHA256SUMS` lists (`<hash>  shagoff-commander_0.18.0_amd64.deb`); a name with a
-/// path or another shape is refused: it goes into a download address.
-pub fn deb_name(sums: &str) -> Option<String> {
+/// The `.deb` of release `tag` (a `valid_tag`) when its `SHA256SUMS` lists it
+/// (`<hash>  shagoff-commander_0.18.0_amd64.deb`): only that name, of that version and
+/// architecture, goes into the download address.
+pub fn deb_name(sums: &str, tag: &str) -> Option<String> {
+    let want = format!("shagoff-commander_{}_amd64.deb", tag.strip_prefix('v')?);
     sums.lines()
         .filter_map(|l| l.split_whitespace().nth(1))
-        .map(|n| n.trim_start_matches('*'))
-        .find(|n| n.ends_with(".deb"))
-        .filter(|n| {
-            n.starts_with("shagoff-commander_")
-                && n.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-' | b'+'))
-        })
-        .map(String::from)
+        .any(|n| n.trim_start_matches('*') == want)
+        .then_some(want)
 }
 
 /// `sha256sum -c --strict` of the `SHA256SUMS` in `dir` (the `.rpm` it lists is not downloaded):
@@ -104,6 +104,7 @@ pub fn verify(dir: &Path) -> Result<(), String> {
     let out = Command::new("sha256sum")
         .args(["-c", "--strict", "--ignore-missing", "SHA256SUMS"])
         .current_dir(dir)
+        .env("LC_ALL", "C") // its `OK` / `FAILED` are translated otherwise
         .output()
         .map_err(|e| format!("sha256sum: {e}"))?;
     match out.status.success() {
@@ -139,7 +140,7 @@ pub fn download(tag: &str, dir: &Path) -> Result<PathBuf, String> {
     let base = format!("{REPO}/releases/download/{tag}");
     fetch(&format!("{base}/SHA256SUMS"), &dir.join("SHA256SUMS"))?;
     let sums = std::fs::read_to_string(dir.join("SHA256SUMS")).map_err(|e| e.to_string())?;
-    let name = deb_name(&sums).ok_or("SHA256SUMS: no package")?;
+    let name = deb_name(&sums, tag).ok_or("SHA256SUMS: no package")?;
     let deb = dir.join(&name);
     fetch(&format!("{base}/{name}"), &deb)?;
     if let Err(e) = verify(dir) {
@@ -195,17 +196,27 @@ mod tests {
     fn deb_name_is_a_plain_package_name() {
         let h = "a".repeat(64);
         let sums = format!(
-            "{h}  shagoff-commander_0.118.0_amd64.deb\n{h}  shagoff-commander-0.118.0-1.x86_64.rpm\n"
+            "{h}  shagoff-commander_0.118.0_arm64.deb\n{h}  shagoff-commander_0.118.0_amd64.deb\n{h}  shagoff-commander-0.118.0-1.x86_64.rpm\n"
         );
         assert_eq!(
-            deb_name(&sums),
+            deb_name(&sums, "v0.118.0"),
             Some("shagoff-commander_0.118.0_amd64.deb".into())
         );
-        assert_eq!(deb_name(&format!("{h}  ../evil.deb")), None);
-        assert_eq!(deb_name(&format!("{h}  shagoff-commander_/../x.deb")), None);
-        assert_eq!(deb_name(&format!("{h}  other_1.deb")), None);
-        assert_eq!(deb_name(""), None);
-        assert!(valid_tag("v0.118.0") && !valid_tag("v0.118.0/../x") && !valid_tag("latest"));
+        assert_eq!(deb_name(&sums, "v0.119.0"), None); // another version's
+        assert_eq!(deb_name(&format!("{h}  ../evil.deb"), "v0.118.0"), None);
+        assert_eq!(deb_name("", "v0.118.0"), None);
+        assert!(valid_tag("v0.118.0") && valid_tag("v10.0.12"));
+        for bad in [
+            "v0.118.0/../x",
+            "latest",
+            "0.1.0",
+            "vv0.1.0",
+            "v+1.0.0",
+            "v1..0",
+            "v1.0.0.0",
+        ] {
+            assert!(!valid_tag(bad), "{bad}");
+        }
     }
 
     #[test]
