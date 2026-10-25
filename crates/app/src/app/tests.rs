@@ -5838,6 +5838,19 @@ mod drawer_tests {
     }
 
     #[test]
+    fn a_check_from_about_opens_the_update_window_even_for_a_skipped_release() {
+        use shagoff_core::update::Status;
+        let mut app = app_with(Config::default(), State::default());
+        app.update_skip = "v9.0.0".into();
+        let _ = app.update(Message::Key(Action::About));
+        let _ = app.update(Message::UpdateChecked(Status::Latest));
+        assert!(app.dialog.is_none() && app.update_check == Some(Status::Latest));
+        let _ = app.update(Message::UpdateChecked(Status::Available("v9.0.0".into())));
+        assert!(matches!(&app.dialog, Some(Dialog::Update { tag, .. }) if tag == "v9.0.0"));
+        assert!(app.drawer.is_none()); // About made way for it
+    }
+
+    #[test]
     fn a_saved_view_mode_is_deleted_from_the_menu() {
         let mut app = app_with(Config::default(), State::default());
         let n = app.config.view_modes.len();

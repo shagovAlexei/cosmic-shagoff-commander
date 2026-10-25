@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.124.0 — 2026-10-25
+
+- feat: About as in ShagShell Secure: «Check for updates» right under the version; a newer release opens the update window (download, hash check, install), «up to date» or the error is said under the button
+
 ## 0.123.3 — 2026-10-25
 
 - fix: Shift+F4 and «New file from template» create the file in the background: a dead network mount no longer freezes the window ([#294](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/294))
