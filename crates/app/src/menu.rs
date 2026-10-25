@@ -8,6 +8,7 @@ use cosmic::iced::keyboard::Key;
 use cosmic::iced::keyboard::key::{Code, Named};
 use cosmic::widget::menu::key_bind::Modifier;
 use cosmic::widget::menu::{self, ItemHeight, ItemWidth, KeyBind};
+use shagoff_core::nest::{Mark, Node, nest};
 use shagoff_core::sort::SortKey;
 use std::collections::HashMap;
 
@@ -413,8 +414,8 @@ pub struct Checks {
     pub watch: bool,
     pub dirs_by_name: bool,
     pub type_colors: bool,
-    /// The Start menu's item names (`None`: a line).
-    pub start: Vec<Option<String>>,
+    /// The Start menu's lines: item, submenu start or end, and the name (`None`: a separator).
+    pub start: Vec<(Mark, Option<String>)>,
     /// Ctrl+F10 / F11 / F12 in force in the active panel (0 / 1 / 2): its item checked.
     pub show: u8,
 }
@@ -429,7 +430,25 @@ fn menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
     all
 }
 
+/// The Start menu's tree (`nodes` of `start`) as menu items.
+fn start_items(start: &[(Mark, Option<String>)], nodes: &[Node]) -> Vec<Item> {
+    nodes
+        .iter()
+        .map(|n| match n {
+            Node::Item(i) => match &start[*i].1 {
+                Some(l) => menu::Item::Button(l.clone(), None, MenuAct::Key(Action::UserMenu(*i))),
+                None => menu::Item::Divider,
+            },
+            Node::Sub(i, sub) => menu::Item::Folder(
+                start[*i].1.clone().unwrap_or_default(),
+                start_items(start, sub),
+            ),
+        })
+        .collect()
+}
+
 fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
+    let marks: Vec<Mark> = checks.start.iter().map(|s| s.0).collect();
     let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
     let sort = |label: String, k: SortKey| b(label, Action::Sort(k));
     vec![
@@ -884,10 +903,7 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
             [b(fl!("menu-start-edit"), Action::ConfigureStartMenu)]
                 .into_iter()
                 .chain((!checks.start.is_empty()).then_some(menu::Item::Divider))
-                .chain(checks.start.iter().enumerate().map(|(i, l)| match l {
-                    None => menu::Item::Divider,
-                    Some(l) => b(l.clone(), Action::UserMenu(i)),
-                }))
+                .chain(start_items(&checks.start, &nest(&marks)))
                 .collect(),
         ),
         (
@@ -1068,6 +1084,32 @@ mod tests {
     use super::*;
     use crate::keymap;
     use cosmic::iced::keyboard::Modifiers;
+
+    #[test]
+    fn the_start_menu_has_submenus() {
+        let start = [
+            (Mark::Item, Some("a".to_string())),
+            (Mark::Open, Some("Tools".to_string())),
+            (Mark::Item, Some("b".to_string())),
+            (Mark::Item, None),
+            (Mark::Close, None),
+        ];
+        let marks: Vec<Mark> = start.iter().map(|s| s.0).collect();
+        let items = start_items(&start, &nest(&marks));
+        assert!(
+            matches!(&items[0], menu::Item::Button(l, _, MenuAct::Key(Action::UserMenu(0))) if l == "a")
+        );
+        let menu::Item::Folder(l, sub) = &items[1] else {
+            panic!("no submenu")
+        };
+        assert_eq!(l, "Tools");
+        assert!(matches!(
+            &sub[0],
+            menu::Item::Button(_, _, MenuAct::Key(Action::UserMenu(2)))
+        ));
+        assert!(matches!(sub[1], menu::Item::Divider));
+        assert_eq!((items.len(), sub.len()), (2, 2));
+    }
     use cosmic::iced::keyboard::key::Physical;
 
     fn actions(ctx: Ctx) -> Vec<Action> {
