@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.121.1 — 2026-10-25
+
+- fix: update review — the .deb must be the tag's version for amd64, sha256sum read in the C locale, a dir per instance, a stricter tag check; Start menu: deleting a submenu bound takes its partner, empty submenus hidden, an unnamed one shown as «Submenu» ([#286](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/286))
+
 ## 0.121.0 — 2026-10-25
 
 - feat: submenus in the Start menu ([#285](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/285))

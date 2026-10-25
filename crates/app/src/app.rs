@@ -1269,7 +1269,13 @@ impl Application for App {
             type_colors: c.type_colors,
             start: (c.start_menu.iter())
                 .map(|b| {
-                    let name = (b.cmd != crate::toolbar::SEP).then(|| crate::toolbar::tip(b));
+                    let name = match b.cmd.as_str() {
+                        crate::toolbar::SEP => None,
+                        crate::toolbar::SUB if b.tip.trim().is_empty() => {
+                            Some(fl!("start-menu-sub"))
+                        }
+                        _ => Some(crate::toolbar::tip(b)),
+                    };
                     (crate::toolbar::mark(b), name)
                 })
                 .collect(),
