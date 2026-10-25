@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.121.0 — 2026-10-25
+
+- feat: submenus in the Start menu ([#285](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/285))
+
 ## 0.120.3 — 2026-10-25
 
 - fix: the update is checked by `sha256sum -c --strict` in ~/.cache, a mismatch is deleted; tag and package name checked before the download ([#284](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/284))

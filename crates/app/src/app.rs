@@ -1268,7 +1268,10 @@ impl Application for App {
             dirs_by_name: c.dirs_by_name,
             type_colors: c.type_colors,
             start: (c.start_menu.iter())
-                .map(|b| (b.cmd != crate::toolbar::SEP).then(|| crate::toolbar::tip(b)))
+                .map(|b| {
+                    let name = (b.cmd != crate::toolbar::SEP).then(|| crate::toolbar::tip(b));
+                    (crate::toolbar::mark(b), name)
+                })
                 .collect(),
             show: match self.panes[self.active].active().panel.show() {
                 Show::All => 0,

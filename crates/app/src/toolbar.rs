@@ -11,6 +11,24 @@ use cosmic::{Element, theme, widget};
 
 /// A separator: a gap on the bar.
 pub const SEP: &str = "-";
+/// Start menu only: a submenu starts (named by `tip`) / ends here (TC's `-Name` / `--`).
+pub const SUB: &str = "-[";
+pub const END: &str = "-]";
+
+/// What a Start menu line is to `core::nest`.
+pub fn mark(b: &ToolButton) -> shagoff_core::nest::Mark {
+    use shagoff_core::nest::Mark;
+    match b.cmd.as_str() {
+        SUB => Mark::Open,
+        END => Mark::Close,
+        _ => Mark::Item,
+    }
+}
+
+/// A line with fields of its own: not a separator or a submenu's end.
+fn has_fields(b: &ToolButton) -> bool {
+    b.cmd != SEP && b.cmd != END
+}
 
 pub struct Builtin {
     pub cm: &'static str,
@@ -711,6 +729,8 @@ pub enum ToolMsg {
     Dir(String),
     Add,
     AddSep,
+    /// Start menu: a submenu (its start and its end) after the selected line.
+    AddSub,
     Delete,
     Up,
     Down,
@@ -752,8 +772,11 @@ impl ToolEdit {
 
     pub fn update(&mut self, m: ToolMsg) {
         let sel = self.sel.filter(|&i| i < self.list.len());
-        let editable = sel.filter(|&i| self.list[i].cmd != SEP);
-        match (m, editable) {
+        let editable = sel.filter(|&i| has_fields(&self.list[i]));
+        // A submenu's start has only its name.
+        let plain = editable.filter(|&i| self.list[i].cmd != SUB);
+        match (m, plain) {
+            (ToolMsg::Tip(s), _) if editable.is_some() => self.list[editable.unwrap()].tip = s,
             (ToolMsg::Select(i), _) => self.sel = (i < self.list.len()).then_some(i),
             (ToolMsg::Builtin(b), Some(i)) => {
                 if let Some(c) = builtins().get(b) {
@@ -763,10 +786,11 @@ impl ToolEdit {
                     };
                 }
             }
-            (ToolMsg::Cmd(s), Some(i)) if s != SEP => self.list[i].cmd = s,
+            (ToolMsg::Cmd(s), Some(i)) if ![SEP, SUB, END].contains(&s.as_str()) => {
+                self.list[i].cmd = s
+            }
             (ToolMsg::Params(s), Some(i)) => self.list[i].params = s,
             (ToolMsg::Icon(s), Some(i)) => self.list[i].icon = s,
-            (ToolMsg::Tip(s), Some(i)) => self.list[i].tip = s,
             (ToolMsg::Dir(s), Some(i)) => self.list[i].dir = s,
             (ToolMsg::Add, _) => self.insert(ToolButton {
                 icon: match self.menu {
@@ -779,6 +803,22 @@ impl ToolEdit {
                 cmd: SEP.into(),
                 ..Default::default()
             }),
+            (ToolMsg::AddSub, _) if self.menu => {
+                self.insert(ToolButton {
+                    cmd: END.into(),
+                    ..Default::default()
+                });
+                let end = self.sel.unwrap();
+                self.list.insert(
+                    end,
+                    ToolButton {
+                        cmd: SUB.into(),
+                        tip: fl!("start-menu-sub"),
+                        ..Default::default()
+                    },
+                );
+                self.sel = Some(end);
+            }
             (ToolMsg::Delete, _) => {
                 if let Some(i) = sel {
                     self.list.remove(i);
@@ -885,24 +925,33 @@ pub fn view<'a>(
         return picker_view(all, filter);
     }
     let mut list = column![].spacing(1);
+    let marks: Vec<_> = t.list.iter().map(mark).collect();
     for (i, b) in t.list.iter().enumerate() {
         let on = msg(ToolMsg::Select(i));
-        list = list.push(if b.cmd == SEP {
+        let (name, cmd) = match b.cmd.as_str() {
+            SUB => (format!("▸ {}", b.tip), String::new()),
+            END => (format!("◂ {}", fl!("start-menu-sub-end")), String::new()),
+            _ => (tip(b), b.cmd.clone()),
+        };
+        let line: Element<'a, Message> = if b.cmd == SEP {
             crate::hotlist::sep_row(t.sel == Some(i), on)
         } else {
-            let line = row![]
+            row![]
                 .push_maybe((!t.menu).then(|| widget::icon::from_name(icon(b)).size(16)))
                 .push(crate::dialogs::menu_row(
-                    tip(b),
-                    b.cmd.clone(),
+                    name,
+                    cmd,
                     t.sel == Some(i),
                     on,
                     font,
                 ))
                 .spacing(6)
-                .align_y(Alignment::Center);
-            line.into()
-        });
+                .align_y(Alignment::Center)
+                .into()
+        };
+        // Inside a submenu: indented.
+        let pad = 16.0 * shagoff_core::nest::depth(&marks, i) as f32;
+        list = list.push(widget::container(line).padding([0.0, 0.0, 0.0, pad]));
     }
     let list = widget::container(widget::scrollable(list).height(Length::Fixed(150.0)))
         .padding(4)
@@ -929,7 +978,13 @@ pub fn view<'a>(
             true,
         ),
         btn(fl!("hotlist-add-sep"), ToolMsg::AddSep, true),
-        btn(fl!("hotlist-delete"), ToolMsg::Delete, sel.is_some()),
+    ]
+    .push_maybe(
+        t.menu
+            .then(|| btn(fl!("start-menu-add-sub"), ToolMsg::AddSub, true)),
+    )
+    .push(btn(fl!("hotlist-delete"), ToolMsg::Delete, sel.is_some()))
+    .push(
         row![
             arrow("go-up-symbolic", ToolMsg::Up, sel.is_some_and(|i| i > 0)),
             arrow(
@@ -939,10 +994,13 @@ pub fn view<'a>(
             ),
         ]
         .spacing(6),
-    ]
+    )
     .spacing(6);
 
-    let editable = sel.map(|i| &t.list[i]).filter(|b| b.cmd != SEP);
+    let editable = sel.map(|i| &t.list[i]).filter(|b| has_fields(b));
+    // A submenu's start: only its name.
+    let named = editable;
+    let editable = editable.filter(|b| b.cmd != SUB);
     let field = |label: String, hint: String, value: &'a str, on: Option<fn(String) -> ToolMsg>| {
         let mut input = widget::text_input(hint, value);
         if let Some(f) = on {
@@ -1005,7 +1063,12 @@ pub fn view<'a>(
         .align_y(Alignment::Center)
     }))
     .push(match t.menu {
-        true => field(fl!("start-menu-name"), tip(&b), tip_text, on(ToolMsg::Tip)),
+        true => field(
+            fl!("start-menu-name"),
+            named.map(tip).unwrap_or_default(),
+            named.map_or("", |b| &b.tip),
+            named.map(|_| ToolMsg::Tip as fn(String) -> ToolMsg),
+        ),
         false => field(fl!("toolbar-tip"), tip(&b), tip_text, on(ToolMsg::Tip)),
     });
 
@@ -1033,6 +1096,28 @@ pub fn view<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_submenu_is_added_as_its_start_and_end() {
+        let mut t = ToolEdit::menu(vec![ToolButton {
+            cmd: "ls".into(),
+            ..Default::default()
+        }]);
+        t.update(ToolMsg::AddSub);
+        assert_eq!(cmds(&t), ["ls", SUB, END]);
+        assert_eq!(t.sel, Some(1));
+        t.update(ToolMsg::Cmd("rm".into())); // its start has only a name
+        t.update(ToolMsg::Tip("Tools".into()));
+        assert_eq!((&*t.list[1].cmd, &*t.list[1].tip), (SUB, "Tools"));
+        t.update(ToolMsg::Add); // inside it
+        assert_eq!(cmds(&t), ["ls", SUB, "", END]);
+        t.update(ToolMsg::Select(3));
+        t.update(ToolMsg::Tip("x".into())); // its end: nothing to edit
+        assert_eq!(t.list[3].tip, "");
+        let mut bar = ToolEdit::new(Vec::new());
+        bar.update(ToolMsg::AddSub); // not on the button bar
+        assert!(bar.list.is_empty());
+    }
 
     fn cmds(t: &ToolEdit) -> Vec<&str> {
         t.list.iter().map(|b| b.cmd.as_str()).collect()
