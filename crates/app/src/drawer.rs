@@ -129,7 +129,7 @@ pub fn about() -> [About; 2] {
         .license("GPL-3.0-only")
         .license_url("https://www.gnu.org/licenses/gpl-3.0.html")
         .links([
-            (fl!("about-source"), REPO.to_string()),
+            (fl!("about-latest"), format!("{REPO}/releases/latest")),
             (fl!("about-issues"), format!("{REPO}/issues")),
         ]);
     [head, rest]
