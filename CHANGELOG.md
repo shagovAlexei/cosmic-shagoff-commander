@@ -2,6 +2,11 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.122.0 — 2026-10-25
+
+- feat: built-in terminal: a mouse selection is copied (clipboard and primary), the middle button pastes ([#290](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/290))
+- fix: toolbar / Start menu / F12 parameters: a name starting with `-` goes in as `./-name`, never as an option ([#290](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/290))
+
 ## 0.121.4 — 2026-10-25
 
 - fix: Alt+Enter as root (pkexec): chmod / chown walk by descriptors, never through a symlink swapped in meanwhile ([#289](https://github.com/shagovAlexei/cosmic-shagoff-commander/pull/289))
