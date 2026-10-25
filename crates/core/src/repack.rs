@@ -217,7 +217,9 @@ fn rewrite(
     // An encrypted archive stays encrypted, with the password it was opened with.
     let pw = archive::password(archive);
     let groups = [(children.clone(), new.clone())];
-    let p = archive::pack_with(format, &root, &groups, pw.as_deref(), h);
+    // Its names too, if they were (a 7z made with «Encrypt names»).
+    let names = format == Format::SevenZ && pw.is_some() && archive::names_encrypted(archive);
+    let p = archive::pack_secret(format, &root, &groups, pw.as_deref(), names, h);
     if p.cancelled {
         return Err(true);
     }

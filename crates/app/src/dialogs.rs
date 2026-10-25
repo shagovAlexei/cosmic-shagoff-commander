@@ -543,6 +543,8 @@ pub struct Pack {
     /// Typed twice, as in TC (a typo would lock the files away).
     pub password: String,
     pub again: String,
+    /// 7z with a password: its names encrypted too (7-Zip «Encrypt file names»).
+    pub names: bool,
 }
 
 impl Pack {
@@ -563,6 +565,7 @@ pub enum Toggle {
     MoveAfter,
     Separate,
     Encrypt,
+    EncryptNames,
     OwnDir,
     SumSeparate,
 }
@@ -1669,6 +1672,11 @@ pub fn view<'a>(
                             pw(fl!("pack-password-again"), &p.again, true),
                         ]
                         .spacing(8)
+                    }))
+                    .push_maybe((p.format == Format::SevenZ && p.encrypt).then(|| {
+                        widget::checkbox(p.names)
+                            .label(fl!("pack-encrypt-names"))
+                            .on_toggle(|_| Message::Toggle(Toggle::EncryptNames))
                     }))
                     .push_maybe(
                         // Said once both are typed: an empty one just keeps OK off.

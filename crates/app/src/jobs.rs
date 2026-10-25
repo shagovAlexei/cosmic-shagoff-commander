@@ -26,6 +26,8 @@ pub enum Job {
         move_after: bool,
         /// Zip / 7z contents encrypted with it.
         password: Option<String>,
+        /// 7z: the names too.
+        names: bool,
     },
     Unpack {
         archives: Vec<PathBuf>,
@@ -184,8 +186,22 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                 groups,
                 move_after,
                 password,
+                names,
             } => {
-                let mut r = archive::pack_with(format, &base, &groups, password.as_deref(), &mut h);
+                let mut r = archive::pack_secret(
+                    format,
+                    &base,
+                    &groups,
+                    password.as_deref(),
+                    names,
+                    &mut h,
+                );
+                // Opened right after (and read back below) without typing it again.
+                if password.is_some() {
+                    for (_, dest) in &groups {
+                        archive::set_password(dest, password.clone());
+                    }
+                }
                 if move_after && !r.cancelled {
                     // Only what each archive really holds (not what appeared meanwhile).
                     for (sources, dest) in &groups {
@@ -481,17 +497,23 @@ mod sync_tests {
 
     #[test]
     fn pack_moving_deletes_what_went_in() {
-        for (format, pw) in [
-            (Format::Zip, None),
-            (Format::TarGz, None),
-            (Format::Zip, Some("pw")),
+        for (format, pw, names) in [
+            (Format::Zip, None, false),
+            (Format::TarGz, None, false),
+            (Format::Zip, Some("pw"), false),
+            // Names encrypted: read back with the password it was packed with.
+            (Format::SevenZ, Some("pw"), false),
+            (Format::SevenZ, Some("pw"), true),
         ] {
             let d = tempfile::tempdir().unwrap();
             let src = d.path().join("dir");
             std::fs::create_dir_all(src.join("sub")).unwrap();
             std::fs::write(src.join("a.txt"), "A").unwrap();
             std::fs::write(src.join("sub/b.txt"), "B").unwrap();
-            std::os::unix::fs::symlink("a.txt", src.join("ln")).unwrap();
+            // 7z keeps no links: one left out would be a skip, and the sources stay.
+            if format != Format::SevenZ {
+                std::os::unix::fs::symlink("a.txt", src.join("ln")).unwrap();
+            }
             let a = d.path().join(format!("out.{}", format.ext()));
             let r = run(Job::Pack {
                 format,
@@ -499,6 +521,7 @@ mod sync_tests {
                 groups: vec![(vec![src.clone()], a.clone())],
                 move_after: true,
                 password: pw.map(String::from),
+                names,
             });
             assert!(!r.cancelled && a.exists(), "{format:?}");
             assert!(!src.exists(), "{format:?} {pw:?}");
