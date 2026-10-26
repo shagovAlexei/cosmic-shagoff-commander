@@ -587,22 +587,28 @@ fn the_selection_goes_to_a_file_and_back() {
     p.mark_names(&["a.txt".into(), "c.txt".into()]);
     let _ = app.update(Message::Key(Action::SaveMarksToFile));
     let _ = app.update(Message::DialogSubmit); // the offered name, in the panel's dir
+    assert!(app.dialog.is_none());
+    // Written in the background (`write_new`: never over a file); its end comes as `MarksSaved`.
     let file = d.path().join(MARKS_FILE);
+    write_new(&file, "a.txt\nc.txt\n").unwrap();
+    assert!(write_new(&file, "b.txt\n").is_err());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "a.txt\nc.txt\n");
+    let _ = app.update(Message::MarksSaved(Ok(2)));
+    assert_eq!(app.msg(), Some(fl!("marks-saved", count = 2).as_str()));
+    let _ = app.update(Message::MarksSaved(Err("File exists".into())));
+    assert!(app.msg().is_some_and(|m| m.contains("File exists")));
+    // Read in the background too: its text comes as `MarksText`, as the clipboard's.
     app.panes[0].active_mut().panel.mark_names(&[]);
     let _ = app.update(Message::Key(Action::LoadMarksFromFile));
     let _ = app.update(Message::DialogSubmit);
+    assert!(app.dialog.is_none());
+    let _ = app.update(Message::MarksText(0, Some("a.txt\nc.txt\n".into())));
     assert_eq!(
         app.panes[0].active().panel.marked_names(),
         ["a.txt", "c.txt"]
     );
-    // The clipboard's text: one more.
     let _ = app.update(Message::MarksText(0, Some("b.txt\n".into())));
     assert_eq!(app.panes[0].active().panel.marked_names().len(), 3);
-    // Saved again: the file is there, kept as it was.
-    let _ = app.update(Message::Key(Action::SaveMarksToFile));
-    let _ = app.update(Message::DialogSubmit);
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "a.txt\nc.txt\n");
 }
 
 #[test]

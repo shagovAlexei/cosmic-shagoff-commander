@@ -601,23 +601,23 @@ impl App {
             } => {
                 let file = writable_dir(&self.panes[side].active().panel)
                     .join(session::expand_home(Path::new(input.trim()), &self.home));
-                let panel = &mut self.panes[side].active_mut().panel;
-                let done = match op {
-                    InputOp::SaveMarks => {
-                        let names = panel.marked_names();
-                        let n = names.len();
-                        write_new(&file, &(names.join("\n") + "\n")).map(|_| n)
+                // Off the UI thread: the file may be on a slow mount.
+                let names = self.panes[side].active().panel.marked_names();
+                let (n, text) = (names.len(), names.join("\n") + "\n");
+                let save = op == InputOp::SaveMarks;
+                let done = async move {
+                    let io = tokio::task::spawn_blocking(move || match save {
+                        true => write_new(&file, &text).map(|_| None),
+                        false => std::fs::read_to_string(&file).map(Some),
+                    });
+                    match io.await.map_err(|e| e.to_string()) {
+                        Ok(Ok(Some(t))) => Message::MarksText(side, Some(t)),
+                        Ok(Ok(None)) => Message::MarksSaved(Ok(n)),
+                        Ok(Err(e)) => Message::MarksSaved(Err(crate::why::text(&e))),
+                        Err(e) => Message::MarksSaved(Err(e)),
                     }
-                    _ => std::fs::read_to_string(&file).map(|t| panel.mark_listed(&t)),
                 };
-                match (done, op) {
-                    (Ok(n), InputOp::SaveMarks) => {
-                        self.say(StatusKind::Info, fl!("marks-saved", count = n))
-                    }
-                    (Ok(n), _) => self.say(StatusKind::Info, fl!("marks-loaded", count = n)),
-                    (Err(e), _) => self.say(StatusKind::Error, crate::why::text(&e)),
-                }
-                Task::none()
+                Task::perform(done, cosmic::Action::App)
             }
             Dialog::Input {
                 op: InputOp::SaveDetails(head),
