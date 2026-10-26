@@ -2,6 +2,11 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.125.1 — 2026-10-26
+
+- fix: F11 «Compare by content» was labelled «Files: mark what differs» in the menu, help and toolbar (one i18n key used for two items)
+- fix: «Save selection to file» / «Load selection from file» read and write off the UI thread
+
 ## 0.125.0 — 2026-10-25
 
 - feat: About is a dialog as in ShagShell Secure: the support note on top, the version with «Check for updates» under it, the description, the author, «Latest release» and «Report a problem» buttons, «Close»

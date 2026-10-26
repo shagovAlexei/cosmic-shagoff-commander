@@ -554,7 +554,7 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 menu::Item::Folder(
                     fl!("menu-compare-lists"),
                     vec![
-                        b(fl!("menu-compare-files"), Action::CompareLists),
+                        b(fl!("menu-compare-lists-files"), Action::CompareLists),
                         b(fl!("menu-compare-subdirs"), Action::CompareListsSubdirs),
                         b(fl!("menu-compare-diff-only"), Action::CompareListsDiffOnly),
                     ],

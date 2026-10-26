@@ -850,6 +850,8 @@ pub enum Message {
     SearchInput(String),
     /// Mark → «Selection from the clipboard»: its text, for the active panel.
     MarksText(usize, Option<String>),
+    /// Mark → «Save selection to file» done (the count), or why it, or a load from a file, failed.
+    MarksSaved(Result<usize, String>),
     /// Files read from the system clipboard by Ctrl+V (`None`: no files there).
     Pasted(Option<(ClipKind, Vec<PathBuf>)>),
     /// Files dropped on a pane (`dir`: the dir row they were dropped on); `mv`: Shift was held.

@@ -1621,6 +1621,8 @@ impl App {
                 let n = self.panes[side].active_mut().panel.mark_listed(&text);
                 self.say(StatusKind::Info, fl!("marks-loaded", count = n));
             }
+            Message::MarksSaved(Ok(n)) => self.say(StatusKind::Info, fl!("marks-saved", count = n)),
+            Message::MarksSaved(Err(e)) => self.say(StatusKind::Error, e),
             Message::DragStart(right) => {
                 self.right_hold = None; // a drag, not a click: no mark, no menu
                 self.right_drag = right;
