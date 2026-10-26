@@ -7165,3 +7165,25 @@ fn switches_flip_their_settings_and_the_ignore_list_hides_its_names() {
     let _ = app.update(Message::Key(Action::SwitchTypeColors));
     assert!(!app.config.watch_dirs && !app.config.type_colors);
 }
+
+#[test]
+fn the_fkeys_and_the_menu_take_their_size_and_colour_and_go_back() {
+    let mut app = app_with(Config::default(), State::default());
+    let _ = app.update(Message::Setting(Setting::FkeySize(18)));
+    let _ = app.update(Message::Setting(Setting::FkeyColor("#e01b24")));
+    let _ = app.update(Message::Setting(Setting::MenuSize(11)));
+    let _ = app.update(Message::Setting(Setting::MenuColor("#9a9996")));
+    let c = &app.config;
+    assert_eq!((c.fkey_size(), c.menu_size()), (18.0, 11.0));
+    assert_eq!(
+        crate::config::ink(&c.fkey_color),
+        Some(cosmic::iced::Color::from_rgb8(0xe0, 0x1b, 0x24))
+    );
+    assert!(crate::config::ink("").is_none()); // the theme's
+    let _ = app.update(Message::Setting(Setting::LooksReset));
+    let (c, d) = (&app.config, Config::default());
+    assert_eq!(
+        (c.fkey_size, &c.fkey_color, c.menu_size, &c.menu_color),
+        (d.fkey_size, &d.fkey_color, d.menu_size, &d.menu_color)
+    );
+}

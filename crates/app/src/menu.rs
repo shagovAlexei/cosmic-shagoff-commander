@@ -3,11 +3,11 @@
 use crate::app::Message;
 use crate::fl;
 use crate::keymap::Action;
-use cosmic::Element;
 use cosmic::iced::keyboard::Key;
 use cosmic::iced::keyboard::key::{Code, Named};
 use cosmic::widget::menu::key_bind::Modifier;
 use cosmic::widget::menu::{self, ItemHeight, ItemWidth, KeyBind};
+use cosmic::{Element, widget};
 use shagoff_core::nest::{Mark, Node, nest};
 use shagoff_core::sort::SortKey;
 use std::collections::HashMap;
@@ -1067,12 +1067,28 @@ pub fn context(ctx: Ctx) -> Vec<menu::Tree<Message>> {
     menu::items(&key_binds(), context_items(ctx))
 }
 
-pub fn bar(checks: Checks, lock: Lock) -> Element<'static, Message> {
+pub fn bar(
+    checks: Checks,
+    lock: Lock,
+    size: f32,
+    ink: Option<cosmic::iced::Color>,
+) -> Element<'static, Message> {
     let binds = key_binds();
+    // libcosmic's `menu::root`, in the size and colour from the settings.
+    let root = move |title: String| {
+        let t = widget::text(title).size(size);
+        let t = match ink {
+            Some(c) => t.class(cosmic::theme::Text::Color(c)),
+            None => t,
+        };
+        widget::button::custom(t)
+            .padding([4, 12])
+            .class(cosmic::theme::Button::MenuRoot)
+    };
     let roots = menus(checks, lock)
         .into_iter()
         .map(|(title, items)| {
-            menu::Tree::with_children(Element::from(menu::root(title)), menu::items(&binds, items))
+            menu::Tree::with_children(Element::from(root(title)), menu::items(&binds, items))
         })
         .collect();
     menu::bar(roots)

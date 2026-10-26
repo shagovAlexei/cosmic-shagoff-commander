@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.126.0 — 2026-10-26
+
+- feat: Settings → «Buttons and menu»: the F-key bar's and the main menu's text size and colour, «Default» back to the theme's
+
 ## 0.125.1 — 2026-10-26
 
 - fix: F11 «Compare by content» was labelled «Files: mark what differs» in the menu, help and toolbar (one i18n key used for two items)

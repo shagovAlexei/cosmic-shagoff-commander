@@ -1353,7 +1353,7 @@ pub fn footer(app: &App) -> Element<'_, Message> {
         col = col.push(command_line(app));
     }
     if app.config.show_fkeys {
-        col = col.push(fkey_bar(&app.config.f12, app.scheme.paint()));
+        col = col.push(fkey_bar(&app.config, app.scheme.paint()));
     }
     col.into()
 }
@@ -1459,9 +1459,19 @@ fn destructive(t: &cosmic::Theme) -> cosmic::iced::widget::text::Style {
 }
 
 pub fn fkey_bar(
-    f12: &crate::config::ToolButton,
+    config: &crate::config::Config,
     paint: colors::PanelPaint,
 ) -> Element<'static, Message> {
+    let f12 = &config.f12;
+    let (size, ink) = (config.fkey_size(), crate::config::ink(&config.fkey_color));
+    // The picked colour over the theme's / the palette's.
+    let label = move |t: String| {
+        let t = text(t).size(size);
+        match ink {
+            Some(c) => t.class(theme::Text::Color(c)),
+            None => t,
+        }
+    };
     // A palette of the list's own: the keys in its cursor colour (NC's cyan keys).
     let class = move || match paint.back.and(paint.cursor) {
         Some(bg) => fkey_class(bg),
@@ -1472,10 +1482,12 @@ pub fn fkey_bar(
         _ => format!("F12 {}", crate::toolbar::tip(f12)),
     };
     // Twelve buttons must fit a ~1000 px window: tight padding, one line, centred.
-    let key = |label: String, action| {
+    let key = |label_text: String, action| {
         button::custom(
-            text(label)
+            label(label_text)
                 .wrapping(cosmic::iced::widget::text::Wrapping::None)
+                // A large size in a narrow window: cut at the end, the F-number stays.
+                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
                 .width(Length::Fill)
                 .align_x(cosmic::iced::alignment::Horizontal::Center),
         )
@@ -1498,7 +1510,7 @@ pub fn fkey_bar(
         key(fl!("fkey-compare"), Action::CompareFiles),
         // Its own label can be long: cut at the end, not on both sides ("F12" stays readable).
         button::custom(
-            text(f12)
+            label(f12)
                 .wrapping(cosmic::iced::widget::text::Wrapping::None)
                 .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
                 .width(Length::Fill),

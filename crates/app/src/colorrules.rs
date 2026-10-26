@@ -347,7 +347,7 @@ fn swatch<'a>(color: &str, bg: bool) -> Element<'a, Message> {
     swatch_sized(color, bg, 14.0)
 }
 
-fn swatch_sized<'a>(color: &str, bg: bool, size: f32) -> Element<'a, Message> {
+pub(crate) fn swatch_sized<'a>(color: &str, bg: bool, size: f32) -> Element<'a, Message> {
     let paint = colors::parse(color).filter(|p| !(bg && *p == Paint::Accent));
     widget::container(widget::Space::new())
         .width(Length::Fixed(size))
