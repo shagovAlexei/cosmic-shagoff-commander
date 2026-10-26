@@ -309,6 +309,8 @@ pub enum Action {
     TermFull,
     /// Ctrl+` (View → "Built-in terminal"): on / off; on, it takes the keys.
     ToggleTerminal,
+    /// The keys to the built-in terminal and back to the panels, it staying shown.
+    TermFocus,
     /// Commands → "Shell…": the built-in terminal's shell.
     PickShell,
     /// Configuration → "Hotkeys…" (TC: redefine hotkeys).
@@ -511,6 +513,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyU), true, false) => Some(Action::SwapPanes),
         (Physical::Code(Code::KeyO), true, false) => Some(Action::TermFull),
         (Physical::Code(Code::Backquote), true, false) => Some(Action::ToggleTerminal),
+        (Physical::Code(Code::Backquote), true, true) => Some(Action::TermFocus),
         (Physical::Code(Code::KeyQ), true, false) => Some(Action::QuickView),
         (Physical::Code(Code::KeyB), true, false) => Some(Action::Branch),
         (Physical::Code(Code::KeyB), true, true) => Some(Action::BranchSel),
@@ -890,6 +893,10 @@ mod tests {
         assert_eq!(
             chr("ё", Code::Backquote, CTRL),
             Some(Action::ToggleTerminal)
+        );
+        assert_eq!(
+            chr("~", Code::Backquote, CTRL | Modifiers::SHIFT),
+            Some(Action::TermFocus)
         );
         assert_eq!(chr("г", Code::KeyU, CTRL), Some(Action::SwapPanes));
         assert_eq!(chr("й", Code::KeyQ, CTRL), Some(Action::QuickView));

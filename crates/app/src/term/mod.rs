@@ -236,11 +236,16 @@ pub fn view(app: &crate::app::App, full: bool) -> cosmic::Element<'_, Message> {
     widget::column![edge, body].into()
 }
 
-/// Keys the terminal leaves to the app, on either layout: Ctrl+O (whole height / back) and Ctrl+`
-/// (hide it).
+/// Keys the terminal leaves to the app, on either layout: Ctrl+O (whole height / back), Ctrl+`
+/// (hide it) and Ctrl+Shift+` (the keys back to the panels).
 pub fn pass(mods: Modifiers, key: &Key) -> bool {
+    let Key::Character(c) = key.as_ref() else {
+        return false;
+    };
     mods.control()
-        && !mods.shift()
         && !mods.alt()
-        && matches!(key.as_ref(), Key::Character(c) if matches!(c, "o" | "O" | "щ" | "Щ" | "`" | "ё" | "Ё"))
+        && match mods.shift() {
+            false => matches!(c, "o" | "O" | "щ" | "Щ" | "`" | "ё" | "Ё"),
+            true => matches!(c, "~" | "`" | "Ё" | "ё"),
+        }
 }

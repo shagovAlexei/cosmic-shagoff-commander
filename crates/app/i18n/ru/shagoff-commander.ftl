@@ -839,6 +839,7 @@ help-edit-path = Правка пути (или щелчок правее нег�
 menu-open-left = Открыть в левой панели
 menu-open-right = Открыть в правой панели
 menu-term-full = Терминал на всё окно
+menu-term-focus = Фокус: терминал ⇄ панели
 menu-show-all = Все файлы
 menu-show-programs = Только программы
 menu-show-mask = Файлы по маске…
