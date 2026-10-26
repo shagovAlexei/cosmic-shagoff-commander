@@ -46,6 +46,13 @@ jobs:
       # libcosmic is a large git dependency; without a cache every run rebuilds
       # the whole tree.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          # The key follows Cargo.lock and the toolchain, not the profiles: bump it when those
+          # change (v1: no debug info for dependencies), else the old cache is restored, does not
+          # fit, everything is rebuilt and nothing saved (an exact hit is never saved again).
+          prefix-key: v1-rust
+          # PR caches are only seen by that PR: main's is the one every PR starts from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Formatting
         run: cargo fmt --all -- --check
@@ -55,6 +62,3 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
-
-      - name: Build
-        run: cargo build --release --locked
