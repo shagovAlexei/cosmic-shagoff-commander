@@ -2,6 +2,11 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.129.1 — 2026-10-26
+
+- fix: the man page names Ctrl+Shift+` (keys to the built-in terminal and back)
+- fix: zstd 0.14.3 / zstd-safe 8.2.0 / zstd-sys 2.1.2 (RUSTSEC-2026-0391, -0398, -0403, -0410; zip and 7z reading)
+
 ## 0.129.0 — 2026-10-26
 
 - feat: the default toolbar ends with «Clone»: each selected file / dir copied next to it as the first free `name_N.ext` (an own `sh` button; existing bars get it by «Default» in the toolbar settings)
