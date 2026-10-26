@@ -39,7 +39,7 @@ Every feature and every MVP phase goes through these steps in order. Do not skip
      The body links the spec and the plan.
    - Wait for CI with `gh pr checks --watch`.
    - Merge only after the user says so: `gh pr merge --merge --delete-branch`.
-   - Then tag the bumped version on `main` and push the tag (`vX.Y.Z`): the `release` workflow attaches the .deb. Check it with `gh run watch` / `gh release view`.
+   - Then wait for main's `release` run of the merge (`gh run watch`; it warms the release cache), tag the bumped version on `main` and push the tag (`vX.Y.Z`): the `release` workflow attaches the .deb. Check it with `gh run watch` / `gh release view`.
 
 Bug fix: use `superpowers:systematic-debugging`. Add a regression test named `regression_<what>` in core, add a row in `TESTING.md`, and work on branch `fix/<topic>`.
 

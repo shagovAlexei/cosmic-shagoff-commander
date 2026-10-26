@@ -1,10 +1,14 @@
 name: release
 
 # Push a tag `vX.Y.Z` (matching `version` in Cargo.toml) → a GitHub release with the .deb and .rpm.
-# A PR changing this file builds the .deb only (an artifact, no release).
+# A PR changing this file builds the .deb only (an artifact, no release). On main (a new version):
+# only the build, for its cache — a tag's run sees main's caches, never another tag's, so without it
+# every release built everything; tag once this run is done.
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths: ['Cargo.toml']
   pull_request:
     paths: ['.github/workflows/release.yml', 'justfile', 'res/*.1']
 
@@ -40,6 +44,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # `just` is not packaged in 22.04.
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
