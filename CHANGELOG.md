@@ -5,6 +5,7 @@ Restored from the merged pull requests and tags (the GitHub releases older than 
 ## 0.129.1 — 2026-10-26
 
 - fix: the man page names Ctrl+Shift+` (keys to the built-in terminal and back)
+- fix: zstd 0.14.3 / zstd-safe 8.2.0 / zstd-sys 2.1.2 (RUSTSEC-2026-0391, -0398, -0403, -0410; zip and 7z reading)
 
 ## 0.129.0 — 2026-10-26
 
