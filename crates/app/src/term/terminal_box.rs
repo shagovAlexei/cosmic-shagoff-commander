@@ -819,8 +819,8 @@ where
             drop(term);
 
             // Skip drawing cursor when scrolled - the cursor is below the visible viewport
-            if display_offset > 0 {
-                // Cursor is off-screen when scrolled up
+            if display_offset > 0 || terminal.blink_off {
+                // Cursor is off-screen when scrolled up (or blinking, in its «off» half)
             } else {
                 let col = cursor.point.column.0;
                 let line = cursor.point.line.0;

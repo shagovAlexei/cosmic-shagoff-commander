@@ -137,6 +137,10 @@ pub struct Config {
     pub term_shell: String,
     /// Its height under the panels, in rows (its top edge dragged).
     pub term_rows: u16,
+    /// The built-in terminal's cursor: 0 block, 1 underline, 2 bar.
+    pub term_cursor: u8,
+    /// … blinks while the terminal has the focus.
+    pub term_blink: bool,
     pub skin: Skin,
     /// TC "Select with right mouse button": a right click marks, a long press opens the menu;
     /// off: a right click opens the menu at once.
@@ -249,6 +253,15 @@ impl Config {
         self.panel_size.clamp(*SIZES.start(), *SIZES.end())
     }
 
+    pub fn term_cursor(&self) -> alacritty_terminal::vte::ansi::CursorShape {
+        use alacritty_terminal::vte::ansi::CursorShape as C;
+        match self.term_cursor {
+            1 => C::Underline,
+            2 => C::Beam,
+            _ => C::Block,
+        }
+    }
+
     pub fn fkey_size(&self) -> f32 {
         self.fkey_size.clamp(*SIZES.start(), *SIZES.end()) as f32
     }
@@ -350,6 +363,8 @@ impl Default for Config {
             term_builtin: false,
             term_shell: String::new(),
             term_rows: 8,
+            term_cursor: 0,
+            term_blink: true,
             skin: Skin::Classic,
             right_marks: true,
             lister_window: true,

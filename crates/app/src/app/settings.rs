@@ -22,6 +22,8 @@ impl App {
             Setting::TermBuiltin(b) => c.term_builtin = b,
             Setting::TermShell(s) => c.term_shell = s,
             Setting::TermRows(n) => c.term_rows = n,
+            Setting::TermCursor(i) => c.term_cursor = i,
+            Setting::TermBlink(b) => c.term_blink = b,
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
             Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::Show(p, b) => *c.shown(p) = b,
@@ -180,6 +182,14 @@ impl App {
         if !self.config.term_builtin {
             (self.term, self.term_tx, self.term_full, self.term_focused) =
                 (None, None, false, false);
+        }
+        if let Some(t) = self.term.as_deref() {
+            if old.term_cursor != self.config.term_cursor {
+                crate::term::set_shape(t, self.config.term_cursor());
+            }
+            if !self.config.term_blink {
+                crate::term::set_blink_off(t, false);
+            }
         }
         // A new text size or theme: the running terminal too.
         if old.panel_size() != self.config.panel_size() || old.app_theme != self.config.app_theme {

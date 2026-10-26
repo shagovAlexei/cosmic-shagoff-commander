@@ -186,7 +186,10 @@ impl App {
         );
         let (style, dark, bg) = self.term_look();
         match crate::term::start(tx, &shell, Some(&dir), dark, bg, &style) {
-            Ok(pane) => self.term = Some(Box::new(pane)),
+            Ok(pane) => {
+                crate::term::set_shape(&pane, self.config.term_cursor());
+                self.term = Some(Box::new(pane));
+            }
             // Not again on every message: Ctrl+O or a click on its line tries again.
             Err(e) => {
                 self.term_ended = true;

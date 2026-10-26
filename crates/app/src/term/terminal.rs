@@ -173,6 +173,8 @@ impl Metadata {
 pub struct Terminal {
     pub metadata_set: IndexSet<Metadata>,
     pub needs_update: bool,
+    /// Settings → blinking cursor: the cursor is in its «off» half now.
+    pub blink_off: bool,
     pub term: Arc<FairMutex<Term<EventProxy>>>,
     pub url_regex_search: RegexSearch,
     pub regex_matches: Vec<alacritty_terminal::term::search::Match>,
@@ -289,6 +291,7 @@ impl Terminal {
             use_bright_bold,
             zoom_adj: Default::default(),
             is_focused: true,
+            blink_off: false,
         })
     }
 
@@ -338,6 +341,21 @@ impl Terminal {
 
     pub fn zoom_adj(&self) -> i8 {
         self.zoom_adj
+    }
+
+    /// Settings → cursor: its shape until a program asks for another (DECSCUSR).
+    pub fn set_cursor_shape(&mut self, shape: CursorShape) {
+        self.term
+            .lock()
+            .set_options(alacritty_terminal::term::Config {
+                scrolling_history: super::HISTORY,
+                default_cursor_style: alacritty_terminal::vte::ansi::CursorStyle {
+                    shape,
+                    blinking: false,
+                },
+                ..Default::default()
+            });
+        self.needs_update = true;
     }
 
     pub fn set_zoom_adj(&mut self, value: i8) {
@@ -803,6 +821,7 @@ impl Terminal {
                     if indexed.point == grid.cursor.point
                         && term.renderable_content().cursor.shape == CursorShape::Block
                         && self.is_focused
+                        && !self.blink_off
                     {
                         //Use specific cursor color if requested
                         if term.colors()[NamedColor::Cursor].is_some() {
