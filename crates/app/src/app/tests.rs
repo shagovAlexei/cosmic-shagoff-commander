@@ -7187,3 +7187,19 @@ fn the_fkeys_and_the_menu_take_their_size_and_colour_and_go_back() {
         (d.fkey_size, &d.fkey_color, d.menu_size, &d.menu_color)
     );
 }
+
+#[test]
+fn the_terminal_cursor_takes_its_shape_and_blinks_only_when_focused() {
+    use alacritty_terminal::vte::ansi::CursorShape;
+    let mut app = app_with(Config::default(), State::default());
+    assert_eq!(app.config.term_cursor(), CursorShape::Block);
+    assert!(app.config.term_blink);
+    for (i, shape) in [(1, CursorShape::Underline), (2, CursorShape::Beam)] {
+        let _ = app.update(Message::Setting(Setting::TermCursor(i)));
+        assert_eq!(app.config.term_cursor(), shape);
+    }
+    // No terminal yet: the tick is harmless; it only ticks while one is focused.
+    let _ = app.update(Message::TermBlink);
+    let _ = app.update(Message::Setting(Setting::TermBlink(false)));
+    assert!(!app.config.term_blink);
+}

@@ -994,6 +994,8 @@ pub enum Message {
     WindowClosed(cosmic::iced::window::Id),
     /// The built-in terminal's pending `cd`: ask the shell again (`term::waiting_tick`).
     TermWait,
+    /// The blinking terminal cursor's half-period.
+    TermBlink,
     /// Every 2 s while files from archives are in the editor: look for saved changes.
     EditTick,
     /// Window ×, Alt+F4, menu «Exit»: asks first while a job runs or waits.
@@ -1094,6 +1096,11 @@ impl Application for App {
         let waiting = matches!(&self.dialog, Some(Dialog::Keys(k)) if k.capturing);
         keymap::CAPTURE.store(waiting, Ordering::Relaxed);
         let blur = if std::mem::take(&mut self.term_blur) {
+            // The box is not told of an `unfocus` (no event reaches it): no blinking from here.
+            self.term_focused = false;
+            if let Some(t) = self.term.as_deref() {
+                crate::term::set_blink_off(t, false);
+            }
             unfocus()
         } else if self.term_want_focus && self.term.is_some() {
             // Turned on by Ctrl+`: its keys once its shell is up.
@@ -1204,6 +1211,13 @@ impl Application for App {
         }
         if self.config.term_builtin {
             subs.push(crate::term::subscription());
+        }
+        // Blinks only while the terminal has the focus (`TermFocused(false)` shows it again).
+        if self.config.term_blink && self.term_focused && self.term.is_some() {
+            subs.push(
+                cosmic::iced::time::every(std::time::Duration::from_millis(530))
+                    .map(|_| Message::TermBlink),
+            );
         }
         // A `cd` waiting for the shell's prompt: `term_follow` (after every update) asks again.
         if let Some(tick) = self

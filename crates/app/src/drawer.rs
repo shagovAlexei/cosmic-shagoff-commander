@@ -72,6 +72,9 @@ pub enum Setting {
     TermBuiltin(bool),
     TermShell(String),
     TermRows(u16),
+    /// 0 block, 1 underline, 2 bar.
+    TermCursor(u8),
+    TermBlink(bool),
     /// Index into [system, LANGUAGES…].
     Language(usize),
     Theme(usize),
@@ -479,6 +482,25 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                     .on_press(set(Setting::LooksReset))
                     .into(),
             ]))
+            .into(),
+        settings::section()
+            .title(fl!("settings-terminal"))
+            .add(settings::item(
+                fl!("settings-term-cursor"),
+                widget::dropdown(
+                    vec![
+                        fl!("settings-cursor-block"),
+                        fl!("settings-cursor-underline"),
+                        fl!("settings-cursor-bar"),
+                    ],
+                    Some(usize::from(c.term_cursor.min(2))),
+                    |i| Message::Setting(Setting::TermCursor(i as u8)),
+                ),
+            ))
+            .add(settings::item(
+                fl!("settings-term-blink"),
+                widget::toggler(c.term_blink).on_toggle(move |b| set(Setting::TermBlink(b))),
+            ))
             .into(),
         settings::section()
             .title(fl!("settings-archives"))

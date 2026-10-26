@@ -9,7 +9,17 @@ impl App {
             // text field leaves to us, `route_event` passes on at any status — not this one's.
             Message::FieldKey(_) | Message::Escape(_) | Message::FeedKey(_)
                 if self.term_focused && self.dialog.is_none() => {}
-            Message::TermFocused(on) => self.term_focused = on,
+            Message::TermFocused(on) => {
+                self.term_focused = on;
+                if let Some(t) = self.term.as_deref().filter(|_| !on) {
+                    crate::term::set_blink_off(t, false);
+                }
+            }
+            Message::TermBlink => {
+                if let Some(t) = self.term.as_deref() {
+                    crate::term::set_blink_off(t, !crate::term::blink_off(t));
+                }
+            }
             Message::Key(action) if self.viewer() && self.dialog.is_none() && !self.busy() => {
                 if let Some(task) = self.lister_action(action) {
                     return task;

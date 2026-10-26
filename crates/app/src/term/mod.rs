@@ -8,6 +8,7 @@ pub mod terminal_box;
 pub mod terminal_theme;
 
 use crate::app::Message;
+use alacritty_terminal::vte::ansi::CursorShape;
 use alacritty_terminal::{event::Event, term, tty};
 use cosmic::iced::{Subscription, futures::SinkExt, keyboard::Key, keyboard::Modifiers};
 use std::path::{Path, PathBuf};
@@ -67,6 +68,28 @@ pub fn start(
         shell: shell.to_string(),
         busy_at: None,
     })
+}
+
+/// Settings → cursor: its shape (on start and when changed).
+pub fn set_shape(pane: &Pane, shape: CursorShape) {
+    let mut t = pane.terminal.lock().unwrap_or_else(|e| e.into_inner());
+    t.set_cursor_shape(shape);
+}
+
+/// Settings → blinking cursor: its «off» half (`false`: shown).
+pub fn set_blink_off(pane: &Pane, off: bool) {
+    let mut t = pane.terminal.lock().unwrap_or_else(|e| e.into_inner());
+    if t.blink_off != off {
+        (t.blink_off, t.needs_update) = (off, true); // a block cursor is drawn into the text
+    }
+}
+
+/// The blinking cursor's «off» half now.
+pub fn blink_off(pane: &Pane) -> bool {
+    pane.terminal
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .blink_off
 }
 
 /// A new text size or theme for the running terminal.
