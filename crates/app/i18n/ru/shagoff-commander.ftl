@@ -655,6 +655,7 @@ menu-toolbar = Панель инструментов…
 toolbar-title = Настройка панели инструментов
 toolbar-add = Добавить кнопку
 toolbar-reset = По умолчанию
+toolbar-clone = Клон
 toolbar-command = Команда:
 toolbar-params = Параметры:
 toolbar-icon = Значок:

@@ -654,6 +654,7 @@ menu-toolbar = Toolbar…
 toolbar-title = Change button bar
 toolbar-add = Add button
 toolbar-reset = Default
+toolbar-clone = Clone
 toolbar-command = Command:
 toolbar-params = Parameters:
 toolbar-icon = Icon:

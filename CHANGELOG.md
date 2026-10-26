@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.129.0 — 2026-10-26
+
+- feat: the default toolbar ends with «Clone»: each selected file / dir copied next to it as the first free `name_N.ext` (an own `sh` button; existing bars get it by «Default» in the toolbar settings)
+
 ## 0.128.0 — 2026-10-26
 
 - feat: Ctrl+Shift+` — the keys to the built-in terminal and back to the panels, the terminal staying shown (Show → Window and panels, help, own hotkeys)
