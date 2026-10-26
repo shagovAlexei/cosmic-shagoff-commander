@@ -1293,6 +1293,8 @@ impl Application for App {
         vec![crate::menu::bar(
             checks,
             self.panes[self.active].active().lock(),
+            self.config.menu_size(),
+            crate::config::ink(&self.config.menu_color),
         )]
     }
 

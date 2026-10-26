@@ -108,6 +108,15 @@ impl App {
             }
             Setting::PanelSize(s) => c.panel_size = s,
             Setting::ListerSize(s) => c.lister_size = s,
+            Setting::FkeySize(s) => c.fkey_size = s,
+            Setting::FkeyColor(s) => c.fkey_color = s.into(),
+            Setting::MenuSize(s) => c.menu_size = s,
+            Setting::MenuColor(s) => c.menu_color = s.into(),
+            Setting::LooksReset => {
+                let d = Config::default();
+                (c.fkey_size, c.fkey_color) = (d.fkey_size, d.fkey_color);
+                (c.menu_size, c.menu_color) = (d.menu_size, d.menu_color);
+            }
             Setting::PackFormat(i) => {
                 if let Some(f) = Format::PACK.get(i) {
                     c.pack_format = f.ext().into();

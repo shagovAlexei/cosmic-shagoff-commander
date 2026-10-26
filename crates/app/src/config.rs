@@ -191,6 +191,12 @@ pub struct Config {
     pub thumb_cache: bool,
     /// Copies are read back from the disk and compared with the source (slower).
     pub verify_copy: bool,
+    /// The F-key bar's text size, pt (the buttons grow with it) and colour ("" = the theme's).
+    pub fkey_size: u16,
+    pub fkey_color: String,
+    /// The main menu's titles (the header bar): text size, pt, and colour ("" = the theme's).
+    pub menu_size: u16,
+    pub menu_color: String,
 }
 
 /// Text sizes offered in the settings.
@@ -207,6 +213,8 @@ pub fn size_step(now: u16, up: bool) -> u16 {
 }
 pub const PANEL_SIZE: u16 = 13;
 pub const LISTER_SIZE: u16 = 14;
+/// libcosmic's own text size: the F-keys' and the menu's default.
+pub const UI_SIZE: u16 = 14;
 
 impl Config {
     /// The row colors: by file type unless switched off, the panel's own either way.
@@ -239,6 +247,14 @@ impl Config {
     /// The file list's text size, kept in `SIZES` (a hand edit could say anything).
     pub fn panel_size(&self) -> u16 {
         self.panel_size.clamp(*SIZES.start(), *SIZES.end())
+    }
+
+    pub fn fkey_size(&self) -> f32 {
+        self.fkey_size.clamp(*SIZES.start(), *SIZES.end()) as f32
+    }
+
+    pub fn menu_size(&self) -> f32 {
+        self.menu_size.clamp(*SIZES.start(), *SIZES.end()) as f32
     }
 
     pub fn lister_size(&self) -> u16 {
@@ -352,6 +368,10 @@ impl Default for Config {
             panel_font: String::new(),
             panel_size: PANEL_SIZE,
             lister_size: LISTER_SIZE,
+            fkey_size: UI_SIZE,
+            fkey_color: String::new(),
+            menu_size: UI_SIZE,
+            menu_color: String::new(),
             ignore_on: false,
             ignore_list: String::new(),
             watch_dirs: true,
@@ -550,6 +570,16 @@ pub fn read<T: CosmicConfigEntry + Default>(h: Option<&cosmic_config::Config>) -
         })
     })
     .unwrap_or_default()
+}
+
+/// A text colour picked in the settings; `None`: the theme's ("" or not a colour).
+pub fn ink(color: &str) -> Option<cosmic::iced::Color> {
+    match shagoff_core::colors::parse(color) {
+        Some(shagoff_core::colors::Paint::Rgb([r, g, b])) => {
+            Some(cosmic::iced::Color::from_rgb8(r, g, b))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

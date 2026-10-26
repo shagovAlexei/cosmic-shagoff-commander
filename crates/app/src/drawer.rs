@@ -114,6 +114,54 @@ pub enum Setting {
     PanelFont(usize),
     PanelSize(u16),
     ListerSize(u16),
+    FkeySize(u16),
+    FkeyColor(&'static str),
+    MenuSize(u16),
+    MenuColor(&'static str),
+    /// «Buttons and menu» back to the theme's.
+    LooksReset,
+}
+
+/// Text colours offered for the F-keys and the menu; "" = the theme's.
+const INKS: [&str; 10] = [
+    "", "#ffffff", "#deddda", "#9a9996", "#e01b24", "#ff7800", "#f6d32d", "#33d17a", "#3584e4",
+    "#9141ac",
+];
+
+/// One click per colour of `INKS`, the one in force marked.
+fn ink_pick<'a>(now: &str, f: fn(&'static str) -> Setting) -> Element<'a, Message> {
+    let now = now.trim().to_ascii_lowercase();
+    let mut row = widget::row::with_capacity(INKS.len()).spacing(2);
+    for color in INKS {
+        let tip = match color {
+            "" => fl!("settings-system"),
+            c => crate::colorrules::color_name(c, false).unwrap_or_else(|| c.into()),
+        };
+        let on = now == color;
+        // The one in force: framed in the accent.
+        let frame = widget::container(crate::colorrules::swatch_sized(color, true, 14.0))
+            .padding(2)
+            .class(theme::Container::custom(move |t| {
+                widget::container::Style {
+                    border: cosmic::iced::Border {
+                        color: t.cosmic().accent_color().into(),
+                        width: if on { 2.0 } else { 0.0 },
+                        radius: 3.0.into(),
+                    },
+                    ..Default::default()
+                }
+            }));
+        let b = widget::button::custom(frame)
+            .padding(1)
+            .class(theme::Button::Icon)
+            .on_press(Message::Setting(f(color)));
+        row = row.push(widget::tooltip(
+            b,
+            widget::text(tip),
+            widget::tooltip::Position::Bottom,
+        ));
+    }
+    row.into()
 }
 
 pub fn view<'a>(app: &'a App, d: &'a Drawer) -> ContextDrawer<'a, Message> {
@@ -406,6 +454,31 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                     Setting::ListerSize,
                 ),
             ))
+            .into(),
+        settings::section()
+            .title(fl!("settings-looks"))
+            .add(settings::item(
+                fl!("settings-fkey-size"),
+                size_pick(c.fkey_size, crate::config::UI_SIZE, Setting::FkeySize),
+            ))
+            .add(settings::item(
+                fl!("settings-fkey-color"),
+                ink_pick(&c.fkey_color, Setting::FkeyColor),
+            ))
+            .add(settings::item(
+                fl!("settings-menu-size"),
+                size_pick(c.menu_size, crate::config::UI_SIZE, Setting::MenuSize),
+            ))
+            .add(settings::item(
+                fl!("settings-menu-color"),
+                ink_pick(&c.menu_color, Setting::MenuColor),
+            ))
+            .add(settings::item_row(vec![
+                widget::Space::new().width(Length::Fill).into(),
+                widget::button::standard(fl!("toolbar-reset"))
+                    .on_press(set(Setting::LooksReset))
+                    .into(),
+            ]))
             .into(),
         settings::section()
             .title(fl!("settings-archives"))
