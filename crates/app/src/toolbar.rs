@@ -596,6 +596,10 @@ pub fn builtin(cmd: &str) -> Option<&'static Builtin> {
     builtins().iter().find(|b| b.cm == cmd.trim())
 }
 
+/// The default bar's «Clone»: each selected file / dir copied next to it as the first free
+/// `name_N.ext` (never over one), by `sh` (the parameters are filled in quoted).
+pub const CLONE: &str = r#"-c 'for f; do b=${f%.*}; e=${f#"$b"}; [ -n "$b" ] || { b=$f; e=; }; n=1; while [ -e "${b}_$n$e" ]; do n=$((n+1)); done; cp -a -- "$f" "${b}_$n$e"; done' sh %S"#;
+
 pub fn default_bar() -> Vec<ToolButton> {
     let cm = |b: &Builtin| ToolButton {
         cmd: b.cm.into(),
@@ -606,10 +610,18 @@ pub fn default_bar() -> Vec<ToolButton> {
         ..Default::default()
     };
     let l = builtins();
+    let clone = ToolButton {
+        cmd: "sh".into(),
+        params: CLONE.into(),
+        icon: "accessories-character-map-symbolic".into(),
+        tip: fl!("toolbar-clone"),
+        dir: String::new(),
+    };
     [&l[..4], &l[4..9], &l[9..11], &l[11..15]]
         .iter()
         .enumerate()
         .flat_map(|(i, g)| (i > 0).then(sep).into_iter().chain(g.iter().map(cm)))
+        .chain([sep(), clone])
         .collect()
 }
 
@@ -1169,12 +1181,47 @@ mod tests {
     }
 
     #[test]
+    fn clone_copies_each_selected_next_to_it_as_name_n() {
+        use shagoff_core::cmdline;
+        let d = tempfile::tempdir().unwrap();
+        let p = |n: &str| d.path().join(n);
+        std::fs::write(p("отчёт.txt"), "x").unwrap();
+        std::fs::create_dir(p("my dir")).unwrap();
+        std::fs::write(p("my dir/f"), "y").unwrap();
+        std::fs::write(p("-x"), "").unwrap();
+        let run = |sel: &[&str]| {
+            let selected: Vec<String> = sel.iter().map(|s| s.to_string()).collect();
+            let vars = cmdline::Vars {
+                dir: d.path(),
+                other: d.path(),
+                name: None,
+                selected: &selected,
+            };
+            let line = cmdline::append("sh", &cmdline::expand(CLONE, &vars));
+            let argv = cmdline::argv(&line, d.path(), None);
+            let ok = std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .current_dir(d.path())
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok);
+        };
+        run(&["отчёт.txt", "my dir", "-x"]);
+        run(&["отчёт.txt"]);
+        assert_eq!(std::fs::read_to_string(p("отчёт_1.txt")).unwrap(), "x");
+        assert!(p("отчёт_2.txt").exists());
+        assert_eq!(std::fs::read_to_string(p("my dir_1/f")).unwrap(), "y");
+        assert!(p("-x_1").exists());
+    }
+
+    #[test]
     fn default_bar_has_its_groups_and_known_commands() {
         let bar = default_bar();
-        assert_eq!(bar.iter().filter(|b| b.cmd == SEP).count(), 3);
+        assert_eq!(bar.iter().filter(|b| b.cmd == SEP).count(), 4);
         assert!(
             bar.iter()
-                .all(|b| b.cmd == SEP || builtin(&b.cmd).is_some())
+                .all(|b| b.cmd == SEP || b.params == CLONE || builtin(&b.cmd).is_some())
         );
         let mut seen = std::collections::HashSet::new();
         assert!(
