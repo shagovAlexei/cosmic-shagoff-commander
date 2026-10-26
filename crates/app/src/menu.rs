@@ -242,6 +242,11 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
             K::Letter(Code::Backquote, "`"),
             a(Action::ToggleTerminal),
         ),
+        (
+            vec![Ctrl, Shift],
+            K::Letter(Code::Backquote, "`"),
+            a(Action::TermFocus),
+        ),
         (vec![], K::Named(Named::F1), a(Action::Help)),
         (vec![Ctrl], K::Named(Named::F1), a(Action::ViewBrief)),
         (
@@ -727,6 +732,7 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                     }))
                     .chain([
                         b(fl!("menu-term-full"), Action::TermFull),
+                        b(fl!("menu-term-focus"), Action::TermFocus),
                         b(fl!("menu-tree-panel"), Action::TreePanel),
                     ])
                     .collect(),

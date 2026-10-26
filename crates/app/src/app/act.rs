@@ -192,6 +192,25 @@ impl App {
                     false => Task::batch([task, unfocus()]),
                 };
             }
+            Action::TermFocus => {
+                // Off: turned on, with the keys (as Ctrl+`).
+                if !self.config.term_builtin {
+                    return self.act(side, Action::ToggleTerminal);
+                }
+                if self.term_focused {
+                    self.term_full = false; // the panels are what gets the keys
+                    self.term_blur = true;
+                    return Task::none();
+                }
+                if self.term.is_none() {
+                    self.term_ended = false;
+                    self.term_start();
+                }
+                // The box tells of its focus only on its next event: blinking from now.
+                self.term_focused = self.term.is_some();
+                self.term_want_focus = self.term.is_none(); // once its shell is up
+                return cosmic::iced::runtime::widget::operation::focus(self.term_id.clone());
+            }
             Action::TermFull => {
                 if !self.config.term_builtin {
                     return Task::none();
@@ -202,6 +221,7 @@ impl App {
                 }
                 self.term_full = !self.term_full && self.term.is_some();
                 // Over the whole height: its keys; back: the panels'.
+                self.term_focused = self.term_full;
                 return match self.term_full {
                     true => cosmic::iced::runtime::widget::operation::focus(self.term_id.clone()),
                     false => unfocus(),
@@ -885,6 +905,7 @@ impl App {
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
             | Action::ToggleTerminal
+            | Action::TermFocus
             | Action::TermFull
             | Action::PickShell
             | Action::Donate

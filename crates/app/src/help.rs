@@ -301,6 +301,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
             vec![
                 r("Ctrl+`", fl!("help-term-toggle"), Action::ToggleTerminal),
                 r("Ctrl+O", fl!("help-term-full"), Action::TermFull),
+                r("Ctrl+Shift+`", fl!("menu-term-focus"), Action::TermFocus),
                 o("Ctrl+Shift+C / Ctrl+Shift+V", fl!("help-term-copy")),
                 o("Shift+PgUp / Shift+PgDn", fl!("help-term-scroll")),
                 o("exit", fl!("help-term-exit")),

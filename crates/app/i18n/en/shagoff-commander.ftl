@@ -841,6 +841,7 @@ help-edit-path = Edit the path (or click right of it)
 menu-open-left = Open in the left panel
 menu-open-right = Open in the right panel
 menu-term-full = Terminal over the whole window
+menu-term-focus = Keys: terminal ⇄ panels
 menu-show-all = All files
 menu-show-programs = Programs only
 menu-show-mask = Files by mask…
