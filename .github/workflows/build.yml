@@ -14,12 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The packages, not their install: the runners' Ubuntu mirror is often slow (16 MB took 5
+      # minutes). New versions are fetched, the rest come from here.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-archives
+          key: apt-build-${{ hashFiles('.github/workflows/build.yml') }}
+
       # libcosmic pulls in the system graphics and Wayland stack; without these
       # the build fails at link time with errors that look unrelated to the code.
       - name: Install system dependencies
         run: |
+          mkdir -p ~/apt-archives/partial
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" \
             libxkbcommon-dev \
             libwayland-dev \
             libudev-dev \
@@ -29,6 +37,7 @@ jobs:
             libegl1-mesa-dev \
             libssl-dev \
             pkg-config
+          sudo chown -R "$USER" ~/apt-archives # root wrote them; the cache saves as us
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:

@@ -9,6 +9,14 @@ authors = ["Shagov Alexei <shagov.alexei@gmail.com>"]
 license = "GPL-3.0-only"
 repository = "https://github.com/shagovAlexei/cosmic-shagoff-commander"
 
+# Debug info: the dependencies' (libcosmic, iced, wgpu…) is most of `target/debug` (11 of 20 GB)
+# and of the link time, and nobody steps into them; ours keeps lines for backtraces.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # The viewer test reads a 48 MB file: unoptimized, its line index takes half a minute.
 [profile.dev.package.shagoff-core]
 opt-level = 2
