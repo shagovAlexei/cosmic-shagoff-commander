@@ -1,4 +1,5 @@
-//! Cloud drives (215): OneDrive, Google Drive, Dropbox, Box through `rclone mount`. gvfs shows
+//! Cloud drives (215, 216): OneDrive, Google Drive, Dropbox, Box, Yandex Disk, pCloud, Google
+//! Photos, HiDrive through `rclone mount`. gvfs shows
 //! Google Drive with object ids for names, so rclone it is: a FUSE dir with the real names, a
 //! plain path for everything else. An account is an rclone remote (`~/.config/rclone/rclone.conf`);
 //! a mount point `<root>/<plugin id>:<remote>` names its plugin, so drives and the switched-off
@@ -39,6 +40,26 @@ pub const PLUGINS: &[Plugin] = &[
         id: "box",
         name: "Box",
         kind: "box",
+    },
+    Plugin {
+        id: "yandex",
+        name: "Yandex Disk",
+        kind: "yandex",
+    },
+    Plugin {
+        id: "pcloud",
+        name: "pCloud",
+        kind: "pcloud",
+    },
+    Plugin {
+        id: "gphotos",
+        name: "Google Photos",
+        kind: "gphotos",
+    },
+    Plugin {
+        id: "hidrive",
+        name: "HiDrive",
+        kind: "hidrive",
     },
 ];
 
@@ -335,6 +356,15 @@ mod tests {
                 ("onedrive", "onedrive")
             ]
         );
+    }
+
+    #[test]
+    fn parse_remotes_knows_the_browser_sign_in_clouds() {
+        let r = parse_remotes("a: yandex\nb: pcloud\nc: gphotos\nd: hidrive\ne: sftp\n");
+        let got: Vec<_> = r.iter().map(|r| r.plugin.id).collect();
+        assert_eq!(got, ["yandex", "pcloud", "gphotos", "hidrive"]);
+        let plugin = PLUGINS.iter().find(|p| p.id == "gphotos").unwrap();
+        assert_eq!(fresh_name(plugin, &["gphotos".to_string()]), "gphotos-2");
     }
 
     #[test]
