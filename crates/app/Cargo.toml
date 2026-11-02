@@ -53,11 +53,13 @@ assets = [
     { source = "target/man/shagoff-commander.1.gz", dest = "/usr/share/man/man1/shagoff-commander.1.gz", mode = "644", doc = true },
 ]
 
-# gio (mounts, «Open with»), xdg-open, curl (update check); the libraries come from ldd.
+# gio (mounts, «Open with»), xdg-open, curl (update check, own rclone), gpgv (its signature);
+# the libraries come from ldd.
 [package.metadata.generate-rpm.requires]
 glib2 = "*"
 xdg-utils = "*"
 curl = "*"
+"/usr/bin/gpgv" = "*"
 
 [package.metadata.generate-rpm.recommends]
 gvfs = "*"

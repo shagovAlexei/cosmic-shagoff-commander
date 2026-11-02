@@ -298,6 +298,16 @@ impl App {
         blocking(move || cloud::add(p, &values, &cancel), Message::CloudAdded)
     }
 
+    /// rclone installed or removed: which one runs, its types and the accounts read again.
+    pub(super) fn rclone_changed(&mut self) -> Task<Message> {
+        if let Some(Drawer::Settings(form)) = &mut self.drawer {
+            form.rclone = cloud::installed();
+            form.own_rclone = shagoff_core::rclone::own();
+        }
+        self.cloud_kinds.clear();
+        self.read_clouds()
+    }
+
     /// An account added: said, the lists read again.
     pub(super) fn cloud_added(&mut self, name: String) -> Task<Message> {
         self.say(StatusKind::Info, fl!("cloud-added", name = name));

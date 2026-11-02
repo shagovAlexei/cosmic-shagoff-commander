@@ -29,6 +29,7 @@ pub mod owners;
 pub mod panel;
 pub mod props;
 pub mod quicksearch;
+pub mod rclone;
 pub mod reorder;
 pub mod repack;
 pub mod search;

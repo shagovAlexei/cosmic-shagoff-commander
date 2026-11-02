@@ -539,6 +539,8 @@ pub struct App {
     /// A sign-in step through fields under way (`cloud::create` / `answer`): no other one
     /// meanwhile, so its answer never lands in another account's dialog.
     cloud_step: bool,
+    /// Our own rclone being downloaded (216d).
+    pub rclone_busy: bool,
     /// Command line under the panels (TC `path>`): its text, field id, history (last first).
     pub cmdline: String,
     pub(crate) cmd_id: widget::Id,
@@ -678,6 +680,12 @@ pub enum Message {
     CloudField(usize, String),
     /// A step of a sign-in through fields: the account and rclone's next question, or `Done`.
     CloudStep(Result<(String, cloud::Step), mount::Error>),
+    /// Download the official rclone (216d) / its end: the version.
+    RcloneGet,
+    RcloneGot(Result<String, mount::Error>),
+    /// Remove our own rclone / its end.
+    RcloneDrop,
+    RcloneDropped(Result<(), mount::Error>),
     /// «Remove» an account (its remote name).
     CloudForget(String),
     CloudForgot(Result<(), mount::Error>),
@@ -1493,6 +1501,7 @@ impl App {
             cloud_kinds: Vec::new(),
             cloud_cancel: None,
             cloud_step: false,
+            rclone_busy: false,
             cmdline: String::new(),
             cmd_id: widget::Id::unique(),
             path_edit: None,

@@ -70,7 +70,7 @@ deb: (build-release '--locked')
     Architecture: $arch
     Maintainer: Shagov Alexei <shagov.alexei@gmail.com>
     Installed-Size: $(du -sk "$root/usr" | cut -f1)
-    Depends: $libs, libglib2.0-bin, xdg-utils, curl
+    Depends: $libs, libglib2.0-bin, xdg-utils, curl, gpgv
     Recommends: cosmic-edit, gvfs-backends, gvfs-fuse
     Suggests: rclone
     Section: utils
