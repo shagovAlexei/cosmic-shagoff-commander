@@ -436,8 +436,10 @@ pub fn create(p: &Plugin, values: &[String]) -> Result<(String, Step), Error> {
         "--",
     ]);
     c.args([&name, p.kind]);
-    let args = options(p, values, obscure);
-    let step = args.and_then(|args| parse_step(&run(with(c, args)).map_err(cut)?));
+    let step = options(p, values, obscure).and_then(|args| {
+        c.args(args);
+        parse_step(&run(c).map_err(cut)?)
+    });
     finish(&name, step).map(|s| (name, s))
 }
 
@@ -476,7 +478,11 @@ fn options(
         args.extend([k.to_string(), v.to_string()]);
     }
     for (f, v) in p.fields.iter().zip(values) {
-        let v = if f.secret { v.as_str() } else { v.trim() };
+        let v = match if f.secret { v.as_str() } else { v.trim() } {
+            // Cleared: the field's default (Zoho has no sign-in without its region).
+            "" => f.default,
+            v => v,
+        };
         if v.is_empty() {
             continue;
         }
@@ -486,11 +492,6 @@ fn options(
         ]);
     }
     Ok(args)
-}
-
-fn with(mut c: Command, args: Vec<String>) -> Command {
-    c.args(args);
-    c
 }
 
 fn cut(e: Error) -> Error {
@@ -521,8 +522,10 @@ fn finish(name: &str, step: Result<Step, Error>) -> Result<Step, Error> {
     step
 }
 
-/// rclone's reversible encoding of a password, as `rclone.conf` keeps it (read from stdin: not
-/// on a command line).
+/// rclone's reversible encoding of a password, as `rclone.conf` keeps it. The plain one goes in
+/// through stdin; the encoded one is on `config create`'s command line while that runs (no network
+/// for the typed plugins: a moment; the `lsd` check is a process of its own, without it).
+// ponytail: reversible on argv for that moment; writing rclone.conf ourselves if it ever matters.
 fn obscure(password: &str) -> Result<String, Error> {
     use std::io::Write;
     use std::process::Stdio;
@@ -713,6 +716,13 @@ mod tests {
                 "hidden(p w)"
             ]
         );
+    }
+
+    #[test]
+    fn a_cleared_field_takes_its_default() {
+        let zoho = PLUGINS.iter().find(|p| p.id == "zoho").unwrap();
+        let args = options(zoho, &[" ".into()], |v| Ok(v.into())).unwrap();
+        assert_eq!(args, ["region", "com"]);
     }
 
     #[test]

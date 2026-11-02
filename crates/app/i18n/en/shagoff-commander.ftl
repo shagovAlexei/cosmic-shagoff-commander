@@ -373,6 +373,7 @@ cloud-port-busy = Another rclone sign-in is still waiting for the browser (port 
 cloud-added = { $name } added: it is in the drive list (Alt+F1)
 cloud-add-title = { $name }: add account
 cloud-checking = Signing in…
+cloud-step-busy = Another account is still being checked: a moment
 cloud-field-user = User (e-mail)
 cloud-field-pass = Password
 cloud-field-password = Password

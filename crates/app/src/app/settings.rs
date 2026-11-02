@@ -298,6 +298,12 @@ impl App {
         blocking(move || cloud::add(p, &values, &cancel), Message::CloudAdded)
     }
 
+    /// An account added: said, the lists read again.
+    pub(super) fn cloud_added(&mut self, name: String) -> Task<Message> {
+        self.say(StatusKind::Info, fl!("cloud-added", name = name));
+        Task::batch([self.read_clouds(), self.refresh_volumes(true)])
+    }
+
     /// The cloud accounts for the settings, when they are open.
     pub(super) fn read_clouds(&self) -> Task<Message> {
         if !matches!(self.drawer, Some(Drawer::Settings(_))) {

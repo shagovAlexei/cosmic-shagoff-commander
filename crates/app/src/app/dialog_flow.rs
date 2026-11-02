@@ -820,7 +820,11 @@ impl App {
                 busy,
                 note,
             } => {
-                if busy {
+                // Busy, or a browser sign-in waiting (one port): the dialog stays as it is.
+                if busy || (plugin.browser && self.cloud_cancel.is_some()) {
+                    if !busy {
+                        self.say(StatusKind::Busy, fl!("cloud-busy"));
+                    }
                     self.dialog = Some(Dialog::CloudAccount {
                         plugin,
                         values,
@@ -848,6 +852,7 @@ impl App {
                         blocking(move || cloud::create(plugin, &v), Message::CloudStep)
                     }
                 };
+                self.cloud_step = true;
                 self.dialog = Some(Dialog::CloudAccount {
                     plugin,
                     values,

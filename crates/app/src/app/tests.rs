@@ -6249,6 +6249,34 @@ mod mount_tests {
     }
 
     #[test]
+    fn regression_a_cancelled_cloud_step_never_lands_in_another_dialog() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::CloudAdd("mailru"));
+        let _ = app.update(Message::DialogSubmit);
+        let _ = app.update(Message::DialogCancel);
+        let _ = app.update(Message::CloudAdd("s3"));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.msg(), Some(fl!("cloud-step-busy").as_str()));
+        let done = Ok(("mailru".into(), cloud::Step::Done));
+        let _ = app.update(Message::CloudStep(done));
+        let _ = app.update(Message::CloudAdd("s3"));
+        assert!(matches!(app.dialog, Some(Dialog::CloudAccount { .. })));
+    }
+
+    #[test]
+    fn zoho_keeps_its_dialog_while_a_browser_sign_in_waits() {
+        let mut app = app_with(Config::default(), State::default());
+        app.cloud_cancel = Some(Arc::new(AtomicBool::new(false)));
+        let _ = app.update(Message::CloudAdd("zoho"));
+        let _ = app.update(Message::CloudField(0, "eu".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::CloudAccount { values, .. }) if values[0] == "eu")
+        );
+        assert_eq!(app.msg(), Some(fl!("cloud-busy").as_str()));
+    }
+
+    #[test]
     fn cloud_account_failure_keeps_the_fields_to_fix() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::CloudAdd("s3"));

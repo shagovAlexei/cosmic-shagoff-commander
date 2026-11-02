@@ -534,6 +534,9 @@ pub struct App {
     pub clouds: Vec<cloud::Remote>,
     /// A cloud sign-in under way: Esc sets it.
     cloud_cancel: Option<Arc<AtomicBool>>,
+    /// A sign-in step through fields under way (`cloud::create` / `answer`): no other one
+    /// meanwhile, so its answer never lands in another account's dialog.
+    cloud_step: bool,
     /// Command line under the panels (TC `path>`): its text, field id, history (last first).
     pub cmdline: String,
     pub(crate) cmd_id: widget::Id,
@@ -1485,6 +1488,7 @@ impl App {
             connecting: None,
             clouds: Vec::new(),
             cloud_cancel: None,
+            cloud_step: false,
             cmdline: String::new(),
             cmd_id: widget::Id::unique(),
             path_edit: None,

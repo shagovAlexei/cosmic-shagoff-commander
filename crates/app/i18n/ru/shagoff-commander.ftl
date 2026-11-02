@@ -374,6 +374,7 @@ cloud-port-busy = Другой вход rclone ещё ждёт браузера 
 cloud-added = { $name } добавлен: он в списке дисков (Alt+F1)
 cloud-add-title = { $name }: добавить учётную запись
 cloud-checking = Вход…
+cloud-step-busy = Другая учётная запись ещё проверяется: минуту
 cloud-field-user = Пользователь (e-mail)
 cloud-field-pass = Пароль
 cloud-field-password = Пароль

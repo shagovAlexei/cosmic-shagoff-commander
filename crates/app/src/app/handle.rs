@@ -2427,6 +2427,10 @@ impl App {
                 if p.browser && p.fields.is_empty() {
                     return self.cloud_sign_in(p, Vec::new());
                 }
+                if self.cloud_step {
+                    self.say(StatusKind::Busy, fl!("cloud-step-busy"));
+                    return Task::none();
+                }
                 self.dialog = Some(Dialog::CloudAccount {
                     plugin: p,
                     values: p.fields.iter().map(|f| f.default.to_string()).collect(),
@@ -2451,6 +2455,7 @@ impl App {
                 }
             }
             Message::CloudStep(r) => {
+                self.cloud_step = false;
                 let Some(Dialog::CloudAccount {
                     name,
                     question,
@@ -2465,10 +2470,7 @@ impl App {
                         Ok((n, cloud::Step::Ask(_))) => {
                             blocking(move || cloud::forget(&n), Message::CloudForgot)
                         }
-                        Ok((n, cloud::Step::Done)) => {
-                            self.say(StatusKind::Info, fl!("cloud-added", name = n));
-                            Task::batch([self.read_clouds(), self.refresh_volumes(true)])
-                        }
+                        Ok((n, cloud::Step::Done)) => self.cloud_added(n),
                         Err(_) => Task::none(),
                     };
                 };
@@ -2476,8 +2478,7 @@ impl App {
                 match r {
                     Ok((n, cloud::Step::Done)) => {
                         self.dialog = None;
-                        self.say(StatusKind::Info, fl!("cloud-added", name = n));
-                        return Task::batch([self.read_clouds(), self.refresh_volumes(true)]);
+                        return self.cloud_added(n);
                     }
                     Ok((n, cloud::Step::Ask(q))) => {
                         *answer = q.default.clone();
