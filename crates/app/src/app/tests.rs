@@ -6202,6 +6202,102 @@ mod mount_tests {
     }
 
     #[test]
+    fn cloud_account_dialog_takes_fields_then_rclone_questions() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::CloudAdd("mailru"));
+        let _ = app.update(Message::CloudField(0, "me@mail.ru".into()));
+        let _ = app.update(Message::CloudField(1, "app pass".into()));
+        let _ = app.update(Message::DialogSubmit);
+        let Some(Dialog::CloudAccount { values, busy, .. }) = &app.dialog else {
+            panic!("the dialog stays while rclone signs in")
+        };
+        assert_eq!(values, &["me@mail.ru", "app pass"]);
+        assert!(*busy);
+        let q = cloud::Question {
+            state: "s1".into(),
+            option: "config_2fa".into(),
+            help: "Code".into(),
+            default: "123".into(),
+            examples: Vec::new(),
+            password: false,
+            error: String::new(),
+        };
+        let _ = app.update(Message::CloudStep(Ok((
+            "mailru".into(),
+            cloud::Step::Ask(q),
+        ))));
+        let Some(Dialog::CloudAccount {
+            name, answer, busy, ..
+        }) = &app.dialog
+        else {
+            panic!("asks")
+        };
+        assert_eq!(
+            (name.as_deref(), answer.as_str(), *busy),
+            (Some("mailru"), "123", false)
+        );
+        let _ = app.update(Message::CloudField(usize::MAX, "456".into()));
+        assert!(
+            matches!(&app.dialog, Some(Dialog::CloudAccount { answer, .. }) if answer == "456")
+        );
+        let _ = app.update(Message::CloudStep(Ok(("mailru".into(), cloud::Step::Done))));
+        assert!(app.dialog.is_none());
+        assert_eq!(
+            app.msg(),
+            Some(fl!("cloud-added", name = "mailru").as_str())
+        );
+    }
+
+    #[test]
+    fn regression_a_cancelled_cloud_step_never_lands_in_another_dialog() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::CloudAdd("mailru"));
+        let _ = app.update(Message::DialogSubmit);
+        let _ = app.update(Message::DialogCancel);
+        let _ = app.update(Message::CloudAdd("s3"));
+        assert!(app.dialog.is_none());
+        assert_eq!(app.msg(), Some(fl!("cloud-step-busy").as_str()));
+        let done = Ok(("mailru".into(), cloud::Step::Done));
+        let _ = app.update(Message::CloudStep(done));
+        let _ = app.update(Message::CloudAdd("s3"));
+        assert!(matches!(app.dialog, Some(Dialog::CloudAccount { .. })));
+    }
+
+    #[test]
+    fn zoho_keeps_its_dialog_while_a_browser_sign_in_waits() {
+        let mut app = app_with(Config::default(), State::default());
+        app.cloud_cancel = Some(Arc::new(AtomicBool::new(false)));
+        let _ = app.update(Message::CloudAdd("zoho"));
+        let _ = app.update(Message::CloudField(0, "eu".into()));
+        let _ = app.update(Message::DialogSubmit);
+        assert!(
+            matches!(&app.dialog, Some(Dialog::CloudAccount { values, .. }) if values[0] == "eu")
+        );
+        assert_eq!(app.msg(), Some(fl!("cloud-busy").as_str()));
+    }
+
+    #[test]
+    fn cloud_account_failure_keeps_the_fields_to_fix() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::CloudAdd("s3"));
+        let Some(Dialog::CloudAccount { values, .. }) = &app.dialog else {
+            panic!("fields first")
+        };
+        assert_eq!(values[0], "https://s3.amazonaws.com"); // the field's default
+        let _ = app.update(Message::DialogSubmit);
+        let bad = mount::Error::Failed("InvalidAccessKeyId".into());
+        let _ = app.update(Message::CloudStep(Err(bad)));
+        let Some(Dialog::CloudAccount {
+            name, note, busy, ..
+        }) = &app.dialog
+        else {
+            panic!("stays open")
+        };
+        assert_eq!((name, *busy), (&None, false));
+        assert_eq!(note, &Some((true, "InvalidAccessKeyId".to_string())));
+    }
+
+    #[test]
     fn volumes_after_list_closed_are_dropped() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::Volumes(0, vec![volume("S", "/dev/sda1", None)]));

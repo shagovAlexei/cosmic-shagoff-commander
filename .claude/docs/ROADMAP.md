@@ -295,7 +295,7 @@
   - [x] 215c. Следующие: Google Drive (gvfs `google-drive` через GOA), Dropbox, Box — тем же каркасом.
 - [ ] 216. Ещё облака
   - [x] 216a. Вход через браузер: Яндекс Диск, pCloud, Google Фото, HiDrive (2026-11-02; 0.132.0)
-  - [ ] 216b. Поля и вопросы rclone: Mail.ru, S3, B2, Nextcloud / WebDAV, Koofr, Seafile, Zoho, Jottacloud
+  - [x] 216b. Поля и вопросы rclone: Mail.ru, S3, B2, Nextcloud / WebDAV, Koofr, Seafile, Zoho, Jottacloud (2026-11-02; 0.133.0)
   - [ ] 216c. Новый rclone: MEGA, Proton Drive, iCloud Drive; «нужен rclone новее»
 
 Не будет (не для Linux или уже иначе): NTFS-права и аудит, параллельный порт, UNC-пути, ярлыки `.lnk` (есть символические ссылки), 8.3-имена, перенаправление x64, тёмная тема (от COSMIC), меню «Пуск» Windows, общий доступ к папкам, плагины TC (`.wcx` / `.wfx`; свои — 215), своё FTP (есть gvfs, Ctrl+F), печать, UUE / MIME, комментарии `descript.ion`, «Открыть от имени», сведения о системе, метка тома, внутренние ассоциации (есть «Открыть с помощью» через gio).

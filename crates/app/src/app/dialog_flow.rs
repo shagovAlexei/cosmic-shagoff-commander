@@ -811,6 +811,59 @@ impl App {
                 };
                 self.start_job(p.side, OpKind::Pack, job, focus)
             }
+            Dialog::CloudAccount {
+                plugin,
+                values,
+                name,
+                question,
+                answer,
+                busy,
+                note,
+            } => {
+                // Busy, or a browser sign-in waiting (one port): the dialog stays as it is.
+                if busy || (plugin.browser && self.cloud_cancel.is_some()) {
+                    if !busy {
+                        self.say(StatusKind::Busy, fl!("cloud-busy"));
+                    }
+                    self.dialog = Some(Dialog::CloudAccount {
+                        plugin,
+                        values,
+                        name,
+                        question,
+                        answer,
+                        busy,
+                        note,
+                    });
+                    return Task::none();
+                }
+                if plugin.browser {
+                    return self.cloud_sign_in(plugin, values);
+                }
+                let step = match (&name, &question) {
+                    (Some(n), Some(q)) => {
+                        let (n, q, a) = (n.clone(), q.clone(), answer.clone());
+                        blocking(
+                            move || cloud::answer(&n, &q, &a).map(|s| (n, s)),
+                            Message::CloudStep,
+                        )
+                    }
+                    _ => {
+                        let v = values.clone();
+                        blocking(move || cloud::create(plugin, &v), Message::CloudStep)
+                    }
+                };
+                self.cloud_step = true;
+                self.dialog = Some(Dialog::CloudAccount {
+                    plugin,
+                    values,
+                    name,
+                    question,
+                    answer,
+                    busy: true,
+                    note: Some((false, fl!("cloud-checking"))),
+                });
+                step
+            }
             Dialog::Connect {
                 side,
                 url,

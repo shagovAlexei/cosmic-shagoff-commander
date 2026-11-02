@@ -4623,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-commander"
-version = "0.132.0"
+version = "0.133.0"
 dependencies = [
  "alacritty_terminal",
  "cosmic-text",
@@ -4647,7 +4647,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-core"
-version = "0.132.0"
+version = "0.133.0"
 dependencies = [
  "bzip2",
  "chardetng",
@@ -4665,6 +4665,7 @@ dependencies = [
  "regex",
  "rustix 1.1.5",
  "serde",
+ "serde_json",
  "sevenz-rust2",
  "sha1",
  "sha2",

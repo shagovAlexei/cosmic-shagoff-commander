@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.133.0 — 2026-11-02
+
+- feat: clouds (216b): Mail.ru Cloud, S3, Backblaze B2, Nextcloud / WebDAV, Koofr, Seafile, Zoho WorkDrive, Jottacloud — a dialog of fields and rclone's own questions, secrets obscured, the account checked with `rclone lsd` before it is kept
+
 ## 0.132.0 — 2026-11-02
 
 - feat: clouds (216a): Yandex Disk, pCloud, Google Photos (adds only: API limits), HiDrive — browser sign-in like the first four
