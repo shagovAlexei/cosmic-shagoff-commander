@@ -99,7 +99,7 @@ impl App {
                 if !matches!(self.drawer, Some(Drawer::Settings(_))) {
                     self.toggle_drawer(Action::Settings);
                 }
-                return Task::none();
+                return self.read_clouds();
             }
             Action::F12 => return self.run_button(self.config.f12.clone()),
             Action::ToggleHumanSizes => {

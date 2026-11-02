@@ -666,8 +666,8 @@ pub enum Message {
     Clouds(Vec<cloud::Remote>),
     /// «Add account» of a plugin (its id).
     CloudAdd(&'static str),
-    /// A sign-in's end: the account's name and the result.
-    CloudAdded(String, Result<(), mount::Error>),
+    /// A sign-in's end: the new account's name.
+    CloudAdded(Result<String, mount::Error>),
     /// «Remove» an account (its remote name).
     CloudForget(String),
     CloudForgot(Result<(), mount::Error>),

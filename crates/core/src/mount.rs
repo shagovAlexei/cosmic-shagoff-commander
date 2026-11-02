@@ -401,16 +401,20 @@ fn gio<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(args: I) -> Command {
 
 /// The volumes gio knows (`gio mount -li`), then the cloud accounts (215).
 pub fn list() -> Result<Vec<Volume>, Error> {
-    let mut out = talk(gio(["mount", "-li"]), "").map(|s| volumes(&s))?;
-    if let Some(root) = crate::cloud::root() {
-        let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
-        out.extend(crate::cloud::volumes(
-            &crate::cloud::remotes(),
-            &mounts,
-            &root,
-        ));
+    let gio = talk(gio(["mount", "-li"]), "").map(|s| volumes(&s));
+    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    let clouds = (crate::cloud::root())
+        .map(|root| crate::cloud::volumes(&crate::cloud::remotes(), &mounts, &root))
+        .unwrap_or_default();
+    // A broken gio does not hide the clouds: they do not need it.
+    match gio {
+        Ok(mut out) => {
+            out.extend(clouds);
+            Ok(out)
+        }
+        Err(e) if clouds.is_empty() => Err(e),
+        Err(_) => Ok(clouds),
     }
-    Ok(out)
 }
 
 /// Mount a partition by device; its mount point.

@@ -6184,10 +6184,7 @@ mod mount_tests {
         let _ = app.update(Message::Escape(app.window_id()));
         assert!(cancel.load(Ordering::Relaxed));
         assert!(app.drawer.is_some());
-        let _ = app.update(Message::CloudAdded(
-            "gdrive".into(),
-            Err(mount::Error::Cancelled),
-        ));
+        let _ = app.update(Message::CloudAdded(Err(mount::Error::Cancelled)));
         assert!(app.cloud_cancel.is_none());
         assert_eq!(app.msg(), Some(fl!("connect-cancelled").as_str()));
     }

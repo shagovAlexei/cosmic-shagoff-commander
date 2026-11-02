@@ -2421,21 +2421,16 @@ impl App {
                 if self.cloud_cancel.is_some() {
                     return Task::none();
                 }
-                let name = cloud::fresh_name(p, &self.clouds);
                 let cancel = Arc::new(AtomicBool::new(false));
                 self.cloud_cancel = Some(cancel.clone());
                 self.say(StatusKind::Busy, fl!("cloud-signing-in"));
-                let n = name.clone();
-                return blocking(
-                    move || cloud::add(p, &n, &cancel),
-                    move |r| Message::CloudAdded(name, r),
-                );
+                return blocking(move || cloud::add(p, &cancel), Message::CloudAdded);
             }
-            Message::CloudAdded(name, r) => {
+            Message::CloudAdded(r) => {
                 self.cloud_cancel = None;
                 self.status = None; // the Busy "Signing in…"
                 match r {
-                    Ok(()) => self.say(StatusKind::Info, fl!("cloud-added", name = name)),
+                    Ok(name) => self.say(StatusKind::Info, fl!("cloud-added", name = name)),
                     Err(mount::Error::Cancelled) => {
                         self.say(StatusKind::Info, fl!("connect-cancelled"))
                     }
@@ -2444,19 +2439,7 @@ impl App {
                 return Task::batch([self.read_clouds(), self.refresh_volumes(true)]);
             }
             Message::CloudForget(name) => {
-                let point = (self.clouds.iter().find(|r| r.name == name))
-                    .zip(cloud::root())
-                    .map(|(r, root)| root.join(cloud::point_name(r)));
-                return blocking(
-                    move || {
-                        // Mounted: unmount first (a mount with no account would linger).
-                        if let Some(p) = point.filter(|p| p.exists()) {
-                            let _ = cloud::unmount(&p);
-                        }
-                        cloud::forget(&name)
-                    },
-                    Message::CloudForgot,
-                );
+                return blocking(move || cloud::remove(&name), Message::CloudForgot);
             }
             Message::CloudForgot(r) => {
                 if let Err(e) = r {

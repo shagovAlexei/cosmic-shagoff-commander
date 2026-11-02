@@ -271,17 +271,13 @@ impl App {
     }
 
     pub(super) fn set_drives(&mut self) {
-        if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
+        let m = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        if !m.is_empty() {
             self.drives = drives::parse(&m, &self.home);
         }
         self.drives.extend(self.gvfs.iter().cloned());
-        if let (Some(root), Ok(m)) = (cloud::root(), std::fs::read_to_string("/proc/self/mounts")) {
-            let off = &self.config.plugins_off;
-            (self.drives).extend(
-                cloud::drives(&m, &root)
-                    .into_iter()
-                    .filter(|d| !cloud::hidden_drive(&d.path, &root, off)),
-            );
+        if let Some(root) = cloud::root() {
+            (self.drives).extend(cloud::drives(&m, &root, &self.config.plugins_off));
         }
     }
 

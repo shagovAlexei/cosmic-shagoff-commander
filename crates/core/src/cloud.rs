@@ -63,9 +63,17 @@ pub fn parse_remotes(listremotes_long: &str) -> Vec<Remote> {
         .collect()
 }
 
-/// A new account's name: the plugin's id, `id-2`, `id-3`… when taken.
-pub fn fresh_name(p: &Plugin, taken: &[Remote]) -> String {
-    let free = |n: &str| !taken.iter().any(|r| r.name == n);
+/// Every remote's name in `rclone listremotes --long`, of any type.
+pub fn names(listremotes_long: &str) -> Vec<String> {
+    (listremotes_long.lines())
+        .filter_map(|l| Some(l.rsplit_once(':')?.0.to_string()))
+        .collect()
+}
+
+/// A new account's name: the plugin's id, `id-2`, `id-3`… when taken by any remote (`rclone
+/// config create` silently replaces one of the same name).
+pub fn fresh_name(p: &Plugin, taken: &[String]) -> String {
+    let free = |n: &str| !taken.iter().any(|t| t == n);
     if free(p.id) {
         return p.id.to_string();
     }
@@ -132,13 +140,16 @@ pub fn volumes(remotes: &[Remote], mounts: &str, root: &Path) -> Vec<Volume> {
         .collect()
 }
 
-/// A drive button per mounted cloud.
-pub fn drives(mounts: &str, root: &Path) -> Vec<Drive> {
+/// A drive button per mounted cloud of a plugin not switched off.
+pub fn drives(mounts: &str, root: &Path, off: &[String]) -> Vec<Drive> {
     mounted(mounts, root)
         .into_iter()
         .filter_map(|path| {
             let name = path.file_name()?.to_string_lossy().into_owned();
             let (p, remote) = of_point(&name)?;
+            if off.iter().any(|o| o == p.id) {
+                return None;
+            }
             Some(Drive {
                 label: label(p, remote),
                 path,
@@ -154,19 +165,14 @@ pub fn hidden_volume(v: &Volume, off: &[String]) -> bool {
         .is_some_and(|(p, _)| off.iter().any(|o| o == p.id))
 }
 
-/// A cloud drive (mount point under `root`) of a switched-off plugin.
-pub fn hidden_drive(path: &Path, root: &Path, off: &[String]) -> bool {
-    path.parent() == Some(root)
-        && path
-            .file_name()
-            .and_then(|n| of_point(&n.to_string_lossy()).map(|(p, _)| p.id))
-            .is_some_and(|id| off.iter().any(|o| o == id))
-}
-
 /// `rclone` is in `PATH` (looked up, not run).
 pub fn installed() -> bool {
+    in_path("rclone")
+}
+
+fn in_path(program: &str) -> bool {
     std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join("rclone").is_file()))
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(program).is_file()))
 }
 
 fn rclone<const N: usize>(args: [&str; N]) -> Command {
@@ -198,15 +204,37 @@ pub fn remotes() -> Vec<Remote> {
         .unwrap_or_default()
 }
 
-/// Sign in: `rclone config create` opens the browser and waits for the provider's answer (minutes,
-/// so no timeout of ours: `cancel` kills it). rclone writes the remote before signing in, so a
-/// cancelled or failed one is removed again (else a remote with no token is left).
-pub fn add(p: &Plugin, name: &str, cancel: &Arc<AtomicBool>) -> Result<(), Error> {
-    let r = mount::talk_until(rclone(["config", "create", name, p.kind]), "", Some(cancel));
+/// Sign in under a free name; that name. `rclone config create` opens the browser and waits for
+/// the provider's answer (minutes, so no timeout of ours: `cancel` kills it). rclone writes the
+/// remote before signing in, so a cancelled or failed one is removed again (else a remote with no
+/// token is left) — safe, the name was nobody's.
+pub fn add(p: &Plugin, cancel: &Arc<AtomicBool>) -> Result<String, Error> {
+    let name = fresh_name(p, &names(&run(rclone(["listremotes", "--long"]))?));
+    let r = mount::talk_until(
+        rclone(["config", "create", &name, p.kind]),
+        "",
+        Some(cancel),
+    );
     if r.is_err() {
-        let _ = forget(name);
+        let _ = forget(&name);
     }
-    r.map(drop)
+    r.map(|_| name)
+}
+
+/// Remove an account: unmount it first (a mount with no account would linger), then forget it.
+/// Not forgotten if it cannot be unmounted (busy).
+pub fn remove(name: &str) -> Result<(), Error> {
+    if let Some(root) = root() {
+        let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        for point in mounted(&mounts, &root) {
+            let ours = (point.file_name())
+                .is_some_and(|n| of_point(&n.to_string_lossy()).is_some_and(|(_, r)| r == name));
+            if ours {
+                unmount(&point)?;
+            }
+        }
+    }
+    forget(name)
 }
 
 /// Remove an account (its token only: the files in the cloud stay).
@@ -221,8 +249,15 @@ pub fn mount(point_name: &str) -> Result<PathBuf, Error> {
     let (_, name) =
         of_point(point_name).ok_or_else(|| Error::Failed(format!("{point_name}: not a cloud")))?;
     let point = root.join(point_name);
-    // A point left by a crashed rclone ("Transport endpoint is not connected") mounts again.
-    let _ = fusermount(&point, true);
+    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    if mounted(&mounts, &root).contains(&point) {
+        // Mounted already (another window, the list a moment old): just go there.
+        if std::fs::read_dir(&point).is_ok() {
+            return Ok(point);
+        }
+        // Left by a crashed rclone ("Transport endpoint is not connected"): mount again.
+        let _ = fusermount(&point, true);
+    }
     std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
         .create(&point)
         .map_err(failed)?;
@@ -241,7 +276,13 @@ pub fn unmount(point: &Path) -> Result<(), Error> {
 }
 
 fn fusermount(point: &Path, lazy: bool) -> Result<(), Error> {
-    let mut c = Command::new("fusermount");
+    // fuse3 has only `fusermount3` on Fedora; Ubuntu links `fusermount` to it.
+    let bin = if in_path("fusermount3") {
+        "fusermount3"
+    } else {
+        "fusermount"
+    };
+    let mut c = Command::new(bin);
     c.arg(if lazy { "-uz" } else { "-u" }).arg(point);
     run(c).map(drop)
 }
@@ -267,10 +308,14 @@ mod tests {
     }
 
     #[test]
-    fn fresh_name_skips_taken() {
-        let r = parse_remotes(REMOTES);
-        assert_eq!(fresh_name(&PLUGINS[0], &r), "onedrive-2");
-        assert_eq!(fresh_name(&PLUGINS[2], &r), "dropbox");
+    fn fresh_name_skips_any_taken_name() {
+        let taken = names(REMOTES);
+        assert_eq!(taken, ["gdrive", "my drive", "nas", "onedrive"]);
+        assert_eq!(fresh_name(&PLUGINS[0], &taken), "onedrive-2");
+        assert_eq!(fresh_name(&PLUGINS[2], &taken), "dropbox");
+        // An sftp remote named like the plugin is not replaced by the sign-in (review).
+        let taken = names("box: sftp\nbox-2: s3\n");
+        assert_eq!(fresh_name(&PLUGINS[3], &taken), "box-3");
     }
 
     #[test]
@@ -302,15 +347,15 @@ mod tests {
         );
         assert!(v[1].mount.is_some()); // my drive
         assert_eq!(v[2].mount, None); // onedrive
-        let d = drives(mounts, root);
+        let d = drives(mounts, root, &[]);
         let labels: Vec<_> = d.iter().map(|d| d.label.as_str()).collect();
         assert_eq!(labels, ["Google Drive", "Google Drive: my drive"]);
+        assert!(drives(mounts, root, &["gdrive".into()]).is_empty());
     }
 
     #[test]
     fn hidden_only_for_switched_off() {
         let off = vec!["gdrive".to_string()];
-        let root = Path::new("/r/c");
         let v = |d: &str| Volume {
             name: String::new(),
             device: d.into(),
@@ -319,8 +364,5 @@ mod tests {
         assert!(hidden_volume(&v("rclone:gdrive:my drive"), &off));
         assert!(!hidden_volume(&v("rclone:onedrive:onedrive"), &off));
         assert!(!hidden_volume(&v("/dev/sdb1"), &off));
-        assert!(hidden_drive(Path::new("/r/c/gdrive:x"), root, &off));
-        assert!(!hidden_drive(Path::new("/r/c/onedrive:x"), root, &off));
-        assert!(!hidden_drive(Path::new("/media/gdrive:x"), root, &off));
     }
 }
