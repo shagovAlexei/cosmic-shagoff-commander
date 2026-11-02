@@ -305,7 +305,7 @@ impl App {
             form.own_rclone = shagoff_core::rclone::own();
         }
         self.cloud_kinds.clear();
-        self.read_clouds()
+        Task::batch([self.read_clouds(), self.refresh_volumes(true)])
     }
 
     /// An account added: said, the lists read again.

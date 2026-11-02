@@ -384,6 +384,7 @@ rclone-own = rclone { $version } с rclone.org (свой, вместо сист�
 rclone-getting = Загрузка rclone с rclone.org…
 rclone-got = rclone { $version } установлен: облака теперь работают через него (подключённые — со старым, пока их не отключить)
 rclone-removed = Свой rclone удалён: снова используется системный
+rclone-clouds-mounted = Сначала отключите облака (Ctrl+Shift+F на каждом): они работают через этот rclone
 cloud-field-username = Пользователь (e-mail)
 cloud-field-apple_id = Apple ID (e-mail)
 cloud-field-2fa = Код 2FA (если включена)

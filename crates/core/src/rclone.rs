@@ -25,12 +25,18 @@ pub fn dir() -> Option<PathBuf> {
     Some(data.join("shagoff-commander/rclone"))
 }
 
-/// Our rclone's version (`v1.75.2`) when it is there.
+/// Our rclone's version (`v1.75.2`, `?` without its `VERSION`) when it is there: whenever
+/// `program` runs ours.
 pub fn own() -> Option<String> {
     let dir = dir()?;
     dir.join("rclone").is_file().then_some(())?;
-    let v = std::fs::read_to_string(dir.join("VERSION")).ok()?;
-    Some(v.trim().to_string())
+    let v = std::fs::read_to_string(dir.join("VERSION")).unwrap_or_default();
+    Some(
+        Some(v.trim())
+            .filter(|v| !v.is_empty())
+            .unwrap_or("?")
+            .to_string(),
+    )
 }
 
 /// The program to run: ours if there, else `rclone` from `PATH`.
@@ -128,16 +134,29 @@ fn unzip(zip: &[u8], version: &str, arch: &str) -> Result<Vec<u8>, Error> {
 /// Download the latest official rclone, check it, put it in `dir`: its version. Blocking.
 pub fn install() -> Result<String, Error> {
     let failed = |e: std::io::Error| Error::Failed(e.to_string());
-    let arch = arch().ok_or_else(|| Error::Failed(std::env::consts::ARCH.into()))?;
+    let arch = (arch()).ok_or_else(|| {
+        Error::Failed(format!(
+            "rclone.org: no build for {}",
+            std::env::consts::ARCH
+        ))
+    })?;
     let dir = dir().ok_or_else(|| Error::Failed("no HOME".into()))?;
     let text = String::from_utf8_lossy(&fetch(&format!("{DOWNLOADS}/version.txt"))?).into_owned();
     let version =
         parse_version(&text).ok_or_else(|| Error::Failed(format!("version.txt: {text}")))?;
+    if own().as_deref() == Some(version.as_str()) {
+        return Ok(version); // the latest already
+    }
     std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
         .create(&dir)
         .map_err(failed)?;
+    // Left by an install that never ended (closed, crashed): tens of MB each.
+    for e in std::fs::read_dir(&dir).map_err(failed)?.flatten() {
+        if e.file_name().to_string_lossy().starts_with(".get-") {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
     let tmp = dir.join(format!(".get-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir(&tmp).map_err(failed)?;
     let r = (|| {
         let sums = fetch(&format!("{DOWNLOADS}/{version}/SHA256SUMS"))?;
@@ -163,16 +182,28 @@ pub fn install() -> Result<String, Error> {
         drop(f);
         std::fs::set_permissions(&part, std::os::unix::fs::PermissionsExt::from_mode(0o755))
             .map_err(failed)?;
-        std::fs::write(dir.join("VERSION"), &version).map_err(failed)?;
-        std::fs::rename(&part, dir.join("rclone")).map_err(failed)
+        // The program first: VERSION never names one that is not there.
+        std::fs::rename(&part, dir.join("rclone")).map_err(failed)?;
+        std::fs::write(tmp.join("VERSION"), &version).map_err(failed)?;
+        std::fs::rename(tmp.join("VERSION"), dir.join("VERSION")).map_err(failed)
     })();
     let _ = std::fs::remove_dir_all(&tmp);
     r.map(|_| version)
 }
 
-/// Remove ours: the distribution's is used again.
+/// `remove`'s refusal while a cloud is mounted (the app shows its own text for it).
+pub const CLOUDS_MOUNTED: &str = "clouds mounted";
+
+/// Remove ours: the distribution's is used again. Refused while a cloud is mounted: its rclone
+/// would run on with no way left here to unmount it.
 pub fn remove() -> Result<(), Error> {
     let dir = dir().ok_or_else(|| Error::Failed("no HOME".into()))?;
+    if let Some(root) = crate::cloud::root() {
+        let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        if !crate::cloud::mounted(&mounts, &root).is_empty() {
+            return Err(Error::Failed(CLOUDS_MOUNTED.into()));
+        }
+    }
     std::fs::remove_dir_all(dir).map_err(|e| Error::Failed(e.to_string()))
 }
 

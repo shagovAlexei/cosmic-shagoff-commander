@@ -383,6 +383,7 @@ rclone-own = rclone { $version } from rclone.org (ours, in place of the system's
 rclone-getting = Downloading rclone from rclone.org…
 rclone-got = rclone { $version } installed: clouds use it now (mounted ones keep the old one until unmounted)
 rclone-removed = Our rclone removed: the system's is used again
+rclone-clouds-mounted = Unmount the clouds first (Ctrl+Shift+F on each): they run on this rclone
 cloud-field-username = User (e-mail)
 cloud-field-apple_id = Apple ID (e-mail)
 cloud-field-2fa = 2FA code (if it is on)

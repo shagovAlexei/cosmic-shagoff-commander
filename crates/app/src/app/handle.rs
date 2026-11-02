@@ -2523,7 +2523,7 @@ impl App {
             }
             Message::RcloneGot(r) => {
                 self.rclone_busy = false;
-                self.status = None; // the Busy "Downloading…"
+                self.clear_busy(); // "Downloading…"
                 match r {
                     Ok(v) => self.say(StatusKind::Info, fl!("rclone-got", version = v)),
                     Err(e) => self.say(StatusKind::Error, mount_error(&e)),
@@ -2531,11 +2531,19 @@ impl App {
                 return self.rclone_changed();
             }
             Message::RcloneDrop => {
+                if self.rclone_busy {
+                    return Task::none();
+                }
+                self.rclone_busy = true;
                 return blocking(shagoff_core::rclone::remove, Message::RcloneDropped);
             }
             Message::RcloneDropped(r) => {
+                self.rclone_busy = false;
                 match r {
                     Ok(()) => self.say(StatusKind::Info, fl!("rclone-removed")),
+                    Err(mount::Error::Failed(e)) if e == shagoff_core::rclone::CLOUDS_MOUNTED => {
+                        self.say(StatusKind::Error, fl!("rclone-clouds-mounted"))
+                    }
                     Err(e) => self.say(StatusKind::Error, mount_error(&e)),
                 }
                 return self.rclone_changed();
