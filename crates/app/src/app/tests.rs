@@ -6222,19 +6222,30 @@ mod mount_tests {
             password: false,
             error: String::new(),
         };
-        let _ = app.update(Message::CloudStep(Ok(("mailru".into(), cloud::Step::Ask(q)))));
+        let _ = app.update(Message::CloudStep(Ok((
+            "mailru".into(),
+            cloud::Step::Ask(q),
+        ))));
         let Some(Dialog::CloudAccount {
             name, answer, busy, ..
         }) = &app.dialog
         else {
             panic!("asks")
         };
-        assert_eq!((name.as_deref(), answer.as_str(), *busy), (Some("mailru"), "123", false));
+        assert_eq!(
+            (name.as_deref(), answer.as_str(), *busy),
+            (Some("mailru"), "123", false)
+        );
         let _ = app.update(Message::CloudField(usize::MAX, "456".into()));
-        assert!(matches!(&app.dialog, Some(Dialog::CloudAccount { answer, .. }) if answer == "456"));
+        assert!(
+            matches!(&app.dialog, Some(Dialog::CloudAccount { answer, .. }) if answer == "456")
+        );
         let _ = app.update(Message::CloudStep(Ok(("mailru".into(), cloud::Step::Done))));
         assert!(app.dialog.is_none());
-        assert_eq!(app.msg(), Some(fl!("cloud-added", name = "mailru").as_str()));
+        assert_eq!(
+            app.msg(),
+            Some(fl!("cloud-added", name = "mailru").as_str())
+        );
     }
 
     #[test]

@@ -87,7 +87,12 @@ pub const PLUGINS: &[Plugin] = &[
     oauth("gphotos", "Google Photos", "gphotos"),
     oauth("hidrive", "HiDrive", "hidrive"),
     // An app password (Mail.ru → Security → App passwords): the account's own one is refused.
-    typed("mailru", "Mail.ru Cloud", "mailru", &[field("user"), secret("pass")]),
+    typed(
+        "mailru",
+        "Mail.ru Cloud",
+        "mailru",
+        &[field("user"), secret("pass")],
+    ),
     Plugin {
         preset: &[("provider", "Other")],
         ..typed(
@@ -105,7 +110,12 @@ pub const PLUGINS: &[Plugin] = &[
             ],
         )
     },
-    typed("b2", "Backblaze B2", "b2", &[field("account"), secret("key")]),
+    typed(
+        "b2",
+        "Backblaze B2",
+        "b2",
+        &[field("account"), secret("key")],
+    ),
     typed(
         "webdav",
         "Nextcloud / WebDAV",
@@ -120,7 +130,12 @@ pub const PLUGINS: &[Plugin] = &[
             secret("pass"),
         ],
     ),
-    typed("koofr", "Koofr", "koofr", &[field("user"), secret("password")]),
+    typed(
+        "koofr",
+        "Koofr",
+        "koofr",
+        &[field("user"), secret("password")],
+    ),
     typed(
         "seafile",
         "Seafile",
@@ -398,7 +413,9 @@ pub fn parse_step(json: &str) -> Result<Step, Error> {
             option: o.name,
             help: o.help,
             default: o.default_str,
-            examples: (o.examples.into_iter()).map(|e| (e.value, e.help)).collect(),
+            examples: (o.examples.into_iter())
+                .map(|e| (e.value, e.help))
+                .collect(),
             password: o.is_password,
             error: a.error,
         })),
@@ -411,7 +428,13 @@ pub fn parse_step(json: &str) -> Result<Step, Error> {
 /// order, empty ones left out): its name and rclone's first question, or `Done` once it lists.
 pub fn create(p: &Plugin, values: &[String]) -> Result<(String, Step), Error> {
     let name = fresh_name(p, &names(&run(rclone(["listremotes", "--long"]))?));
-    let mut c = rclone(["config", "create", "--non-interactive", "--no-obscure", "--"]);
+    let mut c = rclone([
+        "config",
+        "create",
+        "--non-interactive",
+        "--no-obscure",
+        "--",
+    ]);
     c.args([&name, p.kind]);
     let args = options(p, values, obscure);
     let step = args.and_then(|args| parse_step(&run(with(c, args)).map_err(cut)?));
@@ -428,7 +451,15 @@ pub fn answer(name: &str, q: &Question, result: &str) -> Result<Step, Error> {
     })
     .and_then(|result| {
         let mut c = rclone(["config", "update", "--non-interactive", "--no-obscure"]);
-        c.args(["--continue", "--state", &q.state, "--result", &result, "--", name]);
+        c.args([
+            "--continue",
+            "--state",
+            &q.state,
+            "--result",
+            &result,
+            "--",
+            name,
+        ]);
         parse_step(&run(c).map_err(cut)?)
     });
     finish(name, step)
@@ -449,7 +480,10 @@ fn options(
         if v.is_empty() {
             continue;
         }
-        args.extend([f.key.to_string(), if f.secret { hide(v)? } else { v.into() }]);
+        args.extend([
+            f.key.to_string(),
+            if f.secret { hide(v)? } else { v.into() },
+        ]);
     }
     Ok(args)
 }
@@ -649,7 +683,10 @@ mod tests {
         let Ok(Step::Ask(q)) = parse_step(QUESTION) else {
             panic!("a question")
         };
-        assert_eq!((q.state.as_str(), q.option.as_str()), ("auth_type_done", "config_type"));
+        assert_eq!(
+            (q.state.as_str(), q.option.as_str()),
+            ("auth_type_done", "config_type")
+        );
         assert_eq!(q.default, "standard");
         assert_eq!(q.examples[1].0, "legacy");
         assert!(!q.password);
@@ -666,8 +703,14 @@ mod tests {
         assert_eq!(
             args,
             [
-                "provider", "Other", "endpoint", "https://r2.example", "access_key_id", "AK",
-                "secret_access_key", "hidden(p w)"
+                "provider",
+                "Other",
+                "endpoint",
+                "https://r2.example",
+                "access_key_id",
+                "AK",
+                "secret_access_key",
+                "hidden(p w)"
             ]
         );
     }
@@ -676,8 +719,16 @@ mod tests {
     fn plugins_have_unique_ids_and_kinds() {
         for (i, p) in PLUGINS.iter().enumerate() {
             let later = &PLUGINS[i + 1..];
-            assert!(!later.iter().any(|q| q.id == p.id || q.kind == p.kind), "{}", p.id);
-            assert!(p.browser || p.id == "jottacloud" || !p.fields.is_empty(), "{}", p.id);
+            assert!(
+                !later.iter().any(|q| q.id == p.id || q.kind == p.kind),
+                "{}",
+                p.id
+            );
+            assert!(
+                p.browser || p.id == "jottacloud" || !p.fields.is_empty(),
+                "{}",
+                p.id
+            );
         }
     }
 

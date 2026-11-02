@@ -1828,7 +1828,8 @@ pub fn view<'a>(
                 } else {
                     widget::text_input("", value)
                 };
-                let f = (f.on_input(on).on_submit(|_| Message::DialogSubmit)).on_tab(Message::FocusNext);
+                let f = (f.on_input(on).on_submit(|_| Message::DialogSubmit))
+                    .on_tab(Message::FocusNext);
                 if i == 0 || i == usize::MAX {
                     f.id(input_id.clone())
                 } else {
@@ -1853,7 +1854,10 @@ pub fn view<'a>(
                 col = col.push(input(usize::MAX, answer, q.password));
             } else {
                 for (i, (f, v)) in plugin.fields.iter().zip(values).enumerate() {
-                    col = col.push(widget::text::caption(text(&format!("cloud-field-{}", f.key))));
+                    col = col.push(widget::text::caption(text(&format!(
+                        "cloud-field-{}",
+                        f.key
+                    ))));
                     col = col.push(input(i, v, f.secret));
                 }
             }
