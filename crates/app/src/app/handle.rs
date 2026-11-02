@@ -1515,6 +1515,12 @@ impl App {
                     window,
                 )));
             }
+            // A cloud sign-in waits for the browser: Esc stops it (before closing the drawer).
+            Message::Escape(_) if self.cloud_cancel.is_some() && self.dialog.is_none() => {
+                if let Some(c) = &self.cloud_cancel {
+                    c.store(true, Ordering::Relaxed);
+                }
+            }
             // The path line's field has the focus (it closes when it loses it).
             Message::Escape(_) if self.path_edit.is_some() && self.dialog.is_none() => {
                 self.path_edit = None;
@@ -2257,7 +2263,10 @@ impl App {
                 }
             }
             Message::AllVolumes(vols) => {
-                self.volumes = vols.into_iter().filter(|v| v.mount.is_none()).collect();
+                let off = &self.config.plugins_off;
+                self.volumes = (vols.into_iter())
+                    .filter(|v| v.mount.is_none() && !cloud::hidden_volume(v, off))
+                    .collect();
             }
             Message::MountVolume(side, device) => {
                 self.search = None;
@@ -2283,6 +2292,7 @@ impl App {
                     let fresh: Vec<_> = vols
                         .into_iter()
                         .filter(|v| v.mount.is_none())
+                        .filter(|v| !cloud::hidden_volume(v, &self.config.plugins_off))
                         .filter(|v| {
                             !items
                                 .iter()
@@ -2402,6 +2412,41 @@ impl App {
                     }
                     Outcome::Copy(_) => self.say(StatusKind::Info, fl!("term-clipboard-blocked")),
                 }
+            }
+            Message::Clouds(remotes) => self.clouds = remotes,
+            Message::CloudAdd(id) => {
+                let Some(p) = cloud::PLUGINS.iter().find(|p| p.id == id) else {
+                    return Task::none();
+                };
+                if self.cloud_cancel.is_some() {
+                    return Task::none();
+                }
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.cloud_cancel = Some(cancel.clone());
+                self.say(StatusKind::Busy, fl!("cloud-signing-in"));
+                return blocking(move || cloud::add(p, &cancel), Message::CloudAdded);
+            }
+            Message::CloudAdded(r) => {
+                self.cloud_cancel = None;
+                self.status = None; // the Busy "Signing in…"
+                match r {
+                    Ok(name) => self.say(StatusKind::Info, fl!("cloud-added", name = name)),
+                    Err(mount::Error::Cancelled) => {
+                        self.say(StatusKind::Info, fl!("connect-cancelled"))
+                    }
+                    Err(e) => self.say(StatusKind::Error, mount_error(&e)),
+                }
+                return Task::batch([self.read_clouds(), self.refresh_volumes(true)]);
+            }
+            Message::CloudForget(name) => {
+                return blocking(move || cloud::remove(&name), Message::CloudForgot);
+            }
+            Message::CloudForgot(r) => {
+                if let Err(e) = r {
+                    self.say(StatusKind::Error, mount_error(&e));
+                }
+                self.refresh_mounts();
+                return Task::batch([self.read_clouds(), self.refresh_volumes(true)]);
             }
             Message::Gvfs(drives) => {
                 self.gvfs_busy = false;

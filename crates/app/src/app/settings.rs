@@ -59,6 +59,12 @@ impl App {
             Setting::ThumbSize(px) => c.thumb_size = px,
             Setting::ThumbCache(b) => c.thumb_cache = b,
             Setting::VerifyCopy(b) => c.verify_copy = b,
+            Setting::Plugin(id, on) => {
+                c.plugins_off.retain(|o| o != id);
+                if !on {
+                    c.plugins_off.push(id.to_string());
+                }
+            }
             Setting::ColSet(k) => c.col_set = k,
             Setting::ViewModes(m) => c.view_modes = m,
             // 0: own program (typed below), else `builtins()[i - 1]`.
@@ -146,6 +152,10 @@ impl App {
         // A hand edit may name any size.
         self.config.thumb_size =
             (self.config.thumb_size).clamp(crate::thumbs::SIZE_MIN, crate::thumbs::SIZE_MAX);
+        if old.plugins_off != self.config.plugins_off {
+            self.set_drives();
+            tasks.push(self.refresh_volumes(true));
+        }
         if old.verify_copy != self.config.verify_copy {
             shagoff_core::ops::set_verify(self.config.verify_copy);
         }
@@ -261,10 +271,25 @@ impl App {
     }
 
     pub(super) fn set_drives(&mut self) {
-        if let Ok(m) = std::fs::read_to_string("/proc/self/mounts") {
+        let m = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        if !m.is_empty() {
             self.drives = drives::parse(&m, &self.home);
         }
         self.drives.extend(self.gvfs.iter().cloned());
+        if let Some(root) = cloud::root() {
+            (self.drives).extend(cloud::drives(&m, &root, &self.config.plugins_off));
+        }
+    }
+
+    /// The cloud accounts for the settings, when they are open.
+    pub(super) fn read_clouds(&self) -> Task<Message> {
+        if !matches!(self.drawer, Some(Drawer::Settings(_))) {
+            return Task::none();
+        }
+        blocking(
+            || Ok(cloud::remotes()),
+            |r| Message::Clouds(r.unwrap_or_default()),
+        )
     }
 
     /// Run after every `update`: the gvfs dir read asked for by `refresh_mounts`, if none is

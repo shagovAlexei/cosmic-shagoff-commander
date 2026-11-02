@@ -256,6 +256,7 @@ pub fn removable(root: &Path, gvfs: Option<&Path>) -> bool {
     root.starts_with("/media")
         || root.starts_with("/run/media")
         || gvfs.is_some_and(|g| root.starts_with(g) && root != g)
+        || crate::cloud::root().is_some_and(|c| root.parent() == Some(c.as_path()))
 }
 
 /// Where gvfs shows network mounts: `$XDG_RUNTIME_DIR/gvfs`.
@@ -297,7 +298,7 @@ fn talk(cmd: Command, password: &str) -> Result<String, Error> {
 
 /// `talk` that kills the command when `cancel` is set (an unreachable host would otherwise wait
 /// for ssh / gvfs's own timeout).
-fn talk_until(
+pub(crate) fn talk_until(
     mut cmd: Command,
     password: &str,
     cancel: Option<&Arc<AtomicBool>>,
@@ -398,13 +399,29 @@ fn gio<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(args: I) -> Command {
     c
 }
 
-/// The volumes gio knows (`gio mount -li`).
+/// The volumes gio knows (`gio mount -li`), then the cloud accounts (215).
 pub fn list() -> Result<Vec<Volume>, Error> {
-    talk(gio(["mount", "-li"]), "").map(|s| volumes(&s))
+    let gio = talk(gio(["mount", "-li"]), "").map(|s| volumes(&s));
+    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    let clouds = (crate::cloud::root())
+        .map(|root| crate::cloud::volumes(&crate::cloud::remotes(), &mounts, &root))
+        .unwrap_or_default();
+    // A broken gio does not hide the clouds: they do not need it.
+    match gio {
+        Ok(mut out) => {
+            out.extend(clouds);
+            Ok(out)
+        }
+        Err(e) if clouds.is_empty() => Err(e),
+        Err(_) => Ok(clouds),
+    }
 }
 
 /// Mount a partition by device; its mount point.
 pub fn mount_device(device: &str) -> Result<PathBuf, Error> {
+    if let Some(name) = device.strip_prefix("rclone:") {
+        return crate::cloud::mount(name);
+    }
     talk(gio(["mount", "-d", device]), "")?;
     let uri = list()?
         .into_iter()
@@ -460,6 +477,9 @@ pub fn connect(url: &str, password: &str, cancel: &Arc<AtomicBool>) -> Result<Pa
 
 /// Eject (sticks: also powers the drive off), else plain unmount (partitions, network).
 pub fn unmount(path: &Path) -> Result<(), Error> {
+    if crate::cloud::root().is_some_and(|r| path.parent() == Some(r.as_path())) {
+        return crate::cloud::unmount(path);
+    }
     let arg = |flag: &'static str| [OsStr::new("mount"), OsStr::new(flag), path.as_os_str()];
     talk(gio(arg("-e")), "")
         .or_else(|_| talk(gio(arg("-u")), ""))
@@ -550,6 +570,15 @@ Mount(0): nas -> sftp://nas/
         assert!(!removable(Path::new("/home"), gvfs));
         assert!(!removable(Path::new("/"), gvfs));
         assert!(!removable(root, gvfs));
+    }
+
+    #[test]
+    fn removable_takes_cloud_points() {
+        let Some(clouds) = crate::cloud::root() else {
+            return;
+        };
+        assert!(removable(&clouds.join("gdrive:gdrive"), None));
+        assert!(!removable(&clouds, None));
     }
 
     #[test]

@@ -187,6 +187,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Alt+F2", fl!("menu-drive-right"), Action::Drives(1)),
                 r("Ctrl+F", fl!("menu-connect"), Action::Connect),
                 r("Ctrl+Shift+F", fl!("menu-disconnect"), Action::Disconnect),
+                o("Ctrl+,", fl!("help-clouds")),
             ],
         ),
         (

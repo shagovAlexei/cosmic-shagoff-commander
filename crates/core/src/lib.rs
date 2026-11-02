@@ -4,6 +4,7 @@
 pub mod archive;
 pub mod checksum;
 pub mod clipboard;
+pub mod cloud;
 pub mod cmdline;
 pub mod colors;
 pub mod columns;

@@ -189,6 +189,7 @@ impl App {
                     .unwrap_or_default(),
                 ignore: self.config.ignore_list.clone(),
                 fonts: drawer::font_families(),
+                rclone: cloud::installed(),
                 font_filter: String::new(),
             })
         });

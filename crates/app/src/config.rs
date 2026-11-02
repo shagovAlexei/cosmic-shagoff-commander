@@ -113,6 +113,8 @@ pub struct Config {
     pub internal_viewer: bool,
     /// Ctrl+F: addresses connected to, last first, without passwords.
     pub connections: Vec<String>,
+    /// Cloud plugins switched off (`cloud::PLUGINS` ids, 215).
+    pub plugins_off: Vec<String>,
     /// Command line under the panels (TC `path>`).
     pub show_cmdline: bool,
     /// View → Window parts (TC `cm_Vis*`); the F-keys and the command line are the two above.
@@ -352,6 +354,7 @@ impl Default for Config {
             show_fkeys: true,
             internal_viewer: true,
             connections: Vec::new(),
+            plugins_off: Vec::new(),
             show_cmdline: true,
             show_toolbar: true,
             show_drives: true,

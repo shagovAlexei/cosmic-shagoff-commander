@@ -62,3 +62,7 @@ curl = "*"
 [package.metadata.generate-rpm.recommends]
 gvfs = "*"
 gvfs-fuse = "*"
+
+# Clouds (Settings → Clouds) mount through rclone.
+[package.metadata.generate-rpm.suggests]
+rclone = "*"

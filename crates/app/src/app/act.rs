@@ -92,14 +92,14 @@ impl App {
             }
             Action::Help | Action::Settings | Action::Donate => {
                 self.toggle_drawer(action);
-                return Task::none();
+                return self.read_clouds();
             }
             // Nothing set: the settings (left open if they are already).
             Action::F12 if self.config.f12.cmd.trim().is_empty() => {
                 if !matches!(self.drawer, Some(Drawer::Settings(_))) {
                     self.toggle_drawer(Action::Settings);
                 }
-                return Task::none();
+                return self.read_clouds();
             }
             Action::F12 => return self.run_button(self.config.f12.clone()),
             Action::ToggleHumanSizes => {

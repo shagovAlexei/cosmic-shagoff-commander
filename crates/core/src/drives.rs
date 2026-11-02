@@ -88,7 +88,7 @@ fn is_media(p: &Path) -> bool {
 }
 
 /// The kernel escapes space, tab, newline and backslash in mounts as `\ooo` octal.
-fn unescape(s: &str) -> PathBuf {
+pub(crate) fn unescape(s: &str) -> PathBuf {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
