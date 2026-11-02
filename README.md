@@ -28,6 +28,11 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Terminal of your choice (Commands → Terminal…: the system default or any installed one) opens in the panel's folder and runs Shift+Enter
 - Built-in terminal under the panels in place of the command line (Ctrl+` or View → Built-in terminal, off by default): follows the active panel's folder, Ctrl+O over the whole window, shell from Commands → Shell…; selecting with the mouse copies, the middle button pastes
 - View → «Window parts»: hide the button bar, drive buttons, tabs, path line, column headers, status bar, command line, F-key buttons; «Panel at 100 %» — one panel across the whole width, «Panels one above the other»
+- Thumbnails view (Ctrl+Shift+F1): pictures, PDF, video — through the desktop's own thumbnailers, in a sandbox; the folder tree in the panel (Ctrl+F8) or beside the panels (Ctrl+Shift+F8)
+- The trash as a folder: browse it, restore files to where they came from, delete for good, empty it
+- Checksums (MD5 / SHA1 / SHA256 / SHA512) — create and verify; split a file into parts and combine them back; new file from a template; change the date and time of files
+- A Start menu of your own commands (with submenus), your own hotkeys for any command (Configuration → Hotkeys), saved view modes and the columns of the full view
+- Signed updates: a new release is offered at start and installed only if its signature checks; after a crash the next start offers to report it (nothing is sent by itself)
 - Right button marks files as in Total Commander (drag it across rows to mark them), held it opens the menu (or the menu at once — a setting), full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)
 
 ## Keys
@@ -47,6 +52,8 @@ Total Commander's layout, so the hands already know it:
 | Ctrl+B | Branch view: every file below, in one list |
 | Ctrl+D | Hotlist |
 | Ctrl+F | Connect to a server (sftp, smb, ftp, dav) |
+| Ctrl+Shift+F1 | Thumbnails |
+| Ctrl+F8 / Ctrl+Shift+F8 | Folder tree in the panel / beside the panels |
 | Ctrl+T / Ctrl+W | New / close tab |
 | Ctrl+Shift+D | Compare files by content |
 | Alt+Enter | Properties |
@@ -63,6 +70,12 @@ Total Commander's layout, so the hands already know it:
 ![Built-in terminal](res/screenshots/terminal.png)
 
 Built-in terminal under the panels (Ctrl+`): its shell follows the active panel's folder, Ctrl+O over the whole window
+
+## Clouds
+
+| | |
+|---|---|
+| ![Clouds](res/screenshots/clouds.png) | OneDrive, Google Drive, Dropbox and Box through [rclone](https://rclone.org) (`sudo apt install rclone`).<br><br>*Settings → Clouds*: a switch per service, **Add account** signs in in the browser (Esc cancels), **Remove** unmounts and forgets the account. Several accounts of one service are fine.<br><br>Each account is a drive in Alt+F1 and the drive buttons: Enter mounts it with the real file names, Ctrl+Shift+F unmounts. Files are written through rclone's cache, so copying to the cloud works like copying to any folder. |
 
 ## Toolbar buttons
 
