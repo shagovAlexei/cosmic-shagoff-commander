@@ -211,6 +211,21 @@ pub enum Dialog {
         /// The menu row under the cursor: an index into `drop_ops(sources)`, past them = Cancel.
         cursor: usize,
     },
+    /// Settings → Clouds → «Add account» of a plugin signed in through fields and rclone's
+    /// questions (216b), or one with fields before its browser sign-in (Zoho's region).
+    CloudAccount {
+        plugin: &'static shagoff_core::cloud::Plugin,
+        /// The fields' values, in `plugin.fields` order.
+        values: Vec<String>,
+        /// The account once created: rclone asks about it.
+        name: Option<String>,
+        question: Option<shagoff_core::cloud::Question>,
+        answer: String,
+        /// A step under way (rclone signing in, the account being listed).
+        busy: bool,
+        /// The last error (`true`) or "Checking…".
+        note: Option<(bool, String)>,
+    },
     /// Ctrl+F: network location and password.
     Connect {
         side: usize,
@@ -1792,6 +1807,75 @@ pub fn view<'a>(
                 .control(widget::scrollable(col).height(Length::Shrink))
                 .primary_action(
                     widget::button::suggested(fl!("connect-go")).on_press(Message::DialogSubmit),
+                )
+                .secondary_action(cancel)
+                .into()
+        }
+        Dialog::CloudAccount {
+            plugin,
+            values,
+            question,
+            answer,
+            busy,
+            note,
+            ..
+        } => {
+            let text = |key: &str| crate::i18n::LANGUAGE_LOADER.get(key);
+            let input = |i: usize, value: &'a str, secret: bool| {
+                let on = move |s| Message::CloudField(i, s);
+                let f = if secret {
+                    widget::secure_input("", value, None, true)
+                } else {
+                    widget::text_input("", value)
+                };
+                let f = (f.on_input(on).on_submit(|_| Message::DialogSubmit)).on_tab(Message::FocusNext);
+                if i == 0 || i == usize::MAX {
+                    f.id(input_id.clone())
+                } else {
+                    f
+                }
+            };
+            let mut col = column![].spacing(4);
+            let hint = format!("cloud-hint-{}", plugin.id);
+            if question.is_none() && crate::i18n::LANGUAGE_LOADER.has(&hint) {
+                col = col.push(widget::text::body(text(&hint)).wrapping(Wrapping::WordOrGlyph));
+            }
+            if let Some(q) = question {
+                col = col.push(widget::text::body(q.help.clone()).wrapping(Wrapping::WordOrGlyph));
+                for (value, help) in &q.examples {
+                    let first = help.lines().next().unwrap_or_default();
+                    col = col.push(
+                        widget::button::text(format!("{value} — {first}"))
+                            .on_press(Message::CloudField(usize::MAX, value.clone()))
+                            .width(Length::Fill),
+                    );
+                }
+                col = col.push(input(usize::MAX, answer, q.password));
+            } else {
+                for (i, (f, v)) in plugin.fields.iter().zip(values).enumerate() {
+                    col = col.push(widget::text::caption(text(&format!("cloud-field-{}", f.key))));
+                    col = col.push(input(i, v, f.secret));
+                }
+            }
+            if let Some((error, t)) = note {
+                let t = widget::text::body(t.clone()).wrapping(Wrapping::WordOrGlyph);
+                col = col.push(if *error {
+                    t.class(cosmic::theme::Text::Custom(|t| {
+                        cosmic::iced::widget::text::Style {
+                            color: Some(t.cosmic().destructive_text_color().into()),
+                            ..Default::default()
+                        }
+                    }))
+                } else {
+                    t
+                });
+            }
+            widget::dialog()
+                .title(fl!("cloud-add-title", name = plugin.name))
+                .control(widget::scrollable(col).height(Length::Shrink))
+                .primary_action(
+                    widget::button::suggested(fl!("ok"))
+                        .on_press_maybe((!*busy).then_some(Message::DialogSubmit)),
                 )
                 .secondary_action(cancel)
                 .into()

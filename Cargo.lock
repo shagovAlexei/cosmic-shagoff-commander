@@ -4665,6 +4665,7 @@ dependencies = [
  "regex",
  "rustix 1.1.5",
  "serde",
+ "serde_json",
  "sevenz-rust2",
  "sha1",
  "sha2",

@@ -668,6 +668,10 @@ pub enum Message {
     CloudAdd(&'static str),
     /// A sign-in's end: the new account's name.
     CloudAdded(Result<String, mount::Error>),
+    /// «Add account» dialog: field i typed (`usize::MAX`: the answer to rclone's question).
+    CloudField(usize, String),
+    /// A step of a sign-in through fields: the account and rclone's next question, or `Done`.
+    CloudStep(Result<(String, cloud::Step), mount::Error>),
     /// «Remove» an account (its remote name).
     CloudForget(String),
     CloudForgot(Result<(), mount::Error>),

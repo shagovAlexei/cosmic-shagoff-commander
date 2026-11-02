@@ -18,49 +18,130 @@ pub struct Plugin {
     pub name: &'static str,
     /// rclone's storage type.
     pub kind: &'static str,
+    /// Signs in in the browser (OAuth); else through `fields` and rclone's questions (216b).
+    pub browser: bool,
+    /// Options given to `rclone config create` as they are.
+    pub preset: &'static [(&'static str, &'static str)],
+    /// Options asked before creating the account.
+    pub fields: &'static [Field],
+}
+
+/// An rclone option the user types; the app labels it `cloud-field-<key>`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Field {
+    pub key: &'static str,
+    pub secret: bool,
+    pub default: &'static str,
+}
+
+const fn field(key: &'static str) -> Field {
+    Field {
+        key,
+        secret: false,
+        default: "",
+    }
+}
+
+const fn secret(key: &'static str) -> Field {
+    Field {
+        key,
+        secret: true,
+        default: "",
+    }
+}
+
+const fn oauth(id: &'static str, name: &'static str, kind: &'static str) -> Plugin {
+    Plugin {
+        id,
+        name,
+        kind,
+        browser: true,
+        preset: &[],
+        fields: &[],
+    }
+}
+
+const fn typed(
+    id: &'static str,
+    name: &'static str,
+    kind: &'static str,
+    fields: &'static [Field],
+) -> Plugin {
+    Plugin {
+        id,
+        name,
+        kind,
+        browser: false,
+        preset: &[],
+        fields,
+    }
 }
 
 pub const PLUGINS: &[Plugin] = &[
+    oauth("onedrive", "OneDrive", "onedrive"),
+    oauth("gdrive", "Google Drive", "drive"),
+    oauth("dropbox", "Dropbox", "dropbox"),
+    oauth("box", "Box", "box"),
+    oauth("yandex", "Yandex Disk", "yandex"),
+    oauth("pcloud", "pCloud", "pcloud"),
+    oauth("gphotos", "Google Photos", "gphotos"),
+    oauth("hidrive", "HiDrive", "hidrive"),
+    // An app password (Mail.ru → Security → App passwords): the account's own one is refused.
+    typed("mailru", "Mail.ru Cloud", "mailru", &[field("user"), secret("pass")]),
     Plugin {
-        id: "onedrive",
-        name: "OneDrive",
-        kind: "onedrive",
+        preset: &[("provider", "Other")],
+        ..typed(
+            "s3",
+            "S3",
+            "s3",
+            &[
+                Field {
+                    default: "https://s3.amazonaws.com",
+                    ..field("endpoint")
+                },
+                field("region"),
+                field("access_key_id"),
+                secret("secret_access_key"),
+            ],
+        )
     },
+    typed("b2", "Backblaze B2", "b2", &[field("account"), secret("key")]),
+    typed(
+        "webdav",
+        "Nextcloud / WebDAV",
+        "webdav",
+        &[
+            field("url"),
+            Field {
+                default: "nextcloud",
+                ..field("vendor")
+            },
+            field("user"),
+            secret("pass"),
+        ],
+    ),
+    typed("koofr", "Koofr", "koofr", &[field("user"), secret("password")]),
+    typed(
+        "seafile",
+        "Seafile",
+        "seafile",
+        &[field("url"), field("user"), secret("pass")],
+    ),
+    // rclone refuses to sign in without the region (`no region set`).
     Plugin {
-        id: "gdrive",
-        name: "Google Drive",
-        kind: "drive",
+        browser: true,
+        ..typed(
+            "zoho",
+            "Zoho WorkDrive",
+            "zoho",
+            &[Field {
+                default: "com",
+                ..field("region")
+            }],
+        )
     },
-    Plugin {
-        id: "dropbox",
-        name: "Dropbox",
-        kind: "dropbox",
-    },
-    Plugin {
-        id: "box",
-        name: "Box",
-        kind: "box",
-    },
-    Plugin {
-        id: "yandex",
-        name: "Yandex Disk",
-        kind: "yandex",
-    },
-    Plugin {
-        id: "pcloud",
-        name: "pCloud",
-        kind: "pcloud",
-    },
-    Plugin {
-        id: "gphotos",
-        name: "Google Photos",
-        kind: "gphotos",
-    },
-    Plugin {
-        id: "hidrive",
-        name: "HiDrive",
-        kind: "hidrive",
-    },
+    // Its login token is one of rclone's questions.
+    typed("jottacloud", "Jottacloud", "jottacloud", &[]),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -229,14 +310,15 @@ pub fn remotes() -> Vec<Remote> {
 /// the provider's answer (minutes, so no timeout of ours: `cancel` kills it). rclone writes the
 /// remote before signing in, so a cancelled or failed one is removed again (else a remote with no
 /// token is left) — safe, the name was nobody's.
-pub fn add(p: &Plugin, cancel: &Arc<AtomicBool>) -> Result<String, Error> {
+pub fn add(p: &Plugin, values: &[String], cancel: &Arc<AtomicBool>) -> Result<String, Error> {
     // rclone waits for the browser on this port; taken, it fails with its whole usage text.
     // Checked first, so no remote is written either.
     if std::net::TcpListener::bind(AUTH_ADDR).is_err() {
         return Err(Error::Failed(PORT_BUSY.into()));
     }
     let name = fresh_name(p, &names(&run(rclone(["listremotes", "--long"]))?));
-    let mut c = rclone(["config", "create", &name, p.kind]);
+    let mut c = rclone(["config", "create", "--", &name, p.kind]);
+    c.args(options(p, values, obscure)?);
     // Its own process group (cancel kills it), so it would outlive us still waiting on the port
     // (the next sign-in then fails): it goes with the thread that started it, which waits for it.
     // SAFETY: prctl is async-signal-safe.
@@ -254,6 +336,179 @@ pub fn add(p: &Plugin, cancel: &Arc<AtomicBool>) -> Result<String, Error> {
         Error::Failed(text) => Error::Failed(rclone_error(&text)),
         e => e,
     })
+}
+
+/// One of rclone's questions while creating an account (`--non-interactive` answers JSON).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Question {
+    /// Given back with the answer (`--state`).
+    pub state: String,
+    /// The option asked (`config_login_token`).
+    pub option: String,
+    pub help: String,
+    pub default: String,
+    /// (value, help) to pick from.
+    pub examples: Vec<(String, String)>,
+    pub password: bool,
+    /// Why the last answer was not taken.
+    pub error: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    Done,
+    Ask(Question),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Answer {
+    state: String,
+    option: Option<AskedOption>,
+    error: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct AskedOption {
+    name: String,
+    help: String,
+    #[serde(default)]
+    default_str: String,
+    #[serde(default)]
+    examples: Vec<Example>,
+    #[serde(default)]
+    is_password: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Example {
+    value: String,
+    help: String,
+}
+
+/// rclone's `--non-interactive` answer: done, a question, or its error.
+pub fn parse_step(json: &str) -> Result<Step, Error> {
+    let a: Answer =
+        serde_json::from_str(json).map_err(|e| Error::Failed(format!("rclone: {e}")))?;
+    match a.option {
+        Some(o) if !a.state.is_empty() => Ok(Step::Ask(Question {
+            state: a.state,
+            option: o.name,
+            help: o.help,
+            default: o.default_str,
+            examples: (o.examples.into_iter()).map(|e| (e.value, e.help)).collect(),
+            password: o.is_password,
+            error: a.error,
+        })),
+        _ if !a.error.is_empty() => Err(Error::Failed(a.error)),
+        _ => Ok(Step::Done),
+    }
+}
+
+/// Create an account of a plugin without a browser sign-in from its `fields` (`values` in their
+/// order, empty ones left out): its name and rclone's first question, or `Done` once it lists.
+pub fn create(p: &Plugin, values: &[String]) -> Result<(String, Step), Error> {
+    let name = fresh_name(p, &names(&run(rclone(["listremotes", "--long"]))?));
+    let mut c = rclone(["config", "create", "--non-interactive", "--no-obscure", "--"]);
+    c.args([&name, p.kind]);
+    let args = options(p, values, obscure);
+    let step = args.and_then(|args| parse_step(&run(with(c, args)).map_err(cut)?));
+    finish(&name, step).map(|s| (name, s))
+}
+
+/// Answer rclone's question about the account `name`: the next question, or `Done` once it lists.
+pub fn answer(name: &str, q: &Question, result: &str) -> Result<Step, Error> {
+    // Not obscured by rclone itself here (checked): a password would be written as it is.
+    let step = (if q.password {
+        obscure(result)
+    } else {
+        Ok(result.to_string())
+    })
+    .and_then(|result| {
+        let mut c = rclone(["config", "update", "--non-interactive", "--no-obscure"]);
+        c.args(["--continue", "--state", &q.state, "--result", &result, "--", name]);
+        parse_step(&run(c).map_err(cut)?)
+    });
+    finish(name, step)
+}
+
+/// `preset` and the typed `values` as `key value` arguments, secrets through `hide`.
+fn options(
+    p: &Plugin,
+    values: &[String],
+    hide: impl Fn(&str) -> Result<String, Error>,
+) -> Result<Vec<String>, Error> {
+    let mut args = Vec::new();
+    for (k, v) in p.preset {
+        args.extend([k.to_string(), v.to_string()]);
+    }
+    for (f, v) in p.fields.iter().zip(values) {
+        let v = if f.secret { v.as_str() } else { v.trim() };
+        if v.is_empty() {
+            continue;
+        }
+        args.extend([f.key.to_string(), if f.secret { hide(v)? } else { v.into() }]);
+    }
+    Ok(args)
+}
+
+fn with(mut c: Command, args: Vec<String>) -> Command {
+    c.args(args);
+    c
+}
+
+fn cut(e: Error) -> Error {
+    match e {
+        Error::Failed(text) => Error::Failed(rclone_error(&text)),
+        e => e,
+    }
+}
+
+/// Done: the account must list (rclone writes any password without trying it), else it goes.
+fn finish(name: &str, step: Result<Step, Error>) -> Result<Step, Error> {
+    let step = step.and_then(|s| {
+        if s == Step::Done {
+            let target = format!("{name}:");
+            let mut c = rclone(["lsd", "--contimeout", "15s", "--timeout", "30s"]);
+            c.args(["--retries", "1", "--low-level-retries", "1", "--", &target]);
+            match run(c) {
+                // S3 keys for one bucket may not list them all: signed in all the same.
+                Err(Error::Failed(e)) if e.contains("AccessDenied") => {}
+                r => drop(r.map_err(cut)?),
+            }
+        }
+        Ok(s)
+    });
+    if step.is_err() {
+        let _ = forget(name);
+    }
+    step
+}
+
+/// rclone's reversible encoding of a password, as `rclone.conf` keeps it (read from stdin: not
+/// on a command line).
+fn obscure(password: &str) -> Result<String, Error> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let failed = |e: std::io::Error| Error::Failed(e.to_string());
+    let mut child = rclone(["obscure", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(failed)?;
+    // No newline: rclone keeps it as part of the password.
+    let wrote = (child.stdin.take().expect("piped")).write_all(password.as_bytes());
+    let out = child.wait_with_output().map_err(failed)?;
+    wrote.map_err(failed)?;
+    if !out.status.success() {
+        return Err(Error::Failed(
+            String::from_utf8_lossy(&out.stderr).trim().into(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// Where `rclone config create` waits for the provider's answer.
@@ -365,6 +620,65 @@ mod tests {
         assert_eq!(got, ["yandex", "pcloud", "gphotos", "hidrive"]);
         let plugin = PLUGINS.iter().find(|p| p.id == "gphotos").unwrap();
         assert_eq!(fresh_name(plugin, &["gphotos".to_string()]), "gphotos-2");
+    }
+
+    // As rclone 1.60.1 answers `config create t3 jottacloud --non-interactive` (cut down).
+    const QUESTION: &str = r#"{
+	"State": "auth_type_done",
+	"Option": {
+		"Name": "config_type",
+		"Help": "Select authentication type.",
+		"Default": "standard",
+		"Value": null,
+		"Examples": [
+			{"Value": "standard", "Help": "Standard authentication.", "Provider": ""},
+			{"Value": "legacy", "Help": "Legacy authentication.", "Provider": ""}
+		],
+		"IsPassword": false,
+		"DefaultStr": "standard",
+		"Type": "string"
+	},
+	"Error": "",
+	"Result": ""
+}"#;
+
+    #[test]
+    fn parse_step_reads_rclone_answers() {
+        let done = r#"{"State": "", "Option": null, "Error": "", "Result": ""}"#;
+        assert_eq!(parse_step(done), Ok(Step::Done));
+        let Ok(Step::Ask(q)) = parse_step(QUESTION) else {
+            panic!("a question")
+        };
+        assert_eq!((q.state.as_str(), q.option.as_str()), ("auth_type_done", "config_type"));
+        assert_eq!(q.default, "standard");
+        assert_eq!(q.examples[1].0, "legacy");
+        assert!(!q.password);
+        let failed = r#"{"State": "", "Option": null, "Error": "bad token", "Result": ""}"#;
+        assert_eq!(parse_step(failed), Err(Error::Failed("bad token".into())));
+        assert!(parse_step("Usage: rclone").is_err());
+    }
+
+    #[test]
+    fn options_skip_empty_fields_and_hide_secrets() {
+        let s3 = PLUGINS.iter().find(|p| p.id == "s3").unwrap();
+        let values = ["https://r2.example", " ", "AK", "p w"].map(String::from);
+        let args = options(s3, &values, |v| Ok(format!("hidden({v})"))).unwrap();
+        assert_eq!(
+            args,
+            [
+                "provider", "Other", "endpoint", "https://r2.example", "access_key_id", "AK",
+                "secret_access_key", "hidden(p w)"
+            ]
+        );
+    }
+
+    #[test]
+    fn plugins_have_unique_ids_and_kinds() {
+        for (i, p) in PLUGINS.iter().enumerate() {
+            let later = &PLUGINS[i + 1..];
+            assert!(!later.iter().any(|q| q.id == p.id || q.kind == p.kind), "{}", p.id);
+            assert!(p.browser || p.id == "jottacloud" || !p.fields.is_empty(), "{}", p.id);
+        }
     }
 
     #[test]

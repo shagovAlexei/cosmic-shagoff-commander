@@ -281,6 +281,23 @@ impl App {
         }
     }
 
+    /// A browser sign-in (OAuth) with the fields typed before it (Zoho's region).
+    pub(super) fn cloud_sign_in(
+        &mut self,
+        p: &'static cloud::Plugin,
+        values: Vec<String>,
+    ) -> Task<Message> {
+        // One at a time: rclone waits for the browser on one port.
+        if self.cloud_cancel.is_some() {
+            self.say(StatusKind::Busy, fl!("cloud-busy"));
+            return Task::none();
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cloud_cancel = Some(cancel.clone());
+        self.say(StatusKind::Busy, fl!("cloud-signing-in"));
+        blocking(move || cloud::add(p, &values, &cancel), Message::CloudAdded)
+    }
+
     /// The cloud accounts for the settings, when they are open.
     pub(super) fn read_clouds(&self) -> Task<Message> {
         if !matches!(self.drawer, Some(Drawer::Settings(_))) {

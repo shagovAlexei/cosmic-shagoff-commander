@@ -1566,6 +1566,12 @@ impl App {
                         let _ = r.send(ErrorChoice::Cancel);
                     }
                 }
+                // Created and asking: it goes (a step under way does it on its return).
+                Some(Dialog::CloudAccount {
+                    name: Some(n),
+                    busy: false,
+                    ..
+                }) => return blocking(move || cloud::forget(&n), Message::CloudForgot),
                 Some(Dialog::Connect { browsing, .. }) => {
                     if let Some(stop) = browsing {
                         stop.store(true, Ordering::Relaxed);
@@ -2418,15 +2424,73 @@ impl App {
                 let Some(p) = cloud::PLUGINS.iter().find(|p| p.id == id) else {
                     return Task::none();
                 };
-                // One at a time: rclone waits for the browser on one port.
-                if self.cloud_cancel.is_some() {
-                    self.say(StatusKind::Busy, fl!("cloud-busy"));
-                    return Task::none();
+                if p.browser && p.fields.is_empty() {
+                    return self.cloud_sign_in(p, Vec::new());
                 }
-                let cancel = Arc::new(AtomicBool::new(false));
-                self.cloud_cancel = Some(cancel.clone());
-                self.say(StatusKind::Busy, fl!("cloud-signing-in"));
-                return blocking(move || cloud::add(p, &cancel), Message::CloudAdded);
+                self.dialog = Some(Dialog::CloudAccount {
+                    plugin: p,
+                    values: p.fields.iter().map(|f| f.default.to_string()).collect(),
+                    name: None,
+                    question: None,
+                    answer: String::new(),
+                    busy: false,
+                    note: None,
+                });
+                // Nothing to type first (Jottacloud): straight to rclone's questions.
+                if p.fields.is_empty() {
+                    return self.submit_dialog();
+                }
+                return widget::text_input::focus(self.input_id.clone());
+            }
+            Message::CloudField(i, s) => {
+                if let Some(Dialog::CloudAccount { values, answer, .. }) = &mut self.dialog {
+                    match values.get_mut(i) {
+                        Some(v) => *v = s,
+                        None => *answer = s,
+                    }
+                }
+            }
+            Message::CloudStep(r) => {
+                let Some(Dialog::CloudAccount {
+                    name,
+                    question,
+                    answer,
+                    busy,
+                    note,
+                    ..
+                }) = &mut self.dialog
+                else {
+                    // Cancelled meanwhile: an account still asking goes; a finished one stays.
+                    return match r {
+                        Ok((n, cloud::Step::Ask(_))) => {
+                            blocking(move || cloud::forget(&n), Message::CloudForgot)
+                        }
+                        Ok((n, cloud::Step::Done)) => {
+                            self.say(StatusKind::Info, fl!("cloud-added", name = n));
+                            Task::batch([self.read_clouds(), self.refresh_volumes(true)])
+                        }
+                        Err(_) => Task::none(),
+                    };
+                };
+                *busy = false;
+                match r {
+                    Ok((n, cloud::Step::Done)) => {
+                        self.dialog = None;
+                        self.say(StatusKind::Info, fl!("cloud-added", name = n));
+                        return Task::batch([self.read_clouds(), self.refresh_volumes(true)]);
+                    }
+                    Ok((n, cloud::Step::Ask(q))) => {
+                        *answer = q.default.clone();
+                        *note = (!q.error.is_empty()).then(|| (true, q.error.clone()));
+                        (*name, *question) = (Some(n), Some(q));
+                        return widget::text_input::focus(self.input_id.clone());
+                    }
+                    // The account is gone again (core): the fields can be fixed and sent anew.
+                    Err(e) => {
+                        (*name, *question) = (None, None);
+                        *note = Some((true, mount_error(&e)));
+                    }
+                }
             }
             Message::CloudAdded(r) => {
                 self.cloud_cancel = None;
