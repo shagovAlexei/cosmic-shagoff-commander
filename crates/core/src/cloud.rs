@@ -331,9 +331,9 @@ pub fn hidden_volume(v: &Volume, off: &[String]) -> bool {
         .is_some_and(|(p, _)| off.iter().any(|o| o == p.id))
 }
 
-/// `rclone` is in `PATH` (looked up, not run).
+/// Our own rclone (216d) or one in `PATH` (looked up, not run).
 pub fn installed() -> bool {
-    in_path("rclone")
+    crate::rclone::own().is_some() || in_path("rclone")
 }
 
 fn in_path(program: &str) -> bool {
@@ -342,7 +342,7 @@ fn in_path(program: &str) -> bool {
 }
 
 fn rclone<const N: usize>(args: [&str; N]) -> Command {
-    let mut c = Command::new("rclone");
+    let mut c = Command::new(crate::rclone::program());
     c.args(args);
     c
 }

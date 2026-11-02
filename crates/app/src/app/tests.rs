@@ -6277,6 +6277,22 @@ mod mount_tests {
     }
 
     #[test]
+    fn own_rclone_download_runs_once_and_reads_the_types_again() {
+        let mut app = app_with(Config::default(), State::default());
+        app.cloud_kinds = vec!["drive".into()];
+        let _ = app.update(Message::RcloneGet);
+        assert!(app.rclone_busy);
+        assert_eq!(app.msg(), Some(fl!("rclone-getting").as_str()));
+        let _ = app.update(Message::RcloneGot(Ok("v1.75.2".into())));
+        assert!(!app.rclone_busy);
+        assert!(app.cloud_kinds.is_empty()); // the new rclone's are read
+        assert_eq!(
+            app.msg(),
+            Some(fl!("rclone-got", version = "v1.75.2").as_str())
+        );
+    }
+
+    #[test]
     fn clouds_keep_the_installed_rclone_types() {
         let mut app = app_with(Config::default(), State::default());
         let kinds = Some(vec!["drive".into(), "s3".into()]);

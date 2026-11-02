@@ -2513,6 +2513,41 @@ impl App {
                 }
                 return Task::batch([self.read_clouds(), self.refresh_volumes(true)]);
             }
+            Message::RcloneGet => {
+                if self.rclone_busy {
+                    return Task::none();
+                }
+                self.rclone_busy = true;
+                self.say(StatusKind::Busy, fl!("rclone-getting"));
+                return blocking(shagoff_core::rclone::install, Message::RcloneGot);
+            }
+            Message::RcloneGot(r) => {
+                self.rclone_busy = false;
+                self.clear_busy(); // "Downloading…"
+                match r {
+                    Ok(v) => self.say(StatusKind::Info, fl!("rclone-got", version = v)),
+                    Err(e) => self.say(StatusKind::Error, mount_error(&e)),
+                }
+                return self.rclone_changed();
+            }
+            Message::RcloneDrop => {
+                if self.rclone_busy {
+                    return Task::none();
+                }
+                self.rclone_busy = true;
+                return blocking(shagoff_core::rclone::remove, Message::RcloneDropped);
+            }
+            Message::RcloneDropped(r) => {
+                self.rclone_busy = false;
+                match r {
+                    Ok(()) => self.say(StatusKind::Info, fl!("rclone-removed")),
+                    Err(mount::Error::Failed(e)) if e == shagoff_core::rclone::CLOUDS_MOUNTED => {
+                        self.say(StatusKind::Error, fl!("rclone-clouds-mounted"))
+                    }
+                    Err(e) => self.say(StatusKind::Error, mount_error(&e)),
+                }
+                return self.rclone_changed();
+            }
             Message::CloudForget(name) => {
                 return blocking(move || cloud::remove(&name), Message::CloudForgot);
             }

@@ -2018,6 +2018,47 @@ mkdir -p /tmp/bomb && cd /tmp/bomb && head -c 20M /dev/zero > zeros && zip -q bi
 
 Уборка: Ctrl+Shift+F на подключённых облаках; лишние учётки — «Удалить» или `rclone config delete <имя>`; `rm /tmp/cloud-test*.txt /tmp/remotes-before.txt`; тестовые файлы в облаках удалить вручную. Вернуть apt-овский rclone: `sudo rm /usr/bin/rclone && sudo apt install --reinstall rclone` (install.sh кладёт официальный в `/usr/bin/rclone`).
 
+### Свой rclone с rclone.org (0.135.0, 216d)
+
+Подготовка: `rclone version` (apt-овский 1.60.1); `ls ~/.local/share/shagoff-commander/rclone` (не должно быть); `rclone listremotes --long > /tmp/remotes-before.txt`. Нужна хотя бы одна рабочая учётка (например, Google Drive) и сеть.
+
+**Установка поверх apt-овского**
+
+Шаги:
+1. Ctrl+, → «Облака» → MEGA, Proton Drive, iCloud Drive.
+- [ ] У всех трёх «Нужен rclone новее установленного» и кнопка «Установить новый rclone».
+2. Нажать «Установить новый rclone».
+- [ ] В статусе «Загрузка rclone с rclone.org…», затем «rclone vX установлен…».
+- [ ] Раздел начинается со строки «rclone vX с rclone.org (свой…)» и кнопками «Обновить» / «Удалить».
+- [ ] У MEGA, Proton Drive и iCloud Drive появилась «Добавить учётную запись».
+3. `ls -l ~/.local/share/shagoff-commander/rclone` и `~/.local/share/shagoff-commander/rclone/rclone version`.
+- [ ] Есть `rclone` (права 0755) и `VERSION`; версия совпадает с показанной в разделе.
+4. Подключить существующую учётку (Alt+F1 → Enter), затем `ps -o args= -C rclone`.
+- [ ] Монтируется; в аргументах процесса путь `~/.local/share/shagoff-commander/rclone/rclone`.
+
+**Обрыв загрузки**
+
+Шаги:
+1. «Удалить», затем «Установить новый rclone» и посреди загрузки выключить сеть (Wi-Fi).
+- [ ] В статусе ошибка, раздел как до установки.
+- [ ] `ls ~/.local/share/shagoff-commander/` не содержит `rclone/rclone` и каталогов `.get-*`.
+
+**Удаление**
+
+Шаги:
+1. Установить снова, нажать «Удалить».
+- [ ] Каталог `~/.local/share/shagoff-commander/rclone` исчез; снова используется системный rclone; у MEGA, Proton Drive и iCloud Drive опять кнопка установки.
+
+**Совсем без rclone**
+
+Шаги:
+1. `sudo apt remove rclone`, переоткрыть «Облака».
+- [ ] Раздел показывает `sudo apt install rclone` и под ним «или последний с rclone.org…» + «Установить rclone с rclone.org».
+2. Нажать её.
+- [ ] Работает так же, как выше: установка, строка «rclone vX с rclone.org», добавление учётной записи доступно.
+
+Уборка: Ctrl+Shift+F на подключённых облаках; «Удалить» (свой rclone) или оставить; `sudo apt install rclone`, если удаляли; `rm /tmp/remotes-before.txt`.
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.

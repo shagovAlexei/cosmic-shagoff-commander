@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.135.0 — 2026-11-03
+
+- feat: own rclone (216d): Settings → Clouds downloads the official rclone from rclone.org (checksums verified with its built-in PGP key through `gpgv`, then the zip's SHA-256) into `~/.local/share/shagoff-commander/rclone`, no sudo; used in place of the system's; Update / Remove; the .deb depends on `gpgv`, the .rpm on `/usr/bin/gpgv`
+
 ## 0.134.0 — 2026-11-03
 
 - feat: clouds (216c): MEGA, Proton Drive, iCloud Drive (the 2FA code is rclone's question in the same dialog); a service the installed rclone lacks shows «Needs a newer rclone than the installed one» with a link to rclone.org/install instead of «Add account».

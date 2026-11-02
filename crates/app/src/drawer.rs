@@ -11,9 +11,6 @@ use shagoff_core::archive::Format;
 
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
-/// rclone's own install page (a newer one than the distribution's).
-const RCLONE_INSTALL: &str = "https://rclone.org/install/";
-
 /// Where "Support the project" leads: a Stripe Payment Link, which needs no server.
 pub const DONATE_URL: &str = "https://donate.stripe.com/6oU28s8Ff7cR1342J967S00";
 
@@ -40,6 +37,8 @@ pub struct SettingsForm {
     pub font_filter: String,
     /// `rclone` installed: the clouds section lists the plugins, else says how to install it.
     pub rclone: bool,
+    /// Our own rclone's version (216d, `core::rclone::own`).
+    pub own_rclone: Option<String>,
 }
 
 /// Indices of the `fonts` holding every word of `filter`, any case.
@@ -524,7 +523,7 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                 }),
             ))
             .into(),
-        clouds_section(app, form.rclone),
+        clouds_section(app, form),
     ])
     .spacing(16)
     .into()
@@ -532,15 +531,37 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
 
 /// Clouds (215): a switch per plugin, its accounts with «Remove», «Add account»; without rclone,
 /// the command that installs it.
-fn clouds_section(app: &App, rclone: bool) -> Element<'_, Message> {
+fn clouds_section<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Message> {
     let mut section = settings::section().title(fl!("settings-clouds"));
-    if !rclone {
+    // 216d: the official rclone downloaded by us, in place of the distribution's.
+    let get = |label: String| {
+        widget::button::standard(label)
+            .on_press_maybe((!app.rclone_busy).then_some(Message::RcloneGet))
+    };
+    if !form.rclone {
         return section
             .add(settings::item(
                 fl!("settings-clouds-need-rclone"),
                 widget::text("sudo apt install rclone").font(cosmic::font::mono()),
             ))
+            .add(settings::item_row(vec![
+                widget::text::body(fl!("rclone-or"))
+                    .width(Length::Fill)
+                    .into(),
+                get(fl!("rclone-get")).into(),
+            ]))
             .into();
+    }
+    if let Some(v) = &form.own_rclone {
+        section = section.add(settings::item_row(vec![
+            widget::text::body(fl!("rclone-own", version = v.as_str()))
+                .width(Length::Fill)
+                .into(),
+            get(fl!("rclone-update")).into(),
+            widget::button::destructive(fl!("cloud-forget"))
+                .on_press_maybe((!app.rclone_busy).then_some(Message::RcloneDrop))
+                .into(),
+        ]));
     }
     let off = &app.config.plugins_off;
     for p in shagoff_core::cloud::PLUGINS {
@@ -567,9 +588,7 @@ fn clouds_section(app: &App, rclone: bool) -> Element<'_, Message> {
                 widget::text::body(fl!("cloud-need-newer"))
                     .width(Length::Fill)
                     .into(),
-                widget::button::link("rclone.org".to_string())
-                    .on_press(Message::OpenUrl(RCLONE_INSTALL.to_string()))
-                    .into(),
+                get(fl!("rclone-get-short")).into(),
             ]));
             continue;
         }

@@ -190,6 +190,7 @@ impl App {
                 ignore: self.config.ignore_list.clone(),
                 fonts: drawer::font_families(),
                 rclone: cloud::installed(),
+                own_rclone: shagoff_core::rclone::own(),
                 font_filter: String::new(),
             })
         });
