@@ -110,25 +110,17 @@ pub fn hash_of<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-/// The key releases are signed with (Ed25519; its private half is kept off GitHub, 214a): a
+/// The release key (minisign, id 982F950BAA31CF38; its secret half never leaves the author's machine, `just
+/// sign-release`, 214a): `SHA256SUMS.minisig` must be its signature or nothing is installed. A
 /// stolen GitHub token can publish a release, not one this program installs.
-pub const SIGNING_KEY: &str = include_str!("../../../res/release-signing.pub.pem");
+pub const PUBLIC_KEY: &str = "RWQ4zzGqC5UvmPKuX8YgZPMhka9C7qvJVPnYqLgqqIx1NhBj3A451IRE";
 
-/// `SHA256SUMS.sig` in `dir` is `key`'s signature of `SHA256SUMS` there (`openssl pkeyutl`).
-pub fn signed(dir: &Path, key: &str) -> Result<(), String> {
-    let pem = dir.join("release-signing.pub.pem");
-    std::fs::write(&pem, key).map_err(|e| e.to_string())?;
-    let out = Command::new("openssl")
-        .args(["pkeyutl", "-verify", "-pubin", "-rawin", "-inkey"])
-        .arg(&pem)
-        .args(["-in", "SHA256SUMS", "-sigfile", "SHA256SUMS.sig"])
-        .current_dir(dir)
-        .output()
-        .map_err(|e| format!("openssl: {e}"))?;
-    match out.status.success() {
-        true => Ok(()),
-        false => Err(crate::why::NO_SIGNATURE.to_string()),
-    }
+/// `sums` signed by `key` (`sig`: the `.minisig` file's text).
+pub fn signed(sums: &[u8], sig: &str, key: &str) -> Result<(), String> {
+    let bad = |_| crate::why::NO_SIGNATURE.to_string();
+    let key = minisign_verify::PublicKey::from_base64(key).map_err(bad)?;
+    let sig = minisign_verify::Signature::decode(sig).map_err(bad)?;
+    key.verify(sums, &sig, false).map_err(bad)
 }
 
 /// `sha256sum -c --strict` of the `SHA256SUMS` in `dir` (the `.rpm` it lists is not downloaded):
@@ -173,13 +165,12 @@ pub fn download(tag: &str, dir: &Path) -> Result<(PathBuf, String), String> {
     }
     let base = format!("{REPO}/releases/download/{tag}");
     fetch(&format!("{base}/SHA256SUMS"), &dir.join("SHA256SUMS"))?;
-    fetch(
-        &format!("{base}/SHA256SUMS.sig"),
-        &dir.join("SHA256SUMS.sig"),
-    )
-    .map_err(|_| crate::why::NO_SIGNATURE.to_string())?;
-    signed(dir, SIGNING_KEY)?;
     let sums = std::fs::read_to_string(dir.join("SHA256SUMS")).map_err(|e| e.to_string())?;
+    let sig = dir.join("SHA256SUMS.minisig");
+    fetch(&format!("{base}/SHA256SUMS.minisig"), &sig)
+        .map_err(|_| crate::why::NO_SIGNATURE.to_string())?;
+    let sig = std::fs::read_to_string(sig).map_err(|_| crate::why::NO_SIGNATURE.to_string())?;
+    signed(sums.as_bytes(), &sig, PUBLIC_KEY)?;
     let name = deb_name(&sums, tag).ok_or("SHA256SUMS: no package")?;
     let hash = hash_of(&sums, &name)
         .ok_or("SHA256SUMS: no package")?
@@ -249,36 +240,32 @@ mod tests {
         assert!(!newer("0.18.0", "v0.18.0.0"));
     }
 
+    /// A key made for these tests (`minisign -G -W`) and its signature of `SUMS`.
+    const TEST_KEY: &str = "RWTT3cKIYkKL1VI9H4VmO1XqOK/H1y7Kcab5kFf2aiH35YnC/ftg5FR7";
+    const SUMS: &str = "abc  shagoff-commander_0.1.0_amd64.deb\n";
+    const SIG: &str = "untrusted comment: signature from minisign secret key
+RUTT3cKIYkKL1ZCdDDr2kJiRhcVNyfq4gielhG5dMipCQhzQ+3NB+e/n9Y11nKuClax8Lc77G3lgSLQBAMa54Q8tuNx1AbPMTgQ=
+trusted comment: shagoff-commander v0.1.0
+bKEqP+fmYtJTz2bPNzaDo8vkZFOCe3fMXSYn6Rhpq/UFzMUH5rc90LmG0DgJ+DAePJdyo9Yd0ldm3kf4XnHFBQ==
+";
+
     #[test]
     fn regression_update_needs_the_signature_of_our_key() {
-        let d = tempfile::tempdir().unwrap();
-        let (dir, key) = (d.path(), d.path().join("k.pem"));
-        let ssl = |args: &[&str]| {
-            let ok = Command::new("openssl")
-                .args(args)
-                .current_dir(dir)
-                .status()
-                .unwrap();
-            assert!(ok.success(), "{args:?}");
-        };
-        ssl(&["genpkey", "-algorithm", "ed25519", "-out", "k.pem"]);
-        ssl(&["pkey", "-in", "k.pem", "-pubout", "-out", "pub.pem"]);
-        let public = std::fs::read_to_string(dir.join("pub.pem")).unwrap();
-        std::fs::write(dir.join("SHA256SUMS"), "a  x.deb\n").unwrap();
-        assert!(signed(dir, &public).is_err()); // no signature
-        let sign = [
-            "pkeyutl",
-            "-sign",
-            "-rawin",
-            "-inkey",
-            key.to_str().unwrap(),
-        ];
-        ssl(&[&sign[..], &["-in", "SHA256SUMS", "-out", "SHA256SUMS.sig"]].concat());
-        assert_eq!(signed(dir, &public), Ok(()));
-        assert!(signed(dir, SIGNING_KEY).is_err()); // signed, but not by our key
-        std::fs::write(dir.join("SHA256SUMS"), "b  x.deb\n").unwrap();
-        assert!(signed(dir, &public).is_err()); // changed after signing
-        assert!(SIGNING_KEY.starts_with("-----BEGIN PUBLIC KEY-----"));
+        assert_eq!(signed(SUMS.as_bytes(), SIG, TEST_KEY), Ok(()));
+        let changed = SUMS.replace("abc", "abd");
+        assert!(
+            signed(changed.as_bytes(), SIG, TEST_KEY).is_err(),
+            "changed after signing"
+        );
+        assert!(
+            signed(SUMS.as_bytes(), SIG, PUBLIC_KEY).is_err(),
+            "not by our key"
+        );
+        assert!(
+            signed(SUMS.as_bytes(), "", TEST_KEY).is_err(),
+            "no signature"
+        );
+        assert!(minisign_verify::PublicKey::from_base64(PUBLIC_KEY).is_ok());
     }
 
     #[test]

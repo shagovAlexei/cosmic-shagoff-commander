@@ -70,7 +70,7 @@ deb: (build-release '--locked')
     Architecture: $arch
     Maintainer: Shagov Alexei <shagov.alexei@gmail.com>
     Installed-Size: $(du -sk "$root/usr" | cut -f1)
-    Depends: $libs, libglib2.0-bin, xdg-utils, curl, openssl
+    Depends: $libs, libglib2.0-bin, xdg-utils, curl
     Recommends: cosmic-edit, gvfs-backends, gvfs-fuse
     Section: utils
     Priority: optional
@@ -87,13 +87,14 @@ rpm: (build-release '--locked')
     mkdir -p target/man && gzip -9nc res/{{name}}.1 > target/man/{{name}}.1.gz
     cargo generate-rpm -p crates/app --auto-req builtin
 
-# Sign a draft release made by the `release` workflow and publish it (214a). The key is kept off
-# GitHub: ~/.config/shagoff-release/signing.pem (or SHAGOFF_SIGNING_KEY). The release must be of
-# our own tag, built by our workflow from it.
-sign-release tag:
+# Sign a draft release made by the `release` workflow and publish it (214a); the author runs it
+# after each tag (the key asks for its password). The key never leaves this machine; the app
+# installs nothing whose SHA256SUMS.minisig does not check (core::update::PUBLIC_KEY). Until the
+# releases 0.130.0 checks are gone, also the old openssl signature (SHA256SUMS.sig) it wants.
+# Sign release TAG and publish it
+sign-release tag key='~/.config/minisign/shagoff.key':
     #!/usr/bin/env bash
     set -euo pipefail
-    key=${SHAGOFF_SIGNING_KEY:-$HOME/.config/shagoff-release/signing.pem}
     repo=shagovAlexei/cosmic-shagoff-commander
     test "$(git rev-parse '{{tag}}^{commit}')" = "$(gh api "repos/$repo/commits/{{tag}}" --jq .sha)"
     d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
@@ -105,7 +106,15 @@ sign-release tag:
     else
         echo "gh has no 'attestation': provenance not checked" >&2
     fi
-    openssl pkeyutl -sign -rawin -inkey "$key" -in "$d/SHA256SUMS" -out "$d/SHA256SUMS.sig"
-    openssl pkeyutl -verify -pubin -rawin -inkey res/release-signing.pub.pem -in "$d/SHA256SUMS" -sigfile "$d/SHA256SUMS.sig"
-    gh release upload '{{tag}}' -R "$repo" "$d/SHA256SUMS.sig"
+    echo "Signing for {{tag}}:"; cat "$d/SHA256SUMS"
+    minisign -S -s {{key}} -m "$d/SHA256SUMS" -t "shagoff-commander {{tag}}"
+    minisign -Vq -p res/minisign.pub -m "$d/SHA256SUMS"
+    files=("$d/SHA256SUMS.minisig")
+    old=$HOME/.config/shagoff-release/signing.pem
+    if [ -f "$old" ]; then
+        openssl pkeyutl -sign -rawin -inkey "$old" -in "$d/SHA256SUMS" -out "$d/SHA256SUMS.sig"
+        files+=("$d/SHA256SUMS.sig")
+    fi
+    gh release upload '{{tag}}' -R "$repo" "${files[@]}" --clobber
     gh release edit '{{tag}}' -R "$repo" --draft=false --latest
+    echo "{{tag}} is out."

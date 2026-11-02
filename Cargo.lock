@@ -3243,6 +3243,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "minisign-verify"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "871285dc19d8d0ebe0eef3d0e99a205f2a71363b122632cbbfa4a6c370a960ce"
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4617,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-commander"
-version = "0.130.0"
+version = "0.130.1"
 dependencies = [
  "alacritty_terminal",
  "cosmic-text",
@@ -4641,7 +4647,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-core"
-version = "0.130.0"
+version = "0.130.1"
 dependencies = [
  "bzip2",
  "chardetng",
@@ -4653,6 +4659,7 @@ dependencies = [
  "md-5",
  "memchr",
  "mime_guess",
+ "minisign-verify",
  "percent-encoding",
  "png 0.18.1",
  "regex",
@@ -5020,7 +5027,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",
