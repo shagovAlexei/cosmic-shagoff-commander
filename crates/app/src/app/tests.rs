@@ -6279,10 +6279,9 @@ mod mount_tests {
     #[test]
     fn clouds_keep_the_installed_rclone_types() {
         let mut app = app_with(Config::default(), State::default());
-        let _ = app.update(Message::Clouds(
-            Vec::new(),
-            vec!["drive".into(), "s3".into()],
-        ));
+        let kinds = Some(vec!["drive".into(), "s3".into()]);
+        let _ = app.update(Message::Clouds(Vec::new(), kinds));
+        let _ = app.update(Message::Clouds(Vec::new(), None)); // accounts only, read again
         assert_eq!(app.cloud_kinds, ["drive", "s3"]);
     }
 

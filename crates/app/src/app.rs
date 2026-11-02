@@ -668,7 +668,8 @@ pub enum Message {
     /// The gvfs mounts, read in the background (`App::read_gvfs`).
     Gvfs(Vec<Drive>),
     /// The cloud accounts (`cloud::remotes`).
-    Clouds(Vec<cloud::Remote>, Vec<String>),
+    /// The cloud accounts and, when not read yet, the rclone types (`cloud::backends`).
+    Clouds(Vec<cloud::Remote>, Option<Vec<String>>),
     /// «Add account» of a plugin (its id).
     CloudAdd(&'static str),
     /// A sign-in's end: the new account's name.

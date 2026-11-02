@@ -1,5 +1,5 @@
-//! Cloud drives (215, 216): OneDrive, Google Drive, Dropbox, Box, Yandex Disk, pCloud, Google
-//! Photos, HiDrive through `rclone mount`. gvfs shows
+//! Cloud drives (215, 216) through `rclone mount`: the services of `PLUGINS`, signed in in the
+//! browser or through fields and rclone's questions (`create` / `answer`). gvfs shows
 //! Google Drive with object ids for names, so rclone it is: a FUSE dir with the real names, a
 //! plain path for everything else. An account is an rclone remote (`~/.config/rclone/rclone.conf`);
 //! a mount point `<root>/<plugin id>:<remote>` names its plugin, so drives and the switched-off

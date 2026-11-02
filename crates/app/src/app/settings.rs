@@ -309,8 +309,10 @@ impl App {
         if !matches!(self.drawer, Some(Drawer::Settings(_))) {
             return Task::none();
         }
+        // The types once: the same rclone till the next start.
+        let kinds = self.cloud_kinds.is_empty();
         blocking(
-            || Ok((cloud::remotes(), cloud::backends())),
+            move || Ok((cloud::remotes(), kinds.then(cloud::backends))),
             |r| {
                 let (remotes, kinds) = r.unwrap_or_default();
                 Message::Clouds(remotes, kinds)
