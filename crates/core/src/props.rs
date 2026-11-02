@@ -369,6 +369,19 @@ pub fn helper_args(
     v
 }
 
+/// The program pkexec may run as root for `HELPER`: `exe` (`current_exe`) only when it is
+/// installed in `/usr` and neither it nor a dir above it is anyone's but root's to change (a
+/// build in `target/` or `~/bin` would be a root program the user can swap).
+pub fn helper_exe(exe: &Path) -> Result<PathBuf, String> {
+    use std::os::unix::fs::MetadataExt;
+    let exe = exe.canonicalize().map_err(|e| e.to_string())?;
+    let safe = |p: &Path| fs::metadata(p).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0);
+    match exe.starts_with("/usr") && exe.ancestors().all(safe) {
+        true => Ok(exe),
+        false => Err(crate::why::UNSAFE_HELPER.to_string()),
+    }
+}
+
 /// `HELPER`'s side: parse `helper_args` (`args[0]` = `HELPER`) and `apply`. Returns the
 /// failures as lines, or why the arguments are wrong.
 pub fn run_helper(args: &[std::ffi::OsString]) -> Result<Vec<String>, String> {
@@ -628,6 +641,16 @@ mod tests {
         assert_eq!(mode_of(&top.join("sub/f")), 0o644);
         assert_eq!(mode_of(&outside), 0o600); // the link's target untouched
         assert_eq!(mode(&top.join("link")), None);
+    }
+
+    #[test]
+    fn regression_root_helper_only_from_usr() {
+        let d = tempfile::tempdir().unwrap();
+        let mine = d.path().join("shagoff-commander");
+        fs::write(&mine, "").unwrap();
+        assert!(helper_exe(&mine).is_err()); // the user's own build
+        let sh = Path::new("/usr/bin/sh").canonicalize().unwrap();
+        assert_eq!(helper_exe(Path::new("/usr/bin/sh")), Ok(sh));
     }
 
     #[test]

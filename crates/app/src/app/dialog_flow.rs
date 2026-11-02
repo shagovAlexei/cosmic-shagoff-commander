@@ -474,19 +474,22 @@ impl App {
                                     .map(|(p, e)| format!("{}: {e}", p.display()))
                                     .collect();
                             }
-                            let out = std::env::current_exe().and_then(|exe| {
-                                std::process::Command::new("pkexec")
-                                    .arg(exe)
-                                    .args(props::helper_args(
-                                        &paths,
-                                        uid,
-                                        gid,
-                                        (set, clear),
-                                        recursive,
-                                    ))
-                                    .stdin(std::process::Stdio::null())
-                                    .output()
-                            });
+                            let exe = std::env::current_exe().map_err(|e| e.to_string());
+                            let exe = match exe.and_then(|e| props::helper_exe(&e)) {
+                                Ok(exe) => exe,
+                                Err(e) => return vec![crate::why::message(&e)],
+                            };
+                            let out = std::process::Command::new("pkexec")
+                                .arg(exe)
+                                .args(props::helper_args(
+                                    &paths,
+                                    uid,
+                                    gid,
+                                    (set, clear),
+                                    recursive,
+                                ))
+                                .stdin(std::process::Stdio::null())
+                                .output();
                             match out {
                                 Err(e) => vec![format!("pkexec: {e}")],
                                 Ok(o) if o.status.success() => Vec::new(),
@@ -979,7 +982,8 @@ impl App {
             d @ (Dialog::Conflict { .. }
             | Dialog::Error { .. }
             | Dialog::DropMenu { .. }
-            | Dialog::Update { .. }) => {
+            | Dialog::Update { .. }
+            | Dialog::Crashed { .. }) => {
                 self.dialog = Some(d);
                 Task::none()
             }

@@ -7203,3 +7203,9 @@ fn the_terminal_cursor_takes_its_shape_and_blinks_only_when_focused() {
     let _ = app.update(Message::Setting(Setting::TermBlink(false)));
     assert!(!app.config.term_blink);
 }
+
+#[test]
+fn regression_terminal_output_does_not_set_the_clipboard_by_default() {
+    let app = app_with(Config::default(), State::default());
+    assert!(!app.config.term_clipboard);
+}

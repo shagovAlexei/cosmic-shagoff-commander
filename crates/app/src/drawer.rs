@@ -75,6 +75,7 @@ pub enum Setting {
     /// 0 block, 1 underline, 2 bar.
     TermCursor(u8),
     TermBlink(bool),
+    TermClipboard(bool),
     /// Index into [system, LANGUAGES…].
     Language(usize),
     Theme(usize),
@@ -500,6 +501,11 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
             .add(settings::item(
                 fl!("settings-term-blink"),
                 widget::toggler(c.term_blink).on_toggle(move |b| set(Setting::TermBlink(b))),
+            ))
+            .add(settings::item(
+                fl!("settings-term-clipboard"),
+                widget::toggler(c.term_clipboard)
+                    .on_toggle(move |b| set(Setting::TermClipboard(b))),
             ))
             .into(),
         settings::section()

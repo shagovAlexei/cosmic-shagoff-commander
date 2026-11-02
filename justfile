@@ -70,7 +70,7 @@ deb: (build-release '--locked')
     Architecture: $arch
     Maintainer: Shagov Alexei <shagov.alexei@gmail.com>
     Installed-Size: $(du -sk "$root/usr" | cut -f1)
-    Depends: $libs, libglib2.0-bin, xdg-utils, curl
+    Depends: $libs, libglib2.0-bin, xdg-utils, curl, openssl
     Recommends: cosmic-edit, gvfs-backends, gvfs-fuse
     Section: utils
     Priority: optional
@@ -86,3 +86,26 @@ deb: (build-release '--locked')
 rpm: (build-release '--locked')
     mkdir -p target/man && gzip -9nc res/{{name}}.1 > target/man/{{name}}.1.gz
     cargo generate-rpm -p crates/app --auto-req builtin
+
+# Sign a draft release made by the `release` workflow and publish it (214a). The key is kept off
+# GitHub: ~/.config/shagoff-release/signing.pem (or SHAGOFF_SIGNING_KEY). The release must be of
+# our own tag, built by our workflow from it.
+sign-release tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    key=${SHAGOFF_SIGNING_KEY:-$HOME/.config/shagoff-release/signing.pem}
+    repo=shagovAlexei/cosmic-shagoff-commander
+    test "$(git rev-parse '{{tag}}^{commit}')" = "$(gh api "repos/$repo/commits/{{tag}}" --jq .sha)"
+    d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+    gh release download '{{tag}}' -R "$repo" -p SHA256SUMS -p '*.deb' -p '*.rpm' -D "$d"
+    (cd "$d" && sha256sum -c --strict SHA256SUMS)
+    # Built by our workflow (gh ≥ 2.49 has `attestation`).
+    if gh attestation --help >/dev/null 2>&1; then
+        for f in "$d"/*.deb "$d"/*.rpm; do gh attestation verify "$f" -R "$repo" >/dev/null; done
+    else
+        echo "gh has no 'attestation': provenance not checked" >&2
+    fi
+    openssl pkeyutl -sign -rawin -inkey "$key" -in "$d/SHA256SUMS" -out "$d/SHA256SUMS.sig"
+    openssl pkeyutl -verify -pubin -rawin -inkey res/release-signing.pub.pem -in "$d/SHA256SUMS" -sigfile "$d/SHA256SUMS.sig"
+    gh release upload '{{tag}}' -R "$repo" "$d/SHA256SUMS.sig"
+    gh release edit '{{tag}}' -R "$repo" --draft=false --latest

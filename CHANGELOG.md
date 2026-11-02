@@ -2,6 +2,18 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.130.0 — 2026-11-02
+
+Security audit fixes (ROADMAP 214):
+- feat: updates install only a release whose `SHA256SUMS` is signed with the author's Ed25519 key kept off GitHub (`SHA256SUMS.sig`, checked by `openssl` before anything else; the package depends on `openssl`); releases are drafts until `just sign-release` signs them
+- fix: the update installs the very file it checked: root copies the `.deb` into its own temp dir and checks the hash there
+- feat: programs in the built-in terminal can no longer set the clipboard (OSC 52) unless Settings → Built-in terminal allows it; a note says one tried
+- feat: a crash is written to `~/.local/state/shagoff-commander/crash.log`; the next start offers to report it as a GitHub issue (opened in the browser, nothing sent by itself)
+- fix: the temp dirs in `~/.cache/shagoff-commander` (archives opened with F3 / F4, passwords too) are 0700
+- fix: Alt+Enter runs itself as root through pkexec only when installed in `/usr` by root
+- fix: unpacking a zip / 7z whose list says it will not fit in the free space asks first (Retry / Skip = anyway / Cancel)
+- ci: the build workflow's token can only read
+
 ## 0.129.1 — 2026-10-26
 
 - fix: the man page names Ctrl+Shift+` (keys to the built-in terminal and back)

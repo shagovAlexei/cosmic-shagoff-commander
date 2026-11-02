@@ -1422,13 +1422,22 @@ fn temp_root_in(cache: Option<std::ffi::OsString>, home: &Path) -> PathBuf {
 }
 
 /// A new empty `<root>/<pid>/<n>`: same-named files opened one after another never mix.
+/// All of it is 0700: what is unpacked there (from an archive with a password too) is ours only.
 pub fn fresh_temp_dir(root: &Path) -> io::Result<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let mine = root.join(std::process::id().to_string());
-    fs::create_dir_all(&mine)?;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&mine)?;
+    // Made by an older version (by the umask) or before by `create_dir_all`.
+    for d in [root, &mine] {
+        fs::set_permissions(d, fs::Permissions::from_mode(0o700))?;
+    }
     let mut n = 0u32;
     loop {
         let p = mine.join(n.to_string());
-        match fs::create_dir(&p) {
+        match fs::DirBuilder::new().mode(0o700).create(&p) {
             Ok(()) => return Ok(p),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
             Err(e) => return Err(e),
@@ -1553,12 +1562,52 @@ pub fn extract(
     run(std::slice::from_ref(&unit), dest, h)
 }
 
+/// What `units` take unpacked by the archives' own lists, when knowing it is cheap: a zip's or a
+/// 7z's, or an index already read (a tar.* would be decompressed once more just for it).
+fn declared(units: &[Unit]) -> Option<u64> {
+    let cached = |a: &Path| {
+        let cache = INDEX.lock().unwrap_or_else(|e| e.into_inner());
+        cache.as_ref().is_some_and(|(p, ..)| p == a)
+    };
+    (units.iter())
+        .map(|u| {
+            let name = u.archive.file_name()?.to_string_lossy().into_owned();
+            let cheap = matches!(Format::detect(&name)?, Format::Zip | Format::SevenZ);
+            if !cheap && !cached(&u.archive) {
+                return None;
+            }
+            let items = index(&u.archive).ok()?;
+            let wanted =
+                |i: &&Item| !i.dir && u.select.as_ref().is_none_or(|s| s.pick(&i.path).is_some());
+            Some(items.iter().filter(wanted).map(|i| i.size).sum::<u64>())
+        })
+        .sum()
+}
+
+/// A "zip bomb" (214h): what `units` say they unpack to does not fit in `dest`'s free space.
+/// Asked as an error: Retry once there is room, Skip unpacks anyway.
+fn room(units: &[Unit], dest: &Path, h: &mut dyn Handler) -> Result<(), bool> {
+    loop {
+        let (Some(need), Ok(st)) = (declared(units), rustix::fs::statvfs(dest)) else {
+            return Ok(());
+        };
+        if need <= st.f_bavail.saturating_mul(st.f_frsize) {
+            return Ok(());
+        }
+        match h.error(dest, &io::Error::other(crate::why::NO_ROOM)) {
+            ErrorChoice::Retry => {}
+            ErrorChoice::Skip => return Ok(()),
+            ErrorChoice::Cancel => return Err(true),
+        }
+    }
+}
+
 fn run(units: &[Unit], dest: &Path, h: &mut dyn Handler) -> Report {
     let mut report = Report::default();
-    let staging = match attempt(h, dest, || {
-        fs::create_dir_all(dest)?;
-        make_staging(dest)
-    }) {
+    let staging = match attempt(h, dest, || fs::create_dir_all(dest))
+        .and_then(|()| room(units, dest, h))
+        .and_then(|()| attempt(h, dest, || make_staging(dest)))
+    {
         Ok(s) => s,
         Err(cancel) => {
             report.cancelled = cancel;
@@ -2580,6 +2629,38 @@ mod tests {
     }
 
     #[test]
+    fn regression_unpack_knows_the_size_from_a_zips_list() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.zip");
+        let mut z = zip::ZipWriter::new(fs::File::create(&a).unwrap());
+        for (n, data) in [("a.txt", "hello"), ("d/b.txt", "abc")] {
+            z.start_file(n, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            io::Write::write_all(&mut z, data.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+        let unit = |select| Unit {
+            archive: a.clone(),
+            sub: None,
+            select,
+            done: Vec::new(),
+        };
+        assert_eq!(declared(&[unit(None)]), Some(8));
+        let d_only = Select {
+            inner: PathBuf::new(),
+            names: vec!["d".into()],
+        };
+        assert_eq!(declared(&[unit(Some(d_only))]), Some(3));
+        let t = d.path().join("t.tar");
+        evil_tar(&t, &[("f", tar::EntryType::Regular, "", b"x")]);
+        let tar = Unit {
+            archive: t,
+            ..unit(None)
+        };
+        assert_eq!(declared(&[unit(None), tar]), None); // not read through just to know
+    }
+
+    #[test]
     fn unpack_tar_into_dest() {
         let d = tempfile::tempdir().unwrap();
         let a = d.path().join("a.tar");
@@ -3510,6 +3591,20 @@ mod tests {
         assert!(!outside.join("pwned").exists());
         assert_eq!(names(&out), ["sel"]);
         assert_eq!(fs::read_to_string(out.join("sel/ok")).unwrap(), "1");
+    }
+
+    #[test]
+    fn regression_temp_dirs_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("shagoff-commander");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap(); // an old one
+        let p = fresh_temp_dir(&root).unwrap();
+        for dir in [&root, p.parent().unwrap(), &p] {
+            let mode = fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "{}", dir.display());
+        }
     }
 
     #[test]

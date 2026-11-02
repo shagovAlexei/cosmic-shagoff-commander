@@ -2397,7 +2397,10 @@ impl App {
                     Outcome::Exit => {
                         (self.term, self.term_full, self.term_ended) = (None, false, true);
                     }
-                    Outcome::Copy(text) => return cosmic::iced::clipboard::write(text),
+                    Outcome::Copy(text) if self.config.term_clipboard => {
+                        return cosmic::iced::clipboard::write(text);
+                    }
+                    Outcome::Copy(_) => self.say(StatusKind::Info, fl!("term-clipboard-blocked")),
                 }
             }
             Message::Gvfs(drives) => {
@@ -2629,13 +2632,13 @@ impl App {
                             // next start if this run dies.
                             let dir = archive::fresh_temp_dir(&archive::temp_root())
                                 .map_err(|e| e.to_string())?;
-                            let r =
-                                shagoff_core::update::download(&tag, &dir).and_then(
-                                    |deb| match stop.load(std::sync::atomic::Ordering::Relaxed) {
-                                        true => Err("cancelled".into()),
-                                        false => shagoff_core::update::install(&deb),
-                                    },
-                                );
+                            let r = shagoff_core::update::download(&tag, &dir).and_then(
+                                |(deb, hash)| match stop.load(std::sync::atomic::Ordering::Relaxed)
+                                {
+                                    true => Err("cancelled".into()),
+                                    false => shagoff_core::update::install(&deb, &hash),
+                                },
+                            );
                             let _ = std::fs::remove_dir_all(&dir);
                             r
                         })
@@ -2654,6 +2657,10 @@ impl App {
                 }
             }
             Message::OpenUrl(url) => {
+                // «Report» sends it once: the dialog's work is done.
+                if matches!(self.dialog, Some(Dialog::Crashed { .. })) {
+                    self.dialog = None;
+                }
                 if let Err(e) = spawn_detached(&["xdg-open".into(), url.into()]) {
                     log::warn!("xdg-open: {e}");
                 }

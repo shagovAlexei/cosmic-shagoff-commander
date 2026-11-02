@@ -40,4 +40,9 @@ reasons! {
     CRC_MISMATCH = "why-crc-mismatch",
         "joined, but the CRC does not match: a part is damaged or missing";
     MISSING_PART = "why-missing-part", "a part is missing: the numbers of the parts have a gap";
+    UNSAFE_HELPER = "why-unsafe-helper",
+        "the program is not installed in /usr by root: it is not run as root";
+    NO_ROOM = "why-no-room",
+        "the unpacked files would not fit in the free space (Skip: unpack anyway)";
+    NO_SIGNATURE = "why-no-signature", "the release has no valid signature: not installed";
 }

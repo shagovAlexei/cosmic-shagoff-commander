@@ -8,6 +8,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Reading the code is all a build needs (214g).
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
