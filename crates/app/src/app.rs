@@ -532,6 +532,8 @@ pub struct App {
     pub(crate) connecting: Option<(String, Arc<AtomicBool>)>,
     /// The cloud accounts (rclone remotes), read when the settings open and after a change.
     pub clouds: Vec<cloud::Remote>,
+    /// The installed rclone's storage types (`cloud::backends`); empty until read.
+    pub cloud_kinds: Vec<String>,
     /// A cloud sign-in under way: Esc sets it.
     cloud_cancel: Option<Arc<AtomicBool>>,
     /// A sign-in step through fields under way (`cloud::create` / `answer`): no other one
@@ -666,7 +668,8 @@ pub enum Message {
     /// The gvfs mounts, read in the background (`App::read_gvfs`).
     Gvfs(Vec<Drive>),
     /// The cloud accounts (`cloud::remotes`).
-    Clouds(Vec<cloud::Remote>),
+    /// The cloud accounts and, when not read yet, the rclone types (`cloud::backends`).
+    Clouds(Vec<cloud::Remote>, Option<Vec<String>>),
     /// «Add account» of a plugin (its id).
     CloudAdd(&'static str),
     /// A sign-in's end: the new account's name.
@@ -1487,6 +1490,7 @@ impl App {
             updating: None,
             connecting: None,
             clouds: Vec::new(),
+            cloud_kinds: Vec::new(),
             cloud_cancel: None,
             cloud_step: false,
             cmdline: String::new(),

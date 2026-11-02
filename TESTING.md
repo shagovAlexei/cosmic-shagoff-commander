@@ -1967,6 +1967,57 @@ mkdir -p /tmp/bomb && cd /tmp/bomb && head -c 20M /dev/zero > zeros && zip -q bi
 
 Уборка: Ctrl+Shift+F на подключённых облаках; лишние учётки — «Удалить» или `rclone config delete <имя>`; `rm /tmp/cloud-test*.txt /tmp/remotes-before.txt`; тестовые файлы в облаках удалить вручную.
 
+### Облака: MEGA, Proton Drive, iCloud Drive (0.134.0, 216c)
+
+Подготовка: `rclone version` (apt-овский 1.60.1 для шага 1); `rclone listremotes --long > /tmp/remotes-before.txt`; `echo test > /tmp/cloud-test.txt`. Нужны учётки MEGA, Proton Drive (лучше с 2FA) и Apple ID с включённым «Access iCloud Data on the Web»; MEGA — один раз войти в браузере, чтобы сервис создал ключи.
+
+**Со старым rclone (apt, 1.60)**
+
+Шаги:
+1. Ctrl+, → «Облака» → найти MEGA, Proton Drive, iCloud Drive.
+- [ ] У всех трёх вместо «Добавить учётную запись» надпись «Нужен rclone новее установленного» и ссылка «rclone.org».
+2. Нажать «rclone.org».
+- [ ] В браузере открылась https://rclone.org/install/.
+- [ ] Остальные сервисы (Dropbox, Nextcloud и т. д.) без изменений: «Добавить учётную запись» на месте.
+
+**Официальный rclone**
+
+Шаги:
+1. `sudo -v ; curl https://rclone.org/install.sh | sudo bash`, затем `rclone version`.
+- [ ] Версия не ниже 1.69.
+2. Закрыть и снова открыть настройки (Ctrl+, дважды) → «Облака».
+- [ ] У MEGA, Proton Drive и iCloud Drive появилась кнопка «Добавить учётную запись», надписи «Нужен rclone новее…» нет.
+
+**MEGA**
+
+Шаги:
+1. «Добавить учётную запись» у MEGA, ввести почту и неверный пароль, «Добавить».
+- [ ] Ошибка прямо в окне; `rclone listremotes` не содержит нового `mega`.
+2. Ввести верный пароль (поле кода 2FA — только если включена).
+- [ ] Учётка добавлена, в Alt+F1 есть диск MEGA.
+3. Alt+F1 → Enter на нём.
+- [ ] Монтируется, видны настоящие имена файлов; F5 `/tmp/cloud-test.txt` туда и F5 обратно в `/tmp` работают, содержимое совпадает.
+
+**Proton Drive**
+
+Шаги:
+1. «Добавить учётную запись» у Proton Drive: пользователь, пароль, код 2FA (пароль почтового ящика — только в режиме двух паролей), «Добавить».
+- [ ] Добавлена, диск монтируется, F5 туда и обратно работает.
+2. `grep -A6 '^\[protondrive' ~/.config/rclone/rclone.conf`
+- [ ] Есть `enable_caching = false`; пароль в файле обфусцирован (не открытый текст).
+
+**iCloud Drive**
+
+Шаги:
+1. «Добавить учётную запись» у iCloud Drive: Apple ID и пароль, «Добавить».
+- [ ] В том же окне появился вопрос про код двухфакторной проверки.
+2. Ввести код с устройства.
+- [ ] Учётка добавлена, диск монтируется, видны файлы iCloud Drive.
+3. Добавить ещё раз, на вопросе про код нажать «Отмена».
+- [ ] Окно закрылось; `rclone listremotes` не содержит нового `iclouddrive`.
+
+Уборка: Ctrl+Shift+F на подключённых облаках; лишние учётки — «Удалить» или `rclone config delete <имя>`; `rm /tmp/cloud-test*.txt /tmp/remotes-before.txt`; тестовые файлы в облаках удалить вручную. Вернуть apt-овский rclone: `sudo rm /usr/bin/rclone && sudo apt install --reinstall rclone` (install.sh кладёт официальный в `/usr/bin/rclone`).
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.

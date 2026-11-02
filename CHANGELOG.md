@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.134.0 — 2026-11-03
+
+- feat: clouds (216c): MEGA, Proton Drive, iCloud Drive (the 2FA code is rclone's question in the same dialog); a service the installed rclone lacks shows «Needs a newer rclone than the installed one» with a link to rclone.org/install instead of «Add account».
+
 ## 0.133.0 — 2026-11-02
 
 - feat: clouds (216b): Mail.ru Cloud, S3, Backblaze B2, Nextcloud / WebDAV, Koofr, Seafile, Zoho WorkDrive, Jottacloud — a dialog of fields and rclone's own questions, secrets obscured, the account checked with `rclone lsd` before it is kept
