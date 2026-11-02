@@ -1856,7 +1856,7 @@ mkdir -p /tmp/bomb && cd /tmp/bomb && head -c 20M /dev/zero > zeros && zip -q bi
 
 Шаги:
 1. Ctrl+, → «Облака».
-- [ ] Кроме OneDrive, Google Drive, Dropbox, Box есть «Яндекс Диск» (Yandex Disk), «pCloud», «Google Фото» (Google Photos), «HiDrive»; у каждого переключатель (включён) и «Добавить учётную запись».
+- [ ] Кроме OneDrive, Google Drive, Dropbox, Box есть «Yandex Disk», «pCloud», «Google Photos», «HiDrive» (названия сервисов не переводятся); у каждого переключатель (включён) и «Добавить учётную запись».
 
 **Яндекс Диск**
 
@@ -1884,6 +1884,7 @@ mkdir -p /tmp/bomb && cd /tmp/bomb && head -c 20M /dev/zero > zeros && zip -q bi
 1. «Добавить учётную запись» у Google Фото, войти и разрешить доступ; Alt+F1 → «Google Фото» → Enter.
 - [ ] В корне только `media`, `album`, `shared-album`, `upload` (и `feature`), без ошибок.
 2. Перейти в `upload`, F5 на `/tmp/cloud-photo.jpg`.
+- [ ] До копирования в `media/` нет снимков, загруженных не через rclone (API Google с марта 2025 их не показывает).
 - [ ] Копирование прошло, снимок появился в Google Фото (веб или приложение); оригинального качества нет (файл может быть меньше исходного).
 3. F8 на только что добавленном файле в `media`.
 - [ ] Удаление отказано с понятной ошибкой (файлы Google Фото можно только добавлять), снимок на месте.
