@@ -1,0 +1,318 @@
+//! Cloud drives (215): OneDrive, Google Drive, Dropbox, Box through `rclone mount`. gvfs shows
+//! Google Drive with object ids for names, so rclone it is: a FUSE dir with the real names, a
+//! plain path for everything else. An account is an rclone remote (`~/.config/rclone/rclone.conf`);
+//! a mount point `<root>/<plugin id>:<remote>` names its plugin, so drives and the switched-off
+//! filter come from `/proc/self/mounts` alone.
+
+use crate::drives::{self, Drive};
+use crate::mount::{self, Error, Volume};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Plugin {
+    pub id: &'static str,
+    pub name: &'static str,
+    /// rclone's storage type.
+    pub kind: &'static str,
+}
+
+pub const PLUGINS: &[Plugin] = &[
+    Plugin {
+        id: "onedrive",
+        name: "OneDrive",
+        kind: "onedrive",
+    },
+    Plugin {
+        id: "gdrive",
+        name: "Google Drive",
+        kind: "drive",
+    },
+    Plugin {
+        id: "dropbox",
+        name: "Dropbox",
+        kind: "dropbox",
+    },
+    Plugin {
+        id: "box",
+        name: "Box",
+        kind: "box",
+    },
+];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remote {
+    pub name: String,
+    pub plugin: &'static Plugin,
+}
+
+/// The remotes of our plugins' types from `rclone listremotes --long` (`name:   type` lines).
+pub fn parse_remotes(listremotes_long: &str) -> Vec<Remote> {
+    listremotes_long
+        .lines()
+        .filter_map(|l| {
+            let (name, kind) = l.rsplit_once(':')?;
+            let plugin = PLUGINS.iter().find(|p| p.kind == kind.trim())?;
+            Some(Remote {
+                name: name.to_string(),
+                plugin,
+            })
+        })
+        .collect()
+}
+
+/// A new account's name: the plugin's id, `id-2`, `id-3`… when taken.
+pub fn fresh_name(p: &Plugin, taken: &[Remote]) -> String {
+    let free = |n: &str| !taken.iter().any(|r| r.name == n);
+    if free(p.id) {
+        return p.id.to_string();
+    }
+    (2..)
+        .map(|i| format!("{}-{i}", p.id))
+        .find(|n| free(n))
+        .expect("a free name")
+}
+
+/// "OneDrive" for the account named after its plugin, else "OneDrive: work".
+pub fn label(p: &Plugin, remote: &str) -> String {
+    if remote == p.id {
+        p.name.to_string()
+    } else {
+        format!("{}: {remote}", p.name)
+    }
+}
+
+/// The mount point's name: `onedrive:work`.
+pub fn point_name(r: &Remote) -> String {
+    format!("{}:{}", r.plugin.id, r.name)
+}
+
+/// The plugin and remote a mount point's name stands for.
+pub fn of_point(name: &str) -> Option<(&'static Plugin, &str)> {
+    let (id, remote) = name.split_once(':')?;
+    Some((PLUGINS.iter().find(|p| p.id == id)?, remote))
+}
+
+/// Where the clouds are mounted: `$XDG_RUNTIME_DIR/shagoff-clouds`.
+pub fn root() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR").map(|r| PathBuf::from(r).join("shagoff-clouds"))
+}
+
+/// rclone mount points right under `root`, from `/proc/self/mounts`.
+pub fn mounted(mounts: &str, root: &Path) -> Vec<PathBuf> {
+    mounts
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let (_, point, fs) = (f.next()?, f.next()?, f.next()?);
+            let point = drives::unescape(point);
+            (fs == "fuse.rclone" && point.parent() == Some(root)).then_some(point)
+        })
+        .collect()
+}
+
+/// The accounts as volumes for Alt+F1 and the drive buttons: `device` is `rclone:<remote>`,
+/// `mount` its `file://` point when mounted.
+pub fn volumes(remotes: &[Remote], mounts: &str, root: &Path) -> Vec<Volume> {
+    let points = mounted(mounts, root);
+    remotes
+        .iter()
+        .map(|r| {
+            let point = root.join(point_name(r));
+            Volume {
+                name: label(r.plugin, &r.name),
+                device: format!("rclone:{}", r.name),
+                mount: points
+                    .contains(&point)
+                    .then(|| format!("file://{}", point.display())),
+            }
+        })
+        .collect()
+}
+
+/// A drive button per mounted cloud.
+pub fn drives(mounts: &str, root: &Path) -> Vec<Drive> {
+    mounted(mounts, root)
+        .into_iter()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            let (p, remote) = of_point(&name)?;
+            Some(Drive {
+                label: label(p, remote),
+                path,
+            })
+        })
+        .collect()
+}
+
+/// A cloud volume of a switched-off plugin.
+pub fn hidden_volume(v: &Volume, remotes: &[Remote], off: &[String]) -> bool {
+    v.device.strip_prefix("rclone:").is_some_and(|name| {
+        remotes
+            .iter()
+            .any(|r| r.name == name && off.iter().any(|o| o == r.plugin.id))
+    })
+}
+
+/// A cloud drive (mount point under `root`) of a switched-off plugin.
+pub fn hidden_drive(path: &Path, root: &Path, off: &[String]) -> bool {
+    path.parent() == Some(root)
+        && path
+            .file_name()
+            .and_then(|n| of_point(&n.to_string_lossy()).map(|(p, _)| p.id))
+            .is_some_and(|id| off.iter().any(|o| o == id))
+}
+
+/// `rclone` is in `PATH` (looked up, not run).
+pub fn installed() -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join("rclone").is_file()))
+}
+
+fn rclone<const N: usize>(args: [&str; N]) -> Command {
+    let mut c = Command::new("rclone");
+    c.args(args);
+    c
+}
+
+/// Our plugins' accounts; none without rclone or when it fails.
+pub fn remotes() -> Vec<Remote> {
+    if !installed() {
+        return Vec::new();
+    }
+    mount::talk(rclone(["listremotes", "--long"]), "")
+        .map(|s| parse_remotes(&s))
+        .unwrap_or_default()
+}
+
+/// Sign in: `rclone config create` opens the browser and waits for the provider's answer (minutes,
+/// so no timeout of ours: `cancel` kills it). rclone writes the remote before signing in, so a
+/// cancelled or failed one is removed again (else a remote with no token is left).
+pub fn add(p: &Plugin, name: &str, cancel: &Arc<AtomicBool>) -> Result<(), Error> {
+    let r = mount::talk_until(rclone(["config", "create", name, p.kind]), "", Some(cancel));
+    if r.is_err() {
+        let _ = forget(name);
+    }
+    r.map(drop)
+}
+
+/// Remove an account (its token only: the files in the cloud stay).
+pub fn forget(name: &str) -> Result<(), Error> {
+    mount::talk(rclone(["config", "delete", name]), "").map(drop)
+}
+
+/// Mount the account `name`; its mount point.
+pub fn mount(name: &str) -> Result<PathBuf, Error> {
+    let failed = |e: std::io::Error| Error::Failed(e.to_string());
+    let root = root().ok_or_else(|| Error::Failed("no XDG_RUNTIME_DIR".into()))?;
+    let remote = remotes()
+        .into_iter()
+        .find(|r| r.name == name)
+        .ok_or_else(|| Error::Failed(format!("{name}: no such rclone remote")))?;
+    let point = root.join(point_name(&remote));
+    // A point left by a crashed rclone ("Transport endpoint is not connected") mounts again.
+    let _ = fusermount(&point, true);
+    std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+        .create(&point)
+        .map_err(failed)?;
+    let target = format!("{name}:");
+    let mut c = rclone(["mount", &target]);
+    c.arg(&point)
+        .args(["--daemon", "--vfs-cache-mode", "writes"]);
+    mount::talk(c, "").map(|_| point)
+}
+
+/// Unmount a cloud and remove its mount point.
+pub fn unmount(point: &Path) -> Result<(), Error> {
+    fusermount(point, false)?;
+    let _ = std::fs::remove_dir(point);
+    Ok(())
+}
+
+fn fusermount(point: &Path, lazy: bool) -> Result<(), Error> {
+    let mut c = Command::new("fusermount");
+    c.arg(if lazy { "-uz" } else { "-u" }).arg(point);
+    mount::talk(c, "").map(drop)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REMOTES: &str = "gdrive:   drive\nmy drive: drive\nnas:      sftp\nonedrive: onedrive\n";
+
+    #[test]
+    fn parse_remotes_keeps_plugin_kinds() {
+        let r = parse_remotes(REMOTES);
+        let got: Vec<_> = r.iter().map(|r| (r.name.as_str(), r.plugin.id)).collect();
+        assert_eq!(
+            got,
+            [
+                ("gdrive", "gdrive"),
+                ("my drive", "gdrive"),
+                ("onedrive", "onedrive")
+            ]
+        );
+    }
+
+    #[test]
+    fn fresh_name_skips_taken() {
+        let r = parse_remotes(REMOTES);
+        assert_eq!(fresh_name(&PLUGINS[0], &r), "onedrive-2");
+        assert_eq!(fresh_name(&PLUGINS[2], &r), "dropbox");
+    }
+
+    #[test]
+    fn labels_and_points() {
+        let r = parse_remotes(REMOTES);
+        assert_eq!(label(r[0].plugin, "gdrive"), "Google Drive");
+        assert_eq!(label(r[1].plugin, "my drive"), "Google Drive: my drive");
+        assert_eq!(point_name(&r[1]), "gdrive:my drive");
+        let got = of_point("gdrive:my drive").map(|(p, n)| (p.id, n));
+        assert_eq!(got, Some(("gdrive", "my drive")));
+        assert!(of_point("sftp:host=nas").is_none());
+    }
+
+    #[test]
+    fn volumes_and_drives_from_mounts() {
+        let root = Path::new("/run/user/1000/shagoff-clouds");
+        // As the kernel writes it (checked 2026-11-02), a space as `\040`.
+        let mounts = "gdrive: /run/user/1000/shagoff-clouds/gdrive:gdrive fuse.rclone \
+                      rw,nosuid,nodev,relatime,user_id=1000,group_id=1000 0 0\n\
+                      my\\040drive: /run/user/1000/shagoff-clouds/gdrive:my\\040drive \
+                      fuse.rclone rw 0 0\n\
+                      /dev/sda1 /media/x ext4 rw 0 0\n\
+                      x: /tmp/elsewhere fuse.rclone rw 0 0\n";
+        let v = volumes(&parse_remotes(REMOTES), mounts, root);
+        assert_eq!(v[0].device, "rclone:gdrive");
+        assert_eq!(
+            v[0].mount.as_deref(),
+            Some("file:///run/user/1000/shagoff-clouds/gdrive:gdrive")
+        );
+        assert!(v[1].mount.is_some()); // my drive
+        assert_eq!(v[2].mount, None); // onedrive
+        let d = drives(mounts, root);
+        let labels: Vec<_> = d.iter().map(|d| d.label.as_str()).collect();
+        assert_eq!(labels, ["Google Drive", "Google Drive: my drive"]);
+    }
+
+    #[test]
+    fn hidden_only_for_switched_off() {
+        let r = parse_remotes(REMOTES);
+        let off = vec!["gdrive".to_string()];
+        let root = Path::new("/r/c");
+        let v = |d: &str| Volume {
+            name: String::new(),
+            device: d.into(),
+            mount: None,
+        };
+        assert!(hidden_volume(&v("rclone:gdrive"), &r, &off));
+        assert!(!hidden_volume(&v("rclone:onedrive"), &r, &off));
+        assert!(!hidden_volume(&v("/dev/sdb1"), &r, &off));
+        assert!(hidden_drive(Path::new("/r/c/gdrive:x"), root, &off));
+        assert!(!hidden_drive(Path::new("/r/c/onedrive:x"), root, &off));
+        assert!(!hidden_drive(Path::new("/media/gdrive:x"), root, &off));
+    }
+}
