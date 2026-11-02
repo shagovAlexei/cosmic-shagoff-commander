@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.132.0 — 2026-11-02
+
+- feat: clouds (216a): Yandex Disk, pCloud, Google Photos (adds only: API limits), HiDrive — browser sign-in like the first four
+
 ## 0.131.1 — 2026-11-02
 
 - fix: clouds — a cloud sign-in no longer outlives the program (a left one kept rclone's port 53682 and every next «Add account» failed with rclone's whole usage text); a taken port is now said plainly before anything is written, rclone errors are cut to their gist, a second «Add account» while one waits says so
