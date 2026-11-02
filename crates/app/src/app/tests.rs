@@ -6190,6 +6190,18 @@ mod mount_tests {
     }
 
     #[test]
+    fn regression_a_second_sign_in_waits_and_a_taken_port_is_said_plainly() {
+        let mut app = app_with(Config::default(), State::default());
+        app.cloud_cancel = Some(Arc::new(AtomicBool::new(false)));
+        let _ = app.update(Message::CloudAdd("box"));
+        assert_eq!(app.msg(), Some(fl!("cloud-busy").as_str()));
+        let busy = mount::Error::Failed(cloud::PORT_BUSY.into());
+        let _ = app.update(Message::CloudAdded(Err(busy)));
+        assert!(app.cloud_cancel.is_none());
+        assert_eq!(app.msg(), Some(fl!("cloud-port-busy").as_str()));
+    }
+
+    #[test]
     fn volumes_after_list_closed_are_dropped() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::Volumes(0, vec![volume("S", "/dev/sda1", None)]));

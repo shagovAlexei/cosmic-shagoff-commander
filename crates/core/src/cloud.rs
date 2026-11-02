@@ -209,16 +209,46 @@ pub fn remotes() -> Vec<Remote> {
 /// remote before signing in, so a cancelled or failed one is removed again (else a remote with no
 /// token is left) — safe, the name was nobody's.
 pub fn add(p: &Plugin, cancel: &Arc<AtomicBool>) -> Result<String, Error> {
+    // rclone waits for the browser on this port; taken, it fails with its whole usage text.
+    // Checked first, so no remote is written either.
+    if std::net::TcpListener::bind(AUTH_ADDR).is_err() {
+        return Err(Error::Failed(PORT_BUSY.into()));
+    }
     let name = fresh_name(p, &names(&run(rclone(["listremotes", "--long"]))?));
-    let r = mount::talk_until(
-        rclone(["config", "create", &name, p.kind]),
-        "",
-        Some(cancel),
-    );
+    let mut c = rclone(["config", "create", &name, p.kind]);
+    // Its own process group (cancel kills it), so it would outlive us still waiting on the port
+    // (the next sign-in then fails): it goes with the thread that started it, which waits for it.
+    // SAFETY: prctl is async-signal-safe.
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut c, || {
+            rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))
+                .map_err(Into::into)
+        });
+    }
+    let r = mount::talk_until(c, "", Some(cancel));
     if r.is_err() {
         let _ = forget(&name);
     }
-    r.map(|_| name)
+    r.map(|_| name).map_err(|e| match e {
+        Error::Failed(text) => Error::Failed(rclone_error(&text)),
+        e => e,
+    })
+}
+
+/// Where `rclone config create` waits for the provider's answer.
+pub const AUTH_ADDR: &str = "127.0.0.1:53682";
+
+/// `add`'s error when [`AUTH_ADDR`] is taken (the app shows its own text for it).
+pub const PORT_BUSY: &str = "rclone auth port busy";
+
+/// The gist of rclone's failure: its last `Error:` line without the timestamp, not the usage text
+/// it prints after a failed command.
+pub fn rclone_error(stderr: &str) -> String {
+    let gist = (stderr.lines().rev())
+        .filter_map(|l| l.split_once("Error: ").or_else(|| l.split_once("error: ")))
+        .map(|(_, e)| e.trim())
+        .next();
+    gist.unwrap_or(stderr.trim()).to_string()
 }
 
 /// Remove an account: unmount it first (a mount with no account would linger), then forget it.
@@ -316,6 +346,22 @@ mod tests {
         // An sftp remote named like the plugin is not replaced by the sign-in (review).
         let taken = names("box: sftp\nbox-2: s3\n");
         assert_eq!(fresh_name(&PLUGINS[3], &taken), "box-3");
+    }
+
+    #[test]
+    fn rclone_error_drops_the_usage_text() {
+        let stderr = "Error: config failed to refresh token: failed to start auth webserver: \
+                      listen tcp 127.0.0.1:53682: bind: address already in use\nUsage:\n  \
+                      rclone config create name type [key value]* [flags]\n\nFlags:\n  \
+                      --all   Ask the full set of config questions\n\n\
+                      2026/11/02 21:05:05 Fatal error: config failed to refresh token: failed to \
+                      start auth webserver: listen tcp 127.0.0.1:53682: bind: address already in use\n";
+        assert_eq!(
+            rclone_error(stderr),
+            "config failed to refresh token: failed to start auth webserver: listen tcp \
+             127.0.0.1:53682: bind: address already in use"
+        );
+        assert_eq!(rclone_error("plain failure\n"), "plain failure");
     }
 
     #[test]

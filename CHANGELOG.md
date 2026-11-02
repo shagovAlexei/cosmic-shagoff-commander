@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.131.1 — 2026-11-02
+
+- fix: clouds — a cloud sign-in no longer outlives the program (a left one kept rclone's port 53682 and every next «Add account» failed with rclone's whole usage text); a taken port is now said plainly before anything is written, rclone errors are cut to their gist, a second «Add account» while one waits says so
+
 ## 0.131.0 — 2026-11-02
 
 - feat: clouds (ROADMAP 215): OneDrive, Google Drive, Dropbox and Box through `rclone mount` — Settings → Clouds: a switch per plugin, «Add account» (sign-in in the browser, Esc cancels), «Remove»; an account is a drive in Alt+F1 / the drive buttons, Enter mounts it with the real file names, Ctrl+Shift+F unmounts. gvfs was tried first: it shows Google Drive with object ids for names

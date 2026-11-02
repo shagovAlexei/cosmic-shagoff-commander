@@ -1836,6 +1836,16 @@ mkdir -p /tmp/bomb && cd /tmp/bomb && head -c 20M /dev/zero > zeros && zip -q bi
 1. Ctrl+, → «Облака» → у `dropbox` (добавленной выше) «Удалить».
 - [ ] Строка пропала, `rclone listremotes` без неё, в Alt+F1 Dropbox нет; файлы в облаке не тронуты.
 
+**Вход не переживает программу (0.131.1)**
+
+Шаги:
+1. «Добавить учётную запись» у Box, в браузере не входить; закрыть программу (крестик окна).
+- [ ] `pgrep -af 'rclone config create'` — пусто, `ss -ltn | grep 53682` — пусто.
+2. Снова открыть программу, «Добавить учётную запись» у Google Drive.
+- [ ] Вход начинается (браузер), без ошибки.
+3. Пока он ждёт, в терминале: `rclone config create x box &` (займёт порт, если первый отменить Esc) — затем Esc в программе и снова «Добавить».
+- [ ] Внизу «Другой вход rclone ещё ждёт браузера (порт 53682 занят…)» одной строкой, без справки rclone; `rclone listremotes` — новой учётки нет. Уборка: `pkill -f 'rclone config create'`, `rclone config delete x`.
+
 Уборка: Ctrl+Shift+F на подключённых облаках; лишние учётки — «Удалить» или `rclone config delete <имя>`; `rm /tmp/cloud-test*.txt`.
 
 ## Регрессионные тесты
@@ -1989,4 +1999,5 @@ mkdir -p /tmp/bomb && cd /tmp/bomb && head -c 20M /dev/zero > zeros && zip -q bi
 | `regression_the_start_menu_has_submenus_but_no_empty_ones` | «Запуск»: пустое подменю (или из пустых) показывалось как пустая папка | 0.121.2 |
 | `regression_root_chmod_chown_never_go_through_a_link` | Alt+Enter от root: chmod / chown по пути могли уйти по ссылке, подменённой в чужом каталоге (например, на `/etc/shadow`) | 0.121.4 |
 | `regression_a_name_starting_with_a_dash_is_no_option` | Параметры кнопок: файл `-rf` подставлялся как ключ (`rm %S` → `rm -rf`) | 0.122.0 |
+| `regression_a_second_sign_in_waits_and_a_taken_port_is_said_plainly` | Облака: «Добавить учётную запись» при занятом порту 53682 (вход, оставшийся от прошлого запуска) выдавал всю справку rclone; вход rclone переживал закрытие программы | 0.131.1 |
 | `set_date_runs_in_the_background_and_says_what_failed` | «Изменить дату» с «И всё внутри» на большом дереве замораживало окно (`set_times` в потоке интерфейса) | 0.123.2 |
