@@ -2418,7 +2418,9 @@ impl App {
                 let Some(p) = cloud::PLUGINS.iter().find(|p| p.id == id) else {
                     return Task::none();
                 };
+                // One at a time: rclone waits for the browser on one port.
                 if self.cloud_cancel.is_some() {
+                    self.say(StatusKind::Busy, fl!("cloud-busy"));
                     return Task::none();
                 }
                 let cancel = Arc::new(AtomicBool::new(false));
@@ -2433,6 +2435,9 @@ impl App {
                     Ok(name) => self.say(StatusKind::Info, fl!("cloud-added", name = name)),
                     Err(mount::Error::Cancelled) => {
                         self.say(StatusKind::Info, fl!("connect-cancelled"))
+                    }
+                    Err(mount::Error::Failed(e)) if e == cloud::PORT_BUSY => {
+                        self.say(StatusKind::Error, fl!("cloud-port-busy"))
                     }
                     Err(e) => self.say(StatusKind::Error, mount_error(&e)),
                 }
