@@ -310,8 +310,11 @@ impl App {
             return Task::none();
         }
         blocking(
-            || Ok(cloud::remotes()),
-            |r| Message::Clouds(r.unwrap_or_default()),
+            || Ok((cloud::remotes(), cloud::backends())),
+            |r| {
+                let (remotes, kinds) = r.unwrap_or_default();
+                Message::Clouds(remotes, kinds)
+            },
         )
     }
 

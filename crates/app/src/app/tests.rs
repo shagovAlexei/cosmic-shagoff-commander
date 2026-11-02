@@ -6277,6 +6277,13 @@ mod mount_tests {
     }
 
     #[test]
+    fn clouds_keep_the_installed_rclone_types() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Clouds(Vec::new(), vec!["drive".into(), "s3".into()]));
+        assert_eq!(app.cloud_kinds, ["drive", "s3"]);
+    }
+
+    #[test]
     fn cloud_account_failure_keeps_the_fields_to_fix() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::CloudAdd("s3"));

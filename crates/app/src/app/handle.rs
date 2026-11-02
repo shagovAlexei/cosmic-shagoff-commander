@@ -2419,7 +2419,7 @@ impl App {
                     Outcome::Copy(_) => self.say(StatusKind::Info, fl!("term-clipboard-blocked")),
                 }
             }
-            Message::Clouds(remotes) => self.clouds = remotes,
+            Message::Clouds(remotes, kinds) => (self.clouds, self.cloud_kinds) = (remotes, kinds),
             Message::CloudAdd(id) => {
                 let Some(p) = cloud::PLUGINS.iter().find(|p| p.id == id) else {
                     return Task::none();

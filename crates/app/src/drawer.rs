@@ -12,6 +12,9 @@ use shagoff_core::archive::Format;
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
 /// Where "Support the project" leads: a Stripe Payment Link, which needs no server.
+/// rclone's own install page (a newer one than the distribution's).
+const RCLONE_INSTALL: &str = "https://rclone.org/install/";
+
 pub const DONATE_URL: &str = "https://donate.stripe.com/6oU28s8Ff7cR1342J967S00";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -555,6 +558,20 @@ fn clouds_section(app: &App, rclone: bool) -> Element<'_, Message> {
                 widget::button::destructive(fl!("cloud-forget"))
                     .on_press(Message::CloudForget(r.name.clone())),
             ));
+        }
+        // Not in the installed rclone (MEGA, Proton Drive, iCloud in Ubuntu's 1.60): where to
+        // get a newer one. Unknown while the list is read: offered.
+        let kinds = &app.cloud_kinds;
+        if !kinds.is_empty() && !kinds.iter().any(|k| k == p.kind) {
+            section = section.add(settings::item_row(vec![
+                widget::text::body(fl!("cloud-need-newer"))
+                    .width(Length::Fill)
+                    .into(),
+                widget::button::link("rclone.org".to_string())
+                    .on_press(Message::OpenUrl(RCLONE_INSTALL.to_string()))
+                    .into(),
+            ]));
+            continue;
         }
         section = section.add(settings::item_row(vec![
             widget::Space::new().width(Length::Fill).into(),

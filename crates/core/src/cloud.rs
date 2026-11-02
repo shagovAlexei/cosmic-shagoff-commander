@@ -157,7 +157,56 @@ pub const PLUGINS: &[Plugin] = &[
     },
     // Its login token is one of rclone's questions.
     typed("jottacloud", "Jottacloud", "jottacloud", &[]),
+    // Newer than the rclone of Ubuntu 24.04 (1.60): `backends` tells (216c).
+    typed(
+        "mega",
+        "MEGA",
+        "mega",
+        &[field("user"), secret("pass"), field("2fa")],
+    ),
+    Plugin {
+        // rclone: its cache is never cleared on changes made elsewhere; off under a mount.
+        preset: &[("enable_caching", "false")],
+        ..typed(
+            "protondrive",
+            "Proton Drive",
+            "protondrive",
+            &[
+                field("username"),
+                secret("password"),
+                field("2fa"),
+                secret("mailbox_password"),
+            ],
+        )
+    },
+    // The 2FA code is one of rclone's questions (`config_2fa`).
+    typed(
+        "iclouddrive",
+        "iCloud Drive",
+        "iclouddrive",
+        &[field("apple_id"), secret("password")],
+    ),
 ];
+
+/// The storage types of the installed rclone, from `rclone help backends` (two-space indented
+/// `name   description` lines).
+pub fn parse_backends(help: &str) -> Vec<String> {
+    (help.lines())
+        .take_while(|l| !l.starts_with("To see"))
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
+        .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+        .collect()
+}
+
+/// The installed rclone's storage types; none without rclone or when it fails.
+pub fn backends() -> Vec<String> {
+    if !installed() {
+        return Vec::new();
+    }
+    run(rclone(["help", "backends"]))
+        .map(|s| parse_backends(&s))
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Remote {
@@ -716,6 +765,15 @@ mod tests {
                 "hidden(p w)"
             ]
         );
+    }
+
+    #[test]
+    fn parse_backends_reads_rclone_help() {
+        // rclone 1.60.1, cut down.
+        let help = "All rclone backends:\n\n  alias        Alias for an existing remote\n  \
+                    yandex       Yandex Disk\n  zoho         Zoho\n\n\
+                    To see more info about a particular backend use:\n  rclone help backend <name>\n";
+        assert_eq!(parse_backends(help), ["alias", "yandex", "zoho"]);
     }
 
     #[test]
