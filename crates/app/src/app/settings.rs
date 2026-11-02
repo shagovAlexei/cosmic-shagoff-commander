@@ -24,6 +24,7 @@ impl App {
             Setting::TermRows(n) => c.term_rows = n,
             Setting::TermCursor(i) => c.term_cursor = i,
             Setting::TermBlink(b) => c.term_blink = b,
+            Setting::TermClipboard(b) => c.term_clipboard = b,
             Setting::Theme(i) => c.app_theme = config::AppTheme::ALL[i.min(2)],
             Setting::Skin(i) => c.skin = config::Skin::ALL[i.min(1)],
             Setting::Show(p, b) => *c.shown(p) = b,

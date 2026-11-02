@@ -46,10 +46,23 @@ fn main() -> cosmic::iced::Result {
         .env()
         .init()
         .ok();
+    // A crash is kept for the next start to offer as an issue (214c).
+    let crash = shagoff_core::crash::log_path();
+    let last_crash = crash.as_deref().and_then(shagoff_core::crash::take);
+    if let Some(log) = crash {
+        let default = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let thread = std::thread::current().name().unwrap_or("?").to_string();
+            let version = env!("CARGO_PKG_VERSION");
+            shagoff_core::crash::write(&log, &format!("{info}\n\nthread: {thread}, v{version}\n"));
+            default(info);
+        }));
+    }
     let software = pick_renderer();
     i18n::init(&i18n_embed::DesktopLanguageRequester::requested_languages());
     let flags = app::Flags {
         left: std::env::args_os().nth(1).map(Into::into),
+        last_crash,
     };
     let mut settings = cosmic::app::Settings::default()
         .size(cosmic::iced::Size::new(1200.0, 800.0))

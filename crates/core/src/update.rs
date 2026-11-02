@@ -98,6 +98,39 @@ pub fn deb_name(sums: &str, tag: &str) -> Option<String> {
         .then_some(want)
 }
 
+/// The SHA-256 of `name` in `sums`.
+pub fn hash_of<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
+    sums.lines().find_map(|l| {
+        let mut w = l.split_whitespace();
+        let (h, n) = (w.next()?, w.next()?);
+        (n.trim_start_matches('*') == name
+            && h.len() == 64
+            && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then_some(h)
+    })
+}
+
+/// The key releases are signed with (Ed25519; its private half is kept off GitHub, 214a): a
+/// stolen GitHub token can publish a release, not one this program installs.
+pub const SIGNING_KEY: &str = include_str!("../../../res/release-signing.pub.pem");
+
+/// `SHA256SUMS.sig` in `dir` is `key`'s signature of `SHA256SUMS` there (`openssl pkeyutl`).
+pub fn signed(dir: &Path, key: &str) -> Result<(), String> {
+    let pem = dir.join("release-signing.pub.pem");
+    std::fs::write(&pem, key).map_err(|e| e.to_string())?;
+    let out = Command::new("openssl")
+        .args(["pkeyutl", "-verify", "-pubin", "-rawin", "-inkey"])
+        .arg(&pem)
+        .args(["-in", "SHA256SUMS", "-sigfile", "SHA256SUMS.sig"])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| format!("openssl: {e}"))?;
+    match out.status.success() {
+        true => Ok(()),
+        false => Err(crate::why::NO_SIGNATURE.to_string()),
+    }
+}
+
 /// `sha256sum -c --strict` of the `SHA256SUMS` in `dir` (the `.rpm` it lists is not downloaded):
 /// Ok only when the files there match; else the line that says what did not.
 pub fn verify(dir: &Path) -> Result<(), String> {
@@ -131,30 +164,54 @@ fn fetch(url: &str, to: &Path) -> Result<(), String> {
     }
 }
 
-/// Release `tag`'s `SHA256SUMS` and the `.deb` it names into `dir` (curl, from this repository
-/// only), then `verify`. A package that does not match is deleted. Blocking.
-pub fn download(tag: &str, dir: &Path) -> Result<PathBuf, String> {
+/// Release `tag`'s signed `SHA256SUMS` (`signed`, before anything in it is trusted) and the
+/// `.deb` it names into `dir` (curl, from this repository only), then `verify`. A package that
+/// does not match is deleted. The package and its SHA-256. Blocking.
+pub fn download(tag: &str, dir: &Path) -> Result<(PathBuf, String), String> {
     if !valid_tag(tag) {
         return Err(format!("bad tag {tag}"));
     }
     let base = format!("{REPO}/releases/download/{tag}");
     fetch(&format!("{base}/SHA256SUMS"), &dir.join("SHA256SUMS"))?;
+    fetch(
+        &format!("{base}/SHA256SUMS.sig"),
+        &dir.join("SHA256SUMS.sig"),
+    )
+    .map_err(|_| crate::why::NO_SIGNATURE.to_string())?;
+    signed(dir, SIGNING_KEY)?;
     let sums = std::fs::read_to_string(dir.join("SHA256SUMS")).map_err(|e| e.to_string())?;
     let name = deb_name(&sums, tag).ok_or("SHA256SUMS: no package")?;
+    let hash = hash_of(&sums, &name)
+        .ok_or("SHA256SUMS: no package")?
+        .to_string();
     let deb = dir.join(&name);
     fetch(&format!("{base}/{name}"), &deb)?;
     if let Err(e) = verify(dir) {
         let _ = std::fs::remove_file(&deb);
         return Err(e);
     }
-    Ok(deb)
+    Ok((deb, hash))
 }
 
-/// `pkexec apt-get install` of the downloaded `.deb` (asks for the password itself). Blocking.
-pub fn install(deb: &Path) -> Result<(), String> {
+/// Run as root by `install` with `deb hash name`: the package is copied into a dir only root can
+/// write to and checked there, so the file installed is the one checked (214e: the one in
+/// `~/.cache` is the user's to change between the check and the install).
+pub const INSTALL_SCRIPT: &str = r#"set -e
+d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
+cp -- "$1" "$d/$3"
+echo "$2  $d/$3" | sha256sum -c --strict --quiet -
+apt-get install -y "$d/$3""#;
+
+/// `pkexec` `INSTALL_SCRIPT` for the downloaded `.deb` (`deb_name`'s, of SHA-256 `hash`); pkexec
+/// asks for the password itself. Blocking.
+pub fn install(deb: &Path, hash: &str) -> Result<(), String> {
+    let name = deb.file_name().ok_or("no package")?;
     let out = Command::new("pkexec")
-        .args(["apt-get", "install", "-y"])
+        .args(["/bin/sh", "-c", INSTALL_SCRIPT, "sh"])
         .arg(deb)
+        .arg(hash)
+        .arg(name)
         .output()
         .map_err(|e| format!("pkexec: {e}"))?;
     match out.status.success() {
@@ -190,6 +247,74 @@ mod tests {
         assert!(!newer("0.17.1", "v0.17.0"));
         assert!(!newer("0.17.0", "nightly"));
         assert!(!newer("0.18.0", "v0.18.0.0"));
+    }
+
+    #[test]
+    fn regression_update_needs_the_signature_of_our_key() {
+        let d = tempfile::tempdir().unwrap();
+        let (dir, key) = (d.path(), d.path().join("k.pem"));
+        let ssl = |args: &[&str]| {
+            let ok = Command::new("openssl")
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .unwrap();
+            assert!(ok.success(), "{args:?}");
+        };
+        ssl(&["genpkey", "-algorithm", "ed25519", "-out", "k.pem"]);
+        ssl(&["pkey", "-in", "k.pem", "-pubout", "-out", "pub.pem"]);
+        let public = std::fs::read_to_string(dir.join("pub.pem")).unwrap();
+        std::fs::write(dir.join("SHA256SUMS"), "a  x.deb\n").unwrap();
+        assert!(signed(dir, &public).is_err()); // no signature
+        let sign = [
+            "pkeyutl",
+            "-sign",
+            "-rawin",
+            "-inkey",
+            key.to_str().unwrap(),
+        ];
+        ssl(&[&sign[..], &["-in", "SHA256SUMS", "-out", "SHA256SUMS.sig"]].concat());
+        assert_eq!(signed(dir, &public), Ok(()));
+        assert!(signed(dir, SIGNING_KEY).is_err()); // signed, but not by our key
+        std::fs::write(dir.join("SHA256SUMS"), "b  x.deb\n").unwrap();
+        assert!(signed(dir, &public).is_err()); // changed after signing
+        assert!(SIGNING_KEY.starts_with("-----BEGIN PUBLIC KEY-----"));
+    }
+
+    #[test]
+    fn regression_installed_package_is_the_checked_copy() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let bin = d.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        // A stand-in apt-get: says what it was given and its bytes.
+        let apt = bin.join("apt-get");
+        std::fs::write(&apt, "#!/bin/sh\necho \"$3\"; cat \"$3\"\n").unwrap();
+        std::fs::set_permissions(&apt, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let deb = d.path().join("p.deb");
+        std::fs::write(&deb, "good\n").unwrap();
+        let real = Command::new("sha256sum").arg(&deb).output().unwrap();
+        let real = String::from_utf8_lossy(&real.stdout)[..64].to_string();
+        let run = |hash: &str| {
+            let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+            Command::new("sh")
+                .args(["-c", INSTALL_SCRIPT, "sh"])
+                .arg(&deb)
+                .args([hash, "p.deb"])
+                .env("PATH", path)
+                .output()
+                .unwrap()
+        };
+        let out = run(&real);
+        assert!(out.status.success());
+        let said = String::from_utf8_lossy(&out.stdout);
+        assert!(!said.contains(&*d.path().to_string_lossy()) && said.ends_with("/p.deb\ngood\n"));
+        assert!(!run(&"0".repeat(64)).status.success()); // another file's hash: not installed
+        assert_eq!(
+            hash_of(&format!("{real}  *p.deb\n"), "p.deb"),
+            Some(real.as_str())
+        );
+        assert_eq!(hash_of("short  p.deb\n", "p.deb"), None);
     }
 
     #[test]

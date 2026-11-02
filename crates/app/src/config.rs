@@ -141,6 +141,9 @@ pub struct Config {
     pub term_cursor: u8,
     /// … blinks while the terminal has the focus.
     pub term_blink: bool,
+    /// Programs in the built-in terminal may set the clipboard (OSC 52); off, any output
+    /// (`cat` of a stranger's file) could swap a copied command.
+    pub term_clipboard: bool,
     pub skin: Skin,
     /// TC "Select with right mouse button": a right click marks, a long press opens the menu;
     /// off: a right click opens the menu at once.
@@ -365,6 +368,7 @@ impl Default for Config {
             term_rows: 8,
             term_cursor: 0,
             term_blink: true,
+            term_clipboard: false,
             skin: Skin::Classic,
             right_marks: true,
             lister_window: true,

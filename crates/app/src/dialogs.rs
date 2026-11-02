@@ -73,6 +73,10 @@ pub enum Dialog {
     About {
         check: Option<shagoff_core::update::Status>,
     },
+    /// The last run crashed: send its report as a GitHub issue (the user reads it first), or not.
+    Crashed {
+        report: String,
+    },
     /// A newer release was found at start: update, skip it, or later.
     Update {
         tag: String,
@@ -2503,6 +2507,22 @@ pub fn view<'a>(
             .secondary_action(cancel)
             .into(),
         Dialog::About { check } => about(check.as_ref()),
+        Dialog::Crashed { report } => widget::dialog()
+            .title(fl!("crash-title"))
+            .body(fl!("crash-body"))
+            .control(
+                widget::container(widget::scrollable(widget::text::monotext(report.as_str())))
+                    .max_height(160.0)
+                    .class(cosmic::theme::Container::Card)
+                    .padding(8),
+            )
+            .primary_action(widget::button::suggested(fl!("crash-report")).on_press(
+                Message::OpenUrl(shagoff_core::crash::issue_url(crate::drawer::REPO, report)),
+            ))
+            .secondary_action(
+                widget::button::standard(fl!("about-close")).on_press(Message::DialogCancel),
+            )
+            .into(),
         Dialog::Update { tag, stage } => {
             let dlg = widget::dialog().title(fl!("update-dialog-title"));
             let body = |t: String| {

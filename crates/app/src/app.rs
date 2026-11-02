@@ -83,6 +83,8 @@ pub enum ListerWin {
 
 pub struct Flags {
     pub left: Option<PathBuf>,
+    /// The report the last run left when it crashed (`core::crash`).
+    pub last_crash: Option<String>,
 }
 
 /// Ctrl+F8's tree on a tab.
@@ -1037,6 +1039,9 @@ impl Application for App {
         }
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
         let volumes = app.refresh_volumes(true);
+        if let Some(report) = flags.last_crash {
+            app.dialog = Some(Dialog::Crashed { report });
+        }
         // At every start, in the background: a newer release opens the update dialog.
         let update = app.config.check_updates.then(|| {
             Task::perform(

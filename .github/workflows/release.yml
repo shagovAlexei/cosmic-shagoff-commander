@@ -91,7 +91,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           { echo '### SHA-256'; echo '```'; cat SHA256SUMS; echo '```'; } > sums.md
-          gh release create "$GITHUB_REF_NAME" target/deb/*.deb target/generate-rpm/*.rpm SHA256SUMS --generate-notes --notes-file sums.md
+          # A draft: the program installs only a release whose SHA256SUMS is signed with the key
+          # kept off GitHub (214a); `just sign-release vX.Y.Z` signs it there and publishes it.
+          gh release create "$GITHUB_REF_NAME" target/deb/*.deb target/generate-rpm/*.rpm SHA256SUMS --draft --generate-notes --notes-file sums.md
 
       # Keep the five newest releases; older ones go, tags with them.
       - name: Prune old releases
