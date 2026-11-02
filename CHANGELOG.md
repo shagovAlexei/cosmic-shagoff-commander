@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.131.0 — 2026-11-02
+
+- feat: clouds (ROADMAP 215): OneDrive, Google Drive, Dropbox and Box through `rclone mount` — Settings → Clouds: a switch per plugin, «Add account» (sign-in in the browser, Esc cancels), «Remove»; an account is a drive in Alt+F1 / the drive buttons, Enter mounts it with the real file names, Ctrl+Shift+F unmounts. gvfs was tried first: it shows Google Drive with object ids for names
+
 ## 0.130.1 — 2026-11-02
 
 - fix: updates are checked with minisign (`SHA256SUMS.minisig`, in the program by `minisign-verify`, as in ShagShell Secure) instead of the `openssl` program; the package no longer depends on `openssl`. The author signs each release with their own password-protected key

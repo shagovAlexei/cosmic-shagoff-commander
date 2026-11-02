@@ -72,6 +72,7 @@ deb: (build-release '--locked')
     Installed-Size: $(du -sk "$root/usr" | cut -f1)
     Depends: $libs, libglib2.0-bin, xdg-utils, curl
     Recommends: cosmic-edit, gvfs-backends, gvfs-fuse
+    Suggests: rclone
     Section: utils
     Priority: optional
     Homepage: https://github.com/shagovAlexei/cosmic-shagoff-commander

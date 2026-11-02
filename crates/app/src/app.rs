@@ -22,6 +22,7 @@ use cosmic::{Application, Element, widget};
 use shagoff_core::archive::{self, Format};
 use shagoff_core::checksum::{self, Algo, Check};
 use shagoff_core::clipboard::Kind as ClipKind;
+use shagoff_core::cloud;
 use shagoff_core::cmdline::{self, Cmd};
 use shagoff_core::drives::{self, Drive};
 use shagoff_core::format::{self, TimeZone};
@@ -529,6 +530,10 @@ pub struct App {
     updating: Option<PathBuf>,
     /// Ctrl+F in progress: (address, cancel flag set by Esc).
     pub(crate) connecting: Option<(String, Arc<AtomicBool>)>,
+    /// The cloud accounts (rclone remotes), read when the settings open and after a change.
+    pub clouds: Vec<cloud::Remote>,
+    /// A cloud sign-in under way: Esc sets it.
+    cloud_cancel: Option<Arc<AtomicBool>>,
     /// Command line under the panels (TC `path>`): its text, field id, history (last first).
     pub cmdline: String,
     pub(crate) cmd_id: widget::Id,
@@ -657,6 +662,15 @@ pub enum Message {
     Terminals(Vec<Terminal>, Option<usize>),
     /// The gvfs mounts, read in the background (`App::read_gvfs`).
     Gvfs(Vec<Drive>),
+    /// The cloud accounts (`cloud::remotes`).
+    Clouds(Vec<cloud::Remote>),
+    /// «Add account» of a plugin (its id).
+    CloudAdd(&'static str),
+    /// A sign-in's end: the account's name and the result.
+    CloudAdded(String, Result<(), mount::Error>),
+    /// «Remove» an account (its remote name).
+    CloudForget(String),
+    CloudForgot(Result<(), mount::Error>),
     Click(usize, usize),
     DoubleClick(usize, usize),
     /// Context menu "Open": like a double click, not like the Enter key (which runs a typed command).
@@ -1465,6 +1479,8 @@ impl App {
             shown_tabs: [0; 2],
             updating: None,
             connecting: None,
+            clouds: Vec::new(),
+            cloud_cancel: None,
             cmdline: String::new(),
             cmd_id: widget::Id::unique(),
             path_edit: None,

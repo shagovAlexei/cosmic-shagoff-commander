@@ -6153,6 +6153,46 @@ mod mount_tests {
     }
 
     #[test]
+    fn switched_off_cloud_plugin_hides_its_volumes() {
+        let mut app = app_with(Config::default(), State::default());
+        app.config.plugins_off = vec!["gdrive".into()];
+        let _ = app.update(Message::AllVolumes(vec![
+            volume("Google Drive", "rclone:gdrive:gdrive", None),
+            volume("OneDrive", "rclone:onedrive:onedrive", None),
+            volume("STICK", "/dev/sda1", None),
+        ]));
+        let shown: Vec<_> = app.volumes.iter().map(|v| v.device.as_str()).collect();
+        assert_eq!(shown, ["rclone:onedrive:onedrive", "/dev/sda1"]);
+    }
+
+    #[test]
+    fn cloud_plugin_switch_round_trips_through_config() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.set(Setting::Plugin("gdrive", false));
+        let _ = app.set(Setting::Plugin("gdrive", false));
+        assert_eq!(app.config.plugins_off, ["gdrive"]);
+        let _ = app.set(Setting::Plugin("gdrive", true));
+        assert!(app.config.plugins_off.is_empty());
+    }
+
+    #[test]
+    fn esc_stops_a_cloud_sign_in_before_closing_the_drawer() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::Settings));
+        let cancel = Arc::new(AtomicBool::new(false));
+        app.cloud_cancel = Some(cancel.clone());
+        let _ = app.update(Message::Escape(app.window_id()));
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(app.drawer.is_some());
+        let _ = app.update(Message::CloudAdded(
+            "gdrive".into(),
+            Err(mount::Error::Cancelled),
+        ));
+        assert!(app.cloud_cancel.is_none());
+        assert_eq!(app.msg(), Some(fl!("connect-cancelled").as_str()));
+    }
+
+    #[test]
     fn volumes_after_list_closed_are_dropped() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::Volumes(0, vec![volume("S", "/dev/sda1", None)]));

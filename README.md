@@ -24,7 +24,7 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 - Archives as folders: zip, tar.gz / bz2 / xz / zst, 7z — browse, copy in and out, pack / unpack (zip / 7z with a password, 7z names encrypted too if asked)
 - Built-in viewer (F3): text with wrap and code pages (guessed: Cyrillic 1251 / KOI8-R / 866, Western, Central European, Greek, Japanese, Chinese…), hex, images; quick view in the other panel (Ctrl+Q), also inside archives
 - Find files (masks or regex, text inside, size / date, inside archives), compare and synchronize folders, compare files side by side
-- Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs
+- Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs, clouds (OneDrive, Google Drive, Dropbox, Box) through rclone
 - Terminal of your choice (Commands → Terminal…: the system default or any installed one) opens in the panel's folder and runs Shift+Enter
 - Built-in terminal under the panels in place of the command line (Ctrl+` or View → Built-in terminal, off by default): follows the active panel's folder, Ctrl+O over the whole window, shell from Commands → Shell…; selecting with the mouse copies, the middle button pastes
 - View → «Window parts»: hide the button bar, drive buttons, tabs, path line, column headers, status bar, command line, F-key buttons; «Panel at 100 %» — one panel across the whole width, «Panels one above the other»

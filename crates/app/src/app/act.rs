@@ -92,7 +92,7 @@ impl App {
             }
             Action::Help | Action::Settings | Action::Donate => {
                 self.toggle_drawer(action);
-                return Task::none();
+                return self.read_clouds();
             }
             // Nothing set: the settings (left open if they are already).
             Action::F12 if self.config.f12.cmd.trim().is_empty() => {

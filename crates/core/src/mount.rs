@@ -292,7 +292,7 @@ pub fn answer(prompt: &str, password: &str, asked: &mut bool) -> Result<String, 
 }
 
 /// Run `cmd`, answering its prompts; stdout on success.
-pub(crate) fn talk(cmd: Command, password: &str) -> Result<String, Error> {
+fn talk(cmd: Command, password: &str) -> Result<String, Error> {
     talk_until(cmd, password, None)
 }
 
@@ -404,7 +404,11 @@ pub fn list() -> Result<Vec<Volume>, Error> {
     let mut out = talk(gio(["mount", "-li"]), "").map(|s| volumes(&s))?;
     if let Some(root) = crate::cloud::root() {
         let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
-        out.extend(crate::cloud::volumes(&crate::cloud::remotes(), &mounts, &root));
+        out.extend(crate::cloud::volumes(
+            &crate::cloud::remotes(),
+            &mounts,
+            &root,
+        ));
     }
     Ok(out)
 }

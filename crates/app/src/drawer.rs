@@ -35,6 +35,8 @@ pub struct SettingsForm {
     pub fonts: Vec<String>,
     /// «Find a font»: the families listed are those holding every word (any case).
     pub font_filter: String,
+    /// `rclone` installed: the clouds section lists the plugins, else says how to install it.
+    pub rclone: bool,
 }
 
 /// Indices of the `fonts` holding every word of `filter`, any case.
@@ -99,6 +101,8 @@ pub enum Setting {
     ThumbSize(u32),
     ThumbCache(bool),
     VerifyCopy(bool),
+    /// A cloud plugin (its id) switched on / off.
+    Plugin(&'static str, bool),
     ColSet(Vec<String>),
     ViewModes(Vec<crate::config::ViewMode>),
     /// Ctrl+W on the last tab goes home.
@@ -517,9 +521,49 @@ fn settings_view<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messag
                 }),
             ))
             .into(),
+        clouds_section(app, form.rclone),
     ])
     .spacing(16)
     .into()
+}
+
+/// Clouds (215): a switch per plugin, its accounts with «Remove», «Add account»; without rclone,
+/// the command that installs it.
+fn clouds_section(app: &App, rclone: bool) -> Element<'_, Message> {
+    let mut section = settings::section().title(fl!("settings-clouds"));
+    if !rclone {
+        return section
+            .add(settings::item(
+                fl!("settings-clouds-need-rclone"),
+                widget::text("sudo apt install rclone").font(cosmic::font::mono()),
+            ))
+            .into();
+    }
+    let off = &app.config.plugins_off;
+    for p in shagoff_core::cloud::PLUGINS {
+        let on = !off.iter().any(|o| o == p.id);
+        section = section.add(settings::item(
+            p.name,
+            widget::toggler(on).on_toggle(move |b| Message::Setting(Setting::Plugin(p.id, b))),
+        ));
+        if !on {
+            continue;
+        }
+        for r in app.clouds.iter().filter(|r| r.plugin.id == p.id) {
+            section = section.add(settings::item(
+                format!("    {}", r.name),
+                widget::button::destructive(fl!("cloud-forget"))
+                    .on_press(Message::CloudForget(r.name.clone())),
+            ));
+        }
+        section = section.add(settings::item_row(vec![
+            widget::Space::new().width(Length::Fill).into(),
+            widget::button::standard(fl!("cloud-add"))
+                .on_press(Message::CloudAdd(p.id))
+                .into(),
+        ]));
+    }
+    section.into()
 }
 
 /// F12: an internal command from the list, or an own program with parameters.

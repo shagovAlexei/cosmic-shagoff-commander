@@ -113,8 +113,8 @@ pub fn mounted(mounts: &str, root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The accounts as volumes for Alt+F1 and the drive buttons: `device` is `rclone:<remote>`,
-/// `mount` its `file://` point when mounted.
+/// The accounts as volumes for Alt+F1 and the drive buttons: `device` is `rclone:` + the mount
+/// point's name (`rclone:gdrive:work`), `mount` its `file://` point when mounted.
 pub fn volumes(remotes: &[Remote], mounts: &str, root: &Path) -> Vec<Volume> {
     let points = mounted(mounts, root);
     remotes
@@ -123,7 +123,7 @@ pub fn volumes(remotes: &[Remote], mounts: &str, root: &Path) -> Vec<Volume> {
             let point = root.join(point_name(r));
             Volume {
                 name: label(r.plugin, &r.name),
-                device: format!("rclone:{}", r.name),
+                device: format!("rclone:{}", point_name(r)),
                 mount: points
                     .contains(&point)
                     .then(|| format!("file://{}", point.display())),
@@ -148,12 +148,10 @@ pub fn drives(mounts: &str, root: &Path) -> Vec<Drive> {
 }
 
 /// A cloud volume of a switched-off plugin.
-pub fn hidden_volume(v: &Volume, remotes: &[Remote], off: &[String]) -> bool {
-    v.device.strip_prefix("rclone:").is_some_and(|name| {
-        remotes
-            .iter()
-            .any(|r| r.name == name && off.iter().any(|o| o == r.plugin.id))
-    })
+pub fn hidden_volume(v: &Volume, off: &[String]) -> bool {
+    (v.device.strip_prefix("rclone:"))
+        .and_then(of_point)
+        .is_some_and(|(p, _)| off.iter().any(|o| o == p.id))
 }
 
 /// A cloud drive (mount point under `root`) of a switched-off plugin.
@@ -177,12 +175,25 @@ fn rclone<const N: usize>(args: [&str; N]) -> Command {
     c
 }
 
+/// Run `c` with no stdin (with a pipe there, `rclone mount --daemon` never forks off and never
+/// mounts — checked); stdout, or stderr as the error.
+fn run(mut c: Command) -> Result<String, Error> {
+    let out = c.output().map_err(|e| Error::Failed(e.to_string()))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(Error::Failed(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ))
+    }
+}
+
 /// Our plugins' accounts; none without rclone or when it fails.
 pub fn remotes() -> Vec<Remote> {
     if !installed() {
         return Vec::new();
     }
-    mount::talk(rclone(["listremotes", "--long"]), "")
+    run(rclone(["listremotes", "--long"]))
         .map(|s| parse_remotes(&s))
         .unwrap_or_default()
 }
@@ -200,18 +211,16 @@ pub fn add(p: &Plugin, name: &str, cancel: &Arc<AtomicBool>) -> Result<(), Error
 
 /// Remove an account (its token only: the files in the cloud stay).
 pub fn forget(name: &str) -> Result<(), Error> {
-    mount::talk(rclone(["config", "delete", name]), "").map(drop)
+    run(rclone(["config", "delete", name])).map(drop)
 }
 
-/// Mount the account `name`; its mount point.
-pub fn mount(name: &str) -> Result<PathBuf, Error> {
+/// Mount the account a point name stands for (`gdrive:work`); its mount point.
+pub fn mount(point_name: &str) -> Result<PathBuf, Error> {
     let failed = |e: std::io::Error| Error::Failed(e.to_string());
     let root = root().ok_or_else(|| Error::Failed("no XDG_RUNTIME_DIR".into()))?;
-    let remote = remotes()
-        .into_iter()
-        .find(|r| r.name == name)
-        .ok_or_else(|| Error::Failed(format!("{name}: no such rclone remote")))?;
-    let point = root.join(point_name(&remote));
+    let (_, name) =
+        of_point(point_name).ok_or_else(|| Error::Failed(format!("{point_name}: not a cloud")))?;
+    let point = root.join(point_name);
     // A point left by a crashed rclone ("Transport endpoint is not connected") mounts again.
     let _ = fusermount(&point, true);
     std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
@@ -221,7 +230,7 @@ pub fn mount(name: &str) -> Result<PathBuf, Error> {
     let mut c = rclone(["mount", &target]);
     c.arg(&point)
         .args(["--daemon", "--vfs-cache-mode", "writes"]);
-    mount::talk(c, "").map(|_| point)
+    run(c).map(|_| point)
 }
 
 /// Unmount a cloud and remove its mount point.
@@ -234,7 +243,7 @@ pub fn unmount(point: &Path) -> Result<(), Error> {
 fn fusermount(point: &Path, lazy: bool) -> Result<(), Error> {
     let mut c = Command::new("fusermount");
     c.arg(if lazy { "-uz" } else { "-u" }).arg(point);
-    mount::talk(c, "").map(drop)
+    run(c).map(drop)
 }
 
 #[cfg(test)]
@@ -286,7 +295,7 @@ mod tests {
                       /dev/sda1 /media/x ext4 rw 0 0\n\
                       x: /tmp/elsewhere fuse.rclone rw 0 0\n";
         let v = volumes(&parse_remotes(REMOTES), mounts, root);
-        assert_eq!(v[0].device, "rclone:gdrive");
+        assert_eq!(v[0].device, "rclone:gdrive:gdrive");
         assert_eq!(
             v[0].mount.as_deref(),
             Some("file:///run/user/1000/shagoff-clouds/gdrive:gdrive")
@@ -300,7 +309,6 @@ mod tests {
 
     #[test]
     fn hidden_only_for_switched_off() {
-        let r = parse_remotes(REMOTES);
         let off = vec!["gdrive".to_string()];
         let root = Path::new("/r/c");
         let v = |d: &str| Volume {
@@ -308,9 +316,9 @@ mod tests {
             device: d.into(),
             mount: None,
         };
-        assert!(hidden_volume(&v("rclone:gdrive"), &r, &off));
-        assert!(!hidden_volume(&v("rclone:onedrive"), &r, &off));
-        assert!(!hidden_volume(&v("/dev/sdb1"), &r, &off));
+        assert!(hidden_volume(&v("rclone:gdrive:my drive"), &off));
+        assert!(!hidden_volume(&v("rclone:onedrive:onedrive"), &off));
+        assert!(!hidden_volume(&v("/dev/sdb1"), &off));
         assert!(hidden_drive(Path::new("/r/c/gdrive:x"), root, &off));
         assert!(!hidden_drive(Path::new("/r/c/onedrive:x"), root, &off));
         assert!(!hidden_drive(Path::new("/media/gdrive:x"), root, &off));
