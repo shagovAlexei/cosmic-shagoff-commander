@@ -29,8 +29,8 @@ pub fn shared() -> &'static Owners {
 impl Owners {
     /// Read once at start. ponytail: local files only; LDAP/NIS users show as numbers.
     pub fn load() -> Self {
-        let read = |p| {
-            std::fs::read_to_string(p)
+        let read = |p: &str| {
+            std::fs::read_to_string(crate::host::path(std::path::Path::new(p)))
                 .map(|t| parse(&t))
                 .unwrap_or_default()
         };

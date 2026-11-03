@@ -635,8 +635,10 @@ pub(super) fn dir_input(dir: &Path) -> String {
 
 /// Run `argv` without blocking the UI or leaving a zombie.
 pub(super) fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
-    let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
-    let child = std::process::Command::new(prog).args(args).spawn()?;
+    if argv.is_empty() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    let child = shagoff_core::host::command_in(argv, None).spawn()?;
     reap(child);
     Ok(())
 }
@@ -658,10 +660,10 @@ pub(super) fn scan_terminals() -> Task<Message> {
 /// A command line in `dir`, its output dropped (TC closes the console too).
 pub(super) fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
     use std::process::Stdio;
-    let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
-    let child = std::process::Command::new(prog)
-        .args(args)
-        .current_dir(dir)
+    if argv.is_empty() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    let child = shagoff_core::host::command_in(argv, Some(dir))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -692,10 +694,10 @@ pub(super) fn file_in_its_dir(path: &Path) -> Option<String> {
 pub(super) fn run_watched(argv: &[String], dir: &Path) -> std::io::Result<Task<Message>> {
     use std::io::BufRead;
     use std::process::Stdio;
-    let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
-    let mut child = std::process::Command::new(prog)
-        .args(args)
-        .current_dir(dir)
+    if argv.is_empty() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    let mut child = shagoff_core::host::command_in(argv, Some(dir))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

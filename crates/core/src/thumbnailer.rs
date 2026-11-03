@@ -131,11 +131,7 @@ fn parse(text: &str) -> Option<Thumbnailer> {
 
 /// `prog` as a path, or found on `$PATH`.
 fn installed(prog: &str) -> bool {
-    if prog.contains('/') {
-        return Path::new(prog).is_file();
-    }
-    std::env::var_os("PATH")
-        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(prog).is_file()))
+    crate::host::which(prog).is_some()
 }
 
 /// `exec`'s arguments for making `out` (a PNG, `size` px) of `input`: `%i` its path, `%u` its URI,
@@ -225,9 +221,10 @@ fn bwrap_base() -> &'static [OsString] {
         }
         // Merged /usr: links to it; else the dirs themselves.
         for d in ["/lib", "/lib64", "/lib32", "/bin", "/sbin"] {
-            match std::fs::read_link(d) {
+            let host = crate::host::path(Path::new(d));
+            match std::fs::read_link(&host) {
                 Ok(to) => a.extend(["--symlink".into(), to.into(), d.into()]),
-                Err(_) if Path::new(d).is_dir() => a.extend(s(&["--ro-bind", d, d])),
+                Err(_) if host.is_dir() => a.extend(s(&["--ro-bind", d, d])),
                 Err(_) => {}
             }
         }
@@ -241,15 +238,8 @@ pub fn in_system(exec: &str) -> bool {
     let Some(prog) = crate::terminals::exec_words(exec).into_iter().next() else {
         return false;
     };
-    let path = match prog.contains('/') {
-        true => Some(PathBuf::from(&prog)),
-        false => std::env::var_os("PATH").and_then(|p| {
-            std::env::split_paths(&p)
-                .map(|d| d.join(&prog))
-                .find(|p| p.is_file())
-        }),
-    };
-    (path.and_then(|p| p.canonicalize().ok())).is_some_and(|p| p.starts_with("/usr/"))
+    (crate::host::which(&prog).and_then(|p| crate::host::canonicalize(&p)))
+        .is_some_and(|p| p.starts_with("/usr/"))
 }
 
 /// The picture a thumbnailer left at `out`, read without trusting it: not through a link, only a
@@ -299,13 +289,13 @@ pub fn bwrap_works() -> bool {
 /// Runs `argv` (no input, output dropped) for at most `timeout`; true if it exited fine. Its own
 /// process group, all killed on timeout: a worker it started must not write the output later.
 pub fn run(argv: &[OsString], timeout: Duration) -> bool {
-    use std::process::{Command, Stdio};
-    let Some((prog, rest)) = argv.split_first() else {
+    use std::process::Stdio;
+    if argv.is_empty() {
         return false;
-    };
-    let mut cmd = Command::new(prog);
+    }
+    let mut cmd = crate::host::command_in(argv, None);
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let child = (cmd.args(rest))
+    let child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -320,8 +310,15 @@ pub fn run(argv: &[OsString], timeout: Duration) -> bool {
             Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(50)),
             _ => {
                 if let Some(g) = rustix::process::Pid::from_raw(child.id() as i32) {
-                    let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
+                    crate::host::kill_group(g);
                 }
+                // Inside, `flatpak-spawn` waits for the host program TERM was passed to: one
+                // that ignores it is left there, not waited for.
+                let end = Instant::now() + Duration::from_secs(1);
+                while matches!(child.try_wait(), Ok(None)) && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                let _ = child.kill();
                 let _ = child.wait();
                 return false;
             }

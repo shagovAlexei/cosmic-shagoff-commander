@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.137.0 — 2026-11-03
+
+- feat: flatpak (218): `flatpak/` manifest for the COSMIC flatpak repo (pop-os/cosmic-flatpak); inside it every program (gio, rclone, terminals, F4 editor, command line, toolbar buttons, thumbnailers) runs on the host through `flatpak-spawn --host`, the built-in terminal under `script` on a host pty; settings, tabs and trash are the same as the .deb's; no update check there (flatpak updates it)
+
 ## 0.136.0 — 2026-11-03
 
 - feat: find duplicate files (217): Alt+F7 → «Find duplicates» by same name / size / contents (SHA-256), groups divided by a line, «To panel» lists them all

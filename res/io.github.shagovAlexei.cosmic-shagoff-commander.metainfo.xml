@@ -5,8 +5,59 @@
   <project_license>GPL-3.0-only</project_license>
   <name>Shagoff Commander</name>
   <summary>Dual-pane file manager in the spirit of Total Commander</summary>
-  <developer id="io.github.shagovAlexei"><name>Shagov Alexei</name></developer>
+  <developer id="io.github.shagovalexei"><name>Shagov Alexei</name></developer>
   <url type="homepage">https://github.com/shagovAlexei/cosmic-shagoff-commander</url>
+  <description>
+    <p>A dual-pane file manager in the spirit of Total Commander, built with libcosmic for the COSMIC desktop. Total Commander keys and layout: F3–F8, marking with Insert and Space, quick search, tabs, history and hotlist.</p>
+    <ul>
+      <li>Copy, move and delete with conflict answers, trash, clipboard shared with COSMIC Files</li>
+      <li>Archives as folders: zip, tar.gz / bz2 / xz / zst, 7z, with passwords</li>
+      <li>Built-in viewer for text, hex and images, with code pages</li>
+      <li>Find files and duplicates, compare and synchronize folders, compare files side by side</li>
+      <li>Network mounts through gvfs and clouds (OneDrive, Google Drive, Dropbox, MEGA, Proton Drive and more) through rclone</li>
+      <li>Built-in terminal that follows the panel, command line, toolbar buttons, multi-rename</li>
+    </ul>
+    <p>A file manager needs the whole system: this flatpak sees all files and runs programs (open with, terminals, mounts, clouds, the command line) on the host.</p>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/shagovAlexei/cosmic-shagoff-commander/main/res/screenshots/classic.png</image>
+      <caption>Classic look: toolbar, drive drop-down, two panels with tabs</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/shagovAlexei/cosmic-shagoff-commander/main/res/screenshots/modern.png</image>
+      <caption>Modern look: drive buttons, breadcrumbs, panels as cards</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/shagovAlexei/cosmic-shagoff-commander/main/res/screenshots/find.png</image>
+      <caption>Find files</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/shagovAlexei/cosmic-shagoff-commander/main/res/screenshots/pack.png</image>
+      <caption>Packing files into an archive</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/shagovAlexei/cosmic-shagoff-commander/main/res/screenshots/terminal.png</image>
+      <caption>Built-in terminal under the panels</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/shagovAlexei/cosmic-shagoff-commander/main/res/screenshots/clouds.png</image>
+      <caption>Cloud accounts through rclone</caption>
+    </screenshot>
+  </screenshots>
+  <url type="bugtracker">https://github.com/shagovAlexei/cosmic-shagoff-commander/issues</url>
+  <url type="vcs-browser">https://github.com/shagovAlexei/cosmic-shagoff-commander</url>
+  <url type="donation">https://donate.stripe.com/6oU28s8Ff7cR1342J967S00</url>
+  <content_rating type="oars-1.1"/>
+  <branding>
+    <color type="primary" scheme_preference="light">#8fd6e8</color>
+    <color type="primary" scheme_preference="dark">#1d4a57</color>
+  </branding>
+  <releases>
+    <release version="0.137.0" date="2026-11-03">
+      <description><p>Flatpak: programs run on the host, the built-in terminal under script on a host pty.</p></description>
+    </release>
+  </releases>
   <launchable type="desktop-id">io.github.shagovAlexei.cosmic-shagoff-commander.desktop</launchable>
   <provides><binary>shagoff-commander</binary></provides>
 </component>

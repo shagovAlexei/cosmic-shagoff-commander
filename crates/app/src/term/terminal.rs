@@ -191,6 +191,8 @@ pub struct Terminal {
     search_regex_opt: Option<RegexSearch>,
     search_value: String,
     shell_pid: Option<u32>,
+    /// Inside a flatpak: `script`'s pid file, told of a resize by hand (`host::winch`).
+    pub host_shell: Option<PathBuf>,
     size: Size,
     use_bright_bold: bool,
     zoom_adj: i8,
@@ -286,6 +288,7 @@ impl Terminal {
             search_regex_opt: None,
             search_value: String::new(),
             shell_pid,
+            host_shell: None,
             size,
             term,
             use_bright_bold,
@@ -442,6 +445,9 @@ impl Terminal {
             self.size.height = height.max(min_height);
 
             self.notifier.on_resize(self.size.into());
+            if let Some(pidfile) = &self.host_shell {
+                shagoff_core::host::winch(pidfile);
+            }
             self.term.lock().resize(self.size);
 
             self.with_buffer_mut(|buffer| {

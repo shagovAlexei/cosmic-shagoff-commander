@@ -328,8 +328,7 @@ pub(crate) fn talk_until(
         std::thread::spawn(move || {
             while !done.load(Ordering::Relaxed) {
                 if c.load(Ordering::Relaxed) {
-                    let _ =
-                        rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+                    crate::host::kill_group(group);
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -366,7 +365,10 @@ pub(crate) fn talk_until(
     drop(stdin);
     done.store(true, Ordering::Relaxed);
     if let Some(e) = aborted {
-        let _ = child.kill();
+        match group {
+            Some(g) => crate::host::kill_group(g),
+            None => drop(child.kill()),
+        }
         let _ = child.wait();
         return Err(e);
     }
@@ -391,18 +393,16 @@ pub(crate) fn talk_until(
 
 /// gio with English prompts (we parse them) and no stdin of ours.
 fn gio<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(args: I) -> Command {
-    let mut c = Command::new("gio");
-    c.args(args)
-        .env_remove("LC_ALL")
-        .env_remove("LANGUAGE")
-        .env("LC_MESSAGES", "C");
+    let mut c = crate::host::command("env");
+    c.args(["-u", "LC_ALL", "-u", "LANGUAGE", "LC_MESSAGES=C", "gio"])
+        .args(args);
     c
 }
 
 /// The volumes gio knows (`gio mount -li`), then the cloud accounts (215).
 pub fn list() -> Result<Vec<Volume>, Error> {
     let gio = talk(gio(["mount", "-li"]), "").map(|s| volumes(&s));
-    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    let mounts = crate::host::mounts();
     let clouds = (crate::cloud::root())
         .map(|root| crate::cloud::volumes(&crate::cloud::remotes(), &mounts, &root))
         .unwrap_or_default();
