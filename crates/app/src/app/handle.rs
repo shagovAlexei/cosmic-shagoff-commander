@@ -2734,6 +2734,7 @@ impl App {
             Message::CloseDrawer => self.set_drawer(None),
             Message::FocusNext => return cosmic::iced::widget::operation::focus_next(),
             Message::Setting(s) => return self.set(s),
+            Message::ShowChangelog => self.dialog = Some(Dialog::Changelog),
             Message::CheckUpdate => {
                 use shagoff_core::update::{Status, check};
                 if let Some(Dialog::About { check }) = &mut self.dialog {

@@ -2299,3 +2299,4 @@ mkdir -p /tmp/fp && echo text > /tmp/fp/a.txt && printf '\x7fELF' > /tmp/fp/bin
 | `regression_a_name_starting_with_a_dash_is_no_option` | Параметры кнопок: файл `-rf` подставлялся как ключ (`rm %S` → `rm -rf`) | 0.122.0 |
 | `regression_a_second_sign_in_waits_and_a_taken_port_is_said_plainly` | Облака: «Добавить учётную запись» при занятом порту 53682 (вход, оставшийся от прошлого запуска) выдавал всю справку rclone; вход rclone переживал закрытие программы | 0.131.1 |
 | `set_date_runs_in_the_background_and_says_what_failed` | «Изменить дату» с «И всё внутри» на большом дереве замораживало окно (`set_times` в потоке интерфейса) | 0.123.2 |
+| `regression_about_changelog_button_opens_it` | Кнопка «Журнал изменений» в «О программе» ничего не делала (открытое окно забирает клавиши, а кнопка слала клавишное действие) | 0.139.1 |
