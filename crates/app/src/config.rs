@@ -515,6 +515,8 @@ pub struct FindPrefs {
     pub regex: bool,
     pub name_regex: bool,
     pub archives: bool,
+    pub dupes: bool,
+    pub dup_by: shagoff_core::search::Dupes,
     /// As typed: KB, KB, days.
     pub min_size: String,
     pub max_size: String,
@@ -533,6 +535,8 @@ impl Default for FindPrefs {
             regex: false,
             name_regex: false,
             archives: false,
+            dupes: false,
+            dup_by: Default::default(),
             min_size: String::new(),
             max_size: String::new(),
             days: String::new(),

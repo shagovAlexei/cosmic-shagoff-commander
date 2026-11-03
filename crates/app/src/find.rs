@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 pub enum FindEvent {
     Found(u64, Vec<PathBuf>),
+    /// One group of duplicates (the list draws a line before it).
+    Group(u64, Vec<PathBuf>),
     Dir(u64, PathBuf),
     Done(u64),
 }
@@ -51,6 +53,8 @@ pub fn spawn(
     id: u64,
     root: PathBuf,
     q: Query,
+    // «Find duplicates»: the matches are kept, then sent as groups.
+    dupes: Option<search::Dupes>,
 ) -> (Arc<AtomicBool>, fmpsc::UnboundedReceiver<FindEvent>) {
     let (tx, rx) = fmpsc::unbounded();
     let stop = Arc::new(AtomicBool::new(false));
@@ -63,19 +67,31 @@ pub fn spawn(
                 let _ = tx.unbounded_send(FindEvent::Found(id, v));
             }
         };
+        let kept = RefCell::new(Vec::new());
+        let mut dir = |d: &std::path::Path| {
+            if dir_sent.elapsed() >= EVERY {
+                let _ = tx.unbounded_send(FindEvent::Dir(id, d.to_path_buf()));
+                dir_sent = Instant::now();
+            }
+        };
         search::find(
             &root,
             &q,
             &flag,
-            &mut |p| send(b.borrow_mut().push(p, Instant::now())),
+            &mut |p| match dupes {
+                Some(_) => kept.borrow_mut().push(p),
+                None => send(b.borrow_mut().push(p, Instant::now())),
+            },
             &mut |d| {
                 send(b.borrow_mut().tick(Instant::now()));
-                if dir_sent.elapsed() >= EVERY {
-                    let _ = tx.unbounded_send(FindEvent::Dir(id, d.to_path_buf()));
-                    dir_sent = Instant::now();
-                }
+                dir(d);
             },
         );
+        if let Some(by) = dupes {
+            for g in search::duplicates(&kept.borrow(), by, &flag, &mut dir) {
+                let _ = tx.unbounded_send(FindEvent::Group(id, g));
+            }
+        }
         let rest = std::mem::take(&mut b.borrow_mut().batch);
         if !rest.is_empty() {
             let _ = tx.unbounded_send(FindEvent::Found(id, rest));
@@ -104,7 +120,7 @@ mod tests {
             hidden: false,
             ..Query::default()
         };
-        let (_stop, rx) = spawn(7, d.path().to_path_buf(), q);
+        let (_stop, rx) = spawn(7, d.path().to_path_buf(), q, None);
         let events: Vec<FindEvent> = block_on(rx.collect());
         let found: Vec<PathBuf> = events
             .iter()

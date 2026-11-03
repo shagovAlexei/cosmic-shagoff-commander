@@ -7379,3 +7379,28 @@ fn regression_terminal_output_does_not_set_the_clipboard_by_default() {
     let app = app_with(Config::default(), State::default());
     assert!(!app.config.term_clipboard);
 }
+
+#[test]
+fn find_duplicates_needs_a_box_groups_its_results_and_is_remembered() {
+    use crate::find::FindEvent;
+    let (_tmp, mut app) = results_app();
+    let _ = app.update(Message::Key(Action::FindFiles));
+    let _ = app.update(Message::FindDup(DupBox::On));
+    let _ = app.update(Message::FindDup(DupBox::Size));
+    let _ = app.update(Message::FindDup(DupBox::Content));
+    let _ = app.update(Message::FindStart);
+    assert!(find_dialog(&mut app).error.is_some()); // nothing to compare: not started
+    let _ = app.update(Message::FindDup(DupBox::Name));
+    let _ = app.update(Message::FindStart);
+    let id = find_dialog(&mut app).id;
+    assert!(find_dialog(&mut app).error.is_none());
+    for g in [["/a", "/x/a"], ["/b", "/y/b"]] {
+        let g = g.iter().map(PathBuf::from).collect();
+        let _ = app.update(Message::Find(FindEvent::Group(id, g)));
+    }
+    let f = find_dialog(&mut app);
+    assert_eq!((f.groups.clone(), f.total), (vec![0, 2], 4));
+    app.dialog = None;
+    let saved = app.find.clone();
+    assert!(saved.dupes && saved.dup_by.name && !saved.dup_by.size && !saved.dup_by.content);
+}

@@ -521,6 +521,11 @@ find-bad-attrs = Атрибуты: «{ $value }» — только h (скрыт
 find-bad-regex = Регулярное выражение: { $err }
 find-results = Результаты поиска: { $dir }
 find-bad-range = «Размер от» больше, чем «до»
+find-dupes = Искать дубликаты
+find-dup-name = То же имя
+find-dup-size = Тот же размер
+find-dup-content = То же содержимое
+find-dupes-none = Дубликаты: отметьте, что сравнивать
 results-unsupported = В результатах поиска недоступно
 
 # Синхронизация, дополнения

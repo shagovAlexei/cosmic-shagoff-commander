@@ -532,6 +532,8 @@ impl App {
             regex: f.regex,
             name_regex: f.name_regex,
             archives: f.archives,
+            dupes: f.dupes,
+            dup_by: f.dup_by,
             min_size: f.min_size.clone(),
             max_size: f.max_size.clone(),
             days: f.days.clone(),
@@ -545,7 +547,11 @@ impl App {
         } else {
             String::new()
         };
-        let q = match find_query(f, text) {
+        let dupes = f.dupes.then_some(f.dup_by);
+        let q = match find_query(f, text).and_then(|q| match dupes {
+            Some(by) if !by.any() => Err(fl!("find-dupes-none")),
+            _ => Ok(q),
+        }) {
             Ok(q) => shagoff_core::search::Query {
                 hidden: self.panes[side].active().panel.show_hidden(),
                 ..q
@@ -559,6 +565,7 @@ impl App {
                     // A new id: what the stopped search still sends is not this one's.
                     (f.id, f.cursor, f.total) = (id, 0, 0);
                     f.results.clear();
+                    f.groups.clear();
                     f.current.clear();
                     f.root = None;
                     f.error = Some(e);
@@ -566,7 +573,7 @@ impl App {
                 return Task::none();
             }
         };
-        let (stop, events) = crate::find::spawn(id, root, q);
+        let (stop, events) = crate::find::spawn(id, root, q, dupes);
         if let Some(Dialog::Find(f)) = &mut self.dialog {
             if let Some(old) = f.stop.replace(stop) {
                 old.store(true, Ordering::Relaxed);
@@ -575,6 +582,7 @@ impl App {
             f.error = None;
             f.root = Some(root_searched);
             f.results.clear();
+            f.groups.clear();
         }
         Task::run(events, |e| cosmic::Action::App(Message::Find(e)))
     }
@@ -586,6 +594,11 @@ impl App {
         };
         match e {
             FindEvent::Found(id, paths) if id == f.id => {
+                f.total += paths.len();
+                f.results.extend(paths);
+            }
+            FindEvent::Group(id, paths) if id == f.id => {
+                f.groups.push(f.results.len());
                 f.total += paths.len();
                 f.results.extend(paths);
             }
