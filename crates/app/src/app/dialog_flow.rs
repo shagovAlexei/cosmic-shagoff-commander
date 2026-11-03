@@ -1033,7 +1033,7 @@ impl App {
                 }
             }
             // Enter: «Close».
-            Dialog::About { .. } => Task::none(),
+            Dialog::About { .. } | Dialog::Changelog => Task::none(),
             // Answered with their own buttons, not Enter/OK.
             d @ (Dialog::Conflict { .. }
             | Dialog::Error { .. }

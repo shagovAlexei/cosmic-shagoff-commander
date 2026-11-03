@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.139.0 — 2026-11-03
+
+- feat: Help → Changelog: the newest releases from the built-in CHANGELOG.md, also a button next to «Check for updates» in About; Help → «Check for updates…» opens About with the check started (as in ShagShell Secure); the Help menu grouped with icons: help, updates and support, changelog, about; About and Changelog fit a small window (Close stays in sight)
+
 ## 0.138.0 — 2026-11-03
 
 - feat: new APP_ID `io.github.shagovAlexei.cosmic-ext-shagoff-commander` (the COSMIC trademark policy keeps `cosmic-` for System76's own apps): .desktop, metainfo (`<replaces>` the old id), icon, flatpak; settings and tabs move from the old id's dirs at the first start

@@ -221,6 +221,10 @@ pub enum Action {
     About,
     /// Menu only: support the project.
     Donate,
+    /// Menu only (and a button in About): what each release brought.
+    Changelog,
+    /// Menu only: About, with the update check started.
+    CheckUpdates,
     /// Context menu only: the programs for the file's type.
     OpenWith,
     /// F9 / F10: names / full paths of the targets to the clipboard as text.
