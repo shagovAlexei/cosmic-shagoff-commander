@@ -108,7 +108,7 @@ Fedora / openSUSE: `.rpm` из того же релиза (`sudo dnf install ./s
 Flatpak — из репозитория COSMIC (в Pop!_OS 24.04 он уже есть; в других системах сначала `flatpak remote-add --if-not-exists --user cosmic https://apt.pop-os.org/cosmic/cosmic.flatpakrepo`):
 
 ```sh
-flatpak install --user cosmic io.github.shagovAlexei.cosmic-shagoff-commander
+flatpak install --user cosmic io.github.shagovAlexei.cosmic-ext-shagoff-commander
 ```
 
 Файловому менеджеру нужна вся система, поэтому этот flatpak — не песочница: он видит все файлы и запускает все программы («Открыть с помощью», терминалы, монтирование, облака, командную строку) на хосте. `/etc`, `/usr` и подобные открываются как `/run/host/etc`, `/run/host/usr` (внутри flatpak обычные — его среды выполнения). Настройки, вкладки и корзина те же, что у `.deb`; обновляет его flatpak, своя проверка обновлений там выключена.

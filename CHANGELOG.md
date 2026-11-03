@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.138.0 — 2026-11-03
+
+- feat: new APP_ID `io.github.shagovAlexei.cosmic-ext-shagoff-commander` (the COSMIC trademark policy keeps `cosmic-` for System76's own apps): .desktop, metainfo (`<replaces>` the old id), icon, flatpak; settings and tabs move from the old id's dirs at the first start
+
 ## 0.137.0 — 2026-11-03
 
 - feat: flatpak (218): `flatpak/` manifest for the COSMIC flatpak repo (pop-os/cosmic-flatpak); inside it every program (gio, rclone, terminals, F4 editor, command line, toolbar buttons, thumbnailers) runs on the host through `flatpak-spawn --host`, the built-in terminal under `script` on a host pty; settings, tabs and trash are the same as the .deb's; no update check there (flatpak updates it)

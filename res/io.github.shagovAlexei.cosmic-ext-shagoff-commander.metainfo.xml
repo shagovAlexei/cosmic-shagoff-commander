@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.shagovAlexei.cosmic-shagoff-commander</id>
+  <id>io.github.shagovAlexei.cosmic-ext-shagoff-commander</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
   <name>Shagoff Commander</name>
@@ -54,10 +54,16 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.138.0" date="2026-11-03">
+      <description><p>New app ID io.github.shagovAlexei.cosmic-ext-shagoff-commander (COSMIC trademark policy); settings and tabs move over by themselves.</p></description>
+    </release>
     <release version="0.137.0" date="2026-11-03">
       <description><p>Flatpak: programs run on the host, the built-in terminal under script on a host pty.</p></description>
     </release>
   </releases>
-  <launchable type="desktop-id">io.github.shagovAlexei.cosmic-shagoff-commander.desktop</launchable>
+  <replaces>
+    <id>io.github.shagovAlexei.cosmic-shagoff-commander</id>
+  </replaces>
+  <launchable type="desktop-id">io.github.shagovAlexei.cosmic-ext-shagoff-commander.desktop</launchable>
   <provides><binary>shagoff-commander</binary></provides>
 </component>

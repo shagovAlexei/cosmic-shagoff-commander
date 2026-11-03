@@ -70,9 +70,33 @@ pub fn restore(state: &PaneState, fallback: &Path) -> (Vec<PathBuf>, usize) {
     (tabs, active)
 }
 
+/// The app's dir under `root/cosmic` (settings in `~/.config`, tabs in `~/.local/state`) moved
+/// from its old id to the new one (0.138.0: `cosmic-` → `cosmic-ext-`), once: not when the new
+/// one is there already. True if moved.
+pub fn move_app_dir(root: &Path, old: &str, new: &str) -> bool {
+    let (from, to) = (root.join("cosmic").join(old), root.join("cosmic").join(new));
+    from.is_dir() && !to.exists() && std::fs::rename(&from, &to).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_old_ids_dir_moves_once() {
+        let d = tempfile::tempdir().unwrap();
+        let old = d.path().join("cosmic/old/v1");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("show_hidden"), "true").unwrap();
+        assert!(move_app_dir(d.path(), "old", "new"));
+        assert!(d.path().join("cosmic/new/v1/show_hidden").is_file());
+        assert!(!d.path().join("cosmic/old").exists());
+        // The new one there already: nothing moves over it.
+        std::fs::create_dir_all(d.path().join("cosmic/old/v1")).unwrap();
+        assert!(!move_app_dir(d.path(), "old", "new"));
+        assert!(d.path().join("cosmic/old").exists());
+        assert!(!move_app_dir(d.path(), "gone", "new2"));
+    }
 
     #[test]
     fn existing_dir_walks_up_to_a_live_parent() {

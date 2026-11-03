@@ -50,7 +50,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
-pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
+pub const APP_ID: &str = "io.github.shagovAlexei.cosmic-ext-shagoff-commander";
 // ponytail: list height is guessed until the scrollable reports its bounds (it does on the first event).
 const FALLBACK_LIST_H: f32 = 400.0;
 const FALLBACK_LIST_W: f32 = 500.0;
@@ -1060,6 +1060,7 @@ impl Application for App {
         // Tab is ours (switch pane); libcosmic's Tab focus-walk would also focus buttons that Enter then fires.
         core.set_keyboard_nav(false);
         let home = std::env::home_dir().unwrap_or_else(|| "/".into());
+        config::move_old_dirs();
         let (ch, sh) = (config::config_handler(), config::state_handler());
         let (cfg, state): (Config, State) = (config::read(ch.as_ref()), config::read(sh.as_ref()));
         let saved = state.clone();
