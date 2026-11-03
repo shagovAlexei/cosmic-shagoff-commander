@@ -572,6 +572,29 @@ impl Default for SyncPrefs {
     }
 }
 
+/// The APP_ID before 0.138.0 (the COSMIC trademark policy keeps `cosmic-` for System76's own).
+const OLD_APP_ID: &str = "io.github.shagovAlexei.cosmic-shagoff-commander";
+
+/// Settings and tabs saved under the old APP_ID move to the new one (once, before they are read).
+pub fn move_old_dirs() {
+    let home = std::env::home_dir().unwrap_or_default();
+    for (var, default) in [
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_STATE_HOME", ".local/state"),
+    ] {
+        let root = (std::env::var_os(var).map(std::path::PathBuf::from))
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| home.join(default));
+        if shagoff_core::session::move_app_dir(&root, OLD_APP_ID, crate::app::APP_ID) {
+            log::info!(
+                "moved {OLD_APP_ID} to {} in {}",
+                crate::app::APP_ID,
+                root.display()
+            );
+        }
+    }
+}
+
 pub fn config_handler() -> Option<cosmic_config::Config> {
     cosmic_config::Config::new(crate::app::APP_ID, Config::VERSION)
         .inspect_err(|e| log::warn!("config: {e}"))

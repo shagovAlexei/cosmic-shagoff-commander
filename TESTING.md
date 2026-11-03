@@ -61,7 +61,7 @@
 
 ### Фаза 6: F3/F4, диски, автообновление, конфиг
 - [x] Вкладки обеих панелей и активная панель восстанавливаются после перезапуска; удалённый каталог → ближайший родитель
-- [x] `~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/show_hidden` (`true`/`false`) — правка файла на лету показывает/прячет скрытые
+- [x] `~/.config/cosmic/io.github.shagovAlexei.cosmic-ext-shagoff-commander/v1/show_hidden` (`true`/`false`) — правка файла на лету показывает/прячет скрытые
 - [x] Ctrl+H — скрытые во всех вкладках обеих панелей; после перезапуска сохраняется
 - [x] Ctrl+W на последней вкладке: по умолчанию ничего; в файле `last_tab_close` написать `Home` → переход в домашний (или в `home_dir`, например `Some("/tmp")`)
 - [x] F3 — файл открывается программой по умолчанию; F4 — cosmic-edit; на каталоге и `..` ничего; кнопки F3/F4 внизу работают
@@ -986,7 +986,7 @@
 
 ### Ctrl+D после правки конфига снаружи (132)
 
-- [x] Ctrl+D, курсор на втором пункте; в другом окне добавить пункт в начало `~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1/hotlist` — список в диалоге обновился, курсор на том же пункте; Delete — удалён он
+- [x] Ctrl+D, курсор на втором пункте; в другом окне добавить пункт в начало `~/.config/cosmic/io.github.shagovAlexei.cosmic-ext-shagoff-commander/v1/hotlist` — список в диалоге обновился, курсор на том же пункте; Delete — удалён он
 
 ### Избранное: папка с именем не в UTF-8 (133)
 
@@ -1010,7 +1010,7 @@
 
 ### Ошибка записи настроек видна (137)
 
-- [x] `chmod a-w ~/.config/cosmic/io.github.shagovAlexei.cosmic-shagoff-commander/v1`; Ctrl+H — скрытые переключились, карточка «Настройки не сохранены: …»; то же для ширины столбцов, Ctrl+D «Добавить», настроек (Ctrl+,). После — `chmod u+w` того же каталога
+- [x] `chmod a-w ~/.config/cosmic/io.github.shagovAlexei.cosmic-ext-shagoff-commander/v1`; Ctrl+H — скрытые переключились, карточка «Настройки не сохранены: …»; то же для ширины столбцов, Ctrl+D «Добавить», настроек (Ctrl+,). После — `chmod u+w` того же каталога
 
 ### F3 / F4: причина, почему файл не открыть (138)
 
@@ -2099,7 +2099,7 @@ mkdir -p /tmp/fp && echo text > /tmp/fp/a.txt && printf '\x7fELF' > /tmp/fp/bin
 ```
 
 Шаги:
-1. `flatpak run io.github.shagovAlexei.cosmic-shagoff-commander`.
+1. `flatpak run io.github.shagovAlexei.cosmic-ext-shagoff-commander`.
 - [ ] Окно открылось с теми же настройками и вкладками, что у установленного .deb; иконки файлов и кнопок на месте.
 - [ ] В строке состояния у файлов владелец — имя, а не число (`/etc/passwd` хоста).
 - [ ] Переход в `/etc` открывает `/run/host/etc` — каталог хоста (есть `apt`, `passwd`); F3 на файле там показывает его, Enter открывает его программой хоста.
@@ -2119,7 +2119,18 @@ mkdir -p /tmp/fp && echo text > /tmp/fp/a.txt && printf '\x7fELF' > /tmp/fp/bin
 8. «О программе».
 - [ ] Нет кнопки «Проверить обновления», и при запуске окно обновления не появляется.
 
-Уборка: `rm -r /tmp/fp; flatpak uninstall --user io.github.shagovAlexei.cosmic-shagoff-commander`.
+Уборка: `rm -r /tmp/fp; flatpak uninstall --user io.github.shagovAlexei.cosmic-ext-shagoff-commander`.
+
+### Новый APP_ID (0.138.0)
+
+Подготовка: установлена 0.137.0 (`.deb`), у неё свои вкладки и, например, включены скрытые файлы (Ctrl+H).
+
+Шаги:
+1. Поставить 0.138.0 (`sudo apt install ./shagoff-commander_0.138.0_amd64.deb`), запустить из меню приложений.
+- [ ] В меню одна запись «Shagoff Commander» со своей иконкой.
+- [ ] Вкладки и настройки те же, что были; `ls ~/.config/cosmic ~/.local/state/cosmic | grep shagoff` — только `…cosmic-ext-shagoff-commander`.
+2. Закрыть, запустить снова.
+- [ ] Всё на месте (повторно ничего не переносится).
 
 ## Регрессионные тесты
 

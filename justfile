@@ -1,5 +1,5 @@
 name := 'shagoff-commander'
-appid := 'io.github.shagovAlexei.cosmic-shagoff-commander'
+appid := 'io.github.shagovAlexei.cosmic-ext-shagoff-commander'
 prefix := '/usr'
 # Staging root for packaging: `just rootdir=pkg install` puts files under pkg/usr/…
 rootdir := ''

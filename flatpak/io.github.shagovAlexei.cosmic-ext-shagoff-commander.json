@@ -1,5 +1,5 @@
 {
-  "id": "io.github.shagovAlexei.cosmic-shagoff-commander",
+  "id": "io.github.shagovAlexei.cosmic-ext-shagoff-commander",
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "25.08",
   "base": "com.system76.Cosmic.BaseApp",
