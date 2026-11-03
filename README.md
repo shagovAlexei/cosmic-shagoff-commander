@@ -17,6 +17,10 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 | ![Classic](res/screenshots/classic.png) | ![Modern](res/screenshots/modern.png) |
 | Toolbar, drive drop-down, tab strip and path line, compact rows | Drive buttons, breadcrumbs, panels as cards, larger rows |
 
+Light theme (*Settings → Theme*, or the system's):
+
+![Classic look, light theme](res/screenshots/light.png)
+
 ## Features
 
 - Two panels with tabs (lock, rename, move between panels), Total Commander keys: F3–F8, Shift+F5/F6, Insert / Space / Num+ / Num− marking, Alt+letter quick search, history and hotlist
