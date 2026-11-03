@@ -459,6 +459,11 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
     let marks: Vec<Mark> = checks.start.iter().map(|s| s.0).collect();
     let b = |label: String, a: Action| menu::Item::Button(label, None, MenuAct::Key(a));
     let sort = |label: String, k: SortKey| b(label, Action::Sort(k));
+    // Help's items have icons, as in ShagShell Secure.
+    let bi = |label: String, icon: &str, a: Action| {
+        let icon = Some(cosmic::widget::icon::from_name(icon).handle());
+        menu::Item::Button(label, icon, MenuAct::Key(a))
+    };
     vec![
         (
             fl!("menu-files"),
@@ -918,11 +923,31 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
         (
             fl!("menu-help-root"),
             vec![
-                b(fl!("menu-help"), Action::Help),
+                bi(fl!("menu-help"), "help-browser-symbolic", Action::Help),
                 menu::Item::Divider,
-                b(fl!("donate-title"), Action::Donate),
-                b(fl!("menu-about"), Action::About),
-            ],
+            ]
+            .into_iter()
+            // A flatpak is updated by flatpak.
+            .chain((!shagoff_core::host::inside()).then(|| {
+                let icon = "software-update-available-symbolic";
+                bi(fl!("menu-check-updates"), icon, Action::CheckUpdates)
+            }))
+            .chain([
+                bi(
+                    fl!("donate-title"),
+                    "emblem-favorite-symbolic",
+                    Action::Donate,
+                ),
+                menu::Item::Divider,
+                bi(
+                    fl!("menu-changelog"),
+                    "document-open-recent-symbolic",
+                    Action::Changelog,
+                ),
+                menu::Item::Divider,
+                bi(fl!("menu-about"), "help-about-symbolic", Action::About),
+            ])
+            .collect(),
         ),
     ]
 }
@@ -1352,6 +1377,8 @@ mod tests {
                     MenuAct::Key(
                         Action::About
                             | Action::Donate
+                            | Action::Changelog
+                            | Action::CheckUpdates
                             | Action::TabCopyOther
                             | Action::TabMoveOther
                             | Action::TabLock

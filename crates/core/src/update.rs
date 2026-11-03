@@ -214,9 +214,44 @@ pub fn install(deb: &Path, hash: &str) -> Result<(), String> {
     }
 }
 
+/// `CHANGELOG.md` as releases: (`0.138.0 — 2026-11-03`, its lines without the `- `), newest
+/// first, at most `n`.
+pub fn releases(md: &str, n: usize) -> Vec<(&str, Vec<&str>)> {
+    let mut out: Vec<(&str, Vec<&str>)> = Vec::new();
+    for line in md.lines() {
+        if let Some(head) = line.strip_prefix("## ") {
+            if out.len() == n {
+                break;
+            }
+            out.push((head.trim(), Vec::new()));
+        } else if let Some(item) = line.strip_prefix("- ")
+            && let Some((_, items)) = out.last_mut()
+        {
+            items.push(item.trim());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changelog_releases_newest_first() {
+        let md = "# Changelog\n\nIntro.\n- not a release\n\n## 0.2.0 — d2\n\n- feat: b\n- fix: c\n\n## 0.1.0 — d1\n\n- a\n";
+        assert_eq!(
+            releases(md, 10),
+            [
+                ("0.2.0 — d2", vec!["feat: b", "fix: c"]),
+                ("0.1.0 — d1", vec!["a"])
+            ]
+        );
+        assert_eq!(releases(md, 1).len(), 1);
+        // The built-in one starts with this version (a release without its line would show stale).
+        let real = releases(include_str!("../../../CHANGELOG.md"), 1);
+        assert_eq!(real[0].0.split(' ').next(), Some(env!("CARGO_PKG_VERSION")));
+    }
 
     #[test]
     fn status_from_release_json() {

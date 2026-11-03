@@ -90,6 +90,16 @@ impl App {
                 self.dialog = Some(Dialog::About { check: None });
                 return Task::none();
             }
+            Action::Changelog => {
+                self.set_drawer(None);
+                self.dialog = Some(Dialog::Changelog);
+                return Task::none();
+            }
+            Action::CheckUpdates => {
+                self.set_drawer(None);
+                self.dialog = Some(Dialog::About { check: None });
+                return self.update(Message::CheckUpdate);
+            }
             Action::Help | Action::Settings | Action::Donate => {
                 self.toggle_drawer(action);
                 return self.read_clouds();
@@ -883,6 +893,8 @@ impl App {
             | Action::Disconnect
             | Action::Help
             | Action::About
+            | Action::Changelog
+            | Action::CheckUpdates
             | Action::Settings
             | Action::F12
             | Action::SwitchIgnoreList

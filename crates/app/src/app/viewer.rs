@@ -254,7 +254,13 @@ impl App {
         }
         let l = self.lister.as_deref_mut()?;
         Some(match action {
-            Action::Help | Action::About | Action::Settings | Action::Donate | Action::F12 => {
+            Action::Help
+            | Action::About
+            | Action::Changelog
+            | Action::CheckUpdates
+            | Action::Settings
+            | Action::Donate
+            | Action::F12 => {
                 return None;
             }
             // Num+ / Num-: bigger / smaller text, as + / - (TC zooms with them).

@@ -73,6 +73,8 @@ pub enum Dialog {
     About {
         check: Option<shagoff_core::update::Status>,
     },
+    /// Help → Changelog (also a button in About): what each release brought.
+    Changelog,
     /// The last run crashed: send its report as a GitHub issue (the user reads it first), or not.
     Crashed {
         report: String,
@@ -2628,7 +2630,8 @@ pub fn view<'a>(
             .primary_action(ok)
             .secondary_action(cancel)
             .into(),
-        Dialog::About { check } => about(check.as_ref()),
+        Dialog::About { check } => about(check.as_ref(), list_h),
+        Dialog::Changelog => changelog(list_h),
         Dialog::Crashed { report } => widget::dialog()
             .title(fl!("crash-title"))
             .body(fl!("crash-body"))
@@ -2810,7 +2813,8 @@ pub fn progress<'a>(
         .into()
 }
 
-fn about(check: Option<&shagoff_core::update::Status>) -> Element<'_, Message> {
+/// `list_h`: the panel rows' height, the scrolled part's most (its buttons stay in the window).
+fn about(check: Option<&shagoff_core::update::Status>, list_h: f32) -> Element<'_, Message> {
     use crate::drawer::{DONATE_URL, REPO};
     use shagoff_core::update::Status;
     let mut check_btn = widget::button::standard(fl!("update-check"));
@@ -2845,7 +2849,15 @@ fn about(check: Option<&shagoff_core::update::Status>) -> Element<'_, Message> {
             fl!("about-version"),
             env!("CARGO_PKG_VERSION")
         )))
-        .push_maybe((!shagoff_core::host::inside()).then_some(check_btn))
+        .push(
+            widget::row::with_capacity(2)
+                .spacing(8)
+                .push_maybe((!shagoff_core::host::inside()).then_some(check_btn))
+                .push(
+                    widget::button::standard(fl!("menu-changelog"))
+                        .on_press(Message::Key(crate::keymap::Action::Changelog)),
+                ),
+        )
         .push_maybe(note.map(widget::text::body))
         .push(widget::text::body(fl!("about-comments")))
         .push(widget::text::caption(format!(
@@ -2871,9 +2883,38 @@ fn about(check: Option<&shagoff_core::update::Status>) -> Element<'_, Message> {
         );
     widget::dialog()
         .title(fl!("menu-about"))
-        .control(widget::scrollable(content).width(Length::Fill))
+        .control(
+            widget::container(widget::scrollable(content).width(Length::Fill))
+                .max_height(list_h.max(120.0)),
+        )
         .primary_action(
             widget::button::standard(fl!("about-close")).on_press(Message::DialogCancel),
+        )
+        .into()
+}
+
+/// Help → Changelog: the newest releases of `CHANGELOG.md` (built in), each with what it brought.
+fn changelog(list_h: f32) -> Element<'static, Message> {
+    static TEXT: &str = include_str!("../../../CHANGELOG.md");
+    let mut col = widget::column::with_capacity(64).spacing(4);
+    for (head, items) in shagoff_core::update::releases(TEXT, 40) {
+        col = col.push(widget::text::heading(head));
+        for item in items {
+            col = col.push(widget::text::body(format!("• {}", item.replace('`', ""))));
+        }
+        col = col.push(widget::Space::new().height(Length::Fixed(8.0)));
+    }
+    col = col.push(widget::text::caption(fl!("changelog-older")));
+    widget::dialog()
+        .title(fl!("menu-changelog"))
+        .width(Length::Fixed(760.0))
+        .max_width(760.0)
+        .control(
+            widget::scrollable(col.padding([0, 12, 0, 0]))
+                .height(Length::Fixed(list_h.clamp(120.0, 480.0))),
+        )
+        .primary_action(
+            widget::button::suggested(fl!("about-close")).on_press(Message::DialogCancel),
         )
         .into()
 }

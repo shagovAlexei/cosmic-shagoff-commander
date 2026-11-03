@@ -5619,6 +5619,23 @@ mod drawer_tests {
     }
 
     #[test]
+    fn changelog_is_a_dialog_and_check_updates_opens_about_checking() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::Changelog));
+        assert!(matches!(app.dialog, Some(Dialog::Changelog)));
+        assert!(cosmic::Application::dialog(&app).is_some()); // drawn
+        let _ = app.update(Message::DialogSubmit); // Enter: «Close»
+        assert!(app.dialog.is_none());
+        let _ = app.update(Message::Key(Action::CheckUpdates));
+        assert!(matches!(
+            app.dialog,
+            Some(Dialog::About {
+                check: Some(shagoff_core::update::Status::Checking)
+            })
+        ));
+    }
+
+    #[test]
     fn donate_has_its_own_drawer() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::Key(Action::Donate));
