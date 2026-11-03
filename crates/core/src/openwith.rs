@@ -174,7 +174,6 @@ pub fn other_line(cmd: &str, files: &[PathBuf]) -> String {
 }
 
 pub fn launch_argv(desktop: &Path, files: &[PathBuf]) -> Vec<OsString> {
-    let desktop = crate::host::outside(desktop);
     let mut argv = vec![OsString::from("gio"), "launch".into(), desktop.into()];
     argv.extend(files.iter().map(OsString::from));
     argv

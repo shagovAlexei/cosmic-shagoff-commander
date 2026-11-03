@@ -10,5 +10,6 @@ host_path=$(flatpak-spawn --host printenv PATH) && export PATH="$host_path"
 host_shell=$(flatpak-spawn --host getent passwd "$(id -un)" | cut -d: -f7) && [ -n "$host_shell" ] && export SHELL="$host_shell"
 host_data=$(flatpak-spawn --host printenv XDG_DATA_DIRS) || host_data=
 host_data=$(printf %s "${host_data:-/usr/local/share:/usr/share}" | sed 's,\(^\|:\)/usr,\1/run/host/usr,g')
-export XDG_DATA_DIRS="$XDG_DATA_DIRS:$host_data"
+# The host's first: a .desktop file found there is the one its programs see.
+export XDG_DATA_DIRS="$host_data:/app/share:$XDG_DATA_DIRS"
 exec /app/bin/shagoff-commander "$@"

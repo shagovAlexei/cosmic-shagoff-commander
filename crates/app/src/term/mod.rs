@@ -65,10 +65,13 @@ pub fn start(
         use std::sync::atomic::AtomicUsize;
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(".shagoff-term.{}.{n}", std::process::id()))
+        // Our pid is the sandbox's (2 in every instance): the clock tells instances apart.
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        let t = t.map_or(0, |d| d.as_nanos());
+        std::env::temp_dir().join(format!(".shagoff-term.{t}.{n}"))
     });
     let (prog, args) = match &host {
-        Some(pidfile) => shagoff_core::host::shell_argv(shell, pidfile),
+        Some(pidfile) => shagoff_core::host::shell_argv(shell, pidfile, dir),
         None => (shell.to_string(), Vec::new()),
     };
     let options = tty::Options {
@@ -161,7 +164,14 @@ pub fn follow(pane: &mut Pane, dir: &Path) {
         pane.busy_at = None; // back where it is: nothing to wait for
         return;
     }
-    if pane.busy_at.is_some_and(|t| t.elapsed() < RETRY) {
+    // ponytail: inside a flatpak the check is a host process on the UI thread (tens of ms): asked
+    // only every `WAIT_TICK` there; a message round trip if it ever shows.
+    let retry = if pane.host.is_some() {
+        WAIT_TICK
+    } else {
+        RETRY
+    };
+    if pane.busy_at.is_some_and(|t| t.elapsed() < retry) {
         return;
     }
     let t = pane.terminal.lock().unwrap_or_else(|e| e.into_inner());
@@ -176,7 +186,7 @@ pub fn follow(pane: &mut Pane, dir: &Path) {
     };
     if idle {
         // A name that cannot be typed safely: the terminal stays where it is.
-        if let Some(line) = shagoff_core::shell::cd_line(dir) {
+        if let Some(line) = shagoff_core::shell::cd_line(&shagoff_core::host::outside(dir)) {
             t.input_no_scroll(line.into_bytes());
         }
         drop(t);

@@ -290,12 +290,12 @@ pub fn bwrap_works() -> bool {
 /// process group, all killed on timeout: a worker it started must not write the output later.
 pub fn run(argv: &[OsString], timeout: Duration) -> bool {
     use std::process::Stdio;
-    let Some((prog, rest)) = argv.split_first() else {
+    if argv.is_empty() {
         return false;
-    };
-    let mut cmd = crate::host::command(prog);
+    }
+    let mut cmd = crate::host::command_in(argv, None);
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let child = (cmd.args(rest))
+    let child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -312,6 +312,13 @@ pub fn run(argv: &[OsString], timeout: Duration) -> bool {
                 if let Some(g) = rustix::process::Pid::from_raw(child.id() as i32) {
                     crate::host::kill_group(g);
                 }
+                // Inside, `flatpak-spawn` waits for the host program TERM was passed to: one
+                // that ignores it is left there, not waited for.
+                let end = Instant::now() + Duration::from_secs(1);
+                while matches!(child.try_wait(), Ok(None)) && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                let _ = child.kill();
                 let _ = child.wait();
                 return false;
             }

@@ -24,6 +24,35 @@ pub fn command(prog: impl AsRef<std::ffi::OsStr>) -> Command {
     c
 }
 
+/// The command line `argv` on the host, in `dir`. Inside, an argument or dir under `/run/host`
+/// (a panel in the host's `/etc`, `/usr`) is passed as the host's own path; the dir goes as
+/// `--directory` (flatpak-spawn would send its own cwd, which need not exist on the host).
+/// ponytail: a path inside a longer argument (`sh -c "… /run/host/etc/x"`) is not mapped.
+pub fn command_in<S: AsRef<std::ffi::OsStr>>(argv: &[S], dir: Option<&Path>) -> Command {
+    let (prog, args) = match argv.split_first() {
+        Some((p, a)) => (p.as_ref(), a),
+        None => ("".as_ref(), &[][..]),
+    };
+    let host = |a: &std::ffi::OsStr| outside(Path::new(a)).into_os_string();
+    let mut c = if inside() {
+        let mut c = Command::new("flatpak-spawn");
+        c.arg("--host");
+        if let Some(d) = dir {
+            c.arg(format!("--directory={}", outside(d).display()));
+        }
+        c.arg(host(prog));
+        c
+    } else {
+        let mut c = Command::new(prog);
+        if let Some(d) = dir {
+            c.current_dir(d);
+        }
+        c
+    };
+    c.args(args.iter().map(|a| host(a.as_ref())));
+    c
+}
+
 fn argv(inside: bool, prog: &std::ffi::OsStr) -> Vec<std::ffi::OsString> {
     if inside {
         vec!["flatpak-spawn".into(), "--host".into(), prog.into()]
@@ -53,8 +82,12 @@ fn path_in(inside: bool, p: &Path) -> PathBuf {
 
 /// `p` as the host sees it: a path we read under `/run/host` handed to a host program.
 pub fn outside(p: &Path) -> PathBuf {
+    outside_in(inside(), p)
+}
+
+fn outside_in(inside: bool, p: &Path) -> PathBuf {
     match p.strip_prefix(HOST) {
-        Ok(rest) if inside() => Path::new("/").join(rest),
+        Ok(rest) if inside => Path::new("/").join(rest),
         _ => p.to_path_buf(),
     }
 }
@@ -75,15 +108,27 @@ pub fn canonicalize(p: &Path) -> Option<PathBuf> {
 }
 
 /// The host's mount table (`/proc/self/mounts`); the sandbox's own is not it.
+/// Inside it is a host process: kept for a second, the drive buttons ask for it on the UI thread.
 pub fn mounts() -> String {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<Option<(Instant, String)>> = Mutex::new(None);
     if !inside() {
         return std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
     }
-    command("cat")
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, m)) = &*last
+        && at.elapsed() < Duration::from_secs(1)
+    {
+        return m.clone();
+    }
+    let m = command("cat")
         .arg("/proc/self/mounts")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    *last = Some((Instant::now(), m.clone()));
+    m
 }
 
 /// Stops the process group `group` we started. Inside, our child is `flatpak-spawn`: it passes
@@ -98,17 +143,20 @@ pub fn kill_group(group: rustix::process::Pid) {
 /// tty (our pty is the sandbox's: no job control, `tty` fails), so `script` runs it on a pty of
 /// the host's, its pid written to `pidfile` (the follow and resize checks ask the host about it).
 /// `TERM` is passed by hand: the host program gets the session's environment, not ours.
-pub fn shell_argv(shell: &str, pidfile: &Path) -> (String, Vec<String>) {
-    let script = r#"echo $$ > "$1"; exec script -qfec "exec \"$2\"" /dev/null"#;
-    let args = [
+/// The shell reaches `script`'s own `$SHELL -c` through the environment, never quoted into it.
+pub fn shell_argv(shell: &str, pidfile: &Path, dir: Option<&Path>) -> (String, Vec<String>) {
+    let script =
+        r#"echo $$ > "$1"; SHAGOFF_SHELL=$2 exec script -qfec 'exec "$SHAGOFF_SHELL"' /dev/null"#;
+    let mut args: Vec<String> = [
         "--host",
         "--env=TERM=xterm-256color",
         "--env=COLORTERM=truecolor",
-        "sh",
-        "-c",
-    ];
-    let rest = [script, "sh", &pidfile.to_string_lossy(), shell];
-    let args = args.iter().chain(&rest).map(|s| s.to_string()).collect();
+    ]
+    .map(String::from)
+    .into();
+    args.extend(dir.map(|d| format!("--directory={}", outside(d).display())));
+    let rest = ["sh", "-c", script, "sh", &pidfile.to_string_lossy(), shell];
+    args.extend(rest.map(String::from));
     ("flatpak-spawn".into(), args)
 }
 
@@ -135,13 +183,20 @@ pub fn shell_state(pidfile: &Path) -> Option<(String, Option<bool>)> {
 
 /// The window was resized: `flatpak-spawn` does not pass SIGWINCH on, `script` is told by hand
 /// (it then reads the new size off our pty). Not waited for.
+/// One at a time: a window dragged resizes it many times a second, one `kill` covers them all.
 pub fn winch(pidfile: &Path) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static PENDING: AtomicBool = AtomicBool::new(false);
     let Some(pid) = script_pid(pidfile) else {
         return;
     };
+    if PENDING.swap(true, Ordering::AcqRel) {
+        return;
+    }
     std::thread::spawn(move || {
         // After the pty took the size (`on_resize` goes through the terminal's event loop).
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        PENDING.store(false, Ordering::Release);
         let _ = command("kill").args(["-WINCH", &pid.to_string()]).status();
     });
 }
@@ -161,7 +216,7 @@ mod tests {
 
     #[test]
     fn the_shell_runs_under_script_with_its_pid_written() {
-        let (prog, args) = shell_argv("/bin/zsh", Path::new("/tmp/p"));
+        let (prog, args) = shell_argv("/bin/zsh", Path::new("/tmp/p"), None);
         assert_eq!(prog, "flatpak-spawn");
         assert_eq!(args[0], "--host");
         assert_eq!(args[args.len() - 3..], ["sh", "/tmp/p", "/bin/zsh"]);
@@ -169,13 +224,37 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let pidfile = d.path().join("pid");
         let at = args.iter().position(|a| a == "-c").unwrap();
+        // A shell path the host's `sh -c` would expand if it were quoted into the command.
+        let shell = d.path().join("odd \"$x` sh");
+        std::fs::write(&shell, "#!/bin/sh\necho started\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
         let out = Command::new("sh")
             .args(&args[at..at + 3])
-            .args([pidfile.to_str().unwrap(), "/bin/echo"])
+            .arg(&pidfile)
+            .arg(&shell)
             .output()
             .unwrap();
         assert!(script_pid(&pidfile).is_some());
-        assert!(out.status.success(), "{out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("started"),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn host_paths_are_passed_as_the_hosts_own() {
+        // Outside a flatpak nothing changes (`outside` maps only inside).
+        let c = command_in(&["xdg-open", "/run/host/etc/x"], Some(Path::new("/tmp")));
+        assert_eq!(c.get_program(), "xdg-open");
+        assert_eq!(c.get_current_dir(), Some(Path::new("/tmp")));
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(outside_in(true, &p("/run/host/etc/x")), p("/etc/x"));
+        assert_eq!(outside_in(true, &p("/run/hostile")), p("/run/hostile"));
+        assert_eq!(
+            outside_in(false, &p("/run/host/etc/x")),
+            p("/run/host/etc/x")
+        );
     }
 
     #[test]
