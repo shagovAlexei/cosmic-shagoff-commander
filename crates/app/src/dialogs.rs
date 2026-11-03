@@ -2855,7 +2855,7 @@ fn about(check: Option<&shagoff_core::update::Status>, list_h: f32) -> Element<'
                 .push_maybe((!shagoff_core::host::inside()).then_some(check_btn))
                 .push(
                     widget::button::standard(fl!("menu-changelog"))
-                        .on_press(Message::Key(crate::keymap::Action::Changelog)),
+                        .on_press(Message::ShowChangelog),
                 ),
         )
         .push_maybe(note.map(widget::text::body))

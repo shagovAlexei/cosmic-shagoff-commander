@@ -953,6 +953,8 @@ pub enum Message {
     OpenUrl(String),
     /// About → «Check for updates», and its answer (the latest tag).
     CheckUpdate,
+    /// About → Changelog: its own message, an open dialog takes the keys (`Message::Key`).
+    ShowChangelog,
     UpdateChecked(shagoff_core::update::Status),
     /// The check at start came back (`Status::Available` opens the dialog).
     StartupUpdate(shagoff_core::update::Status),

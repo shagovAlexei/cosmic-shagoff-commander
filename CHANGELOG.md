@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.139.1 — 2026-11-03
+
+- fix: the Changelog button in About did nothing (an open dialog takes the keys, and the button sent one)
+
 ## 0.139.0 — 2026-11-03
 
 - feat: Help → Changelog: the newest releases from the built-in CHANGELOG.md, also a button next to «Check for updates» in About; Help → «Check for updates…» opens About with the check started (as in ShagShell Secure); the Help menu grouped with icons: help, updates and support, changelog, about; About and Changelog fit a small window (Close stays in sight)

@@ -5636,6 +5636,14 @@ mod drawer_tests {
     }
 
     #[test]
+    fn regression_about_changelog_button_opens_it() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::Key(Action::About));
+        let _ = app.update(Message::ShowChangelog);
+        assert!(matches!(app.dialog, Some(Dialog::Changelog)));
+    }
+
+    #[test]
     fn donate_has_its_own_drawer() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.update(Message::Key(Action::Donate));
