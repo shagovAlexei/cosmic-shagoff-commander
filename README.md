@@ -6,7 +6,7 @@ A dual-pane file manager in the spirit of Total Commander, built with libcosmic 
 
 ![Shagoff Commander, Classic look](res/screenshots/classic.png)
 
-**Status:** active development, used daily. See [.claude/docs/ROADMAP.md](.claude/docs/ROADMAP.md).
+**Status:** active development, used daily.
 
 ## Two looks
 

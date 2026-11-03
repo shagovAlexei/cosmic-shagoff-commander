@@ -6,7 +6,7 @@
 
 ![Shagoff Commander, классический облик](res/screenshots/classic.png)
 
-**Статус:** активная разработка, используется каждый день. См. [.claude/docs/ROADMAP.md](.claude/docs/ROADMAP.md).
+**Статус:** активная разработка, используется каждый день.
 
 ## Два облика
 

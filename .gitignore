@@ -1,7 +1,7 @@
 target/
-.claude/settings.local.json
 .superpowers/
 .agents/
 AGENTS.md
-.claude/local/
-
+# Local notes, specs, plans and skills for the AI assistant: not published
+.claude/
+CLAUDE.md
