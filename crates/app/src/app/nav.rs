@@ -442,6 +442,8 @@ impl App {
         path: PathBuf,
         focus: Option<String>,
     ) -> Task<Message> {
+        // In a flatpak, `/etc`, `/usr`… are the runtime's: the host's are under `/run/host`.
+        let path = shagoff_core::host::path(&path);
         let generation = self.next_id();
         let t = &mut self.panes[side].items_mut()[i];
         t.pending = Some((generation, path.clone()));
