@@ -290,20 +290,30 @@ fn grouped<K: std::hash::Hash + Eq>(items: Vec<(K, PathBuf)>) -> Vec<Vec<PathBuf
 
 /// The regular files among `paths` (not followed through links; archive members and dirs are
 /// out) that share what `by` asks, as groups in `paths`' order. Contents are compared by SHA-256
-/// within same-size groups; `each` gets every file read. Stopped → nothing.
+/// within same-size groups; `each` gets every file read. Stopped → nothing. A file reached by
+/// two paths (hard link, bind mount) counts once: deleting "the copy" would delete it. Empty
+/// files are all alike: left out when sizes or contents are compared.
 pub fn duplicates(
     paths: &[PathBuf],
     by: Dupes,
     stop: &AtomicBool,
     each: &mut dyn FnMut(&Path),
 ) -> Vec<Vec<PathBuf>> {
+    use std::os::unix::fs::MetadataExt;
+    let sized = by.size || by.content;
+    let mut seen = std::collections::HashSet::new();
     let files = paths.iter().filter_map(|p| {
         let m = fs::symlink_metadata(p).ok().filter(|m| m.is_file())?;
+        if (sized && m.len() == 0) || !seen.insert((m.dev(), m.ino())) {
+            return None;
+        }
         let name = by.name.then(|| p.file_name().map(|n| n.to_owned()));
-        let size = (by.size || by.content).then_some(m.len());
-        Some(((name, size), p.clone()))
+        Some(((name, sized.then_some(m.len())), p.clone()))
     });
     let groups = grouped(files.collect());
+    if stop.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
     if !by.content {
         return groups;
     }
@@ -868,10 +878,15 @@ mod tests {
         fs::write(p("b.txt"), "diff").unwrap(); // same size, other bytes
         fs::write(p("c.txt"), "longer").unwrap(); // alone
         symlink(p("a.txt"), p("link.txt")).unwrap(); // never counted
-        let all: Vec<PathBuf> = ["a.txt", "b.txt", "c.txt", "link.txt", "x", "x/a.txt"]
-            .iter()
-            .map(|n| p(n))
-            .collect();
+        fs::hard_link(p("a.txt"), p("hard.txt")).unwrap(); // the same file: once
+        fs::write(p("e1"), "").unwrap();
+        fs::write(p("e2"), "").unwrap(); // empty ones: not by size or contents
+        let all: Vec<PathBuf> = [
+            "a.txt", "b.txt", "c.txt", "e1", "e2", "hard.txt", "link.txt", "x", "x/a.txt",
+        ]
+        .iter()
+        .map(|n| p(n))
+        .collect();
         let stop = AtomicBool::new(false);
         let by = |name, size, content| {
             duplicates(
@@ -893,5 +908,6 @@ mod tests {
         assert_eq!(by(false, false, true), [vec![p("a.txt"), p("x/a.txt")]]);
         stop.store(true, Ordering::Relaxed);
         assert!(by(false, true, true).is_empty());
+        assert!(by(true, false, false).is_empty());
     }
 }

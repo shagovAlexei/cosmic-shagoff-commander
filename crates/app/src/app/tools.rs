@@ -548,10 +548,7 @@ impl App {
             String::new()
         };
         let dupes = f.dupes.then_some(f.dup_by);
-        let q = match find_query(f, text).and_then(|q| match dupes {
-            Some(by) if !by.any() => Err(fl!("find-dupes-none")),
-            _ => Ok(q),
-        }) {
+        let q = match find_query(f, text) {
             Ok(q) => shagoff_core::search::Query {
                 hidden: self.panes[side].active().panel.show_hidden(),
                 ..q

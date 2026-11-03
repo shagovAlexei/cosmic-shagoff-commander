@@ -2067,13 +2067,15 @@ mkdir -p /tmp/dup/a /tmp/dup/b
 echo same > /tmp/dup/a/1.txt; echo same > /tmp/dup/b/1.txt; echo same > /tmp/dup/b/copy.txt
 echo diff > /tmp/dup/a/2.txt   # тот же размер, другое содержимое
 ln -s /tmp/dup/a/1.txt /tmp/dup/link.txt
+ln /tmp/dup/a/1.txt /tmp/dup/hard.txt   # тот же файл под вторым именем
+: > /tmp/dup/e1; : > /tmp/dup/e2       # пустые
 ```
 
 Шаги:
 1. Панель в `/tmp/dup`, Alt+F7, отметить «Искать дубликаты».
 - [ ] Под ней строка «То же имя» (снято), «Тот же размер», «То же содержимое» (отмечены); кнопки окна на 1036×530 не обрезаны.
 2. «Найти».
-- [ ] Одна группа: `a/1.txt`, `b/1.txt`, `b/copy.txt`; `a/2.txt` и `link.txt` нет.
+- [ ] Одна группа: `a/1.txt`, `b/1.txt`, `b/copy.txt`; `a/2.txt`, `link.txt`, `hard.txt` (тот же файл, что `a/1.txt`), `e1`, `e2` нет.
 3. Снять «То же содержимое», «Найти».
 - [ ] Одна группа из четырёх файлов (вместе с `a/2.txt`).
 4. Отметить «То же имя», снять «Тот же размер», «Найти».
