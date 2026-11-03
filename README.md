@@ -111,7 +111,7 @@ Flatpak, from the COSMIC flatpak repository (Pop!_OS 24.04 has it; elsewhere add
 flatpak install --user cosmic io.github.shagovAlexei.cosmic-shagoff-commander
 ```
 
-A file manager needs the whole system, so this flatpak is no sandbox: it sees all files and runs every program (open with, terminals, mounts, clouds, the command line) on the host. Settings, tabs and trash are the same as the `.deb`'s; flatpak updates it, the program's own update check is off there.
+A file manager needs the whole system, so this flatpak is no sandbox: it sees all files and runs every program (open with, terminals, mounts, clouds, the command line) on the host. `/etc`, `/usr` and the like open as `/run/host/etc`, `/run/host/usr` (inside the flatpak the plain ones are its runtime's). Settings, tabs and trash are the same as the `.deb`'s; flatpak updates it, the program's own update check is off there.
 
 Each release lists the SHA-256 sums of its files in its notes and also carries `SHA256SUMS` and a signed build attestation.
 
