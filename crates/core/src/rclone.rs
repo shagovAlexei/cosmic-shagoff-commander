@@ -9,7 +9,6 @@ use crate::mount::Error;
 use sha2::Digest;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// rclone's release signing keys (dearmored `rclone.org/KEYS`).
 const KEYRING: &[u8] = include_bytes!("../../../res/rclone-keys.gpg");
@@ -79,7 +78,7 @@ pub fn hash_of<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn fetch(url: &str) -> Result<Vec<u8>, Error> {
-    let out = Command::new("curl")
+    let out = crate::host::command("curl")
         .args(["-fsSL", "-m", "600", "--", url])
         .output()
         .map_err(|e| Error::Failed(format!("curl: {e}")))?;
@@ -99,12 +98,11 @@ fn signed(sums: &[u8], tmp: &Path) -> Result<String, Error> {
     let failed = |e: std::io::Error| Error::Failed(e.to_string());
     std::fs::write(&keyring, KEYRING).map_err(failed)?;
     std::fs::write(&file, sums).map_err(failed)?;
-    let out = Command::new("gpgv")
-        .arg("--keyring")
+    let out = crate::host::command("env")
+        .args(["LC_ALL=C", "gpgv", "--keyring"])
         .arg(&keyring)
         .args(["--output", "-", "--"])
         .arg(&file)
-        .env("LC_ALL", "C")
         .output()
         .map_err(|e| Error::Failed(format!("gpgv: {e}")))?;
     match out.status.success() {
@@ -199,7 +197,7 @@ pub const CLOUDS_MOUNTED: &str = "clouds mounted";
 pub fn remove() -> Result<(), Error> {
     let dir = dir().ok_or_else(|| Error::Failed("no HOME".into()))?;
     if let Some(root) = crate::cloud::root() {
-        let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        let mounts = crate::host::mounts();
         if !crate::cloud::mounted(&mounts, &root).is_empty() {
             return Err(Error::Failed(CLOUDS_MOUNTED.into()));
         }
@@ -248,7 +246,11 @@ mod tests {
     /// it does not (needs `gpgv`, there on every Debian / Ubuntu / Fedora: apt and rpm use it).
     #[test]
     fn signed_sums_check_and_a_changed_one_does_not() {
-        if Command::new("gpgv").arg("--version").output().is_err() {
+        if std::process::Command::new("gpgv")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             return;
         }
         let sums = include_str!("testdata/rclone-SHA256SUMS");

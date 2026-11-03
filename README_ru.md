@@ -105,6 +105,14 @@ sudo apt install ./shagoff-commander_*_amd64.deb
 Fedora / openSUSE: `.rpm` из того же релиза (`sudo dnf install ./shagoff-commander-*.x86_64.rpm`).
 `man shagoff-commander` — запуск, файлы и главные клавиши.
 
+Flatpak — из репозитория COSMIC (в Pop!_OS 24.04 он уже есть; в других системах сначала `flatpak remote-add --if-not-exists --user cosmic https://apt.pop-os.org/cosmic/cosmic.flatpakrepo`):
+
+```sh
+flatpak install --user cosmic io.github.shagovAlexei.cosmic-shagoff-commander
+```
+
+Файловому менеджеру нужна вся система, поэтому этот flatpak — не песочница: он видит все файлы и запускает все программы («Открыть с помощью», терминалы, монтирование, облака, командную строку) на хосте. Настройки, вкладки и корзина те же, что у `.deb`; обновляет его flatpak, своя проверка обновлений там выключена.
+
 В заметках каждого релиза перечислены суммы SHA-256 файлов, также приложены `SHA256SUMS` и подписанная аттестация сборки.
 
 Скачать свежий `.deb` и `SHA256SUMS` через `curl`, проверить хеш и поставить, только если он совпал (`--ignore-missing` пропускает `.rpm` из списка):

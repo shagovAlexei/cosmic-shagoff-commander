@@ -636,7 +636,7 @@ pub(super) fn dir_input(dir: &Path) -> String {
 /// Run `argv` without blocking the UI or leaving a zombie.
 pub(super) fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
     let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
-    let child = std::process::Command::new(prog).args(args).spawn()?;
+    let child = shagoff_core::host::command(prog).args(args).spawn()?;
     reap(child);
     Ok(())
 }
@@ -659,7 +659,7 @@ pub(super) fn scan_terminals() -> Task<Message> {
 pub(super) fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
     use std::process::Stdio;
     let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
-    let child = std::process::Command::new(prog)
+    let child = shagoff_core::host::command(prog)
         .args(args)
         .current_dir(dir)
         .stdin(Stdio::null())
@@ -693,7 +693,7 @@ pub(super) fn run_watched(argv: &[String], dir: &Path) -> std::io::Result<Task<M
     use std::io::BufRead;
     use std::process::Stdio;
     let (prog, args) = argv.split_first().ok_or(std::io::ErrorKind::InvalidInput)?;
-    let mut child = std::process::Command::new(prog)
+    let mut child = shagoff_core::host::command(prog)
         .args(args)
         .current_dir(dir)
         .stdin(Stdio::null())

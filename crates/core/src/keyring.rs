@@ -153,7 +153,7 @@ fn fetch_realm(u: &url::Url) -> Result<Option<String>, String> {
     let rest = u.as_str().split_once("://").map_or("", |(_, r)| r);
     let address = format!("{http}://{rest}");
     for (method, depth) in [("OPTIONS", None), ("PROPFIND", Some("Depth: 0"))] {
-        let mut curl = std::process::Command::new("curl");
+        let mut curl = crate::host::command("curl");
         curl.args([
             "-sSkL",
             "-m",

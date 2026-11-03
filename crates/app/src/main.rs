@@ -110,7 +110,7 @@ fn desktop_icon_theme() -> Option<String> {
         return None;
     }
     let run = |cmd: &str, args: &[&str]| {
-        let out = std::process::Command::new(cmd).args(args).output().ok()?;
+        let out = shagoff_core::host::command(cmd).args(args).output().ok()?;
         out.status
             .success()
             .then(|| icons::theme_name(&String::from_utf8_lossy(&out.stdout)))?

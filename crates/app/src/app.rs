@@ -1077,7 +1077,8 @@ impl Application for App {
             app.dialog = Some(Dialog::Crashed { report });
         }
         // At every start, in the background: a newer release opens the update dialog.
-        let update = app.config.check_updates.then(|| {
+        // A flatpak is updated by flatpak.
+        let update = (app.config.check_updates && !shagoff_core::host::inside()).then(|| {
             Task::perform(
                 async {
                     tokio::task::spawn_blocking(|| {

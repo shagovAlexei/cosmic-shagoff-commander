@@ -2845,7 +2845,7 @@ fn about(check: Option<&shagoff_core::update::Status>) -> Element<'_, Message> {
             fl!("about-version"),
             env!("CARGO_PKG_VERSION")
         )))
-        .push(check_btn)
+        .push_maybe((!shagoff_core::host::inside()).then_some(check_btn))
         .push_maybe(note.map(widget::text::body))
         .push(widget::text::body(fl!("about-comments")))
         .push(widget::text::caption(format!(

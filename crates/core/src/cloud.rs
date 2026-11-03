@@ -337,12 +337,11 @@ pub fn installed() -> bool {
 }
 
 fn in_path(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(program).is_file()))
+    crate::host::which(program).is_some()
 }
 
 fn rclone<const N: usize>(args: [&str; N]) -> Command {
-    let mut c = Command::new(crate::rclone::program());
+    let mut c = crate::host::command(crate::rclone::program());
     c.args(args);
     c
 }
@@ -617,7 +616,7 @@ pub fn rclone_error(stderr: &str) -> String {
 /// Not forgotten if it cannot be unmounted (busy).
 pub fn remove(name: &str) -> Result<(), Error> {
     if let Some(root) = root() {
-        let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        let mounts = crate::host::mounts();
         for point in mounted(&mounts, &root) {
             let ours = (point.file_name())
                 .is_some_and(|n| of_point(&n.to_string_lossy()).is_some_and(|(_, r)| r == name));
@@ -641,7 +640,7 @@ pub fn mount(point_name: &str) -> Result<PathBuf, Error> {
     let (_, name) =
         of_point(point_name).ok_or_else(|| Error::Failed(format!("{point_name}: not a cloud")))?;
     let point = root.join(point_name);
-    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    let mounts = crate::host::mounts();
     if mounted(&mounts, &root).contains(&point) {
         // Mounted already (another window, the list a moment old): just go there.
         if std::fs::read_dir(&point).is_ok() {
@@ -674,7 +673,7 @@ fn fusermount(point: &Path, lazy: bool) -> Result<(), Error> {
     } else {
         "fusermount"
     };
-    let mut c = Command::new(bin);
+    let mut c = crate::host::command(bin);
     c.arg(if lazy { "-uz" } else { "-u" }).arg(point);
     run(c).map(drop)
 }

@@ -119,3 +119,12 @@ sign-release tag key='~/.config/minisign/shagoff.key':
     gh release upload '{{tag}}' -R "$repo" "${files[@]}" --clobber
     gh release edit '{{tag}}' -R "$repo" --draft=false --latest
     echo "{{tag}} is out."
+
+# Flatpak (218): build and install for this user (needs org.flatpak.Builder from flathub)
+flatpak:
+    flatpak run org.flatpak.Builder --user --install --force-clean --install-deps-from=flathub \
+        --state-dir=target/flatpak-builder target/flatpak-build flatpak/{{appid}}.json
+
+# Regenerate flatpak/cargo-sources.json after Cargo.lock changes (flatpak-builder-tools' cargo generator)
+flatpak-sources generator='flatpak-cargo-generator.py':
+    uv run --with aiohttp --with tomlkit python3 {{generator}} Cargo.lock -o flatpak/cargo-sources.json

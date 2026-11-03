@@ -251,7 +251,8 @@ impl App {
 
     /// Commands → "Shell…": `$SHELL` first, then `/etc/shells`; the chosen one ticked.
     pub(super) fn shell_items(&self) -> (Vec<ListItem>, usize) {
-        let etc = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+        let etc = std::fs::read_to_string(shagoff_core::host::path(Path::new("/etc/shells")))
+            .unwrap_or_default();
         let list = shagoff_core::shell::shells(&etc);
         let chosen = &self.config.term_shell;
         let at = list.iter().position(|s| s == chosen);

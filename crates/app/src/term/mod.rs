@@ -26,9 +26,19 @@ pub struct Pane {
     dir: Option<PathBuf>,
     /// Its path: whether it has a line editor (`shell::at_prompt`).
     shell: String,
+    /// Inside a flatpak: the pid file of `script`, the shell's host parent (`host::shell_argv`).
+    host: Option<PathBuf>,
     /// When it was last found busy: asked again only after `RETRY` (not on every message of a
     /// long build's output).
     busy_at: Option<std::time::Instant>,
+}
+
+impl Drop for Pane {
+    fn drop(&mut self) {
+        if let Some(pidfile) = &self.host {
+            let _ = std::fs::remove_file(pidfile);
+        }
+    }
 }
 
 const RETRY: std::time::Duration = std::time::Duration::from_millis(300);
@@ -51,8 +61,18 @@ pub fn start(
     } else {
         terminal_theme::cosmic_light()
     };
+    let host = shagoff_core::host::inside().then(|| {
+        use std::sync::atomic::AtomicUsize;
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(".shagoff-term.{}.{n}", std::process::id()))
+    });
+    let (prog, args) = match &host {
+        Some(pidfile) => shagoff_core::host::shell_argv(shell, pidfile),
+        None => (shell.to_string(), Vec::new()),
+    };
     let options = tty::Options {
-        shell: Some(tty::Shell::new(shell.to_string(), Vec::new())),
+        shell: Some(tty::Shell::new(prog, args)),
         working_directory: dir.map(Path::to_path_buf),
         ..tty::Options::default()
     };
@@ -62,10 +82,12 @@ pub fn start(
     };
     let mut t = Terminal::new(tx, config, options, style, colors)?;
     t.set_config(style, &colors);
+    t.host_shell = host.clone();
     Ok(Pane {
         terminal: Mutex::new(t),
         dir: dir.map(Path::to_path_buf),
         shell: shell.to_string(),
+        host,
         busy_at: None,
     })
 }
@@ -143,11 +165,15 @@ pub fn follow(pane: &mut Pane, dir: &Path) {
         return;
     }
     let t = pane.terminal.lock().unwrap_or_else(|e| e.into_inner());
-    let idle = t.shell_pid().is_some_and(|pid| {
-        use shagoff_core::shell::{at_prompt, canonical};
-        std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            .is_ok_and(|stat| at_prompt(&stat, canonical(pid), &pane.shell))
-    });
+    use shagoff_core::shell::{at_prompt, canonical};
+    let idle = match &pane.host {
+        Some(pidfile) => shagoff_core::host::shell_state(pidfile)
+            .is_some_and(|(stat, canon)| at_prompt(&stat, canon, &pane.shell)),
+        None => t.shell_pid().is_some_and(|pid| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .is_ok_and(|stat| at_prompt(&stat, canonical(pid), &pane.shell))
+        }),
+    };
     if idle {
         // A name that cannot be typed safely: the terminal stays where it is.
         if let Some(line) = shagoff_core::shell::cd_line(dir) {

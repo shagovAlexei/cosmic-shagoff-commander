@@ -2,7 +2,6 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct App {
@@ -98,9 +97,9 @@ pub fn find_desktop(id: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 }
 
 fn gio(args: &[&std::ffi::OsStr]) -> Result<String, String> {
-    let out = Command::new("gio")
+    let out = crate::host::command("env")
+        .args(["LC_ALL=C", "gio"])
         .args(args)
-        .env("LC_ALL", "C")
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
@@ -175,6 +174,7 @@ pub fn other_line(cmd: &str, files: &[PathBuf]) -> String {
 }
 
 pub fn launch_argv(desktop: &Path, files: &[PathBuf]) -> Vec<OsString> {
+    let desktop = crate::host::outside(desktop);
     let mut argv = vec![OsString::from("gio"), "launch".into(), desktop.into()];
     argv.extend(files.iter().map(OsString::from));
     argv

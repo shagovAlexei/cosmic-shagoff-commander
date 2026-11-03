@@ -271,7 +271,7 @@ impl App {
     }
 
     pub(super) fn set_drives(&mut self) {
-        let m = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        let m = shagoff_core::host::mounts();
         if !m.is_empty() {
             self.drives = drives::parse(&m, &self.home);
         }

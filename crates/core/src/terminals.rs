@@ -149,14 +149,13 @@ pub fn default_of<'a>(
 /// `gio`.
 pub fn scan(lang: &str) -> (Vec<Terminal>, Option<usize>) {
     let terms = installed(&data_dirs(), lang);
-    let gio = std::process::Command::new("gio")
-        .args(["mime", "x-scheme-handler/terminal"])
-        .env("LC_ALL", "C")
+    let gio = crate::host::command("env")
+        .args(["LC_ALL=C", "gio", "mime", "x-scheme-handler/terminal"])
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-    let real = std::fs::canonicalize("/usr/bin/x-terminal-emulator").ok();
+    let real = crate::host::canonicalize(Path::new("/usr/bin/x-terminal-emulator"));
     let default = default_of(&terms, gio.as_deref(), real.as_deref())
         .and_then(|d| terms.iter().position(|t| t == d));
     (terms, default)
