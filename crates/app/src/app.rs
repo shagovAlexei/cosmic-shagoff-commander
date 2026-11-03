@@ -1,8 +1,8 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State, ToolButton};
 use crate::dialogs::{
-    self, Dialog, FindField, InputOp, Item, ListItem, ListKind, MaskOp, MrField, SyncOpt, Toggle,
-    UpdateStage,
+    self, Dialog, DupBox, FindField, InputOp, Item, ListItem, ListKind, MaskOp, MrField, SyncOpt,
+    Toggle, UpdateStage,
 };
 use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
@@ -808,6 +808,8 @@ pub enum Message {
     FindHelp,
     FindNameRegex,
     FindArchives,
+    /// «Find duplicates» and its three boxes.
+    FindDup(crate::dialogs::DupBox),
     /// Alt+Enter: toggle a permission bit / "also inside folders".
     PropsBit(u32),
     /// Alt+Enter's group drop-down: index into `Props::gids`.

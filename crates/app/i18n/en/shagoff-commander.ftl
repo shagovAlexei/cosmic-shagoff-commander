@@ -520,6 +520,11 @@ find-bad-attrs = Attributes: "{ $value }" — only h (hidden), r (read-only), s 
 find-bad-regex = Regular expression: { $err }
 find-results = Search results: { $dir }
 find-bad-range = Size from is larger than size up to
+find-dupes = Find duplicates
+find-dup-name = Same name
+find-dup-size = Same size
+find-dup-content = Same contents
+find-dupes-none = Duplicates: tick what to compare
 results-unsupported = Not available in search results
 
 # Sync, more

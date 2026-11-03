@@ -248,6 +248,96 @@ pub fn find(
     }
 }
 
+/// Alt+F7 «Find duplicates»: what two files must share.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Dupes {
+    pub name: bool,
+    pub size: bool,
+    pub content: bool,
+}
+
+impl Default for Dupes {
+    fn default() -> Self {
+        Self {
+            name: false,
+            size: true,
+            content: true,
+        }
+    }
+}
+
+impl Dupes {
+    pub fn any(self) -> bool {
+        self.name || self.size || self.content
+    }
+}
+
+/// `items` grouped in `keys`' first-seen order, groups of one dropped.
+fn grouped<K: std::hash::Hash + Eq>(items: Vec<(K, PathBuf)>) -> Vec<Vec<PathBuf>> {
+    let mut index = std::collections::HashMap::new();
+    let mut groups: Vec<Vec<PathBuf>> = Vec::new();
+    for (k, p) in items {
+        let i = *index.entry(k).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[i].push(p);
+    }
+    groups.retain(|g| g.len() > 1);
+    groups
+}
+
+/// The regular files among `paths` (not followed through links; archive members and dirs are
+/// out) that share what `by` asks, as groups in `paths`' order. Contents are compared by SHA-256
+/// within same-size groups; `each` gets every file read. Stopped → nothing. A file reached by
+/// two paths (hard link, bind mount) counts once: deleting "the copy" would delete it. Empty
+/// files are all alike: left out when sizes or contents are compared.
+pub fn duplicates(
+    paths: &[PathBuf],
+    by: Dupes,
+    stop: &AtomicBool,
+    each: &mut dyn FnMut(&Path),
+) -> Vec<Vec<PathBuf>> {
+    use std::os::unix::fs::MetadataExt;
+    let sized = by.size || by.content;
+    let mut seen = std::collections::HashSet::new();
+    let files = paths.iter().filter_map(|p| {
+        let m = fs::symlink_metadata(p).ok().filter(|m| m.is_file())?;
+        if (sized && m.len() == 0) || !seen.insert((m.dev(), m.ino())) {
+            return None;
+        }
+        let name = by.name.then(|| p.file_name().map(|n| n.to_owned()));
+        Some(((name, sized.then_some(m.len())), p.clone()))
+    });
+    let groups = grouped(files.collect());
+    if stop.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    if !by.content {
+        return groups;
+    }
+    let mut out = Vec::new();
+    for g in groups {
+        let mut hashed = Vec::new();
+        for p in g {
+            if stop.load(Ordering::Relaxed) {
+                return Vec::new();
+            }
+            each(&p);
+            use crate::checksum::{Algo, hash};
+            if let Ok(h) = hash(&p, Algo::Sha256, stop) {
+                hashed.push((h, p));
+            }
+        }
+        out.extend(grouped(hashed));
+    }
+    if stop.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    out
+}
+
 /// Does the file contain `q.text`? Read errors → false.
 pub fn contains(path: &Path, q: &Query) -> bool {
     contains_until(path, q, &AtomicBool::new(false))
@@ -776,5 +866,48 @@ mod tests {
         let mut query = q("*", None, false, false);
         query.min_size = Some(0);
         assert!(run(d.path(), &query).is_empty());
+    }
+
+    #[test]
+    fn duplicates_by_size_by_name_and_by_content() {
+        let d = tempfile::tempdir().unwrap();
+        let p = |n: &str| d.path().join(n);
+        fs::create_dir_all(p("x")).unwrap();
+        fs::write(p("a.txt"), "same").unwrap();
+        fs::write(p("x/a.txt"), "same").unwrap();
+        fs::write(p("b.txt"), "diff").unwrap(); // same size, other bytes
+        fs::write(p("c.txt"), "longer").unwrap(); // alone
+        symlink(p("a.txt"), p("link.txt")).unwrap(); // never counted
+        fs::hard_link(p("a.txt"), p("hard.txt")).unwrap(); // the same file: once
+        fs::write(p("e1"), "").unwrap();
+        fs::write(p("e2"), "").unwrap(); // empty ones: not by size or contents
+        let all: Vec<PathBuf> = [
+            "a.txt", "b.txt", "c.txt", "e1", "e2", "hard.txt", "link.txt", "x", "x/a.txt",
+        ]
+        .iter()
+        .map(|n| p(n))
+        .collect();
+        let stop = AtomicBool::new(false);
+        let by = |name, size, content| {
+            duplicates(
+                &all,
+                Dupes {
+                    name,
+                    size,
+                    content,
+                },
+                &stop,
+                &mut |_| {},
+            )
+        };
+        assert_eq!(
+            by(false, true, false),
+            [vec![p("a.txt"), p("b.txt"), p("x/a.txt")]]
+        );
+        assert_eq!(by(true, false, false), [vec![p("a.txt"), p("x/a.txt")]]);
+        assert_eq!(by(false, false, true), [vec![p("a.txt"), p("x/a.txt")]]);
+        stop.store(true, Ordering::Relaxed);
+        assert!(by(false, true, true).is_empty());
+        assert!(by(true, false, false).is_empty());
     }
 }

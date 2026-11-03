@@ -445,6 +445,11 @@ pub struct Find {
     pub name_regex: bool,
     /// Also names inside zip / tar / 7z.
     pub archives: bool,
+    /// «Find duplicates», by what `dup_by` says.
+    pub dupes: bool,
+    pub dup_by: shagoff_core::search::Dupes,
+    /// Index in `results` where each group of duplicates starts.
+    pub groups: Vec<usize>,
     /// Filters as typed: size bounds in KB, "not older than" in days.
     pub min_size: String,
     pub max_size: String,
@@ -541,6 +546,14 @@ impl Drop for Find {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DupBox {
+    On,
+    Name,
+    Size,
+    Content,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindField {
     Mask,
     Dir,
@@ -1976,6 +1989,9 @@ pub fn view<'a>(
             };
             let mut list = column![].spacing(2);
             for (i, p) in f.results.iter().enumerate().take(FIND_SHOWN) {
+                if i > 0 && f.groups.binary_search(&i).is_ok() {
+                    list = list.push(widget::divider::horizontal::default());
+                }
                 let label = p.display().to_string();
                 let b = if i == f.cursor {
                     widget::button::suggested(label)
@@ -2054,6 +2070,10 @@ pub fn view<'a>(
                                 .label(fl!("find-archives"))
                                 .on_toggle(|_| Message::FindArchives)
                                 .into(),
+                            widget::checkbox(f.dupes)
+                                .label(fl!("find-dupes"))
+                                .on_toggle(|_| Message::FindDup(DupBox::On))
+                                .into(),
                             if f.help {
                                 widget::button::suggested(fl!("find-regex-help-button"))
                             } else {
@@ -2065,6 +2085,20 @@ pub fn view<'a>(
                         .spacing(16)
                         .align_items(cosmic::iced::Alignment::Center),
                     )
+                    .push_maybe(f.dupes.then(|| {
+                        let dup = |on: bool, label: String, b: DupBox| {
+                            widget::checkbox(on)
+                                .label(label)
+                                .on_toggle(move |_| Message::FindDup(b))
+                                .into()
+                        };
+                        widget::flex_row(vec![
+                            dup(f.dup_by.name, fl!("find-dup-name"), DupBox::Name),
+                            dup(f.dup_by.size, fl!("find-dup-size"), DupBox::Size),
+                            dup(f.dup_by.content, fl!("find-dup-content"), DupBox::Content),
+                        ])
+                        .spacing(16)
+                    }))
                     .push_maybe(
                         f.help
                             .then(|| widget::text::caption(fl!("find-regex-help"))),

@@ -523,6 +523,9 @@ pub(super) fn find_query(
             .map(Some)
             .map_err(|_| fl!("find-bad-number", field = what, value = s))
     };
+    if f.dupes && !f.dup_by.any() {
+        return Err(fl!("find-dupes-none"));
+    }
     let kb = |n: Option<u64>| n.map(|n| n.saturating_mul(1024));
     let days = number(&f.days, fl!("find-days"))?;
     let (min, max) = (

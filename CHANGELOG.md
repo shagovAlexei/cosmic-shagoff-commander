@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.136.0 — 2026-11-03
+
+- feat: find duplicate files (217): Alt+F7 → «Find duplicates» by same name / size / contents (SHA-256), groups divided by a line, «To panel» lists them all
+
 ## 0.135.0 — 2026-11-03
 
 - feat: own rclone (216d): Settings → Clouds downloads the official rclone from rclone.org (checksums verified with its built-in PGP key through `gpgv`, then the zip's SHA-256) into `~/.local/share/shagoff-commander/rclone`, no sudo; used in place of the system's; Update / Remove; the .deb depends on `gpgv`, the .rpm on `/usr/bin/gpgv`

@@ -652,6 +652,18 @@ impl App {
                     f.in_list = false;
                 }
             }
+            Message::FindDup(b) => {
+                if let Some(Dialog::Find(f)) = &mut self.dialog {
+                    let flag = match b {
+                        DupBox::On => &mut f.dupes,
+                        DupBox::Name => &mut f.dup_by.name,
+                        DupBox::Size => &mut f.dup_by.size,
+                        DupBox::Content => &mut f.dup_by.content,
+                    };
+                    *flag = !*flag;
+                    f.in_list = false;
+                }
+            }
             Message::FindArchives => {
                 if let Some(Dialog::Find(f)) = &mut self.dialog {
                     f.archives = !f.archives;
