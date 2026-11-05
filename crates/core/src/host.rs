@@ -147,13 +147,8 @@ pub fn kill_group(group: rustix::process::Pid) {
 pub fn shell_argv(shell: &str, pidfile: &Path, dir: Option<&Path>) -> (String, Vec<String>) {
     let script =
         r#"echo $$ > "$1"; SHAGOFF_SHELL=$2 exec script -qfec 'exec "$SHAGOFF_SHELL"' /dev/null"#;
-    let mut args: Vec<String> = [
-        "--host",
-        "--env=TERM=xterm-256color",
-        "--env=COLORTERM=truecolor",
-    ]
-    .map(String::from)
-    .into();
+    let mut args = vec!["--host".to_string()];
+    args.extend(crate::shell::ENV.map(|(k, v)| format!("--env={k}={v}")));
     args.extend(dir.map(|d| format!("--directory={}", outside(d).display())));
     let rest = ["sh", "-c", script, "sh", &pidfile.to_string_lossy(), shell];
     args.extend(rest.map(String::from));

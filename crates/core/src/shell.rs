@@ -4,6 +4,11 @@
 use crate::cmdline::quote;
 use std::path::Path;
 
+/// What the built-in terminal tells its shell it is. Never left to the inherited environment:
+/// started from the desktop there is no `TERM`, and zsh then redraws its line by printing it
+/// again (`ls` shows as `llsls`).
+pub const ENV: [(&str, &str); 2] = [("TERM", "xterm-256color"), ("COLORTERM", "truecolor")];
+
 /// `/etc/shells` as a list to choose from: a name once (`/bin/zsh` and `/usr/bin/zsh` are one, the
 /// first kept), restricted `rbash` and non-shells such as `tmux` and `screen` left out.
 pub fn shells(etc_shells: &str) -> Vec<String> {
@@ -97,6 +102,11 @@ pub fn cd_line(dir: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_term_env_set() {
+        assert!(ENV.contains(&("TERM", "xterm-256color")));
+    }
 
     #[test]
     fn shells_once_each_without_non_shells() {

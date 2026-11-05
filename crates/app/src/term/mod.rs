@@ -77,6 +77,9 @@ pub fn start(
     let options = tty::Options {
         shell: Some(tty::Shell::new(prog, args)),
         working_directory: dir.map(Path::to_path_buf),
+        env: shagoff_core::shell::ENV
+            .map(|(k, v)| (k.into(), v.into()))
+            .into(),
         ..tty::Options::default()
     };
     let config = term::Config {
