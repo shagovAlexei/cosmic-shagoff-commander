@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.139.2 — 2026-11-05
+
+- fix: the built-in terminal doubled typed letters (`ls` → `llsls`) when the program was started from the menu: its shell got no `TERM`
+
 ## 0.139.1 — 2026-11-03
 
 - fix: the Changelog button in About did nothing (an open dialog takes the keys, and the button sent one)
