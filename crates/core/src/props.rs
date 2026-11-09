@@ -374,6 +374,9 @@ pub fn helper_args(
 /// build in `target/` or `~/bin` would be a root program the user can swap).
 pub fn helper_exe(exe: &Path) -> Result<PathBuf, String> {
     use std::os::unix::fs::MetadataExt;
+    if crate::host::inside() {
+        return Err(crate::why::FLATPAK_ROOT.to_string());
+    }
     let exe = exe.canonicalize().map_err(|e| e.to_string())?;
     let safe = |p: &Path| fs::metadata(p).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0);
     match exe.starts_with("/usr") && exe.ancestors().all(safe) {

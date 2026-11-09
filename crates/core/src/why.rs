@@ -40,6 +40,8 @@ reasons! {
     CRC_MISMATCH = "why-crc-mismatch",
         "joined, but the CRC does not match: a part is damaged or missing";
     MISSING_PART = "why-missing-part", "a part is missing: the numbers of the parts have a gap";
+    FLATPAK_ROOT = "why-flatpak-root",
+        "a flatpak cannot run anything as root: this change needs the .deb or .rpm";
     UNSAFE_HELPER = "why-unsafe-helper",
         "the program is not installed in /usr by root: it is not run as root";
     NO_ROOM = "why-no-room",

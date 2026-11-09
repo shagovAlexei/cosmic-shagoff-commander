@@ -983,6 +983,7 @@ date-modified = Изменения
 date-accessed = Доступа
 date-now = Текущие дата и время
 date-note = Время создания и смены статуса в Linux задать нельзя
+why-flatpak-root = Из flatpak нельзя ничего запустить от root: для этого изменения нужен .deb или .rpm
 why-unsafe-helper = Программа установлена не в /usr от root: от root она не запускается
 why-verify-failed = Копия, прочитанная заново, не совпала с оригиналом
 settings-verify-copy = Проверять копии (читать заново после копирования: медленнее)

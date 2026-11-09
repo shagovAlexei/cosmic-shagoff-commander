@@ -102,6 +102,39 @@ pub fn which(prog: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?).find_map(|d| found(d.join(prog)))
 }
 
+/// Whether the host has `prog`. Inside, `flatpak-spawn` itself always starts and the host's
+/// «not found» never reaches us; outside starting it says so: true.
+pub fn has(prog: &std::ffi::OsStr) -> bool {
+    use std::process::Stdio;
+    let argv = [
+        "sh".as_ref(),
+        "-c".as_ref(),
+        r#"command -v -- "$1""#.as_ref(),
+        "sh".as_ref(),
+        prog,
+    ];
+    !inside()
+        || (command_in(&argv, None)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status())
+        .is_ok_and(|s| s.success())
+}
+
+/// `argv` for the host so TERM stops its whole process group: `flatpak-spawn` passes our TERM
+/// on to the host program only, its children would live on. (Each host program is a session of
+/// its own there, so `kill 0` reaches nothing else.) Outside: `argv` as it is.
+const GROUP_TERM: &str = r#"trap 'trap - TERM; kill 0' TERM; "$@" & wait $!"#;
+
+pub fn group_term<S: AsRef<std::ffi::OsStr>>(argv: &[S]) -> Vec<std::ffi::OsString> {
+    let mut v: Vec<std::ffi::OsString> = Vec::new();
+    if inside() {
+        v.extend(["sh", "-c", GROUP_TERM, "sh"].map(Into::into));
+    }
+    v.extend(argv.iter().map(|a| a.as_ref().to_os_string()));
+    v
+}
+
 /// `p` with its links resolved, as the host sees it.
 pub fn canonicalize(p: &Path) -> Option<PathBuf> {
     path(p).canonicalize().ok().map(|c| outside(&c))
@@ -199,6 +232,26 @@ pub fn winch(pidfile: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TERM to the wrapper alone (what `flatpak-spawn` passes on) stops the program's children.
+    #[test]
+    fn regression_flatpak_term_reaches_the_group() {
+        use std::os::unix::process::CommandExt;
+        let d = tempfile::tempdir().unwrap();
+        let late = d.path().join("late");
+        let prog = format!("(sleep 1; touch '{}') & sleep 5", late.display());
+        let mut child = Command::new("sh")
+            .args(["-c", GROUP_TERM, "sh", "sh", "-c", &prog])
+            .process_group(0) // the host's session of its own
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+        rustix::process::kill_process(pid, rustix::process::Signal::TERM).unwrap();
+        child.wait().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1300));
+        assert!(!late.exists(), "a child outlived TERM");
+    }
 
     #[test]
     fn inside_programs_run_through_flatpak_spawn() {

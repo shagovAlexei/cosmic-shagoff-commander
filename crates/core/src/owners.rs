@@ -104,9 +104,15 @@ pub fn euid() -> u32 {
 
 /// The groups this process may give a file it owns (its own and the supplementary ones):
 /// without root, chgrp to any other fails.
+/// The kernel's `overflowgid` (`/proc/sys/kernel/overflowgid`, 65534 unless changed by hand).
+const OVERFLOW_GID: u32 = 65534;
+
 pub fn my_groups() -> Vec<u32> {
     let mut v: Vec<u32> = (rustix::process::getgroups().unwrap_or_default().into_iter())
         .map(|g| g.as_raw())
+        // In a flatpak the groups not mapped into the sandbox read as the overflow gid
+        // (`nfsnobody`): no group of ours, nothing can be given it.
+        .filter(|g| *g != OVERFLOW_GID)
         .collect();
     v.push(rustix::process::getegid().as_raw());
     v.sort_unstable();
