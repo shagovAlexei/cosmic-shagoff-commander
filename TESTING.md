@@ -2146,6 +2146,102 @@ mkdir -p /tmp/fp && echo text > /tmp/fp/a.txt && printf '\x7fELF' > /tmp/fp/bin
 5. В flatpak (`just flatpak`, `flatpak run …`).
 - [ ] В меню нет «Проверить обновления…», в «О программе» — только «Журнал изменений».
 
+### Flatpak: полная проверка (0.139.2)
+
+Всё, что программа берёт снаружи, во flatpak идёт другим путём (`flatpak-spawn --host`, `/run/host`), поэтому проверяется отдельно. Проверка .deb — разделы выше.
+
+#### Автоматически (05.11.2026, 0.139.2)
+
+Повторить:
+```sh
+just flatpak
+# все тесты внутри песочницы: код видит /.flatpak-info и идёт путём flatpak
+for b in $(cargo test --workspace --no-run --message-format=json 2>/dev/null \
+    | python3 -c 'import json,sys;[print(m["executable"]) for m in map(json.loads,sys.stdin) if m.get("executable") and m["profile"]["test"]]'); do
+  case $b in *shagoff_commander*) c=crates/app;; *) c=crates/core;; esac
+  flatpak run --cwd=$PWD/$c --command=$b io.github.shagovAlexei.cosmic-ext-shagoff-commander --test-threads=4 2>&1 | grep -E '^test result|FAILED'
+done
+```
+
+Итог: прошли 976 тестов, не прошли 12. Ожидаемые падения (тест написан для работы вне песочницы): 5 тестов, где `/etc`, `/usr` открываются как `/run/host/etc`, `/run/host/usr`; `host_paths_are_passed_as_the_hosts_own`; `regression_root_helper_only_from_usr`. Найденные ошибки:
+
+| № | Что | Тест |
+|---|---|---|
+| F1 | Alt+Enter → «Сменить владельца» (от root, pkexec): во flatpak помощник лежит в `/app`, не в `/usr`, — отказ «программа установлена не в /usr» | `regression_root_helper_only_from_usr` |
+| F2 | В «О программе» / магазине — версия 0.138.0: в `res/*.metainfo.xml` нет `<release>` 0.139.x | — |
+| F3 | Alt+Enter → группа: в песочнице видна только основная группа (`id`: `shag, nfsnobody`), смена на дополнительную (`docker`, `video`…) — ошибка «нет прав» | `chgrp_to_own_group_and_refused_otherwise` |
+| F4 | F3 / F4 внешней программой, которой нет на хосте: молча ничего (`flatpak-spawn` запускается всегда, ошибка хоста не доходит) | `f3_without_the_builtin_viewer_runs_the_program`, `spawn_detached_reports_missing_program` |
+| F5 | Зависший генератор эскизов: TERM доходит только до главного процесса на хосте, его дочерние живут дальше | `run_kills_the_whole_group_on_timeout` |
+
+Снаружи песочницы (скрипт из `flatpak run --command=sh …`, каждая строка — OK): `/.flatpak-info`; XDG-каталоги из `launch.sh` = свои у дома; дом и `/tmp` общие с хостом; `/run/host/etc/passwd`, `.desktop` и `mime/globs2` хоста; каталог gvfs; корзина; на хосте: `sh`, `env K=V`, `printenv PATH`, `getent passwd`, `gio` (`version`, `info`, `mime`, `mount -l`, `list network:///`, `trash --list`), `xdg-open`, `script`, `curl`, `gpgv`, `rclone`, `bwrap`, терминал, `pkexec`, TERM группе; D-Bus: `org.freedesktop.secrets`, `com.system76.CosmicSettingsDaemon`; сеть (api.github.com); сокет Wayland; `/dev/dri`; тема значков Cosmic.
+
+Запуск `flatpak run …`: окно открылось, в журнале (RUST_LOG=warn) ошибок нет; встроенный терминал — `script -qfec` → `/bin/zsh` на хосте, свой pty, `TERM=xterm-256color`, `COLORTERM=truecolor`, каталог — каталог панели.
+
+#### Вручную
+
+Подготовка:
+```sh
+just flatpak                                   # или из PR в cosmic-flatpak
+mkdir -p /tmp/fpc/sub && cd /tmp/fpc
+echo hello > a.txt && cp a.txt b.txt && seq 1 100000 > big.txt
+zip -q -P 123 secret.zip a.txt && zip -q plain.zip a.txt b.txt && zip -q outer.zip plain.zip
+cp /usr/share/doc/*/copyright sub/ 2>/dev/null; ls /usr/share/backgrounds/*/* 2>/dev/null | head -3 | xargs -r cp -t sub/
+flatpak run io.github.shagovAlexei.cosmic-ext-shagoff-commander
+```
+Перед этим закрыть .deb-версию: настройки у них общие.
+
+1. Запуск.
+- [ ] Вкладки, избранное (Ctrl+D), цвета и колонки — те же, что у .deb.
+- [ ] Значки файлов и кнопок на месте; тема (светлая / тёмная) — как у системы, и меняется вместе с ней (Настройки COSMIC → Оформление).
+- [ ] В строке состояния у файлов владелец — `shag`, не число.
+2. Встроенный терминал (под панелями; Ctrl+O — во всё окно).
+- [ ] Набрать `ls` — видно `ls`, без повторов букв; `echo $TERM` → `xterm-256color`; `tty` → `/dev/pts/N`; `cat /.flatpak-info` → «No such file» (оболочка на хосте).
+- [ ] Перейти на панели в `/tmp/fpc/sub` — в терминале `cd -- /tmp/fpc/sub`, приглашение там же.
+- [ ] `sleep 100`, Ctrl+C — прерывается; `vim big.txt` — во весь терминал, после изменения размера окна тоже; `:q`.
+- [ ] Выделить мышью текст — он в буфере (вставить в другую программу Ctrl+V); средняя кнопка вставляет.
+3. Открытие файлов.
+- [ ] Enter на `a.txt` — открывается программой хоста по умолчанию; правая кнопка → «Открыть с помощью…» — список программ хоста со значками, выбранная открывает.
+- [ ] F3 — встроенный просмотрщик; Alt+F3 — внешний; F4 — редактор из настроек (по умолчанию — программа хоста).
+- [ ] Настройки → программа F4 = `no-such-editor`, F4 на файле. Ожидается сообщение об ошибке (сейчас — ничего: F4 в таблице выше).
+4. Операции.
+- [ ] F5 / F6 / F7 / Shift+F6 / F8 (в корзину) в `/tmp/fpc` — как в .deb; в корзине (`~/.local/share/Trash/files`) — «Восстановить», F8 там — насовсем.
+- [ ] Перетащить файл из панели в Файлы COSMIC и обратно; Ctrl+C в панели → Ctrl+V в Файлах (и наоборот) — копируется.
+5. Архивы.
+- [ ] Enter на `plain.zip` — внутри `a.txt`, `b.txt`; F3 на `a.txt` — «hello»; F5 наружу; F8 внутри — архив перепакован.
+- [ ] `secret.zip` → `a.txt` — спрашивает пароль `123`, открывает.
+- [ ] `outer.zip` → `plain.zip` → открывается как каталог (только чтение).
+- [ ] Alt+F5 на `a.txt b.txt` → 7z с паролем — создаётся; открывается с паролем.
+- [ ] F4 на `a.txt` в архиве, изменить, сохранить — предлагает положить обратно, после «Да» в архиве новое.
+6. Свойства (Alt+Enter) на `/tmp/fpc/a.txt`.
+- [ ] Права — галочками меняются (`ls -l` на хосте показывает).
+- [ ] Группа: выбрать `shag` — меняется; выбрать дополнительную (`video` и т. п.) — сейчас ошибка (F3 в таблице).
+- [ ] «Сменить владельца» — сейчас отказ про `/usr` (F1 в таблице).
+7. Диски и сеть.
+- [ ] Вставить флешку — появляется кнопка диска, Enter монтирует (пароль не нужен), «Извлечь» — отключает.
+- [ ] Ctrl+F → `sftp://localhost` (или smb-ресурс) с паролем, «Запомнить пароль» — подключается; отключить, подключить снова — пароль не спрашивает (связка ключей).
+- [ ] Ctrl+F → Esc во время подключения — останавливается.
+- [ ] Ctrl+F → обзор сети — список компьютеров, если в сети есть Samba.
+8. Облака (Ctrl+, → «Облака»).
+- [ ] Свой rclone: «Установить» — скачивает и проверяет подпись (`gpgv` хоста).
+- [ ] Учётная запись (любая из имеющихся) — монтируется, видна кнопкой диска, файлы открываются; «Отключить» — отключает.
+9. Команды.
+- [ ] Командная строка: `touch /tmp/fpc/z` — файл появляется.
+- [ ] Commands → «Открыть терминал» — внешний терминал хоста в каталоге панели.
+- [ ] Кнопка панели инструментов с `sh -c 'notify-send %N'`, F12, меню «Запуск» — запускают на хосте.
+10. Вид.
+- [ ] Ctrl+Shift+F1 в `/tmp/fpc/sub` и в каталоге с PDF / видео — эскизы появляются.
+- [ ] Alt+F10 / Ctrl+F8 — дерево каталогов.
+11. Поиск и сравнение.
+- [ ] Alt+F7 `*.txt` в `/tmp/fpc` с текстом `hello` — находит; «Дубликаты» — `a.txt` и `b.txt` одной группой.
+- [ ] Files → контрольные суммы SHA256 для `a.txt`, затем «Проверить» — совпадает.
+- [ ] «Сравнить каталоги» / «Синхронизировать» между `/tmp/fpc` и `/tmp/fpc/sub` — работают.
+12. Справка и прочее.
+- [ ] F1 — справка; «Поддержать проект» — открывает браузер хоста; в «О программе» ссылки открываются в браузере.
+- [ ] В «О программе» версия 0.139.2 (сейчас 0.138.0: F2 в таблице); нет «Проверить обновления», при старте окно обновления не появляется.
+- [ ] Ctrl+, → язык English — меню по-английски, обратно — по-русски.
+
+Уборка: `rm -r /tmp/fpc; flatpak uninstall --user io.github.shagovAlexei.cosmic-ext-shagoff-commander` (если flatpak больше не нужен).
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
