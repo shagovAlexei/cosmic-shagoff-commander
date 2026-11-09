@@ -58,6 +58,18 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.139.3" date="2026-11-09">
+      <description><p>Flatpak: owner and group offer only what can be changed without root, a missing external viewer or editor is reported, a hung thumbnailer is stopped with its children.</p></description>
+    </release>
+    <release version="0.139.2" date="2026-11-05">
+      <description><p>The built-in terminal no longer doubles typed letters when the program is started from the menu.</p></description>
+    </release>
+    <release version="0.139.1" date="2026-11-03">
+      <description><p>The Changelog button in About opens it.</p></description>
+    </release>
+    <release version="0.139.0" date="2026-11-03">
+      <description><p>Help → Changelog and Check for updates; the Help menu grouped with icons.</p></description>
+    </release>
     <release version="0.138.0" date="2026-11-03">
       <description><p>New app ID io.github.shagovAlexei.cosmic-ext-shagoff-commander (COSMIC trademark policy); settings and tabs move over by themselves.</p></description>
     </release>

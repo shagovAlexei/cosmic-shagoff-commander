@@ -638,6 +638,9 @@ pub(super) fn spawn_detached(argv: &[OsString]) -> std::io::Result<()> {
     if argv.is_empty() {
         return Err(std::io::ErrorKind::InvalidInput.into());
     }
+    if !shagoff_core::host::has(&argv[0]) {
+        return Err(std::io::ErrorKind::NotFound.into());
+    }
     let child = shagoff_core::host::command_in(argv, None).spawn()?;
     reap(child);
     Ok(())

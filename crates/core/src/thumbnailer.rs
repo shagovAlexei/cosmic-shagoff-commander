@@ -293,7 +293,7 @@ pub fn run(argv: &[OsString], timeout: Duration) -> bool {
     if argv.is_empty() {
         return false;
     }
-    let mut cmd = crate::host::command_in(argv, None);
+    let mut cmd = crate::host::command_in(&crate::host::group_term(argv), None);
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let child = cmd
         .stdin(Stdio::null())

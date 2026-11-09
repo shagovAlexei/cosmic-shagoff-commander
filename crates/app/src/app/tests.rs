@@ -7429,3 +7429,16 @@ fn find_duplicates_needs_a_box_groups_its_results_and_is_remembered() {
     let saved = app.find.clone();
     assert!(saved.dupes && saved.dup_by.name && !saved.dup_by.size && !saved.dup_by.content);
 }
+
+/// The flatpak and the stores show the version from the metainfo's newest `<release>`.
+#[test]
+fn regression_metainfo_has_this_release() {
+    let xml = include_str!(
+        "../../../../res/io.github.shagovAlexei.cosmic-ext-shagoff-commander.metainfo.xml"
+    );
+    let first = xml
+        .split("<release version=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next());
+    assert_eq!(first, Some(env!("CARGO_PKG_VERSION")));
+}

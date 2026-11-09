@@ -2,6 +2,13 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.139.3 — 2026-11-09
+
+- fix (flatpak): Alt+Enter offers only the owner and groups that can be given without root (a flatpak cannot run anything as root; the `nfsnobody` group is gone), and says so plainly if a change still needs it
+- fix (flatpak): an external viewer / editor that is not installed is reported, not silently nothing
+- fix (flatpak): a hung thumbnailer is stopped with its children
+- fix: the metainfo lists the 0.139 releases (the flatpak and the store showed 0.138.0)
+
 ## 0.139.2 — 2026-11-05
 
 - fix: the built-in terminal doubled typed letters (`ls` → `llsls`) when the program was started from the menu: its shell got no `TERM`

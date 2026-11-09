@@ -396,18 +396,26 @@ impl App {
         let any = modes.iter().fold(0, |a, m| a | m);
         let has_dir = metas.iter().flatten().any(|m| m.is_dir());
         // The drop-downs: every group / user and the files' own (a number when not in /etc).
+        // A flatpak cannot run anything as root: only what the user may give without it.
+        let inside = shagoff_core::host::inside();
         let common = |ids: &[u32], all: &[(u32, String)]| {
             (ids.first())
                 .filter(|g| ids.iter().all(|x| x == *g))
                 .and_then(|g| all.iter().position(|(id, _)| id == g))
         };
         let file_gids: Vec<u32> = metas.iter().flatten().map(|m| m.gid()).collect();
-        let mut gids = self.owners.all_gids();
+        let mut gids = match inside {
+            true => shagoff_core::owners::my_groups(),
+            false => self.owners.all_gids(),
+        };
         gids.extend(&file_gids);
         let groups = self.owners.groups(&gids);
         let group = common(&file_gids, &groups);
         let file_uids: Vec<u32> = metas.iter().flatten().map(|m| m.uid()).collect();
-        let mut uids = self.owners.all_uids();
+        let mut uids = match inside {
+            true => vec![shagoff_core::owners::euid()],
+            false => self.owners.all_uids(),
+        };
         uids.extend(&file_uids);
         let users = self.owners.users(&uids);
         let user = common(&file_uids, &users);

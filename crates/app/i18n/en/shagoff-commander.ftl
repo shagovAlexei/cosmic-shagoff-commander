@@ -985,6 +985,7 @@ date-modified = Modified
 date-accessed = Accessed
 date-now = Current date and time
 date-note = Creation and status-change times cannot be set on Linux
+why-flatpak-root = A flatpak cannot run anything as root: this change needs the .deb or .rpm
 why-unsafe-helper = The program is not installed in /usr by root: it is not run as root
 why-verify-failed = The copy read back differs from the original
 settings-verify-copy = Verify copies (read them back after copying: slower)
