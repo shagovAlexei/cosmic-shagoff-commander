@@ -119,6 +119,16 @@ pub fn with_format(path: &str, f: Format) -> String {
     format!("{base}.{}", f.ext())
 }
 
+/// Alt+F5 «Add date to name»: `_stamp` before the archive extension (`a.tar.gz` →
+/// `a_<stamp>.tar.gz`), at the end of a name without one.
+pub fn dated(path: &Path, stamp: &str) -> PathBuf {
+    let name = path
+        .file_name()
+        .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+    let stem = stem(&name);
+    path.with_file_name(format!("{stem}_{stamp}{}", &name[stem.len()..]))
+}
+
 /// `(sources, archive)` per archive to write. `path` ending in `/` is a dir (default name inside);
 /// with `separate`, only the dir part of `path` is used.
 pub fn groups(
@@ -2402,6 +2412,21 @@ mod tests {
         assert_eq!(stem("a.tar.gz"), "a");
         assert_eq!(stem("a.b.ZIP"), "a.b");
         assert_eq!(stem("notes.txt"), "notes.txt");
+    }
+
+    #[test]
+    fn dated_puts_the_stamp_before_the_archive_extension() {
+        let d = |p: &str| dated(Path::new(p), "2026-11-05-17-47");
+        assert_eq!(
+            d("/x/shagshell.zip"),
+            Path::new("/x/shagshell_2026-11-05-17-47.zip")
+        );
+        assert_eq!(
+            d("/x/a.b.tar.gz"),
+            Path::new("/x/a.b_2026-11-05-17-47.tar.gz")
+        );
+        assert_eq!(d("/x/A.7Z"), Path::new("/x/A_2026-11-05-17-47.7Z"));
+        assert_eq!(d("/x/noext"), Path::new("/x/noext_2026-11-05-17-47"));
     }
 
     #[test]

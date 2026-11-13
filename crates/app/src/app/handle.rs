@@ -596,6 +596,18 @@ impl App {
             Message::Toggle(t) => match (&mut self.dialog, t) {
                 (Some(Dialog::Pack(p)), Toggle::MoveAfter) => p.move_after = !p.move_after,
                 (Some(Dialog::Pack(p)), Toggle::Separate) => p.separate = !p.separate,
+                (Some(Dialog::Pack(p)), Toggle::PackDate) => {
+                    p.dated = !p.dated;
+                    let v = p.dated;
+                    match &self.config_handler {
+                        Some(h) => {
+                            if let Err(e) = self.config.set_pack_date(h, v) {
+                                self.config_not_saved(&e);
+                            }
+                        }
+                        None => self.config.pack_date = v,
+                    }
+                }
                 (Some(Dialog::Pack(p)), Toggle::Encrypt) => {
                     p.encrypt = !p.encrypt;
                     if p.encrypt {

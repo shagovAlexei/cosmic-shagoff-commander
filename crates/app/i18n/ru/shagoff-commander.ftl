@@ -135,6 +135,7 @@ pack-password = Пароль
 pack-password-again = Пароль ещё раз
 pack-password-differ = Пароли не совпадают
 pack-separate = Отдельный архив для каждого файла
+pack-date = Добавить дату к имени (_ГГГГ-ММ-ДД-ЧЧ-ММ)
 unpack-own-dir = Каждый архив — в свою папку
 packing = Упаковка
 job-hide = В фоне

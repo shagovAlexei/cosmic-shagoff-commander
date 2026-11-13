@@ -3930,6 +3930,20 @@ fn pack_submit_starts_job() {
 }
 
 #[test]
+fn pack_date_checkbox_is_remembered() {
+    let (_tmp, mut app) = pack_setup();
+    let _ = app.update(Message::Key(Action::Pack));
+    let _ = app.update(Message::Toggle(dialogs::Toggle::PackDate));
+    assert!(app.config.pack_date);
+    let _ = app.update(Message::DialogCancel);
+    let _ = app.update(Message::Key(Action::Pack));
+    let Some(Dialog::Pack(p)) = &app.dialog else {
+        panic!()
+    };
+    assert!(p.dated);
+}
+
+#[test]
 fn pack_password_must_be_typed_twice_alike() {
     let (_tmp, mut app) = pack_setup();
     let _ = app.update(Message::Key(Action::Pack));

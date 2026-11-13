@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.140.0 — 2026-11-13
+
+- Alt+F5: «Add date to name» puts the current date and time before the archive's extension (`a.zip` → `a_2026-11-05-17-47.zip`, `a_….tar.gz`); the checkbox is remembered
+
 ## 0.139.3 — 2026-11-09
 
 - fix (flatpak): Alt+Enter offers only the owner and groups that can be given without root (a flatpak cannot run anything as root; the `nfsnobody` group is gone), and says so plainly if a change still needs it

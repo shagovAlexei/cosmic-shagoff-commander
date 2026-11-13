@@ -134,6 +134,7 @@ pack-password = Password
 pack-password-again = Password again
 pack-password-differ = The passwords differ
 pack-separate = A separate archive for each file
+pack-date = Add date to name (_YYYY-MM-DD-HH-MM)
 unpack-own-dir = Each archive into its own folder
 packing = Packing
 job-hide = In background

@@ -577,6 +577,8 @@ pub struct Pack {
     pub format: Format,
     pub move_after: bool,
     pub separate: bool,
+    /// «Add date to name»: `archive::dated` on each archive at submit.
+    pub dated: bool,
     /// Zip / 7z «Шифровать» (TC): shows the password fields.
     pub encrypt: bool,
     /// Typed twice, as in TC (a typo would lock the files away).
@@ -603,6 +605,7 @@ impl Pack {
 pub enum Toggle {
     MoveAfter,
     Separate,
+    PackDate,
     Encrypt,
     EncryptNames,
     OwnDir,
@@ -1684,6 +1687,9 @@ pub fn view<'a>(
                         widget::checkbox(p.separate)
                             .label(fl!("pack-separate"))
                             .on_toggle(|_| Message::Toggle(Toggle::Separate)),
+                        widget::checkbox(p.dated)
+                            .label(fl!("pack-date"))
+                            .on_toggle(|_| Message::Toggle(Toggle::PackDate)),
                     ]
                     .push_maybe(p.format.can_encrypt().then(|| {
                         widget::checkbox(p.encrypt)
@@ -1722,7 +1728,7 @@ pub fn view<'a>(
                         (p.password().is_err() && !p.again.is_empty())
                             .then(|| widget::text::caption(fl!("pack-password-differ"))),
                     )
-                    .spacing(12),
+                    .spacing(8), // 7z with a password and a mismatch must still fit 530 px
                 )
                 .primary_action(
                     widget::button::suggested(fl!("pack"))

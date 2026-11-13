@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.140.0" date="2026-11-13">
+      <description><p>Pack (Alt+F5): «Add date to name» puts the current date and time before the archive's extension; the checkbox is remembered.</p></description>
+    </release>
     <release version="0.139.3" date="2026-11-09">
       <description><p>Flatpak: owner and group offer only what can be changed without root, a missing external viewer or editor is reported, a hung thumbnailer is stopped with its children.</p></description>
     </release>

@@ -102,6 +102,8 @@ pub struct Config {
     pub hotlist: Vec<HotEntry>,
     /// Alt+F5: last chosen format, by extension ("zip", "tar.gz", …); unknown → zip.
     pub pack_format: String,
+    /// Alt+F5 «Add date to name»: last state of the checkbox.
+    pub pack_date: bool,
     /// Files → «Create checksum files»: the last algorithm picked (`Algo::ext`).
     pub checksum_algo: String,
     /// Interface language: "" (system), "en", "ru".
@@ -348,6 +350,7 @@ impl Default for Config {
             home_dir: None,
             hotlist: Vec::new(),
             pack_format: "zip".into(),
+            pack_date: false,
             checksum_algo: "sha256".into(),
             language: String::new(),
             app_theme: AppTheme::System,
