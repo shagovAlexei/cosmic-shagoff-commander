@@ -1624,8 +1624,8 @@ impl App {
                     {
                         // Every one under way: the hint does not say whose.
                         let mut back = Vec::new();
-                        for side in 0..2 {
-                            for (i, t) in self.panes[side].items_mut().iter_mut().enumerate() {
+                        for (side, pane) in self.panes.iter_mut().enumerate() {
+                            for (i, t) in pane.items_mut().iter_mut().enumerate() {
                                 // Found, its rows being read: the dir as usual again.
                                 if t.branching.is_some() && t.branch && t.results.is_some() {
                                     t.results = None;

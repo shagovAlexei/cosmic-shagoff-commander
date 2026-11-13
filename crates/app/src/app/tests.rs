@@ -3323,13 +3323,8 @@ fn ctrl_h_flips_hidden_in_every_tab() {
     let _ = app.update(Message::Key(Action::NewTab));
     let _ = app.update(Message::Key(Action::ToggleHidden));
     assert!(app.config.show_hidden);
-    for side in 0..2 {
-        assert!(
-            app.panes[side]
-                .items()
-                .iter()
-                .all(|t| t.panel.show_hidden())
-        );
+    for pane in &app.panes {
+        assert!(pane.items().iter().all(|t| t.panel.show_hidden()));
     }
 }
 
@@ -6024,8 +6019,8 @@ mod drawer_tests {
             std::fs::write(dir.path().join(n), "x").unwrap();
         }
         let mut app = app_with(Config::default(), State::default());
-        for s in 0..2 {
-            app.panes[s].active_mut().panel.set_listing(
+        for pane in &mut app.panes {
+            pane.active_mut().panel.set_listing(
                 dir.path().to_path_buf(),
                 shagoff_core::listing::scan(dir.path(), true).unwrap(),
                 None,

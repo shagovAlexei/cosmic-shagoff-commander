@@ -965,8 +965,8 @@ impl App {
             }
             Action::CompareLists | Action::CompareListsSubdirs | Action::CompareListsDiffOnly => {
                 // Rows an earlier «only what differs» hid are compared too.
-                for s in 0..2 {
-                    let panel = &mut self.panes[s].active_mut().panel;
+                for pane in &mut self.panes {
+                    let panel = &mut pane.active_mut().panel;
                     if panel.only_marked() {
                         panel.set_show(panel.show().clone());
                     }
