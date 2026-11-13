@@ -315,19 +315,28 @@ impl App {
     }
 
     /// The cloud accounts for the settings, when they are open.
-    pub(super) fn read_clouds(&self) -> Task<Message> {
+    pub(super) fn read_clouds(&mut self) -> Task<Message> {
         if !matches!(self.drawer, Some(Drawer::Settings(_))) {
             return Task::none();
         }
+        // Ours there: is rclone.org's newer (once a run, off the UI thread)?
+        let latest = match !self.rclone_asked && shagoff_core::rclone::own().is_some() {
+            true => {
+                self.rclone_asked = true;
+                blocking(shagoff_core::rclone::latest, Message::RcloneLatest)
+            }
+            false => Task::none(),
+        };
         // The types once: the same rclone till the next start.
         let kinds = self.cloud_kinds.is_empty();
-        blocking(
+        let clouds = blocking(
             move || Ok((cloud::remotes(), kinds.then(cloud::backends))),
             |r| {
                 let (remotes, kinds) = r.unwrap_or_default();
                 Message::Clouds(remotes, kinds)
             },
-        )
+        );
+        Task::batch([clouds, latest])
     }
 
     /// Run after every `update`: the gvfs dir read asked for by `refresh_mounts`, if none is

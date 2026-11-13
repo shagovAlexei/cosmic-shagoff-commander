@@ -534,6 +534,10 @@ pub struct App {
     pub clouds: Vec<cloud::Remote>,
     /// The installed rclone's storage types (`cloud::backends`); empty until read.
     pub cloud_kinds: Vec<String>,
+    /// The latest rclone on rclone.org (222), asked once a run when the settings show ours:
+    /// «Update» only when it is newer. None: not known (yet, or no network).
+    pub rclone_latest: Option<String>,
+    pub rclone_asked: bool,
     /// A cloud sign-in under way: Esc sets it.
     cloud_cancel: Option<Arc<AtomicBool>>,
     /// A sign-in step through fields under way (`cloud::create` / `answer`): no other one
@@ -672,6 +676,8 @@ pub enum Message {
     /// The cloud accounts (`cloud::remotes`).
     /// The cloud accounts and, when not read yet, the rclone types (`cloud::backends`).
     Clouds(Vec<cloud::Remote>, Option<Vec<String>>),
+    /// rclone.org's latest version (`rclone::latest`).
+    RcloneLatest(Result<String, mount::Error>),
     /// «Add account» of a plugin (its id).
     CloudAdd(&'static str),
     /// A sign-in's end: the new account's name.
@@ -1505,6 +1511,8 @@ impl App {
             connecting: None,
             clouds: Vec::new(),
             cloud_kinds: Vec::new(),
+            rclone_latest: None,
+            rclone_asked: false,
             cloud_cancel: None,
             cloud_step: false,
             rclone_busy: false,
