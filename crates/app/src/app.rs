@@ -1247,8 +1247,8 @@ impl Application for App {
         }
         if self.job.is_none() && self.config.watch_dirs {
             // Paused during file operations: finish_job rescans both panes anyway.
-            for side in 0..2 {
-                let cwd = self.panes[side].active().panel.cwd().to_path_buf();
+            for (side, pane) in self.panes.iter().enumerate() {
+                let cwd = pane.active().panel.cwd().to_path_buf();
                 subs.push(crate::watcher::watch(side, cwd));
             }
         }

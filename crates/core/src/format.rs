@@ -69,6 +69,17 @@ pub fn date_edit(t: SystemTime, tz: &TimeZone) -> String {
         .unwrap_or_default()
 }
 
+/// Alt+F5 «Add date to name»: `2026-11-05-17-47`, safe in a file name.
+pub fn name_stamp(t: SystemTime, tz: &TimeZone) -> String {
+    jiff::Timestamp::try_from(t)
+        .map(|ts| {
+            ts.to_zoned(tz.clone())
+                .strftime("%Y-%m-%d-%H-%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
 /// `date_edit`'s text back (seconds optional; `DD.MM.YYYY` as the panels show it also), in `tz`.
 pub fn parse_date(text: &str, tz: &TimeZone) -> Option<SystemTime> {
     let text = text.trim();
@@ -438,6 +449,7 @@ mod tests {
         let tz = TimeZone::fixed(jiff::tz::offset(3));
         let t = parse_date("2026-10-23 14:05:07", &tz).unwrap();
         assert_eq!(date_edit(t, &tz), "2026-10-23 14:05:07");
+        assert_eq!(name_stamp(t, &tz), "2026-10-23-14-05");
         assert_eq!(
             parse_date("23.10.2026 14:05", &tz),
             parse_date("2026-10-23 14:05:00", &tz)

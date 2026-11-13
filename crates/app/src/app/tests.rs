@@ -3323,13 +3323,8 @@ fn ctrl_h_flips_hidden_in_every_tab() {
     let _ = app.update(Message::Key(Action::NewTab));
     let _ = app.update(Message::Key(Action::ToggleHidden));
     assert!(app.config.show_hidden);
-    for side in 0..2 {
-        assert!(
-            app.panes[side]
-                .items()
-                .iter()
-                .all(|t| t.panel.show_hidden())
-        );
+    for pane in &app.panes {
+        assert!(pane.items().iter().all(|t| t.panel.show_hidden()));
     }
 }
 
@@ -3927,6 +3922,20 @@ fn pack_submit_starts_job() {
     let _ = app.update(Message::DialogSubmit);
     assert!(app.dialog.is_none());
     assert_eq!(app.job.as_ref().map(|j| j.kind), Some(OpKind::Pack));
+}
+
+#[test]
+fn pack_date_checkbox_is_remembered() {
+    let (_tmp, mut app) = pack_setup();
+    let _ = app.update(Message::Key(Action::Pack));
+    let _ = app.update(Message::Toggle(dialogs::Toggle::PackDate));
+    assert!(app.config.pack_date);
+    let _ = app.update(Message::DialogCancel);
+    let _ = app.update(Message::Key(Action::Pack));
+    let Some(Dialog::Pack(p)) = &app.dialog else {
+        panic!()
+    };
+    assert!(p.dated);
 }
 
 #[test]
@@ -6010,8 +6019,8 @@ mod drawer_tests {
             std::fs::write(dir.path().join(n), "x").unwrap();
         }
         let mut app = app_with(Config::default(), State::default());
-        for s in 0..2 {
-            app.panes[s].active_mut().panel.set_listing(
+        for pane in &mut app.panes {
+            pane.active_mut().panel.set_listing(
                 dir.path().to_path_buf(),
                 shagoff_core::listing::scan(dir.path(), true).unwrap(),
                 None,

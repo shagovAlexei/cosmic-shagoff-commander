@@ -97,8 +97,8 @@ fn status_popup(app: &App) -> Option<Element<'_, Message>> {
             .into()
     };
     let mut cards: Vec<Element<'_, Message>> = Vec::new();
-    for side in 0..2 {
-        if let Some(e) = &app.panes[side].active().error {
+    for (side, pane) in app.panes.iter().enumerate() {
+        if let Some(e) = &pane.active().error {
             cards.push(card(StatusKind::Error, e, Some(side)));
         }
     }

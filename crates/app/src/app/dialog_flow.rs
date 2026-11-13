@@ -281,6 +281,7 @@ impl App {
                     format,
                     move_after: action == Action::MoveToArchive,
                     separate: false,
+                    dated: self.config.pack_date,
                     encrypt: false,
                     password: String::new(),
                     again: String::new(),
@@ -795,8 +796,14 @@ impl App {
                     return Task::none();
                 }
                 let is_dir = |s: &Path| p.dirs.iter().any(|d| d == s);
-                let groups =
+                let mut groups =
                     archive::groups(&p.sources, &p.base, &path, p.format, p.separate, &is_dir);
+                if p.dated {
+                    let stamp = format::name_stamp(std::time::SystemTime::now(), &self.tz);
+                    for (_, a) in &mut groups {
+                        *a = archive::dated(a, &stamp);
+                    }
+                }
                 // Cursor on the new archive when it lands in this panel.
                 let focus = match groups.as_slice() {
                     [(_, a)] if a.parent() == Some(cwd.as_path()) => {

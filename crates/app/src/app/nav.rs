@@ -24,8 +24,8 @@ impl App {
 
     pub(super) fn apply_hidden(&mut self) -> Task<Message> {
         let on = self.config.show_hidden;
-        for side in 0..2 {
-            for t in self.panes[side].items_mut() {
+        for pane in &mut self.panes {
+            for t in pane.items_mut() {
                 t.panel.set_show_hidden(on);
             }
         }
