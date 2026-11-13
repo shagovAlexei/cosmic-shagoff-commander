@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.142.1 — 2026-11-13
+
+- The application icon is the previous one again (the new one of 0.141.0 is withdrawn)
+
 ## 0.142.0 — 2026-11-13
 
 - Yandex Disk: signed in with your own Yandex app (Yandex refuses rclone's shared one with «410 Gone» since October 2026): client ID and secret, then the code Yandex shows
