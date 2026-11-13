@@ -54,10 +54,13 @@
   <url type="donation">https://donate.stripe.com/6oU28s8Ff7cR1342J967S00</url>
   <content_rating type="oars-1.1"/>
   <branding>
-    <color type="primary" scheme_preference="light">#9cd2ff</color>
-    <color type="primary" scheme_preference="dark">#0d2a66</color>
+    <color type="primary" scheme_preference="light">#8fd6e8</color>
+    <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.142.1" date="2026-11-13">
+      <description><p>The application icon is the previous one again.</p></description>
+    </release>
     <release version="0.142.0" date="2026-11-13">
       <description><p>Yandex Disk signs in with your own Yandex app; Google Photos takes an own client ID and uploads work; a cloud dir that fails to read shows the error instead of an empty panel.</p></description>
     </release>

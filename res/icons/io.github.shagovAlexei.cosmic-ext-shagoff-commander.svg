@@ -1,36 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <defs>
-    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4fd8ff"/>
-      <stop offset="1" stop-color="#1a5cff"/>
-    </linearGradient>
-    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3f86ff"/>
-      <stop offset="1" stop-color="#173f9e"/>
-    </linearGradient>
-    <linearGradient id="folder" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#22c4ff"/>
-      <stop offset="1" stop-color="#1468ff"/>
-    </linearGradient>
-    <linearGradient id="s" x1="1" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="0.45" stop-color="#8fe6ff"/>
-      <stop offset="1" stop-color="#1f6bff"/>
-    </linearGradient>
-  </defs>
-  <rect x="8" y="16" width="112" height="98" rx="18" fill="#08132b"/>
-  <path d="M26 16h76a18 18 0 0 1 18 18v2H8v-2a18 18 0 0 1 18-18z" fill="url(#bar)"/>
-  <path d="M8 36h112M64 36v78" stroke="#3aa8ff" stroke-width="3"/>
-  <rect x="8" y="16" width="112" height="98" rx="18" fill="none" stroke="url(#rim)" stroke-width="5"/>
-  <path id="f" d="M18 46a3 3 0 0 1 3-3h10l4 4h15a3 3 0 0 1 3 3v15a3 3 0 0 1-3 3H21a3 3 0 0 1-3-3z" fill="url(#folder)"/>
-  <use href="#f" x="57"/>
-  <g fill="#5cb8ff">
-    <rect x="19" y="78" width="7" height="7" rx="2"/><rect x="30" y="80" width="22" height="4" rx="2" opacity=".6"/>
-    <rect x="19" y="92" width="7" height="7" rx="2"/><rect x="30" y="94" width="22" height="4" rx="2" opacity=".6"/>
-    <rect x="76" y="78" width="7" height="7" rx="2"/><rect x="87" y="80" width="22" height="4" rx="2" opacity=".6"/>
-    <rect x="76" y="92" width="7" height="7" rx="2"/><rect x="87" y="94" width="22" height="4" rx="2" opacity=".6"/>
-  </g>
-  <path id="sp" d="M88 54C70 58 54 62 56 71S82 80 78 92C75 101 54 105 32 109" fill="none" stroke-linecap="round"/>
-  <use href="#sp" stroke="#08132b" stroke-width="15"/>
-  <use href="#sp" stroke="url(#s)" stroke-width="9"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="4" y="8" width="56" height="48" rx="6" fill="#2b4d7a"/>
+  <rect x="9" y="16" width="21" height="34" rx="2" fill="#e8eef7"/>
+  <rect x="34" y="16" width="21" height="34" rx="2" fill="#e8eef7"/>
+  <rect x="9" y="22" width="21" height="5" fill="#f2b33d"/>
+  <g fill="#9fb3cc"><rect x="12" y="31" width="15" height="2"/><rect x="12" y="37" width="12" height="2"/><rect x="37" y="25" width="15" height="2"/><rect x="37" y="31" width="10" height="2"/><rect x="37" y="37" width="13" height="2"/></g>
 </svg>
