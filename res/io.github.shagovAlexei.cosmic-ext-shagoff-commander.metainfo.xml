@@ -54,10 +54,13 @@
   <url type="donation">https://donate.stripe.com/6oU28s8Ff7cR1342J967S00</url>
   <content_rating type="oars-1.1"/>
   <branding>
-    <color type="primary" scheme_preference="light">#8fd6e8</color>
-    <color type="primary" scheme_preference="dark">#1d4a57</color>
+    <color type="primary" scheme_preference="light">#9cd2ff</color>
+    <color type="primary" scheme_preference="dark">#0d2a66</color>
   </branding>
   <releases>
+    <release version="0.141.0" date="2026-11-13">
+      <description><p>New application icon: a neon two-pane window with an S across the divider.</p></description>
+    </release>
     <release version="0.140.0" date="2026-11-13">
       <description><p>Pack (Alt+F5): «Add date to name» puts the current date and time before the archive's extension; the checkbox is remembered.</p></description>
     </release>
