@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.142.2" date="2026-11-14">
+      <description><p>Settings → Clouds offers to update the own rclone only when a newer one is out.</p></description>
+    </release>
     <release version="0.142.1" date="2026-11-13">
       <description><p>The application icon is the previous one again.</p></description>
     </release>

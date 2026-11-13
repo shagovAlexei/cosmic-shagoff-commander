@@ -553,15 +553,23 @@ fn clouds_section<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messa
             .into();
     }
     if let Some(v) = &form.own_rclone {
-        section = section.add(settings::item_row(vec![
+        let mut row = vec![
             widget::text::body(fl!("rclone-own", version = v.as_str()))
                 .width(Length::Fill)
                 .into(),
-            get(fl!("rclone-update")).into(),
+        ];
+        // Only for a newer one on rclone.org (222).
+        if let Some(l) =
+            (app.rclone_latest.as_deref()).filter(|l| shagoff_core::rclone::newer(l, v))
+        {
+            row.push(get(fl!("rclone-update", version = l)).into());
+        }
+        row.push(
             widget::button::destructive(fl!("cloud-forget"))
                 .on_press_maybe((!app.rclone_busy).then_some(Message::RcloneDrop))
                 .into(),
-        ]));
+        );
+        section = section.add(settings::item_row(row));
     }
     let off = &app.config.plugins_off;
     for p in shagoff_core::cloud::PLUGINS {

@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.142.2 — 2026-11-14
+
+- fix: Settings → Clouds offers «Update to vX» for our own rclone only when rclone.org has a newer one (checked once a run; no network — no button)
+
 ## 0.142.1 — 2026-11-13
 
 - The application icon is the previous one again (the new one of 0.141.0 is withdrawn)

@@ -2551,6 +2551,10 @@ impl App {
                 self.say(StatusKind::Busy, fl!("rclone-getting"));
                 return blocking(shagoff_core::rclone::install, Message::RcloneGot);
             }
+            Message::RcloneLatest(r) => {
+                // No network: no button (it would be offered for nothing).
+                self.rclone_latest = r.ok();
+            }
             Message::RcloneGot(r) => {
                 self.rclone_busy = false;
                 self.clear_busy(); // "Downloading…"

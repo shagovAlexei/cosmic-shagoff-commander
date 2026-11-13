@@ -64,6 +64,28 @@ pub fn parse_version(text: &str) -> Option<String> {
     plain.then(|| v.to_string())
 }
 
+/// The latest official version (`v1.76.0`), from `version.txt`. Blocking.
+pub fn latest() -> Result<String, Error> {
+    let text =
+        String::from_utf8_lossy(&fetch(&format!("{DOWNLOADS}/version.txt"), 20)?).into_owned();
+    parse_version(&text).ok_or_else(|| Error::Failed(format!("version.txt: {text}")))
+}
+
+/// Whether `latest` is newer than ours (`own`, `?` when unknown: then yes).
+pub fn newer(latest: &str, own: &str) -> bool {
+    let nums = |v: &str| -> Option<Vec<u64>> {
+        v.strip_prefix('v')?
+            .split('.')
+            .map(|n| n.parse().ok())
+            .collect()
+    };
+    match (nums(latest), nums(own)) {
+        (Some(l), Some(o)) => l > o,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 /// The zip of `version` for `arch`: `rclone-v1.75.2-linux-amd64.zip`.
 fn zip_name(version: &str, arch: &str) -> String {
     format!("rclone-{version}-linux-{arch}.zip")
@@ -77,9 +99,10 @@ pub fn hash_of<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-fn fetch(url: &str) -> Result<Vec<u8>, Error> {
+/// `url`'s body, within `secs` seconds.
+fn fetch(url: &str, secs: u32) -> Result<Vec<u8>, Error> {
     let out = crate::host::command("curl")
-        .args(["-fsSL", "-m", "600", "--", url])
+        .args(["-fsSL", "-m", &secs.to_string(), "--", url])
         .output()
         .map_err(|e| Error::Failed(format!("curl: {e}")))?;
     match out.status.success() {
@@ -139,7 +162,8 @@ pub fn install() -> Result<String, Error> {
         ))
     })?;
     let dir = dir().ok_or_else(|| Error::Failed("no HOME".into()))?;
-    let text = String::from_utf8_lossy(&fetch(&format!("{DOWNLOADS}/version.txt"))?).into_owned();
+    let text =
+        String::from_utf8_lossy(&fetch(&format!("{DOWNLOADS}/version.txt"), 600)?).into_owned();
     let version =
         parse_version(&text).ok_or_else(|| Error::Failed(format!("version.txt: {text}")))?;
     if own().as_deref() == Some(version.as_str()) {
@@ -157,12 +181,12 @@ pub fn install() -> Result<String, Error> {
     let tmp = dir.join(format!(".get-{}", std::process::id()));
     std::fs::create_dir(&tmp).map_err(failed)?;
     let r = (|| {
-        let sums = fetch(&format!("{DOWNLOADS}/{version}/SHA256SUMS"))?;
+        let sums = fetch(&format!("{DOWNLOADS}/{version}/SHA256SUMS"), 600)?;
         let sums = signed(&sums, &tmp)?;
         let name = zip_name(&version, arch);
         let want =
             hash_of(&sums, &name).ok_or_else(|| Error::Failed(format!("SHA256SUMS: no {name}")))?;
-        let zip = fetch(&format!("{DOWNLOADS}/{version}/{name}"))?;
+        let zip = fetch(&format!("{DOWNLOADS}/{version}/{name}"), 600)?;
         let got: String = (sha2::Sha256::digest(&zip).iter())
             .map(|b| format!("{b:02x}"))
             .collect();
@@ -208,6 +232,16 @@ pub fn remove() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_update_offered_only_for_a_newer_rclone() {
+        assert!(newer("v1.76.0", "v1.75.2"));
+        assert!(newer("v1.76.10", "v1.76.9"));
+        assert!(!newer("v1.76.0", "v1.76.0"));
+        assert!(!newer("v1.75.0", "v1.76.0"));
+        assert!(newer("v1.76.0", "?"));
+        assert!(!newer("junk", "v1.0"));
+    }
 
     #[test]
     fn version_txt_is_taken_only_when_plain() {

@@ -2291,6 +2291,20 @@ convert -size 64x64 xc:orange /tmp/up.jpg
 
 Уборка: лишние учётные записи — Ctrl+, → «Облака» → «Удалить»; `rm /tmp/up.jpg`; снимок в Google Фото удалить на сайте.
 
+### Обновление своего rclone (0.142.2, 222)
+
+Подготовка: свой rclone установлен (Ctrl+, → «Облака» → «Установить rclone с rclone.org»). Последняя версия: `curl -s https://downloads.rclone.org/version.txt`.
+
+Шаги:
+1. Ctrl+, → «Облака».
+- [ ] В строке «rclone vX с rclone.org (свой…)» есть только «Удалить», кнопки «Обновить» нет (стоит последняя).
+2. Закрой программу, подмени версию: `echo v1.0.0 > ~/.local/share/shagoff-commander/rclone/VERSION`; запусти, Ctrl+, → «Облака».
+- [ ] Через пару секунд появилась кнопка «Обновить до vX» с версией с rclone.org; нажми — внизу «rclone vX установлен», кнопка пропала.
+3. Закрой программу, снова `echo v1.0.0 > …/VERSION`, отключи сеть (`nmcli networking off`), запусти, Ctrl+, → «Облака».
+- [ ] Кнопки «Обновить» нет, ошибок не показано.
+
+Уборка: `nmcli networking on`; если VERSION остался подменённым — «Обновить» при сети или Ctrl+, → «Облака» → «Удалить» и установить снова.
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
@@ -2450,3 +2464,4 @@ convert -size 64x64 xc:orange /tmp/up.jpg
 | `regression_metainfo_has_this_release` | Flatpak и магазин показывали 0.138.0: в metainfo не было выпусков 0.139 | 0.139.3 |
 | `regression_a_readdir_error_is_the_dirs_error` | Облако, сервер которого отказывает (Яндекс: 410), показывалось пустым каталогом вместо ошибки чтения | 0.142.0 |
 | `regression_google_photos_is_written_without_rename` | F5 в `upload/` Google Фото: «Input/output error» — копия писалась во временный файл и переименовывалась, а Google Фото переименовывать не умеет | 0.142.0 |
+| `regression_update_offered_only_for_a_newer_rclone` | Настройки → Облака: «Обновить» у своего rclone висела всегда, даже при последней версии | 0.142.2 |
