@@ -256,9 +256,18 @@ pub(super) fn mount_error(e: &mount::Error) -> String {
         mount::Error::NeedPassword => fl!("mount-need-password"),
         mount::Error::WrongPassword => fl!("mount-wrong-password"),
         mount::Error::Question(q) => fl!("mount-question", text = q.replace('\n', " ")),
-        mount::Error::Failed(s) => s.clone(),
+        mount::Error::Failed(s) => cloud_error(s).unwrap_or_else(|| crate::why::message(s)),
         mount::Error::Cancelled => fl!("connect-cancelled"),
     }
+}
+
+/// A cloud's refusal of rclone's shared app (its text from rclone, English).
+fn cloud_error(s: &str) -> Option<String> {
+    if s.contains("GoneError") {
+        return Some(fl!("cloud-err-gone"));
+    }
+    let quota = s.contains("Error 429") || s.contains("Quota exceeded");
+    quota.then(|| fl!("cloud-err-quota"))
 }
 
 /// A dir's entries, or the search results fed to the panel (re-read: deleted ones drop out).

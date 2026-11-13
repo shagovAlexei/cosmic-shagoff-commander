@@ -675,9 +675,11 @@ impl Transfer<'_> {
             Err(step) => return step,
         };
         let start = self.done;
+        // Google Photos cannot rename: written under its name (rclone uploads it on close).
+        let direct = !crate::cloud::renames(dst);
         let part = loop {
             self.done = start;
-            let result = create_part_for(dst, self.verify).and_then(|(part, w)| {
+            let result = create_part_for(dst, self.verify, direct).and_then(|(part, w)| {
                 let done = self.copy_contents(src, w, meta);
                 if !matches!(done, Ok(true)) {
                     let _ = fs::remove_file(&part); // only ever our own, freshly created part
@@ -697,9 +699,10 @@ impl Transfer<'_> {
                 },
             }
         };
-        if let Err(s) = self
-            .put_aside(dst)
-            .and_then(|_| self.retry(dst, || fs::rename(&part, dst)))
+        if !direct
+            && let Err(s) = self
+                .put_aside(dst)
+                .and_then(|_| self.retry(dst, || fs::rename(&part, dst)))
         {
             let _ = fs::remove_file(&part);
             return s;
@@ -940,11 +943,18 @@ fn part_name(dst: &Path, n: u32) -> PathBuf {
 
 /// Create a part file that did not exist before (O_EXCL), so it can never be the source or a user file.
 pub(crate) fn create_part(dst: &Path) -> io::Result<(PathBuf, File)> {
-    create_part_for(dst, false)
+    create_part_for(dst, false, false)
 }
 
 /// `create_part`, readable too when the copy is to be read back (`verify`).
-fn create_part_for(dst: &Path, verify: bool) -> io::Result<(PathBuf, File)> {
+/// `direct`: `dst` itself, created new (a file system that cannot rename).
+fn create_part_for(dst: &Path, verify: bool, direct: bool) -> io::Result<(PathBuf, File)> {
+    if direct {
+        let f = (File::options().read(verify).write(true))
+            .create_new(true)
+            .open(dst)?;
+        return Ok((dst.to_path_buf(), f));
+    }
     let mut n = 0;
     loop {
         let part = part_name(dst, n);

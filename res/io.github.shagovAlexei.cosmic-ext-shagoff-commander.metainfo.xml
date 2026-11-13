@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#0d2a66</color>
   </branding>
   <releases>
+    <release version="0.142.0" date="2026-11-13">
+      <description><p>Yandex Disk signs in with your own Yandex app; Google Photos takes an own client ID and uploads work; a cloud dir that fails to read shows the error instead of an empty panel.</p></description>
+    </release>
     <release version="0.141.0" date="2026-11-13">
       <description><p>New application icon: a neon two-pane window with an S across the divider.</p></description>
     </release>

@@ -2512,8 +2512,14 @@ impl App {
                     Ok((n, cloud::Step::Ask(q))) => {
                         *answer = q.default.clone();
                         *note = (!q.error.is_empty()).then(|| (true, q.error.clone()));
+                        let open = q.open.clone();
                         (*name, *question) = (Some(n), Some(q));
-                        return widget::text_input::focus(self.input_id.clone());
+                        let focus = widget::text_input::focus(self.input_id.clone());
+                        if open.is_empty() {
+                            return focus;
+                        }
+                        // The Yandex sign-in: its page shows the code to type here.
+                        return Task::batch([focus, self.update(Message::OpenUrl(open))]);
                     }
                     // The account is gone again (core): the fields can be fixed and sent anew.
                     Err(e) => {
