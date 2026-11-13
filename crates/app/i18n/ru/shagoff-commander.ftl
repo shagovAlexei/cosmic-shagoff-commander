@@ -414,6 +414,14 @@ cloud-hint-webdav = Nextcloud / ownCloud: https://СЕРВЕР/remote.php/dav/fi
 cloud-hint-koofr = Нужен пароль приложения: Koofr → Preferences → Password → Generate new password.
 cloud-hint-seafile = Адрес сервера (https://seafile.example.com), ваш e-mail и пароль.
 cloud-hint-zoho = Регион вашей учётной записи Zoho: com, eu, in, jp, com.cn, com.au. Затем вход в браузере.
+cloud-field-client_id = Client ID (ClientID)
+cloud-field-client_secret = Client secret
+cloud-hint-yandex = Яндекс не пускает общее приложение rclone, нужно своё (один раз): oauth.yandex.ru → «Создать» → «Для доступа к API или отладки»; в «Доступ к данным» добавьте «Чтение всего Диска», «Запись в любом месте на Диске» и «Доступ к информации о Диске»; создайте и скопируйте сюда ClientID и Client secret. Потом Яндекс откроется в браузере: разрешите доступ и введите код, который он покажет.
+cloud-hint-gphotos = Необязательно: своё приложение Google (у общего приложения rclone часто кончается суточный лимит загрузки): https://rclone.org/googlephotos/#making-your-own-client-id — пустые поля — общее приложение. Затем вход в браузере. Загружать — в папку «upload» или в альбом.
+cloud-ask-yandex_code = Яндекс открылся в браузере: разрешите доступ и введите сюда код, который он покажет (действует около 10 минут).
+cloud-open-again = Открыть страницу Яндекса снова
+cloud-err-gone = Облако не пускает общее приложение rclone (410 Gone): удалите учётную запись и добавьте снова со своим client ID (Настройки → Облака)
+cloud-err-quota = Суточный лимит общего приложения rclone исчерпан (429): добавьте учётную запись снова со своим client ID или попробуйте завтра
 settings-title = Настройки
 fkey-rename = F2 Переим.
 copied = Скопировано в буфер обмена: { $n }
@@ -942,10 +950,12 @@ why-crc-mismatch = Собран, но CRC не совпадает: часть п
 why-missing-part = Нет одной из частей: в номерах частей пропуск
 why-no-room = Распакованное не поместится в свободное место (Пропустить — распаковать всё равно)
 why-no-signature = У выпуска нет верной подписи: не установлен
+why-client-needed = Нужны client ID и client secret вашего приложения
 why-no-sums = В файле нет строк контрольных сумм
 err-not-permitted = Операция не разрешена (неизменяемый файл или не ваш)
 err-quota = Превышена дисковая квота
 err-cross-device = Между разными файловыми системами так нельзя
+err-io = Ошибка ввода-вывода: сбой диска или, у облака, его сервера
 
 # View → Window parts (TC cm_Vis*), panel width
 menu-window-parts = Части окна

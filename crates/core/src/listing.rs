@@ -44,7 +44,8 @@ impl Entry {
     }
 }
 
-/// Lists `path` without `..`. Unreadable items are skipped; only failing to read the dir itself is an error.
+/// Lists `path` without `..`. Items that cannot be stat'ed are listed with what is known; failing to
+/// open or to read the dir (readdir itself) is an error.
 pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
     let dir = match fs::read_dir(path) {
         Ok(d) => d,
@@ -62,10 +63,20 @@ pub fn scan(path: &Path, show_hidden: bool) -> io::Result<Vec<Entry>> {
         }
         Err(e) => return Err(e),
     };
+    read_items(path, dir, show_hidden)
+}
+
+/// The items of an opened dir. An error of readdir itself is the dir's (a cloud mount whose
+/// server refuses: EIO) — skipped, it showed an empty dir.
+fn read_items(
+    path: &Path,
+    dir: impl Iterator<Item = io::Result<fs::DirEntry>>,
+    show_hidden: bool,
+) -> io::Result<Vec<Entry>> {
     let mut out = Vec::new();
     let trash = crate::trashcan::is_top(path);
     for item in dir {
-        let Ok(item) = item else { continue };
+        let item = item?;
         let os_name = item.file_name();
         let name = os_name.to_string_lossy().into_owned();
         if !show_hidden && name.starts_with('.') {
@@ -207,6 +218,13 @@ pub(crate) fn ext_of(name: &str) -> String {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn regression_a_readdir_error_is_the_dirs_error() {
+        let eio = std::iter::once(Err(io::Error::from_raw_os_error(5)));
+        let e = read_items(Path::new("/x"), eio, true).unwrap_err();
+        assert_eq!(e.raw_os_error(), Some(5));
+    }
 
     fn find<'a>(v: &'a [Entry], name: &str) -> &'a Entry {
         v.iter()

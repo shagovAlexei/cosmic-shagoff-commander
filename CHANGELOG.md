@@ -2,6 +2,12 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.142.0 — 2026-11-13
+
+- Yandex Disk: signed in with your own Yandex app (Yandex refuses rclone's shared one with «410 Gone» since October 2026): client ID and secret, then the code Yandex shows
+- Google Photos: optional own client ID / secret (rclone's shared app runs out of its daily upload limit); F5 / F6 into it no longer fail with «Input/output error» (written without a temporary name: it cannot rename)
+- fix: a dir that fails to read (a cloud whose server refuses) shows the error, not an empty panel; «Input/output error», 410 and 429 from clouds are said plainly
+
 ## 0.141.0 — 2026-11-13
 
 - New application icon: a neon two-pane window with an S across the divider, simplified to stay readable at 16–32 px

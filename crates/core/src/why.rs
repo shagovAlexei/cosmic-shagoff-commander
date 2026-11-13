@@ -47,4 +47,5 @@ reasons! {
     NO_ROOM = "why-no-room",
         "the unpacked files would not fit in the free space (Skip: unpack anyway)";
     NO_SIGNATURE = "why-no-signature", "the release has no valid signature: not installed";
+    CLIENT_NEEDED = "why-client-needed", "the client ID and the client secret of your app are needed";
 }

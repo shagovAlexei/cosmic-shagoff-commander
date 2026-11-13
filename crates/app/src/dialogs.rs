@@ -1863,7 +1863,19 @@ pub fn view<'a>(
                 col = col.push(widget::text::body(text(&hint)).wrapping(Wrapping::WordOrGlyph));
             }
             if let Some(q) = question {
-                col = col.push(widget::text::body(q.help.clone()).wrapping(Wrapping::WordOrGlyph));
+                // Our own question (the Yandex code) has its text translated.
+                let own = format!("cloud-ask-{}", q.option);
+                let help = match crate::i18n::LANGUAGE_LOADER.has(&own) {
+                    true => text(&own),
+                    false => q.help.clone(),
+                };
+                col = col.push(widget::text::body(help).wrapping(Wrapping::WordOrGlyph));
+                if !q.open.is_empty() {
+                    col = col.push(
+                        widget::button::link(fl!("cloud-open-again"))
+                            .on_press(Message::OpenUrl(q.open.clone())),
+                    );
+                }
                 for (value, help) in &q.examples {
                     let first = help.lines().next().unwrap_or_default();
                     col = col.push(

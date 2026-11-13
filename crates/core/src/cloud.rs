@@ -82,9 +82,22 @@ pub const PLUGINS: &[Plugin] = &[
     oauth("gdrive", "Google Drive", "drive"),
     oauth("dropbox", "Dropbox", "dropbox"),
     oauth("box", "Box", "box"),
-    oauth("yandex", "Yandex Disk", "yandex"),
+    // rclone's shared app is refused by Yandex (410 Gone, since 10.2026): the user's own, signed
+    // in by the code Yandex shows (`yandex_code`).
+    typed(
+        "yandex",
+        "Yandex Disk",
+        "yandex",
+        &[field("client_id"), field("client_secret")],
+    ),
     oauth("pcloud", "pCloud", "pcloud"),
-    oauth("gphotos", "Google Photos", "gphotos"),
+    // rclone's shared app has used up Google's daily upload quota: the user's own, if given.
+    // ponytail: its secret is on rclone's argv while the browser sign-in waits (Google calls a
+    // desktop app's secret not confidential); rclone.conf written by us if that ever matters.
+    Plugin {
+        fields: &[field("client_id"), field("client_secret")],
+        ..oauth("gphotos", "Google Photos", "gphotos")
+    },
     oauth("hidrive", "HiDrive", "hidrive"),
     // An app password (Mail.ru → Security → App passwords): the account's own one is refused.
     typed(
@@ -269,6 +282,21 @@ pub fn of_point(name: &str) -> Option<(&'static Plugin, &str)> {
     Some((PLUGINS.iter().find(|p| p.id == id)?, remote))
 }
 
+/// Plugins whose rclone backend cannot rename (`mv` → EIO): Google Photos.
+const NO_RENAME: &[&str] = &["gphotos"];
+
+/// Whether a file can be renamed at `path`: not inside a mounted cloud of `NO_RENAME`.
+pub fn renames(path: &Path) -> bool {
+    root().is_none_or(|root| renames_under(&root, path))
+}
+
+fn renames_under(root: &Path, path: &Path) -> bool {
+    let point = (path.strip_prefix(root).ok())
+        .and_then(|rest| rest.components().next())
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    !point.is_some_and(|n| of_point(&n).is_some_and(|(p, _)| NO_RENAME.contains(&p.id)))
+}
+
 /// Where the clouds are mounted: `$XDG_RUNTIME_DIR/shagoff-clouds`.
 pub fn root() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR").map(|r| PathBuf::from(r).join("shagoff-clouds"))
@@ -415,6 +443,8 @@ pub struct Question {
     pub password: bool,
     /// Why the last answer was not taken.
     pub error: String,
+    /// A page to open for the answer (the Yandex sign-in), else empty.
+    pub open: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -466,6 +496,7 @@ pub fn parse_step(json: &str) -> Result<Step, Error> {
                 .collect(),
             password: o.is_password,
             error: a.error,
+            open: String::new(),
         })),
         _ if !a.error.is_empty() => Err(Error::Failed(a.error)),
         _ => Ok(Step::Done),
@@ -476,6 +507,10 @@ pub fn parse_step(json: &str) -> Result<Step, Error> {
 /// order, empty ones left out): its name and rclone's first question, or `Done` once it lists.
 pub fn create(p: &Plugin, values: &[String]) -> Result<(String, Step), Error> {
     let name = fresh_name(p, &names(&run(rclone(["listremotes", "--long"]))?));
+    if p.id == "yandex" {
+        let value = |i: usize| values.get(i).map_or("", |v| v.trim());
+        return yandex_ask(value(0), value(1)).map(|q| (name, Step::Ask(q)));
+    }
     let mut c = rclone([
         "config",
         "create",
@@ -493,6 +528,22 @@ pub fn create(p: &Plugin, values: &[String]) -> Result<(String, Step), Error> {
 
 /// Answer rclone's question about the account `name`: the next question, or `Done` once it lists.
 pub fn answer(name: &str, q: &Question, result: &str) -> Result<Step, Error> {
+    if let Some(app) = q.state.strip_prefix(YANDEX_STATE) {
+        let (id, secret) = app.split_once('\n').unwrap_or((app, ""));
+        // A wrong or expired code: asked again (the page is open already), nothing was created.
+        let token = match yandex_token(id, secret, result.trim()) {
+            Ok(t) => t,
+            Err(Error::Failed(e)) => {
+                return Ok(Step::Ask(Question {
+                    error: e,
+                    open: String::new(),
+                    ..q.clone()
+                }));
+            }
+            Err(e) => return Err(e),
+        };
+        return finish(name, yandex_create(name, id, secret, &token));
+    }
     // Not obscured by rclone itself here (checked): a password would be written as it is.
     let step = (if q.password {
         obscure(result)
@@ -513,6 +564,141 @@ pub fn answer(name: &str, q: &Question, result: &str) -> Result<Step, Error> {
         parse_step(&run(c).map_err(cut)?)
     });
     finish(name, step)
+}
+
+/// Our own question's state (never rclone's): the app's client ID and secret follow.
+const YANDEX_STATE: &str = "shagoff-yandex\n";
+
+/// The option of our question for the code Yandex shows after the sign-in.
+pub const YANDEX_CODE: &str = "yandex_code";
+
+/// The sign-in page of the user's Yandex app (an «API / debugging» one: its redirect is fixed to
+/// `verification_code`, which shows the code to type, so rclone's own browser sign-in never ends).
+pub fn yandex_url(client_id: &str) -> String {
+    format!(
+        "https://oauth.yandex.ru/authorize?response_type=code&client_id={}",
+        url_encode(client_id)
+    )
+}
+
+fn yandex_ask(id: &str, secret: &str) -> Result<Question, Error> {
+    if id.is_empty() || secret.is_empty() {
+        return Err(Error::Failed(crate::why::CLIENT_NEEDED.into()));
+    }
+    Ok(Question {
+        state: format!("{YANDEX_STATE}{id}\n{secret}"),
+        option: YANDEX_CODE.into(),
+        help: "The code Yandex shows after you allow the access".into(),
+        default: String::new(),
+        examples: Vec::new(),
+        password: false,
+        error: String::new(),
+        open: yandex_url(id),
+    })
+}
+
+/// The code for a token as rclone keeps it (`oauth.yandex.ru/token`, the form through stdin: the
+/// secret stays off argv). rclone refreshes it itself afterwards.
+fn yandex_token(id: &str, secret: &str, code: &str) -> Result<String, Error> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let failed = |e: std::io::Error| Error::Failed(format!("curl: {e}"));
+    let mut child = (crate::host::command("curl"))
+        .args([
+            "-sS",
+            "-m",
+            "60",
+            "--data",
+            "@-",
+            "https://oauth.yandex.ru/token",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(failed)?;
+    let body = form(&[
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("client_id", id),
+        ("client_secret", secret),
+    ]);
+    let wrote = (child.stdin.take().expect("piped")).write_all(body.as_bytes());
+    let out = child.wait_with_output().map_err(failed)?;
+    wrote.map_err(failed)?;
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        return Err(Error::Failed(e.trim().into()));
+    }
+    rclone_token(
+        &String::from_utf8_lossy(&out.stdout),
+        jiff::Timestamp::now(),
+    )
+}
+
+/// The account with the app and its token.
+fn yandex_create(name: &str, id: &str, secret: &str, token: &str) -> Result<Step, Error> {
+    // ponytail: secret and token on argv while rclone writes them (a moment, no network);
+    // writing rclone.conf ourselves if it ever matters.
+    let mut c = rclone(["config", "create", "--non-interactive", "--no-obscure"]);
+    c.args([
+        "--",
+        name,
+        "yandex",
+        "client_id",
+        id,
+        "client_secret",
+        secret,
+    ]);
+    // A token given: no "replace it?" question.
+    c.args(["token", token, "config_refresh_token", "false"]);
+    parse_step(&run(c).map_err(cut)?)
+}
+
+#[derive(serde::Deserialize)]
+struct Token {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_in: Option<i64>,
+    error_description: Option<String>,
+    error: Option<String>,
+}
+
+/// Yandex's token answer as rclone keeps a token, or its error.
+fn rclone_token(answer: &str, now: jiff::Timestamp) -> Result<String, Error> {
+    let t: Token = serde_json::from_str(answer)
+        .map_err(|_| Error::Failed(format!("oauth.yandex.ru: {}", answer.trim())))?;
+    let Some(access) = t.access_token else {
+        let e = t.error_description.or(t.error).unwrap_or_default();
+        return Err(Error::Failed(format!("oauth.yandex.ru: {e}")));
+    };
+    let life = jiff::SignedDuration::from_secs(t.expires_in.unwrap_or(3600));
+    Ok(serde_json::json!({
+        "access_token": access,
+        "token_type": "OAuth",
+        "refresh_token": t.refresh_token.unwrap_or_default(),
+        "expiry": (now + life).to_string(),
+    })
+    .to_string())
+}
+
+fn url_encode(s: &str) -> String {
+    (s.bytes())
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            b => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// `application/x-www-form-urlencoded`.
+fn form(pairs: &[(&str, &str)]) -> String {
+    (pairs.iter())
+        .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 /// `preset` and the typed `values` as `key value` arguments, secrets through `hide`.
@@ -683,6 +869,61 @@ mod tests {
     use super::*;
 
     const REMOTES: &str = "gdrive:   drive\nmy drive: drive\nnas:      sftp\nonedrive: onedrive\n";
+
+    #[test]
+    fn yandex_code_becomes_an_rclone_token() {
+        let now: jiff::Timestamp = "2026-11-13T21:00:00Z".parse().unwrap();
+        let t = rclone_token(
+            r#"{"access_token":"y0_a","expires_in":31536000,"refresh_token":"1:r","token_type":"bearer"}"#,
+            now,
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+        assert_eq!(v["access_token"], "y0_a");
+        assert_eq!(v["refresh_token"], "1:r");
+        assert_eq!(v["token_type"], "OAuth");
+        assert_eq!(v["expiry"], "2027-11-13T21:00:00Z");
+        let e = rclone_token(
+            r#"{"error":"bad_verification_code","error_description":"Code has expired"}"#,
+            now,
+        );
+        assert_eq!(
+            e,
+            Err(Error::Failed("oauth.yandex.ru: Code has expired".into()))
+        );
+    }
+
+    #[test]
+    fn yandex_asks_for_the_code_of_the_users_own_app() {
+        assert_eq!(
+            yandex_ask("", "s"),
+            Err(Error::Failed(crate::why::CLIENT_NEEDED.into()))
+        );
+        let q = yandex_ask("ab12", "s3").unwrap();
+        assert_eq!(q.option, YANDEX_CODE);
+        assert_eq!(
+            q.open,
+            "https://oauth.yandex.ru/authorize?response_type=code&client_id=ab12"
+        );
+        assert_eq!(q.state.strip_prefix(YANDEX_STATE), Some("ab12\ns3"));
+        assert_eq!(form(&[("a b", "x&y"), ("c", "d")]), "a%20b=x%26y&c=d");
+    }
+
+    #[test]
+    fn regression_google_photos_is_written_without_rename() {
+        let root = Path::new("/run/user/1/shagoff-clouds");
+        assert!(!renames_under(
+            root,
+            &root.join("gphotos:gphotos/upload/a.jpg")
+        ));
+        assert!(!renames_under(root, &root.join("gphotos:my photos/upload")));
+        assert!(renames_under(root, &root.join("gdrive:gdrive/a.jpg")));
+        assert!(renames_under(
+            root,
+            Path::new("/home/u/gphotos:gphotos/a.jpg")
+        ));
+        assert!(renames_under(root, &root.join("junk")));
+    }
 
     #[test]
     fn parse_remotes_keeps_plugin_kinds() {

@@ -17,6 +17,8 @@ pub fn text(e: &io::Error) -> String {
         let t = match (e.raw_os_error(), e.kind()) {
             // EPERM is not EACCES: an immutable file, a chown not allowed — not the mode bits.
             (Some(1), _) => Some(fl!("err-not-permitted")),
+            // A cloud mount's server refusing ends up as this too.
+            (Some(5), _) => Some(fl!("err-io")),
             (_, ErrorKind::PermissionDenied) => Some(fl!("err-permission")),
             (_, ErrorKind::NotFound) => Some(fl!("err-not-found")),
             (_, ErrorKind::AlreadyExists) => Some(fl!("err-exists")),
@@ -71,6 +73,7 @@ mod tests {
             text(&io::Error::from_raw_os_error(1)),
             fl!("err-not-permitted")
         );
+        assert_eq!(text(&io::Error::from_raw_os_error(5)), fl!("err-io"));
         // Made by core of a kind alone: translated too.
         assert_eq!(
             text(&io::Error::from(ErrorKind::AlreadyExists)),

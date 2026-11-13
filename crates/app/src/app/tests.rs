@@ -6255,6 +6255,7 @@ mod mount_tests {
             examples: Vec::new(),
             password: false,
             error: String::new(),
+            open: String::new(),
         };
         let _ = app.update(Message::CloudStep(Ok((
             "mailru".into(),
@@ -6354,6 +6355,58 @@ mod mount_tests {
         };
         assert_eq!((name, *busy), (&None, false));
         assert_eq!(note, &Some((true, "InvalidAccessKeyId".to_string())));
+    }
+
+    #[test]
+    fn yandex_asks_its_app_then_the_code_and_says_a_refusal_plainly() {
+        let mut app = app_with(Config::default(), State::default());
+        let _ = app.update(Message::CloudAdd("yandex"));
+        let Some(Dialog::CloudAccount { values, .. }) = &app.dialog else {
+            panic!("client ID and secret first")
+        };
+        assert_eq!(values.len(), 2);
+        let _ = app.update(Message::DialogSubmit);
+        let need = mount::Error::Failed(shagoff_core::why::CLIENT_NEEDED.into());
+        let _ = app.update(Message::CloudStep(Err(need)));
+        let Some(Dialog::CloudAccount { note, .. }) = &app.dialog else {
+            panic!("stays open")
+        };
+        assert_eq!(note, &Some((true, fl!("why-client-needed"))));
+        let q = cloud::Question {
+            state: String::new(),
+            option: cloud::YANDEX_CODE.into(),
+            help: String::new(),
+            default: String::new(),
+            examples: Vec::new(),
+            password: false,
+            error: String::new(),
+            // Not opened in a test: `OpenUrl` spawns xdg-open.
+            open: String::new(),
+        };
+        let _ = app.update(Message::DialogSubmit);
+        let _ = app.update(Message::CloudStep(Ok((
+            "yandex".into(),
+            cloud::Step::Ask(q),
+        ))));
+        let Some(Dialog::CloudAccount { question, .. }) = &app.dialog else {
+            panic!("the code is asked")
+        };
+        assert_eq!(
+            question.as_ref().map(|q| q.option.as_str()),
+            Some("yandex_code")
+        );
+        assert_eq!(
+            mount_error(&mount::Error::Failed(
+                "error listing: [410 - GoneError] Gone (Ресурс больше недоступен.)".into()
+            )),
+            fl!("cloud-err-gone")
+        );
+        assert_eq!(
+            mount_error(&mount::Error::Failed(
+                "googleapi: Error 429: Quota exceeded".into()
+            )),
+            fl!("cloud-err-quota")
+        );
     }
 
     #[test]

@@ -413,6 +413,14 @@ cloud-hint-webdav = Nextcloud / ownCloud: https://SERVER/remote.php/dav/files/US
 cloud-hint-koofr = Needs an app password: Koofr → Preferences → Password → Generate new password.
 cloud-hint-seafile = The server's address (https://seafile.example.com), your e-mail and password.
 cloud-hint-zoho = Region of your Zoho account: com, eu, in, jp, com.cn, com.au. Then sign in in the browser.
+cloud-field-client_id = Client ID
+cloud-field-client_secret = Client secret
+cloud-hint-yandex = Yandex refuses rclone's shared app, so it needs your own (once): oauth.yandex.ru → Create → «For API access or debugging»; in «Data access» add «Read all of Disk», «Write anywhere on Disk» and «Access to information about Disk»; create it and copy its ClientID and Client secret here. Then Yandex opens in the browser: allow the access and type the code it shows.
+cloud-hint-gphotos = Optional: your own Google app (rclone's shared one often runs out of its daily upload limit): https://rclone.org/googlephotos/#making-your-own-client-id — empty fields use the shared one. Then sign in in the browser. Uploads go into the «upload» folder or an album.
+cloud-ask-yandex_code = Yandex has opened in the browser: allow the access and type here the code it shows (it is valid for about 10 minutes).
+cloud-open-again = Open the Yandex page again
+cloud-err-gone = The cloud refuses rclone's shared app (410 Gone): remove the account and add it again with your own client ID (Settings → Clouds)
+cloud-err-quota = The daily limit of rclone's shared app is used up (429): add the account again with your own client ID, or try tomorrow
 settings-title = Settings
 fkey-rename = F2 Rename
 copied = Copied to the clipboard: { $n }
@@ -944,10 +952,12 @@ why-crc-mismatch = Joined, but the CRC does not match: a part is damaged or miss
 why-missing-part = A part is missing: the numbers of the parts have a gap
 why-no-room = The unpacked files would not fit in the free space (Skip: unpack anyway)
 why-no-signature = The release has no valid signature: not installed
+why-client-needed = The client ID and the client secret of your app are needed
 why-no-sums = No checksum lines in the file
 err-not-permitted = Operation not permitted (an immutable file, or not yours)
 err-quota = Disk quota exceeded
 err-cross-device = Not possible across file systems
+err-io = Input/output error: the disk, or for a cloud its server, failed
 
 # View → Window parts (TC cm_Vis*), panel width
 menu-window-parts = Window parts
