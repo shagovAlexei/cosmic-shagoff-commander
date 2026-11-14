@@ -4159,5 +4159,8 @@ mod tests {
         fs::write(&a, "not an archive").unwrap();
         let e = list(&a, Path::new(""), true).unwrap_err();
         assert_eq!(e.to_string(), "Unrecognized archive format");
+        // Alt+Shift+F9 reads to the stream's end, where bsdtar's failure shows.
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        assert!(test(&a, &stop).is_err());
     }
 }
