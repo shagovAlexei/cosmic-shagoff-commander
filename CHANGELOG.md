@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.146.0 — 2026-11-14
+
+- Panels: in a git working copy the branch is shown in the path line, names are coloured by their state (changed, new, ignored, conflict), and View → Columns has a «Git» column
+
 ## 0.145.0 — 2026-11-14
 
 - Archives: rar, iso, deb, rpm and cab open as folders (Enter, F3, F5 / Alt+F9 out, search inside); they are read through `bsdtar` (package `libarchive-tools`) and never changed. Enter on such a file now goes inside it; «Open with…» still runs its program

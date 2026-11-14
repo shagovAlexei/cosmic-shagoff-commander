@@ -214,6 +214,21 @@ impl App {
                 }
                 return self.act(self.active, action);
             }
+            Message::GitRead {
+                tab,
+                generation,
+                path,
+                repo,
+            } => {
+                let t = self
+                    .panes
+                    .iter_mut()
+                    .flat_map(|p| p.items_mut())
+                    .find(|t| t.id == tab);
+                if let Some(t) = t.filter(|t| t.git_want == generation) {
+                    t.git = repo.map(|r| (path, r));
+                }
+            }
             Message::Listed {
                 tab,
                 generation,

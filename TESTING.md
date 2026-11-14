@@ -2368,6 +2368,25 @@ apt download libarchive-tools && mv libarchive-tools_*.deb tools.deb
 
 Уборка: `rm -r /tmp/fa`; `sudo apt install libarchive-tools`.
 
+### Git в панели (0.146.0, 226)
+
+Подготовка:
+```sh
+rm -rf /tmp/g && mkdir /tmp/g && cd /tmp/g && git init -q -b main
+echo a > a.txt && echo b > b.txt && mkdir sub && echo c > sub/c.txt && echo '*.o' > .gitignore
+git add . && git commit -qm init
+echo changed >> a.txt; echo new > n.txt; touch x.o; mkdir fresh; echo f > fresh/f; echo d >> sub/c.txt
+```
+Шаги и что должно быть:
+1. Открыть `/tmp/g` в панели: в строке пути справа `⎇ main` (обе обложки, Ctrl+, → Интерфейс).
+2. `a.txt` и `sub` — оранжевые, `n.txt` и `fresh` — зелёные, `x.o` — серый, `b.txt` — обычного цвета.
+3. Вид → Колонки → «Git»: колонка «Git» — «изменён» / «новый» / «игнор.»; у `b.txt` пусто. Колонку выключить.
+4. Войти в `sub`: `c.txt` оранжевый, ветка та же. Войти в `fresh`: `f` зелёный.
+5. В терминале `git -C /tmp/g switch -qc topic`, в панели Ctrl+R: `⎇ topic`. `git -C /tmp/g add n.txt`, Ctrl+R: `n.txt` по-прежнему зелёный («новый»).
+6. Перейти в `/tmp`: ветки нет, цветов git нет. Цвета по типам (Ctrl+, → Цвета), если заданы для `.txt`, сильнее цвета git.
+
+Уборка: `rm -rf /tmp/g`.
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.

@@ -464,7 +464,36 @@ impl App {
         // one that is there, as TC. Found by the background read — never a `stat` on the UI
         // thread, a dead mount would hang it. A step elsewhere into a gone dir stays an error.
         let resolve = (path == t.panel.cwd()).then(|| self.home.clone());
-        Task::perform(
+        // Git (226): read on its own, a slow `git status` does not hold the list back. Not for
+        // search results (no one dir).
+        t.git_want = generation;
+        if results.is_some() {
+            t.git = None;
+        }
+        let git = match &results {
+            Some(_) => Task::none(),
+            None => {
+                let path = path.clone();
+                Task::perform(
+                    async move {
+                        let p = path.clone();
+                        let repo = tokio::task::spawn_blocking(move || shagoff_core::git::read(&p))
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(Arc::new);
+                        Message::GitRead {
+                            tab,
+                            generation,
+                            path,
+                            repo,
+                        }
+                    },
+                    cosmic::Action::App,
+                )
+            }
+        };
+        let list = Task::perform(
             async move {
                 let (result, space, path) = tokio::task::spawn_blocking(move || {
                     let p = match resolve {
@@ -493,7 +522,8 @@ impl App {
                 }
             },
             cosmic::Action::App,
-        )
+        );
+        Task::batch([list, git])
     }
 
     /// A click in pane `side`: as a key there (and Tab away from the other) — the error shown

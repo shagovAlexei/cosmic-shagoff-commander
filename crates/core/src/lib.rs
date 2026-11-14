@@ -13,6 +13,7 @@ pub mod crash;
 pub mod diff;
 pub mod drives;
 pub mod format;
+pub mod git;
 pub mod history;
 pub mod host;
 pub mod hotkey;
