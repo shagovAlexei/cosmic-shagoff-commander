@@ -12,7 +12,7 @@ use shagoff_core::archive::Format;
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
 /// Stripe Payment Link for a cloud key; the key is mailed by hand (`just access-key`).
-pub const BUY_URL: &str = "https://buy.stripe.com/PRO_LINK_TBD";
+pub const BUY_URL: &str = "https://buy.stripe.com/3cI00kg7H9kZ7rscjJ67S06";
 /// Where "Support the project" leads: a Stripe Payment Link, which needs no server.
 pub const DONATE_URL: &str = "https://donate.stripe.com/6oU28s8Ff7cR1342J967S00";
 
