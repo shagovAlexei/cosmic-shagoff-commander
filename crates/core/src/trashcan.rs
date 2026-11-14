@@ -2,6 +2,7 @@
 //! other dir; each top-level item has `info/<name>.trashinfo` saying where it came from. Deleting
 //! there is for good (and drops the info), «Restore» moves an item back.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
@@ -132,6 +133,56 @@ pub fn restore(item: &Path) -> io::Result<PathBuf> {
     Ok(to)
 }
 
+/// Each origin → the item of `items` last deleted from there (by its info's `DeletionDate`, to
+/// the second; then the info file's own time). Each info is read once.
+pub fn newest(items: &[PathBuf]) -> HashMap<PathBuf, PathBuf> {
+    let date = |info: &Path| {
+        let text = fs::read(info).ok()?;
+        let line = text
+            .split(|&b| b == b'\n')
+            .find_map(|l| l.strip_prefix(b"DeletionDate="))?;
+        let mtime = fs::metadata(info).and_then(|m| m.modified()).ok();
+        Some((line.trim_ascii_end().to_vec(), mtime)) // ISO 8601: sorts as text
+    };
+    let mut best: HashMap<PathBuf, (PathBuf, _)> = HashMap::new();
+    for item in items {
+        let (Some(from), Some(info)) = (origin(item), info_of(item)) else {
+            continue;
+        };
+        let d = date(&info);
+        if best.get(&from).is_none_or(|(_, b)| d > *b) {
+            best.insert(from, (item.clone(), d));
+        }
+    }
+    best.into_iter().map(|(k, (v, _))| (k, v)).collect()
+}
+
+/// Ctrl+Z after F8: each path back from the trash, never over an existing one. Returns the
+/// paths not restored, with the first error.
+pub fn untrash(paths: &[PathBuf]) -> (Vec<PathBuf>, Option<io::Error>) {
+    let items = match everything() {
+        Ok(i) => i,
+        Err(e) => return (paths.to_vec(), Some(e)),
+    };
+    let newest = newest(&items);
+    let (mut left, mut first) = (Vec::new(), None);
+    for p in paths {
+        // The info keeps the real path (a `..` or a linked dir resolved).
+        let real = (p.parent().and_then(|d| d.canonicalize().ok()))
+            .zip(p.file_name())
+            .map(|(d, n)| d.join(n));
+        let r = newest
+            .get(real.as_ref().unwrap_or(p))
+            .ok_or_else(|| io::Error::other(crate::why::NOT_IN_TRASH))
+            .and_then(|item| restore(item));
+        if let Err(e) = r {
+            left.push(p.clone());
+            first.get_or_insert(e);
+        }
+    }
+    (left, first)
+}
+
 /// Every item in every trash (the home one and the drives'), for «Empty trash».
 pub fn everything() -> io::Result<Vec<PathBuf>> {
     let roots = trash::os_limited::trash_folders().map_err(io::Error::other)?;
@@ -214,6 +265,23 @@ mod tests {
         assert!(!root.join("info/a b.txt.trashinfo").exists());
         // Not right in a trash: nothing to restore.
         assert!(restore(&home.join("my docs")).is_err());
+    }
+
+    #[test]
+    fn newest_is_the_last_deleted_from_that_path() {
+        let t = tempfile::tempdir().unwrap();
+        let root = test_root(t.path());
+        let p = t.path().join("a");
+        let old = trash(&root, "a", "a");
+        let new = trash(&root, "a.2", "a");
+        let other = trash(&root, "b", "b");
+        let info = root.join("info/a.2.trashinfo");
+        let text = fs::read_to_string(&info).unwrap().replace("10:00", "11:00");
+        fs::write(&info, text).unwrap();
+        let items = [old, new.clone(), other];
+        let n = newest(&items);
+        assert_eq!(n.get(&p), Some(&new));
+        assert_eq!(n.get(&t.path().join("c")), None);
     }
 
     #[test]

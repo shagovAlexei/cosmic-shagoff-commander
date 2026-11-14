@@ -138,6 +138,8 @@ pub enum Action {
     ClipCopy,
     ClipCut,
     ClipPaste,
+    /// Ctrl+Z: take back the last move, copy, F8 (trash) or F7.
+    Undo,
     MultiRename,
     /// Alt+F5 / Alt+F9: pack the targets / unpack the archives among them.
     Pack,
@@ -527,6 +529,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::KeyC), true, false) => Some(Action::ClipCopy),
         (Physical::Code(Code::KeyX), true, false) => Some(Action::ClipCut),
         (Physical::Code(Code::KeyV), true, false) => Some(Action::ClipPaste),
+        (Physical::Code(Code::KeyZ), true, false) => Some(Action::Undo),
         (Physical::Code(Code::KeyM), true, false) => Some(Action::MultiRename),
         (Physical::Code(Code::KeyP), true, false) => Some(Action::CmdCwd),
         (Physical::Code(Code::KeyE), true, false) => Some(Action::CmdPrevious),

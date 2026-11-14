@@ -617,7 +617,7 @@ pub(super) fn make(
     name: String,
     first: Option<String>,
     what: New,
-    f: impl FnOnce() -> std::io::Result<()> + Send + 'static,
+    f: impl FnOnce() -> std::io::Result<Vec<PathBuf>> + Send + 'static,
 ) -> Task<Message> {
     Task::perform(
         async move {

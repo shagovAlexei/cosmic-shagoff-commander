@@ -50,4 +50,8 @@ reasons! {
     NO_BSDTAR = "why-no-bsdtar",
         "bsdtar is needed to read this archive (package libarchive-tools)";
     CLIENT_NEEDED = "why-client-needed", "the client ID and the client secret of your app are needed";
+    UNDO_REPLACED = "why-undo-replaced",
+        "the last operation replaced files, merged folders or took them out of the trash: it cannot be undone";
+    UNDO_PERMANENT = "why-undo-permanent", "the last operation deleted for good: it cannot be undone";
+    NOT_EMPTY = "why-not-empty", "the folder is not empty any more";
 }

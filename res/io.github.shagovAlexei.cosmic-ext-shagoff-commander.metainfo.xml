@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.147.0" date="2026-11-14">
+      <description><p>Ctrl+Z undoes the last move, rename, copy, delete to the trash or new folder.</p></description>
+    </release>
     <release version="0.146.0" date="2026-11-14">
       <description><p>Git in the panels: branch in the path line, names coloured by state, a Git column.</p></description>
     </release>

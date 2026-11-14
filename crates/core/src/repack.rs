@@ -44,7 +44,7 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
         let e = io::Error::new(io::ErrorKind::InvalidInput, why.to_string());
         Report {
             cancelled: h.error(archive, &e) == ErrorChoice::Cancel,
-            completed: Vec::new(),
+            ..Report::default()
         }
     };
     let Some(format) = Format::detect(&name).filter(|f| f.is_tree() && !f.foreign()) else {

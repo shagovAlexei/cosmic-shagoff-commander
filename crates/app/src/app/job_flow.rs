@@ -93,6 +93,69 @@ impl App {
         self.start_job(side, OpKind::Delete, Job::Delete { paths, permanent }, None)
     }
 
+    /// Ctrl+Z: the last move goes back, copies to the trash, F8 back from it, F7's dirs away.
+    pub(super) fn undo_last(&mut self, side: usize) -> Task<Message> {
+        // The running one's record is not written yet: the one taken back would be older.
+        if self.job.is_some() {
+            self.say(StatusKind::Info, fl!("undo-busy"));
+            return Task::none();
+        }
+        let Some(undo) = self.undo.take() else {
+            self.say(StatusKind::Info, fl!("undo-nothing"));
+            return Task::none();
+        };
+        // What failed stays to try again.
+        let done = |app: &mut Self, r: std::io::Result<()>, left: Option<Undo>| {
+            if let Err(e) = r {
+                app.undo = left;
+                app.say(
+                    StatusKind::Error,
+                    fl!("undo-failed", err = crate::why::text(&e)),
+                );
+            }
+            let reload = |app: &mut Self, s: usize| {
+                let cwd = app.panes[s].active().panel.cwd().to_path_buf();
+                app.reload(s, cwd, None)
+            };
+            Task::batch([reload(app, 0), reload(app, 1)])
+        };
+        match undo {
+            // Moved back by the same engine: progress, conflicts, and Ctrl+Z again redoes it.
+            Undo::Moved(method, pairs) => {
+                let job = Job::Transfer { method, pairs };
+                self.start_job(side, OpKind::Move, job, None)
+            }
+            Undo::Copied(paths) => {
+                let job = Job::Delete {
+                    paths,
+                    permanent: false,
+                };
+                self.start_job(side, OpKind::Delete, job, None)
+            }
+            // ponytail: on the UI thread — renames inside one drive; a trash on a dead network
+            // mount would hang it.
+            Undo::Trashed(paths) => {
+                let (left, err) = trashcan::untrash(&paths);
+                let r = err.map_or(Ok(()), Err);
+                done(self, r, Some(Undo::Trashed(left)))
+            }
+            Undo::Made(dirs) => {
+                let r = shagoff_core::undo::unmake(&dirs);
+                // Those still there (an `rmdir` of a gone one is fine).
+                let left = dirs.into_iter().filter(|d| d.exists()).collect();
+                done(self, r, Some(Undo::Made(left)))
+            }
+            Undo::Lost(why) => {
+                self.say(
+                    StatusKind::Error,
+                    crate::why::text(&std::io::Error::other(why)),
+                );
+                self.undo = Some(Undo::Lost(why));
+                Task::none()
+            }
+        }
+    }
+
     pub(super) fn start_job(
         &mut self,
         side: usize,
@@ -212,6 +275,11 @@ impl App {
         let Some(job) = self.job.take() else {
             return Task::none();
         };
+        // Anything done replaces the record (none for an unpack, a sync…): Ctrl+Z never takes
+        // back an older operation instead.
+        if report.undo.is_some() || !report.completed.is_empty() {
+            self.undo.clone_from(&report.undo);
+        }
         // Not put back (an error, cancelled): the next tick asks about that change again.
         if let Some(file) = self.updating.take()
             && (report.cancelled || report.completed.is_empty())

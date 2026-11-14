@@ -42,6 +42,7 @@ use shagoff_core::tabs::Tabs;
 use shagoff_core::templates;
 use shagoff_core::terminals::{self, Terminal};
 use shagoff_core::trashcan;
+use shagoff_core::undo::Undo;
 use shagoff_core::viewport;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -535,6 +536,8 @@ pub struct App {
     pub(crate) lister: Option<Box<Lister>>,
     /// Files from archives open in the editor (F4).
     pub(crate) edited: Vec<Edited>,
+    /// Ctrl+Z: how to take back the last move, copy, F8 or F7.
+    pub(crate) undo: Option<shagoff_core::undo::Undo>,
     /// Archives opened from inside another (155): the copy in the temp dir → the dir in the outer
     /// archive it came from (Backspace at its root goes back there).
     nested: HashMap<PathBuf, PathBuf>,
@@ -678,7 +681,8 @@ pub enum Message {
         name: String,
         first: Option<String>,
         what: New,
-        made: Result<(), String>,
+        /// The dirs F7 made, the deepest first (none for a file).
+        made: Result<Vec<PathBuf>, String>,
     },
     /// The built-in terminal's event channel is up: its shell starts.
     TermTx(tokio::sync::mpsc::UnboundedSender<TermEvent>),
@@ -1528,6 +1532,7 @@ impl App {
             ctx_row: false,
             lister: None,
             edited: Vec::new(),
+            undo: None,
             nested: HashMap::new(),
             shown_tabs: [0; 2],
             updating: None,
