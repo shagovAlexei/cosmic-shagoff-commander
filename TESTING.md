@@ -2,6 +2,167 @@
 
 `just verify` = `cargo fmt --check` + `clippy -D warnings` + `cargo test`. Его запускаем перед каждым PR, CI запускает его же.
 
+## Регрессионные тесты
+
+Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
+
+| Тест | Баг | PR |
+|---|---|---|
+| `regression_copy_never_truncates_its_own_source` | Временный `<имя>.shagoff-part` совпадал с источником и обнулял его | фаза 5 |
+| `regression_user_file_named_like_a_part_is_untouched` | Пользовательский файл `x.shagoff-part` затирался при копировании `x` | фаза 5 |
+| `regression_sources_with_colliding_part_names_both_survive` | Два источника делили одно имя временного файла | фаза 5 |
+| `regression_plan_sees_through_dotdot_and_symlink_detours` | `nope/../a/new` и путь через симлинк обходили защиту «в самого себя» | фаза 5 |
+| `regression_special_files_are_skipped_not_hung` | Копирование FIFO вешало приложение | фаза 5 |
+| `regression_merge_keeps_existing_dir_mode` | Слияние меняло права существующего каталога | фаза 5 |
+| `regression_second_scan_of_same_path_wins` | Из двух чтений одного каталога применялось старое, новое отбрасывалось | фаза 6 |
+| `regression_watcher_does_not_cancel_navigation` | Изменения в покидаемом каталоге (загрузка браузера) отменяли переход в другой каталог | фаза 6 |
+| `regression_ctrl_h_keeps_pending_navigation` | Ctrl+H сразу после Enter перечитывал старый каталог и отменял переход | фаза 6 |
+| `regression_dir_readable_but_not_searchable_lists_names` | Каталог `r--` без `x` показывался пустым | техдолг |
+| `regression_human_rounds_before_choosing_unit` | «100.0 G» и «1024 K» на границах единиц | техдолг |
+| `regression_root_or_home_device_mounted_again_gets_no_extra_button` | Повторное монтирование диска `/` или home давало лишнюю кнопку | техдолг |
+| `regression_last_tab_home_dir_with_tilde_or_gone` | `home_dir` с `~` или удалённым каталогом → ошибка при Ctrl+W | техдолг |
+| `regression_drive_list_is_fixed_while_dialog_open` | Список дисков менялся под открытым Alt+F1, Enter уходил не туда | техдолг |
+| `regression_backspace_while_loading_goes_up_from_the_target` | Быстрые Backspace на медленной ФС терялись | техдолг |
+| `regression_f3_on_broken_symlink_reports_it` | F3/F4 на битой ссылке молча ничего не делали | техдолг |
+| `regression_trailing_slash_means_into_a_new_dir` | Цель `новая/` для одного файла давала ошибку ENOTDIR | техдолг |
+| `regression_click_on_half_visible_row_scrolls_it_in` | Клик по обрезанной строке не докручивал её | техдолг |
+| `regression_shrinking_window_keeps_cursor_visible` | После уменьшения окна курсор уходил за край | техдолг |
+| `regression_swap_keeps_scan_in_flight` | Чтение каталога, начатое до Ctrl+U, терялось, вкладка застревала | 08 |
+| `regression_recent_starts_with_the_current_entry_after_back` | После Alt+← список Alt+↓ начинался не с текущего каталога | 08 |
+| `regression_paste_during_navigation_lands_in_target` | Ctrl+V сразу после Enter на папке вставлял в покидаемый каталог | 09 |
+| `regression_rename_method_never_replaces_or_merges` | Ctrl+M: шаг цепочки после пропущенного спрашивал «Заменить?» про файл из той же пачки (и сливал папки) | 10 |
+| `regression_archive_inside_source_is_not_completed` | «Переместить в архив» с архивом внутри исходной папки удаляло и папку, и новый архив | 11 |
+| `regression_dotdot_stem_stays_in_staging` | Архив `...tar` с «в свою папку» писал прямо в цель и заменял файлы без вопроса | 11 |
+| `regression_dot_slash_root_entry_is_not_an_error` | Запись `./` (tar -C dir .) давала ошибку «небезопасный путь» | 11 |
+| `regression_pack_onto_one_of_its_sources_is_refused` | Упаковка `a.zip` в `a.zip` заменяла файл пустым архивом | 11 |
+| `regression_short_source_is_an_error_not_a_padded_entry` | Файл, уменьшившийся во время упаковки в tar, молча дополнялся нулями | 11 |
+| `regression_split_path_trailing_slash` | Путь `…/a.zip/` со слешем на конце не открывался как архив | 12 |
+| `regression_pack_onto_existing_archive_is_not_read_only` | Упаковка поверх существующего `foo.zip` отказывала с «Архив только для чтения» вместо вопроса о замене | 12 |
+| `regression_f5_right_after_entering_archive_copies_the_shown_rows` | F5 сразу после Enter на архиве искал файлы старого каталога внутри архива | 12 |
+| `regression_enter_after_moving_into_results_goes_to_file` | Alt+F7: Enter после ↓ по результатам перезапускал поиск (фокус оставался в поле) | 13 |
+| `regression_pending_matches_flush_on_a_tick` | Alt+F7: найденный файл не показывался, пока не найдётся следующий | 13 |
+| `regression_deep_tree_does_not_overflow_the_stack` | Поиск в очень глубоком дереве ронял отладочную сборку (рекурсия) | 13 |
+| `regression_shrinking_lowercase_across_chunk_boundary` | Поиск без учёта регистра пропускал текст на границе кусков, если строчная форма короче | 13 |
+| `regression_symlink_vs_file_has_no_arrow` | Синхронизация: симлинк против файла получал стрелку и заменял файл ссылкой | 14 |
+| `regression_sync_asks_before_replacing_and_deletes_nothing` | Синхронизация заменяла существующие файлы без вопроса (решено: спрашивать всегда, как F5) | 14 |
+| `regression_slack_is_two_seconds_not_three` | Допуск даты 2 с на деле был меньше 3 с | 14 |
+| `regression_crlf_vs_lf_is_not_identical` | Сравнение файлов: CRLF против LF показывалось как «Файлы одинаковые» | 15 |
+| `regression_rows_are_capped_but_counted` | Сравнение огромных файлов держало в памяти все строки | 15 |
+| `regression_fifo_is_refused_not_read` | FIFO под курсором вешал поток сравнения | 15 |
+| `regression_diff_with_three_marked_does_not_fall_back_to_cursors` | Ctrl+Shift+D при «не двух» отмеченных молча сравнивал файлы под курсорами | 15 |
+| `regression_diff_inside_archive_explains` | Ctrl+Shift+D внутри архива давал «Not a directory» | 15 |
+| `regression_fifo_is_refused_not_read` (lister) | F3 на FIFO вешал поток чтения | 20 |
+| `regression_extract_skipped_on_conflict_is_not_completed` | F6 из архива удалял запись, хотя в конфликте выбран «Пропустить» | 21 |
+| `regression_gnu_sparse_file_is_unpacked` | Разреженные файлы tar молча пропадали при распаковке и при перезаписи архива | 21 |
+| `regression_links_inside_never_lead_outside` | Изменение архива через ссылку внутри него писало за пределы временного каталога (F4 на ссылке обнулял настоящий файл) | 21 |
+| `regression_symlinked_archive_stays_a_link` | Архив-ссылка заменялся обычным файлом, настоящий архив не менялся | 21 |
+| `regression_zip_names_in_a_legacy_encoding_are_kept` | Имена cp866 в zip без флага UTF-8 навсегда портились при перезаписи | 21 |
+| `regression_f6_of_the_archive_into_itself_is_refused` | F6 архива в самого себя удалял архив | 21 |
+| `regression_regex_anchors_are_per_line_across_chunks` | `^` / `$` в регулярном выражении срабатывали на границах кусков большого файла | 22 |
+| `regression_feed_uses_the_dir_searched_not_the_edited_field` | «В панель» брал каталог из исправленного поля «Где»: F7/F5/Alt+F5 писали не туда | 22 |
+| `regression_huge_days_does_not_panic` | Огромное «не старше, дней» роняло программу | 22 |
+| `regression_going_to_the_searched_dir_leaves_results` | Переход в каталог поиска (диск, Ctrl+\, история) оставлял результаты | 22 |
+| `regression_mirror_unreadable_left_deletes_nothing` | Зеркало: нечитаемый каталог слева — всё справа под ним помечалось к удалению | 23 |
+| `regression_mirror_with_missing_left_root_deletes_nothing` | Зеркало: пропавший левый каталог (вынули флешку) — всё справа к удалению | 23 |
+| `regression_editing_the_mask_drops_rows_and_confirmation` | Маска, изменённая без Enter, оставляла старые строки и подтверждение удаления | 23 |
+| `regression_copy_block_leaves_other_lines_byte_for_byte` | Перенос блока переписывал концы строк во всём файле со смешанными CRLF/LF | 25 |
+| `regression_copy_block_uses_the_rows_shown` | Перенос пересчитывал сравнение и мог взять не тот блок, что на экране | 25 |
+| `regression_save_keeps_links_and_refuses_what_it_should` | «Сохранить» заменял ссылку файлом, затирал изменения с диска, писал файл только для чтения | 25 |
+| `regression_password_never_saved` | Пароль с `#`, `/` или `?` ломал разбор адреса, и адрес сохранялся вместе с паролем | 26 |
+| `regression_viewer_letters_start_the_line_when_no_viewer` | Командная строка: первая буква `n p q 1 3 4` терялась (её брали клавиши просмотра F3 при закрытом просмотре) | 27 |
+| `regression_double_click_and_quick_search_open_not_run` | Двойной клик / Enter быстрого поиска выполняли набранную команду вместо открытия | 27 |
+| `regression_terminal_line_with_a_comment_keeps_the_shell` | Shift+Enter: `#` в команде закрывал терминал сразу | 27 |
+| `regression_find_feed_leaves_a_locked_tab_alone` | Alt+F7 «В панель» уводил закреплённую вкладку в результаты поиска | 28 |
+| `regression_scan_in_flight_does_not_move_a_tab_locked_meanwhile` | Вкладка, закреплённая во время чтения нового каталога, всё равно уходила в него | 28 |
+| `regression_history_step_keeps_the_locked_tabs_place` | Alt+← в закреплённой вкладке сдвигал её собственную историю | 28 |
+| `regression_startup_path_does_not_repoint_a_locked_tab` | Путь из командной строки при запуске заменял каталог закреплённой вкладки | 28 |
+| `regression_viewer_arrows_scroll_sideways` | ←/→ стали клавишами Brief и перестали прокручивать просмотр F3 вбок | 29 |
+| `regression_separators_inside_quotes_are_literal` | `;` и `|` в кавычках резали маску | 35 |
+| `regression_search_results_match_by_file_name` | В результатах поиска быстрый поиск, фильтр и маски сравнивали с путём | 35 |
+| `regression_menu_open_opens_even_with_a_typed_command` | «Открыть» в контекстном меню выполнял набранную команду вместо открытия | 37 |
+| `regression_closing_a_popup_does_not_quit` | Закрытие всплывающего контекстного меню завершало приложение (`on_close_requested` отвечал «выход» на любую поверхность) | 37 |
+| `regression_light_or_dark_is_not_a_system_theme` | Светлая/тёмная тема из настроек слетала при запуске: libcosmic подменял тему `System` системной палитрой | 41 |
+| `argv_runs_through_sh_or_a_terminal_that_stays_open` (regression) | `terminal = ["cosmic-term"]` без `-e`: Shift+Enter открывал пустой терминал, команда терялась | 43 |
+| `mask_dialog_remembers_masks` (regression) | ↑/↓ в поле маски приходили обычными клавишами и не листали историю | 43 |
+| `regression_hot_letters_not_taken_by_back_row_or_dir_names` | «‹ Назад» в подменю перехватывал горячую букву подменю; каталог `R&D`, добавленный в избранное, получал горячую «D» | 61 |
+| `regression_ctrl_q_reloads_a_changed_file_and_shows_a_zip` | Ctrl+Q показывал старое содержимое изменённого файла; `.zip` на диске считался путём внутри архива | 62 |
+| `ctrl_b_lists_every_file_below_and_again_leaves` (regression) | Ветвь, прочитанная после ухода вкладки в другой каталог (и даже после возврата), ложилась поверх него | 66 |
+| `regression_presorted_listing_is_not_sorted_again_on_the_ui_thread` | Ctrl+B на большом каталоге (`/usr`, 400 000 файлов) вешал окно: сортировка 11 с в UI-потоке (сравнение имён выделяло память) — теперь сортируется в фоне, сравнение без выделений | 66 |
+| `regression_dir_history_survives_a_restart` | История каталогов Alt+↓ пропадала после перезапуска при «Помнить историю» | 60 |
+| `regression_column_drag_ends_on_any_release_and_esc_undoes_it` | Перетаскивание границы колонки не заканчивалось: отпускание над списком файлов забирал список; Esc не помогал | 48 |
+| `regression_a_queued_copy_is_planned_when_it_starts` | Операция из очереди копировала по плану, посчитанному при постановке: файл в каталог, созданный предыдущей операцией, давал конфликт «заменить каталог» | 69 |
+| `regression_closing_the_window_asks_while_a_job_runs_or_waits` | Закрытие окна во время операции молча теряло её и очередь | 69 |
+| `regression_a_background_question_waits_for_the_open_dialog` | Вопрос фоновой операции (конфликт, ошибка) заменял открытый диалог, его ввод терялся | 69 |
+| `regression_light_is_light_without_a_cosmic_theme_config` | Вне COSMIC (Linux Lite: нет конфига темы и `/usr/share/cosmic`) тема «Светлая» оставалась тёмной: libcosmic отдаёт тёмную палитру по умолчанию | 0.13.1 |
+| `regression_closing_the_viewer_scrolls_the_lists_back` | Длинный каталог, курсор в конце, F3 → Esc (или Ctrl+Q и Tab): список показывался с начала, курсор вне экрана | 0.26.1 |
+| `regression_cross_move_keeps_a_dir_not_extracted_whole` | F6 из архива в архив: каталог с неизвлёкшимся файлом удалялся из источника целиком | 92 |
+| `regression_cached_totals_follow_every_change` | Итоги в строке состояния считались на каждой перерисовке (~10 мс на 100 000 отмеченных); кеш должен сбрасываться при каждом изменении строк, отметок и размеров каталогов | 0.47.1 |
+| `regression_ctrl_up_on_dotdot_in_results_opens_the_searched_dir` | Ctrl+↑ на `..` в результатах поиска / ветви открывал родителя каталога поиска, а Backspace — сам каталог | 0.59.1 |
+| `regression_one_file_to_a_new_name_inside_is_a_file_not_a_dir` | F5 одного файла в `a.zip/new.txt` создавал каталог `new.txt/` с файлом внутри, а не файл под новым именем | 119 |
+| `regression_move_into_archive_keeps_files_that_appeared_meanwhile` | F6 в архив удалял исходные папки целиком: файл, появившийся в них за время упаковки, пропадал, не попав в архив (так же Alt+F5 «Переместить в архив») | 123 |
+| `regression_edited_file_is_asked_again_when_putting_it_back_failed` | F4 из архива: после «Обновить», закончившегося ошибкой или отменой, сохранённое изменение больше не предлагалось — правка могла так и не попасть в архив | 124 |
+| `regression_watcher_leaves_search_results_alone` | Каждое событие watcher в каталоге поиска перечитывало все результаты (миллион результатов — миллион stat) | 125 |
+| `regression_ctrl_r_before_the_results_arrive_keeps_them` | Ctrl+R между «В панель» и приходом списка снимал результаты поиска (и любой незаконченный переход возвращал назад) | 126 |
+| `regression_viewer_n_in_an_archive_cancelled_keeps_the_cursor_on_the_shown_file` | Вьюер в архиве: N / P, извлечение отменено или не удалось — курсор панели оставался на новом файле, а показан был старый | 127 |
+| `regression_ctrl_t_does_not_copy_the_filter` | Ctrl+T копировал в новую вкладку фильтр Ctrl+S (в TC — нет) | 128 |
+| `regression_click_in_the_other_pane_clears_the_error_like_tab` | Ошибка панели оставалась после щелчка мышью по другой панели (Tab её убирал) | 130 |
+| `regression_alt_letter_adds_to_the_open_search` | Alt+буква при открытом, но не сфокусированном поле быстрого поиска начинала поиск заново вместо дописывания | 131 |
+| `regression_hotlist_delete_after_an_outside_change_deletes_the_entry_shown` | Delete в открытом Ctrl+D после правки конфига снаружи удалял пункт по старому номеру — не тот | 132 |
+| `regression_hotlist_add_of_a_non_utf8_dir_says_why` | Папка с именем не в UTF-8 молча не сохранялась в избранное (ошибка только в логе) | 133 |
+| `regression_failed_step_then_enter_keeps_the_shown_dir`, `regression_alt_left_to_a_deleted_dir_keeps_history_on_the_dir_shown` | Alt+← в удалённый каталог, затем Enter в подкаталог — показанный каталог пропадал из истории | 135 |
+| `regression_unopenable_says_why_not_always_broken_link` | F3 / F4 писали «ссылка никуда не ведёт» про любой файл, который не открыть (удалён снаружи, в каталоге `r--`) | 138 |
+| `regression_gvfs_dir_is_never_read_on_the_ui_thread` | С висящим sftp-монтированием окно замирало при старте: список дисков читал каталог gvfs в UI-потоке | 139 |
+| `regression_every_job_dropped_from_the_queue_says_why` | Несколько операций, отброшенных из очереди подряд (план не сложился при старте), — в строке была видна только последняя причина | 140 |
+| `regression_closing_the_window_warns_of_unsaved_diff_copies` | × окна при несохранённых переносах блоков в сравнении закрывал программу без вопроса | 141 |
+| `regression_a_picture_over_the_limit_opens_as_hex_and_says_why` | Картинка больше 32 МБ во вьюере — пустое поле без объяснения | 142 |
+| `regression_quick_search_up_in_an_empty_list` | ↑ в быстром поиске при пустом списке — переполнение `0 + 0 - 1` (паника в отладочной сборке) | 07 |
+| `regression_enter_works_again_while_a_read_hangs` | Чтение каталога зависло (мёртвый сетевой диск) — Enter в вкладке не работал до Backspace / кнопки диска | 143 |
+| `regression_btrfs_subvolumes_on_the_root_device_get_buttons` | Подтом btrfs в `/media` на одном устройстве с `/` не получал кнопку диска | 144 |
+| `regression_ctrl_is_let_go_when_the_window_loses_focus` | Ctrl, отпущенный в другом окне, оставался «зажатым»: щелчок по возвращении отмечал файл | 145 |
+| `regression_keys_the_focused_terminal_took_do_not_act_on_the_panels` | F8 / Ctrl+R / Esc в сфокусированном встроенном терминале действовали на панели | 149 |
+| `the_editor_opens_at_the_rows_line` | Правка в сравнении открывалась в начале файла, без фокуса: непонятно, где править | 159 |
+| `regression_a_conflict_names_the_archive_not_the_staging_dir` | Конфликт при F5 в архив показывал путь временного каталога (`.shagoff-unpack…/t/…`) | 158 |
+| `regression_tmux_as_the_shell_is_never_typed_into` | `tmux` в `term_shell`: `cd` панели набирался в его окно (хоть в vim) | 149 |
+| `regression_browse_attrs_space_separated` | «Обзор сети» никогда ничего не находил: `gio list` разделяет атрибуты пробелом, а разбор ждал табуляцию | 26 |
+| `regression_a_bad_regex_clears_the_last_results` | Alt+F7: под ошибкой регулярного выражения оставались результаты прошлого поиска | 22 |
+| `regression_skip_while_packing_skips_one_entry` | Alt+F5: «Пропустить» на нечитаемой записи отменял всю упаковку | 21 |
+| `regression_a_trailing_dot_stays` | Ctrl+M с правилами по умолчанию переименовывал `notes.` в `notes` | 32 |
+| `argv_runs_through_sh_or_a_terminal_that_stays_open` | Shift+Enter: xfce4-terminal / kitty получали чужой флаг запуска (`-e`) | 151 |
+| `regression_rename_old_across_filesystems_waits_for_the_copy` | F6 на другую ФС, «Переименовать старый»: старый уходил в сторону до копирования (при отмене место пустело), вопрос задавался дважды | 70 |
+| `regression_a_saved_pos_past_the_end_does_not_panic` | История каталогов из испорченного состояния: Alt+← падал | — |
+| `regression_a_dir_keeps_its_own_date_and_mode` | Каталог в архиве: дата зависела от порядка записей, неявный каталог получал права файла | 12 |
+| `regression_a_dotted_dir_keeps_its_whole_name` | Alt+F5 на каталоге `v1.2` предлагал `v1.zip` | 21 |
+| `regression_a_finished_job_does_not_cancel_navigation` | Конец фоновой операции возвращал панель из каталога, который ещё читался | 68 |
+| `regression_a_size_counted_lands_in_a_tab_moved_meanwhile` | Размер по Space / ветвь Ctrl+B терялись, если вкладку перенесли в другую панель | 38 |
+| `regression_a_viewer_window_covers_no_pane` | F3 в своём окне: эскизы в панелях переставали грузиться | 104 |
+| `regression_a_viewer_window_does_not_stop_a_tab_drop` | F3 в своём окне: вкладку нельзя было перетащить в другую панель | 88 |
+| `regression_a_failed_diff_save_keeps_undo_and_the_close_warning` | Сравнение: неудачное «Сохранить» стирало отмену и предупреждение при закрытии | 113 |
+| `regression_super_is_never_captured_as_a_plain_key` | Свои клавиши: Super+K записывалось как K | 154 |
+| `regression_shift_letters_are_not_the_viewer_keys` | F3: Shift+Q / Shift+N действовали как Q / N | 20 |
+| `regression_rename_old_then_a_failed_move_puts_it_back` | F6 с «Переименовать старый», перенос не удался, «Пропустить»: старый оставался под именем `a (1)` | 70 |
+| `regression_job_errors_in_the_ui_language` | Ошибки операций показывались по-английски (тексты core и системные «… (os error N)») | 0.84.1 |
+| `test_reads_every_member_and_finds_damage` | tar.zst писался без контрольной суммы: порча внутри несжатого блока проходила Alt+Shift+F9 как «в порядке» (тест падал не каждый раз) | 168 |
+| `regression_dialog_arrows_walk_its_buttons_not_the_panel` | «Файл уже существует» и другие окна: стрелки не ходили по кнопкам | 0.85.2 |
+| `the_path_line_is_edited_and_goes_there` | Правка пути: выделенный целиком путь не виден — выделение того же цвета, что активная строка пути (теперь курсор в конце, без выделения) | 176 |
+| `regression_a_picture_wakes_the_loop_until_the_renderer_has_it` | F3 на фото в своём окне, закрывающем главное: картинка не появлялась, пока не нажмёшь клавишу (запрос перерисовки от загрузчика картинок терялся, пока главное окно не рисуется) | 0.88.1 |
+| `regression_the_trash_origin_is_not_cut_away` | Корзина: в строке состояния путь, откуда удалён файл, обрезался до `/h…` (после него шли размер, дата, права, владелец) — теперь только `имя ← путь`, на всю половину строки | 0.92.0 |
+| `regression_sort_is_kept_per_tab_across_runs` | При каждом запуске сортировка по имени: сортировка вкладки не сохранялась (теперь своя у каждой вкладки, как вид) | 0.102.1 |
+| `regression_update_refuses_a_package_that_does_not_match_its_hash` | Обновление: пакет с неверным хешем не удалялся; в русской локали ошибкой показывалась строка совпавшего файла («ЦЕЛ») | 0.121.1 |
+| `regression_update_takes_only_the_tags_amd64_deb` | Обновление брало первый `.deb` из `SHA256SUMS` — любой архитектуры и версии | 0.121.1 |
+| `regression_a_submenu_keeps_its_start_and_end_together` | «Запуск»: удаление или ↑ / ↓ разрывали пару начало / конец подменю, и подменю «съедало» всё ниже | 0.121.2 |
+| `regression_the_start_menu_has_submenus_but_no_empty_ones` | «Запуск»: пустое подменю (или из пустых) показывалось как пустая папка | 0.121.2 |
+| `regression_root_chmod_chown_never_go_through_a_link` | Alt+Enter от root: chmod / chown по пути могли уйти по ссылке, подменённой в чужом каталоге (например, на `/etc/shadow`) | 0.121.4 |
+| `regression_a_name_starting_with_a_dash_is_no_option` | Параметры кнопок: файл `-rf` подставлялся как ключ (`rm %S` → `rm -rf`) | 0.122.0 |
+| `regression_a_second_sign_in_waits_and_a_taken_port_is_said_plainly` | Облака: «Добавить учётную запись» при занятом порту 53682 (вход, оставшийся от прошлого запуска) выдавал всю справку rclone; вход rclone переживал закрытие программы | 0.131.1 |
+| `set_date_runs_in_the_background_and_says_what_failed` | «Изменить дату» с «И всё внутри» на большом дереве замораживало окно (`set_times` в потоке интерфейса) | 0.123.2 |
+| `regression_about_changelog_button_opens_it` | Кнопка «Журнал изменений» в «О программе» ничего не делала (открытое окно забирает клавиши, а кнопка слала клавишное действие) | 0.139.1 |
+| `regression_term_env_set` | Встроенный терминал удваивал набранные буквы (`ls` → `llsls`) при запуске из меню: у оболочки не было `TERM` | 0.139.2 |
+| `regression_flatpak_term_reaches_the_group` | Flatpak: у зависшего генератора эскизов оставались дочерние процессы (TERM через `flatpak-spawn` доходит только до главного) | 0.139.3 |
+| `regression_metainfo_has_this_release` | Flatpak и магазин показывали 0.138.0: в metainfo не было выпусков 0.139 | 0.139.3 |
+| `regression_a_readdir_error_is_the_dirs_error` | Облако, сервер которого отказывает (Яндекс: 410), показывалось пустым каталогом вместо ошибки чтения | 0.142.0 |
+| `regression_google_photos_is_written_without_rename` | F5 в `upload/` Google Фото: «Input/output error» — копия писалась во временный файл и переименовывалась, а Google Фото переименовывать не умеет | 0.142.0 |
+| `regression_update_offered_only_for_a_newer_rclone` | Настройки → Облака: «Обновить» у своего rclone висела всегда, даже при последней версии | 0.142.2 |
+
 ## Ручной чек-лист UI
 
 Пункты добавляются по мере появления фаз.
@@ -2386,164 +2547,3 @@ echo changed >> a.txt; echo new > n.txt; touch x.o; mkdir fresh; echo f > fresh/
 6. Перейти в `/tmp`: ветки нет, цветов git нет. Цвета по типам (Ctrl+, → Цвета), если заданы для `.txt`, сильнее цвета git.
 
 Уборка: `rm -rf /tmp/g`.
-
-## Регрессионные тесты
-
-Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.
-
-| Тест | Баг | PR |
-|---|---|---|
-| `regression_copy_never_truncates_its_own_source` | Временный `<имя>.shagoff-part` совпадал с источником и обнулял его | фаза 5 |
-| `regression_user_file_named_like_a_part_is_untouched` | Пользовательский файл `x.shagoff-part` затирался при копировании `x` | фаза 5 |
-| `regression_sources_with_colliding_part_names_both_survive` | Два источника делили одно имя временного файла | фаза 5 |
-| `regression_plan_sees_through_dotdot_and_symlink_detours` | `nope/../a/new` и путь через симлинк обходили защиту «в самого себя» | фаза 5 |
-| `regression_special_files_are_skipped_not_hung` | Копирование FIFO вешало приложение | фаза 5 |
-| `regression_merge_keeps_existing_dir_mode` | Слияние меняло права существующего каталога | фаза 5 |
-| `regression_second_scan_of_same_path_wins` | Из двух чтений одного каталога применялось старое, новое отбрасывалось | фаза 6 |
-| `regression_watcher_does_not_cancel_navigation` | Изменения в покидаемом каталоге (загрузка браузера) отменяли переход в другой каталог | фаза 6 |
-| `regression_ctrl_h_keeps_pending_navigation` | Ctrl+H сразу после Enter перечитывал старый каталог и отменял переход | фаза 6 |
-| `regression_dir_readable_but_not_searchable_lists_names` | Каталог `r--` без `x` показывался пустым | техдолг |
-| `regression_human_rounds_before_choosing_unit` | «100.0 G» и «1024 K» на границах единиц | техдолг |
-| `regression_root_or_home_device_mounted_again_gets_no_extra_button` | Повторное монтирование диска `/` или home давало лишнюю кнопку | техдолг |
-| `regression_last_tab_home_dir_with_tilde_or_gone` | `home_dir` с `~` или удалённым каталогом → ошибка при Ctrl+W | техдолг |
-| `regression_drive_list_is_fixed_while_dialog_open` | Список дисков менялся под открытым Alt+F1, Enter уходил не туда | техдолг |
-| `regression_backspace_while_loading_goes_up_from_the_target` | Быстрые Backspace на медленной ФС терялись | техдолг |
-| `regression_f3_on_broken_symlink_reports_it` | F3/F4 на битой ссылке молча ничего не делали | техдолг |
-| `regression_trailing_slash_means_into_a_new_dir` | Цель `новая/` для одного файла давала ошибку ENOTDIR | техдолг |
-| `regression_click_on_half_visible_row_scrolls_it_in` | Клик по обрезанной строке не докручивал её | техдолг |
-| `regression_shrinking_window_keeps_cursor_visible` | После уменьшения окна курсор уходил за край | техдолг |
-| `regression_swap_keeps_scan_in_flight` | Чтение каталога, начатое до Ctrl+U, терялось, вкладка застревала | 08 |
-| `regression_recent_starts_with_the_current_entry_after_back` | После Alt+← список Alt+↓ начинался не с текущего каталога | 08 |
-| `regression_paste_during_navigation_lands_in_target` | Ctrl+V сразу после Enter на папке вставлял в покидаемый каталог | 09 |
-| `regression_rename_method_never_replaces_or_merges` | Ctrl+M: шаг цепочки после пропущенного спрашивал «Заменить?» про файл из той же пачки (и сливал папки) | 10 |
-| `regression_archive_inside_source_is_not_completed` | «Переместить в архив» с архивом внутри исходной папки удаляло и папку, и новый архив | 11 |
-| `regression_dotdot_stem_stays_in_staging` | Архив `...tar` с «в свою папку» писал прямо в цель и заменял файлы без вопроса | 11 |
-| `regression_dot_slash_root_entry_is_not_an_error` | Запись `./` (tar -C dir .) давала ошибку «небезопасный путь» | 11 |
-| `regression_pack_onto_one_of_its_sources_is_refused` | Упаковка `a.zip` в `a.zip` заменяла файл пустым архивом | 11 |
-| `regression_short_source_is_an_error_not_a_padded_entry` | Файл, уменьшившийся во время упаковки в tar, молча дополнялся нулями | 11 |
-| `regression_split_path_trailing_slash` | Путь `…/a.zip/` со слешем на конце не открывался как архив | 12 |
-| `regression_pack_onto_existing_archive_is_not_read_only` | Упаковка поверх существующего `foo.zip` отказывала с «Архив только для чтения» вместо вопроса о замене | 12 |
-| `regression_f5_right_after_entering_archive_copies_the_shown_rows` | F5 сразу после Enter на архиве искал файлы старого каталога внутри архива | 12 |
-| `regression_enter_after_moving_into_results_goes_to_file` | Alt+F7: Enter после ↓ по результатам перезапускал поиск (фокус оставался в поле) | 13 |
-| `regression_pending_matches_flush_on_a_tick` | Alt+F7: найденный файл не показывался, пока не найдётся следующий | 13 |
-| `regression_deep_tree_does_not_overflow_the_stack` | Поиск в очень глубоком дереве ронял отладочную сборку (рекурсия) | 13 |
-| `regression_shrinking_lowercase_across_chunk_boundary` | Поиск без учёта регистра пропускал текст на границе кусков, если строчная форма короче | 13 |
-| `regression_symlink_vs_file_has_no_arrow` | Синхронизация: симлинк против файла получал стрелку и заменял файл ссылкой | 14 |
-| `regression_sync_asks_before_replacing_and_deletes_nothing` | Синхронизация заменяла существующие файлы без вопроса (решено: спрашивать всегда, как F5) | 14 |
-| `regression_slack_is_two_seconds_not_three` | Допуск даты 2 с на деле был меньше 3 с | 14 |
-| `regression_crlf_vs_lf_is_not_identical` | Сравнение файлов: CRLF против LF показывалось как «Файлы одинаковые» | 15 |
-| `regression_rows_are_capped_but_counted` | Сравнение огромных файлов держало в памяти все строки | 15 |
-| `regression_fifo_is_refused_not_read` | FIFO под курсором вешал поток сравнения | 15 |
-| `regression_diff_with_three_marked_does_not_fall_back_to_cursors` | Ctrl+Shift+D при «не двух» отмеченных молча сравнивал файлы под курсорами | 15 |
-| `regression_diff_inside_archive_explains` | Ctrl+Shift+D внутри архива давал «Not a directory» | 15 |
-| `regression_fifo_is_refused_not_read` (lister) | F3 на FIFO вешал поток чтения | 20 |
-| `regression_extract_skipped_on_conflict_is_not_completed` | F6 из архива удалял запись, хотя в конфликте выбран «Пропустить» | 21 |
-| `regression_gnu_sparse_file_is_unpacked` | Разреженные файлы tar молча пропадали при распаковке и при перезаписи архива | 21 |
-| `regression_links_inside_never_lead_outside` | Изменение архива через ссылку внутри него писало за пределы временного каталога (F4 на ссылке обнулял настоящий файл) | 21 |
-| `regression_symlinked_archive_stays_a_link` | Архив-ссылка заменялся обычным файлом, настоящий архив не менялся | 21 |
-| `regression_zip_names_in_a_legacy_encoding_are_kept` | Имена cp866 в zip без флага UTF-8 навсегда портились при перезаписи | 21 |
-| `regression_f6_of_the_archive_into_itself_is_refused` | F6 архива в самого себя удалял архив | 21 |
-| `regression_regex_anchors_are_per_line_across_chunks` | `^` / `$` в регулярном выражении срабатывали на границах кусков большого файла | 22 |
-| `regression_feed_uses_the_dir_searched_not_the_edited_field` | «В панель» брал каталог из исправленного поля «Где»: F7/F5/Alt+F5 писали не туда | 22 |
-| `regression_huge_days_does_not_panic` | Огромное «не старше, дней» роняло программу | 22 |
-| `regression_going_to_the_searched_dir_leaves_results` | Переход в каталог поиска (диск, Ctrl+\, история) оставлял результаты | 22 |
-| `regression_mirror_unreadable_left_deletes_nothing` | Зеркало: нечитаемый каталог слева — всё справа под ним помечалось к удалению | 23 |
-| `regression_mirror_with_missing_left_root_deletes_nothing` | Зеркало: пропавший левый каталог (вынули флешку) — всё справа к удалению | 23 |
-| `regression_editing_the_mask_drops_rows_and_confirmation` | Маска, изменённая без Enter, оставляла старые строки и подтверждение удаления | 23 |
-| `regression_copy_block_leaves_other_lines_byte_for_byte` | Перенос блока переписывал концы строк во всём файле со смешанными CRLF/LF | 25 |
-| `regression_copy_block_uses_the_rows_shown` | Перенос пересчитывал сравнение и мог взять не тот блок, что на экране | 25 |
-| `regression_save_keeps_links_and_refuses_what_it_should` | «Сохранить» заменял ссылку файлом, затирал изменения с диска, писал файл только для чтения | 25 |
-| `regression_password_never_saved` | Пароль с `#`, `/` или `?` ломал разбор адреса, и адрес сохранялся вместе с паролем | 26 |
-| `regression_viewer_letters_start_the_line_when_no_viewer` | Командная строка: первая буква `n p q 1 3 4` терялась (её брали клавиши просмотра F3 при закрытом просмотре) | 27 |
-| `regression_double_click_and_quick_search_open_not_run` | Двойной клик / Enter быстрого поиска выполняли набранную команду вместо открытия | 27 |
-| `regression_terminal_line_with_a_comment_keeps_the_shell` | Shift+Enter: `#` в команде закрывал терминал сразу | 27 |
-| `regression_find_feed_leaves_a_locked_tab_alone` | Alt+F7 «В панель» уводил закреплённую вкладку в результаты поиска | 28 |
-| `regression_scan_in_flight_does_not_move_a_tab_locked_meanwhile` | Вкладка, закреплённая во время чтения нового каталога, всё равно уходила в него | 28 |
-| `regression_history_step_keeps_the_locked_tabs_place` | Alt+← в закреплённой вкладке сдвигал её собственную историю | 28 |
-| `regression_startup_path_does_not_repoint_a_locked_tab` | Путь из командной строки при запуске заменял каталог закреплённой вкладки | 28 |
-| `regression_viewer_arrows_scroll_sideways` | ←/→ стали клавишами Brief и перестали прокручивать просмотр F3 вбок | 29 |
-| `regression_separators_inside_quotes_are_literal` | `;` и `|` в кавычках резали маску | 35 |
-| `regression_search_results_match_by_file_name` | В результатах поиска быстрый поиск, фильтр и маски сравнивали с путём | 35 |
-| `regression_menu_open_opens_even_with_a_typed_command` | «Открыть» в контекстном меню выполнял набранную команду вместо открытия | 37 |
-| `regression_closing_a_popup_does_not_quit` | Закрытие всплывающего контекстного меню завершало приложение (`on_close_requested` отвечал «выход» на любую поверхность) | 37 |
-| `regression_light_or_dark_is_not_a_system_theme` | Светлая/тёмная тема из настроек слетала при запуске: libcosmic подменял тему `System` системной палитрой | 41 |
-| `argv_runs_through_sh_or_a_terminal_that_stays_open` (regression) | `terminal = ["cosmic-term"]` без `-e`: Shift+Enter открывал пустой терминал, команда терялась | 43 |
-| `mask_dialog_remembers_masks` (regression) | ↑/↓ в поле маски приходили обычными клавишами и не листали историю | 43 |
-| `regression_hot_letters_not_taken_by_back_row_or_dir_names` | «‹ Назад» в подменю перехватывал горячую букву подменю; каталог `R&D`, добавленный в избранное, получал горячую «D» | 61 |
-| `regression_ctrl_q_reloads_a_changed_file_and_shows_a_zip` | Ctrl+Q показывал старое содержимое изменённого файла; `.zip` на диске считался путём внутри архива | 62 |
-| `ctrl_b_lists_every_file_below_and_again_leaves` (regression) | Ветвь, прочитанная после ухода вкладки в другой каталог (и даже после возврата), ложилась поверх него | 66 |
-| `regression_presorted_listing_is_not_sorted_again_on_the_ui_thread` | Ctrl+B на большом каталоге (`/usr`, 400 000 файлов) вешал окно: сортировка 11 с в UI-потоке (сравнение имён выделяло память) — теперь сортируется в фоне, сравнение без выделений | 66 |
-| `regression_dir_history_survives_a_restart` | История каталогов Alt+↓ пропадала после перезапуска при «Помнить историю» | 60 |
-| `regression_column_drag_ends_on_any_release_and_esc_undoes_it` | Перетаскивание границы колонки не заканчивалось: отпускание над списком файлов забирал список; Esc не помогал | 48 |
-| `regression_a_queued_copy_is_planned_when_it_starts` | Операция из очереди копировала по плану, посчитанному при постановке: файл в каталог, созданный предыдущей операцией, давал конфликт «заменить каталог» | 69 |
-| `regression_closing_the_window_asks_while_a_job_runs_or_waits` | Закрытие окна во время операции молча теряло её и очередь | 69 |
-| `regression_a_background_question_waits_for_the_open_dialog` | Вопрос фоновой операции (конфликт, ошибка) заменял открытый диалог, его ввод терялся | 69 |
-| `regression_light_is_light_without_a_cosmic_theme_config` | Вне COSMIC (Linux Lite: нет конфига темы и `/usr/share/cosmic`) тема «Светлая» оставалась тёмной: libcosmic отдаёт тёмную палитру по умолчанию | 0.13.1 |
-| `regression_closing_the_viewer_scrolls_the_lists_back` | Длинный каталог, курсор в конце, F3 → Esc (или Ctrl+Q и Tab): список показывался с начала, курсор вне экрана | 0.26.1 |
-| `regression_cross_move_keeps_a_dir_not_extracted_whole` | F6 из архива в архив: каталог с неизвлёкшимся файлом удалялся из источника целиком | 92 |
-| `regression_cached_totals_follow_every_change` | Итоги в строке состояния считались на каждой перерисовке (~10 мс на 100 000 отмеченных); кеш должен сбрасываться при каждом изменении строк, отметок и размеров каталогов | 0.47.1 |
-| `regression_ctrl_up_on_dotdot_in_results_opens_the_searched_dir` | Ctrl+↑ на `..` в результатах поиска / ветви открывал родителя каталога поиска, а Backspace — сам каталог | 0.59.1 |
-| `regression_one_file_to_a_new_name_inside_is_a_file_not_a_dir` | F5 одного файла в `a.zip/new.txt` создавал каталог `new.txt/` с файлом внутри, а не файл под новым именем | 119 |
-| `regression_move_into_archive_keeps_files_that_appeared_meanwhile` | F6 в архив удалял исходные папки целиком: файл, появившийся в них за время упаковки, пропадал, не попав в архив (так же Alt+F5 «Переместить в архив») | 123 |
-| `regression_edited_file_is_asked_again_when_putting_it_back_failed` | F4 из архива: после «Обновить», закончившегося ошибкой или отменой, сохранённое изменение больше не предлагалось — правка могла так и не попасть в архив | 124 |
-| `regression_watcher_leaves_search_results_alone` | Каждое событие watcher в каталоге поиска перечитывало все результаты (миллион результатов — миллион stat) | 125 |
-| `regression_ctrl_r_before_the_results_arrive_keeps_them` | Ctrl+R между «В панель» и приходом списка снимал результаты поиска (и любой незаконченный переход возвращал назад) | 126 |
-| `regression_viewer_n_in_an_archive_cancelled_keeps_the_cursor_on_the_shown_file` | Вьюер в архиве: N / P, извлечение отменено или не удалось — курсор панели оставался на новом файле, а показан был старый | 127 |
-| `regression_ctrl_t_does_not_copy_the_filter` | Ctrl+T копировал в новую вкладку фильтр Ctrl+S (в TC — нет) | 128 |
-| `regression_click_in_the_other_pane_clears_the_error_like_tab` | Ошибка панели оставалась после щелчка мышью по другой панели (Tab её убирал) | 130 |
-| `regression_alt_letter_adds_to_the_open_search` | Alt+буква при открытом, но не сфокусированном поле быстрого поиска начинала поиск заново вместо дописывания | 131 |
-| `regression_hotlist_delete_after_an_outside_change_deletes_the_entry_shown` | Delete в открытом Ctrl+D после правки конфига снаружи удалял пункт по старому номеру — не тот | 132 |
-| `regression_hotlist_add_of_a_non_utf8_dir_says_why` | Папка с именем не в UTF-8 молча не сохранялась в избранное (ошибка только в логе) | 133 |
-| `regression_failed_step_then_enter_keeps_the_shown_dir`, `regression_alt_left_to_a_deleted_dir_keeps_history_on_the_dir_shown` | Alt+← в удалённый каталог, затем Enter в подкаталог — показанный каталог пропадал из истории | 135 |
-| `regression_unopenable_says_why_not_always_broken_link` | F3 / F4 писали «ссылка никуда не ведёт» про любой файл, который не открыть (удалён снаружи, в каталоге `r--`) | 138 |
-| `regression_gvfs_dir_is_never_read_on_the_ui_thread` | С висящим sftp-монтированием окно замирало при старте: список дисков читал каталог gvfs в UI-потоке | 139 |
-| `regression_every_job_dropped_from_the_queue_says_why` | Несколько операций, отброшенных из очереди подряд (план не сложился при старте), — в строке была видна только последняя причина | 140 |
-| `regression_closing_the_window_warns_of_unsaved_diff_copies` | × окна при несохранённых переносах блоков в сравнении закрывал программу без вопроса | 141 |
-| `regression_a_picture_over_the_limit_opens_as_hex_and_says_why` | Картинка больше 32 МБ во вьюере — пустое поле без объяснения | 142 |
-| `regression_quick_search_up_in_an_empty_list` | ↑ в быстром поиске при пустом списке — переполнение `0 + 0 - 1` (паника в отладочной сборке) | 07 |
-| `regression_enter_works_again_while_a_read_hangs` | Чтение каталога зависло (мёртвый сетевой диск) — Enter в вкладке не работал до Backspace / кнопки диска | 143 |
-| `regression_btrfs_subvolumes_on_the_root_device_get_buttons` | Подтом btrfs в `/media` на одном устройстве с `/` не получал кнопку диска | 144 |
-| `regression_ctrl_is_let_go_when_the_window_loses_focus` | Ctrl, отпущенный в другом окне, оставался «зажатым»: щелчок по возвращении отмечал файл | 145 |
-| `regression_keys_the_focused_terminal_took_do_not_act_on_the_panels` | F8 / Ctrl+R / Esc в сфокусированном встроенном терминале действовали на панели | 149 |
-| `the_editor_opens_at_the_rows_line` | Правка в сравнении открывалась в начале файла, без фокуса: непонятно, где править | 159 |
-| `regression_a_conflict_names_the_archive_not_the_staging_dir` | Конфликт при F5 в архив показывал путь временного каталога (`.shagoff-unpack…/t/…`) | 158 |
-| `regression_tmux_as_the_shell_is_never_typed_into` | `tmux` в `term_shell`: `cd` панели набирался в его окно (хоть в vim) | 149 |
-| `regression_browse_attrs_space_separated` | «Обзор сети» никогда ничего не находил: `gio list` разделяет атрибуты пробелом, а разбор ждал табуляцию | 26 |
-| `regression_a_bad_regex_clears_the_last_results` | Alt+F7: под ошибкой регулярного выражения оставались результаты прошлого поиска | 22 |
-| `regression_skip_while_packing_skips_one_entry` | Alt+F5: «Пропустить» на нечитаемой записи отменял всю упаковку | 21 |
-| `regression_a_trailing_dot_stays` | Ctrl+M с правилами по умолчанию переименовывал `notes.` в `notes` | 32 |
-| `argv_runs_through_sh_or_a_terminal_that_stays_open` | Shift+Enter: xfce4-terminal / kitty получали чужой флаг запуска (`-e`) | 151 |
-| `regression_rename_old_across_filesystems_waits_for_the_copy` | F6 на другую ФС, «Переименовать старый»: старый уходил в сторону до копирования (при отмене место пустело), вопрос задавался дважды | 70 |
-| `regression_a_saved_pos_past_the_end_does_not_panic` | История каталогов из испорченного состояния: Alt+← падал | — |
-| `regression_a_dir_keeps_its_own_date_and_mode` | Каталог в архиве: дата зависела от порядка записей, неявный каталог получал права файла | 12 |
-| `regression_a_dotted_dir_keeps_its_whole_name` | Alt+F5 на каталоге `v1.2` предлагал `v1.zip` | 21 |
-| `regression_a_finished_job_does_not_cancel_navigation` | Конец фоновой операции возвращал панель из каталога, который ещё читался | 68 |
-| `regression_a_size_counted_lands_in_a_tab_moved_meanwhile` | Размер по Space / ветвь Ctrl+B терялись, если вкладку перенесли в другую панель | 38 |
-| `regression_a_viewer_window_covers_no_pane` | F3 в своём окне: эскизы в панелях переставали грузиться | 104 |
-| `regression_a_viewer_window_does_not_stop_a_tab_drop` | F3 в своём окне: вкладку нельзя было перетащить в другую панель | 88 |
-| `regression_a_failed_diff_save_keeps_undo_and_the_close_warning` | Сравнение: неудачное «Сохранить» стирало отмену и предупреждение при закрытии | 113 |
-| `regression_super_is_never_captured_as_a_plain_key` | Свои клавиши: Super+K записывалось как K | 154 |
-| `regression_shift_letters_are_not_the_viewer_keys` | F3: Shift+Q / Shift+N действовали как Q / N | 20 |
-| `regression_rename_old_then_a_failed_move_puts_it_back` | F6 с «Переименовать старый», перенос не удался, «Пропустить»: старый оставался под именем `a (1)` | 70 |
-| `regression_job_errors_in_the_ui_language` | Ошибки операций показывались по-английски (тексты core и системные «… (os error N)») | 0.84.1 |
-| `test_reads_every_member_and_finds_damage` | tar.zst писался без контрольной суммы: порча внутри несжатого блока проходила Alt+Shift+F9 как «в порядке» (тест падал не каждый раз) | 168 |
-| `regression_dialog_arrows_walk_its_buttons_not_the_panel` | «Файл уже существует» и другие окна: стрелки не ходили по кнопкам | 0.85.2 |
-| `the_path_line_is_edited_and_goes_there` | Правка пути: выделенный целиком путь не виден — выделение того же цвета, что активная строка пути (теперь курсор в конце, без выделения) | 176 |
-| `regression_a_picture_wakes_the_loop_until_the_renderer_has_it` | F3 на фото в своём окне, закрывающем главное: картинка не появлялась, пока не нажмёшь клавишу (запрос перерисовки от загрузчика картинок терялся, пока главное окно не рисуется) | 0.88.1 |
-| `regression_the_trash_origin_is_not_cut_away` | Корзина: в строке состояния путь, откуда удалён файл, обрезался до `/h…` (после него шли размер, дата, права, владелец) — теперь только `имя ← путь`, на всю половину строки | 0.92.0 |
-| `regression_sort_is_kept_per_tab_across_runs` | При каждом запуске сортировка по имени: сортировка вкладки не сохранялась (теперь своя у каждой вкладки, как вид) | 0.102.1 |
-| `regression_update_refuses_a_package_that_does_not_match_its_hash` | Обновление: пакет с неверным хешем не удалялся; в русской локали ошибкой показывалась строка совпавшего файла («ЦЕЛ») | 0.121.1 |
-| `regression_update_takes_only_the_tags_amd64_deb` | Обновление брало первый `.deb` из `SHA256SUMS` — любой архитектуры и версии | 0.121.1 |
-| `regression_a_submenu_keeps_its_start_and_end_together` | «Запуск»: удаление или ↑ / ↓ разрывали пару начало / конец подменю, и подменю «съедало» всё ниже | 0.121.2 |
-| `regression_the_start_menu_has_submenus_but_no_empty_ones` | «Запуск»: пустое подменю (или из пустых) показывалось как пустая папка | 0.121.2 |
-| `regression_root_chmod_chown_never_go_through_a_link` | Alt+Enter от root: chmod / chown по пути могли уйти по ссылке, подменённой в чужом каталоге (например, на `/etc/shadow`) | 0.121.4 |
-| `regression_a_name_starting_with_a_dash_is_no_option` | Параметры кнопок: файл `-rf` подставлялся как ключ (`rm %S` → `rm -rf`) | 0.122.0 |
-| `regression_a_second_sign_in_waits_and_a_taken_port_is_said_plainly` | Облака: «Добавить учётную запись» при занятом порту 53682 (вход, оставшийся от прошлого запуска) выдавал всю справку rclone; вход rclone переживал закрытие программы | 0.131.1 |
-| `set_date_runs_in_the_background_and_says_what_failed` | «Изменить дату» с «И всё внутри» на большом дереве замораживало окно (`set_times` в потоке интерфейса) | 0.123.2 |
-| `regression_about_changelog_button_opens_it` | Кнопка «Журнал изменений» в «О программе» ничего не делала (открытое окно забирает клавиши, а кнопка слала клавишное действие) | 0.139.1 |
-| `regression_term_env_set` | Встроенный терминал удваивал набранные буквы (`ls` → `llsls`) при запуске из меню: у оболочки не было `TERM` | 0.139.2 |
-| `regression_flatpak_term_reaches_the_group` | Flatpak: у зависшего генератора эскизов оставались дочерние процессы (TERM через `flatpak-spawn` доходит только до главного) | 0.139.3 |
-| `regression_metainfo_has_this_release` | Flatpak и магазин показывали 0.138.0: в metainfo не было выпусков 0.139 | 0.139.3 |
-| `regression_a_readdir_error_is_the_dirs_error` | Облако, сервер которого отказывает (Яндекс: 410), показывалось пустым каталогом вместо ошибки чтения | 0.142.0 |
-| `regression_google_photos_is_written_without_rename` | F5 в `upload/` Google Фото: «Input/output error» — копия писалась во временный файл и переименовывалась, а Google Фото переименовывать не умеет | 0.142.0 |
-| `regression_update_offered_only_for_a_newer_rclone` | Настройки → Облака: «Обновить» у своего rclone висела всегда, даже при последней версии | 0.142.2 |
