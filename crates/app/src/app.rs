@@ -150,6 +150,10 @@ pub struct Tab {
     counting: Arc<AtomicBool>,
     /// Stops the Ctrl+B read under way (Esc, the dir left).
     branch_stop: Arc<AtomicBool>,
+    /// Git (226): the dir read and its working copy's state; shown only while it is `cwd`.
+    pub(crate) git: Option<(PathBuf, Arc<shagoff_core::git::Repo>)>,
+    /// The generation of the git read wanted; any other result is stale.
+    git_want: u64,
 }
 
 /// A closed tab's background reads (branch, dir sizes) stop with it.
@@ -165,6 +169,13 @@ impl Tab {
     fn stop_branch(&mut self) {
         self.branching = None;
         self.branch_stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Git (226): the working copy the dir shown is in, if it was read for this dir.
+    pub fn git(&self) -> Option<&shagoff_core::git::Repo> {
+        (self.git.as_ref())
+            .filter(|(p, _)| p == self.panel.cwd())
+            .map(|(_, r)| &**r)
     }
 
     fn new(id: u64, cwd: PathBuf) -> Self {
@@ -191,6 +202,8 @@ impl Tab {
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
+            git: None,
+            git_want: 0,
         }
     }
 
@@ -272,6 +285,8 @@ impl Tab {
             name: None,
             counting: Arc::default(),
             branch_stop: Arc::default(),
+            git: None,
+            git_want: 0,
         }
     }
 }
@@ -624,6 +639,13 @@ pub enum Message {
         result: Result<Vec<Entry>, String>,
         /// (free, total) of the scanned dir's filesystem; statvfs can block on network mounts.
         space: Option<(u64, u64)>,
+    },
+    /// Git (226): the state of the working copy `path` is in, for the tab's read `generation`.
+    GitRead {
+        tab: u64,
+        generation: u64,
+        path: PathBuf,
+        repo: Option<Arc<shagoff_core::git::Repo>>,
     },
     /// Ctrl+F8: a click on row i of side's tree (the other panel follows) / a double click
     /// (open / close it).

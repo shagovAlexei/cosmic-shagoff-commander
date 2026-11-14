@@ -10,16 +10,19 @@ pub enum Col {
     Attr,
     Owner,
     Group,
+    /// The item's git state (226).
+    Git,
 }
 
 impl Col {
-    pub const ALL: [Col; 6] = [
+    pub const ALL: [Col; 7] = [
         Col::Ext,
         Col::Size,
         Col::Date,
         Col::Attr,
         Col::Owner,
         Col::Group,
+        Col::Git,
     ];
 
     pub fn key(self) -> &'static str {
@@ -30,6 +33,7 @@ impl Col {
             Col::Attr => "attr",
             Col::Owner => "owner",
             Col::Group => "group",
+            Col::Git => "git",
         }
     }
 
@@ -40,7 +44,7 @@ impl Col {
             Col::Size => Some(1),
             Col::Date => Some(2),
             Col::Attr => Some(3),
-            Col::Owner | Col::Group => None,
+            Col::Owner | Col::Group | Col::Git => None,
         }
     }
 

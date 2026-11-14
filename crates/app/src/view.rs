@@ -279,9 +279,9 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
                 .width(Length::Fill)
                 .into()
         }
-        (Skin::Modern, None) => breadcrumbs(side, &cwd, active),
+        (Skin::Modern, None) => with_branch(breadcrumbs(side, &cwd, active), p),
         // TC: the plain path line, each part clickable.
-        (Skin::Classic, None) => container(path_parts(side, &cwd))
+        (Skin::Classic, None) => container(with_branch(path_parts(side, &cwd), p))
             .padding([2, 6])
             .width(Length::Fill)
             .class(bar_style(active, app.scheme.paint()))
@@ -412,6 +412,22 @@ fn pane(app: &App, side: usize) -> Element<'_, Message> {
             .on_release(Message::ColDragEnd)
             .into(),
         _ => pane,
+    }
+}
+
+/// Git (226): the branch after the path, outside its scrolling (always seen).
+fn with_branch<'a>(path: Element<'a, Message>, p: &Tab) -> Element<'a, Message> {
+    match p.git() {
+        Some(r) => row![
+            path,
+            text(format!("⎇ {}", r.branch))
+                .size(TEXT)
+                .wrapping(Wrapping::None)
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into(),
+        None => path,
     }
 }
 
@@ -668,7 +684,9 @@ fn brief_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
             };
             let lit = i == cursor || hover == Some((side, i)) || p.panel.is_marked(e);
             let look = scheme.pick(e, std::time::SystemTime::now());
-            let paint = look.filter(|_| !lit).and_then(|l| l.fg);
+            let paint = (look.and_then(|l| l.fg))
+                .or(git_paint(p, e))
+                .filter(|_| !lit);
             let cell = container(name_cell(e, label, skin, paint, font))
                 .padding([0, 6])
                 .height(Length::Fixed(row_h))
@@ -723,9 +741,9 @@ fn thumb_list<'a>(app: &'a App, side: usize, p: &'a Tab, active: bool) -> Elemen
             };
             let on = i == cursor || hover == Some((side, i));
             let look = scheme.pick(e, std::time::SystemTime::now());
-            let paint = look
-                .filter(|_| !on && !p.panel.is_marked(e))
-                .and_then(|l| l.fg);
+            let paint = (look.and_then(|l| l.fg))
+                .or(git_paint(p, e))
+                .filter(|_| !on && !p.panel.is_marked(e));
             let pic = (app.thumbs.get(&p.panel.cwd().join(&e.os_name)))
                 .and_then(|(m, h)| h.as_ref().filter(|_| *m == e.mtime));
             let pic: Element<'_, Message> = match pic {
@@ -1016,7 +1034,7 @@ fn header(
             Col::Owner => cell(col_label(c), SortKey::Owner, width, start).into(),
             Col::Group => cell(col_label(c), SortKey::Group, width, start).into(),
             // Not sorted by.
-            Col::Attr => self::cell(col_label(c)).width(width).into(),
+            Col::Attr | Col::Git => self::cell(col_label(c)).width(width).into(),
         });
     }
     // A narrow pane: the columns on the right that don't fit are left out, as in the rows.
@@ -1062,6 +1080,7 @@ pub fn col_label(c: Col) -> String {
         Col::Attr => fl!("col-attr"),
         Col::Owner => fl!("col-owner"),
         Col::Group => fl!("col-group"),
+        Col::Git => fl!("col-git"),
     }
 }
 
@@ -1097,8 +1116,9 @@ fn file_row<'a>(
             e,
             format::display_name(e),
             app.config.skin,
-            look.filter(|_| !(is_cursor || is_marked))
-                .and_then(|l| l.fg),
+            (look.and_then(|l| l.fg))
+                .or(git_paint(app.panes[side].active(), e))
+                .filter(|_| !(is_cursor || is_marked)),
             font,
         ))
         .width(Length::Fill)
@@ -1115,6 +1135,9 @@ fn file_row<'a>(
             (Col::Attr, _) => format::attrs(e),
             (Col::Owner, _) => (e.owner).map_or(String::new(), |(u, _)| app.owners.user(u)),
             (Col::Group, _) => (e.owner).map_or(String::new(), |(_, g)| app.owners.group(g)),
+            (Col::Git, _) => (app.panes[side].active().git())
+                .and_then(|r| r.state(&e.os_name))
+                .map_or(String::new(), git_label),
         };
         let cell = cell(text).width(Length::Fixed(w));
         cells = cells.push(match c {
@@ -1205,6 +1228,29 @@ fn dnd_row<'a>(
 /// One-line table cell: long text is cut with "…" instead of wrapping.
 fn cell(s: String) -> widget::Text<'static, cosmic::Theme> {
     panel_cell(s, (cosmic::font::default(), TEXT))
+}
+
+/// Git (226): a name's colour by its state, under the colours by type.
+fn git_paint(p: &Tab, e: &Entry) -> Option<Paint> {
+    use shagoff_core::git::State;
+    let rgb = match p.git()?.state(&e.os_name)? {
+        State::Changed => [0xd0, 0x87, 0x00],
+        State::New => [0x2e, 0x9e, 0x44],
+        State::Ignored => [0x8a, 0x8a, 0x8a],
+        State::Conflict => [0xd0, 0x30, 0x30],
+    };
+    Some(Paint::Rgb(rgb))
+}
+
+/// Git (226): the state in the «Git» column.
+fn git_label(s: shagoff_core::git::State) -> String {
+    use shagoff_core::git::State;
+    match s {
+        State::Changed => fl!("git-changed"),
+        State::New => fl!("git-new"),
+        State::Ignored => fl!("git-ignored"),
+        State::Conflict => fl!("git-conflict"),
+    }
 }
 
 /// A cell of the file list, in its font (Configuration → Settings → Fonts).
