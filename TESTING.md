@@ -2327,6 +2327,47 @@ convert -size 64x64 xc:orange /tmp/up.jpg
 
 Уборка: `rm -r ~/.config/cosmic/io.github.shagovAlexei.cosmic-ext-shagoff-commander && mv ~/cfg-backup ~/.config/cosmic/io.github.shagovAlexei.cosmic-ext-shagoff-commander` (или оставь свой ключ).
 
+### Архивы только для чтения: rar, iso, deb, rpm, cab (0.145.0, 225)
+
+Подготовка: `sudo apt install libarchive-tools` (даёт `bsdtar`; после установки .deb 0.145.0 уже стоит как рекомендуемый). Образцы:
+
+```
+mkdir -p /tmp/fa/src/docs /tmp/fa/out && cd /tmp/fa
+echo aa > src/docs/a.txt; echo bbb > "src/b c.txt"
+bsdtar --format=iso9660 -cf disk.iso -C src docs "b c.txt"
+apt download libarchive-tools && mv libarchive-tools_*.deb tools.deb
+```
+
+Любой свой `.rar` (и, если есть, `.rpm`, `.cab`) положи туда же. Левая панель — `/tmp/fa`, правая — `/tmp/fa/out`.
+
+Шаги:
+1. Enter на `disk.iso`.
+- [ ] Панель внутри образа: `[docs]` и `b c.txt`, в строке пути `…/fa/disk.iso`.
+2. Курсор на `b c.txt`, F3.
+- [ ] Просмотр показывает `bbb`.
+3. Esc, F5, Enter.
+- [ ] В правой панели появился `b c.txt` с тем же содержимым.
+4. В образе: F8, затем F7, затем Shift+F4.
+- [ ] Каждый раз внизу «Архив только для чтения», окно не открывается, образ не изменился.
+5. Перейди в правую панель, курсор на `b c.txt`, F5 (цель — образ в левой панели).
+- [ ] «Архив только для чтения».
+6. Backspace из образа; перетащи мышью файл из правой панели на строку `disk.iso`.
+- [ ] Файл копируется в каталог `/tmp/fa` (как на обычный файл), не в образ.
+7. Enter на `tools.deb`.
+- [ ] Три строки: `control.tar.zst`, `data.tar.zst` (или `.xz`), `debian-binary`.
+8. Enter на `data.tar.zst`.
+- [ ] Открылся как папка: `[usr]`, внутри `bin/bsdtar`; Backspace из корня — обратно в `tools.deb`.
+9. Enter на своём `.rar` (и `.rpm`, `.cab`).
+- [ ] Список файлов; F5 наружу копирует; Alt+F9 на самом файле распаковывает его в правую панель.
+10. Alt+F7 в `/tmp/fa`, имя `a.txt`, «Искать в архивах».
+- [ ] Найден `disk.iso/docs/a.txt`.
+11. `echo мусор > /tmp/fa/bad.cab`, Enter на нём.
+- [ ] Карточка ошибки «Unrecognized archive format», панель осталась в `/tmp/fa`.
+12. `sudo apt remove libarchive-tools`, перезапусти программу, Enter на `disk.iso`.
+- [ ] Ошибка «Чтобы читать этот архив, нужен bsdtar: установите пакет libarchive-tools…»; zip и 7z открываются как раньше.
+
+Уборка: `rm -r /tmp/fa`; `sudo apt install libarchive-tools`.
+
 ## Регрессионные тесты
 
 Каждый исправленный баг получает тест с именем `regression_<суть>` в ядре и строку в этой таблице.

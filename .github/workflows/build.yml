@@ -32,6 +32,7 @@ jobs:
           mkdir -p ~/apt-archives/partial
           sudo apt-get update
           sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" \
+            libarchive-tools \
             libxkbcommon-dev \
             libwayland-dev \
             libudev-dev \

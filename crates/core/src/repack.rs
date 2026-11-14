@@ -47,7 +47,7 @@ pub fn modify(archive: &Path, change: &Change, h: &mut dyn Handler) -> Report {
             completed: Vec::new(),
         }
     };
-    let Some(format) = Format::detect(&name).filter(|f| f.is_tree()) else {
+    let Some(format) = Format::detect(&name).filter(|f| f.is_tree() && !f.foreign()) else {
         return refuse(h, crate::why::NOT_CHANGEABLE);
     };
     // A symlinked archive: rewrite the real file, keep the link.
@@ -604,6 +604,18 @@ mod tests {
     use super::*;
     use crate::ops::{FileInfo, Resolution};
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_foreign_archive_is_never_changed() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.rar");
+        fs::write(&a, "rar").unwrap();
+        let mut h = Script::default();
+        let r = modify(&a, &Change::Mkdir("new".into()), &mut h);
+        assert!(r.completed.is_empty());
+        assert_eq!(h.errors, 1);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "rar");
+    }
 
     #[derive(Default)]
     struct Script {
