@@ -384,6 +384,17 @@ rclone-or = или последний с rclone.org, без sudo (подпись
 rclone-get = Установить rclone с rclone.org
 rclone-get-short = Установить новый rclone
 rclone-update = Обновить до { $version }
+access = Shagoff Commander Pro
+access-trial = Облака: бесплатный пробный период, { $days ->
+    [one] остался { $days } день
+    [few] осталось { $days } дня
+   *[other] осталось { $days } дней
+}
+access-over = Облака: бесплатный месяц закончился
+access-over-say = Бесплатный месяц облаков закончился: купите Pro в Настройки → Облака
+access-buy = Купить Pro
+access-key = Ключ Pro
+access-key-bad = Ключ Pro (не подходит)
 rclone-own = rclone { $version } с rclone.org (свой, вместо системного)
 rclone-getting = Загрузка rclone с rclone.org…
 rclone-got = rclone { $version } установлен: облака теперь работают через него (подключённые — со старым, пока их не отключить)

@@ -117,6 +117,10 @@ pub struct Config {
     pub connections: Vec<String>,
     /// Cloud plugins switched off (`cloud::PLUGINS` ids, 215).
     pub plugins_off: Vec<String>,
+    /// Cloud key (`core::access`), as typed.
+    pub access_key: String,
+    /// When the clouds' trial started (unix secs; 0: not yet).
+    pub cloud_trial: u64,
     /// Command line under the panels (TC `path>`).
     pub show_cmdline: bool,
     /// View → Window parts (TC `cm_Vis*`); the F-keys and the command line are the two above.
@@ -358,6 +362,8 @@ impl Default for Config {
             internal_viewer: true,
             connections: Vec::new(),
             plugins_off: Vec::new(),
+            access_key: String::new(),
+            cloud_trial: 0,
             show_cmdline: true,
             show_toolbar: true,
             show_drives: true,

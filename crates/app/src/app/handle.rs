@@ -2304,6 +2304,9 @@ impl App {
                     return Task::none();
                 }
                 self.dialog = None;
+                if !self.cloud_ok(std::path::Path::new(&device)) {
+                    return Task::none();
+                }
                 self.say(StatusKind::Busy, fl!("mounting"));
                 return blocking(
                     move || mount::mount_device(&device),
@@ -2453,6 +2456,9 @@ impl App {
                 let Some(p) = cloud::PLUGINS.iter().find(|p| p.id == id) else {
                     return Task::none();
                 };
+                if !self.cloud_access() {
+                    return Task::none();
+                }
                 if p.browser && p.fields.is_empty() {
                     return self.cloud_sign_in(p, Vec::new());
                 }

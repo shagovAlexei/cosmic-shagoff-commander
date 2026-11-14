@@ -11,6 +11,8 @@ use shagoff_core::archive::Format;
 
 pub const REPO: &str = "https://github.com/shagovAlexei/cosmic-shagoff-commander";
 
+/// Stripe Payment Link for a cloud key; the key is mailed by hand (`just access-key`).
+pub const BUY_URL: &str = "https://buy.stripe.com/PRO_LINK_TBD";
 /// Where "Support the project" leads: a Stripe Payment Link, which needs no server.
 pub const DONATE_URL: &str = "https://donate.stripe.com/6oU28s8Ff7cR1342J967S00";
 
@@ -105,6 +107,7 @@ pub enum Setting {
     VerifyCopy(bool),
     /// A cloud plugin (its id) switched on / off.
     Plugin(&'static str, bool),
+    AccessKey(String),
     ColSet(Vec<String>),
     ViewModes(Vec<crate::config::ViewMode>),
     /// Ctrl+W on the last tab goes home.
@@ -571,6 +574,7 @@ fn clouds_section<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messa
         );
         section = section.add(settings::item_row(row));
     }
+    section = pro_rows(app, section);
     let off = &app.config.plugins_off;
     for p in shagoff_core::cloud::PLUGINS {
         let on = !off.iter().any(|o| o == p.id);
@@ -608,6 +612,40 @@ fn clouds_section<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messa
         ]));
     }
     section.into()
+}
+
+/// Cloud access: the key or the trial's days, «Buy» and the key field while there is no key.
+fn pro_rows<'a>(
+    app: &'a App,
+    section: settings::Section<'a, Message>,
+) -> settings::Section<'a, Message> {
+    use shagoff_core::access::{self, Access};
+    let c = &app.config;
+    let state = match access::status(&c.access_key, c.cloud_trial, crate::app::unix_now()) {
+        Access::Key(email) => {
+            return section.add(settings::item(fl!("access"), widget::text::body(email)));
+        }
+        Access::Trial(days) => fl!("access-trial", days = days),
+        Access::Over => fl!("access-over"),
+    };
+    let bad = !c.access_key.trim().is_empty();
+    section
+        .add(settings::item_row(vec![
+            widget::text::body(state).width(Length::Fill).into(),
+            widget::button::suggested(fl!("access-buy"))
+                .on_press(Message::OpenUrl(BUY_URL.to_string()))
+                .into(),
+        ]))
+        .add(settings::item(
+            if bad {
+                fl!("access-key-bad")
+            } else {
+                fl!("access-key")
+            },
+            widget::text_input("", c.access_key.clone())
+                .on_input(|s| Message::Setting(Setting::AccessKey(s)))
+                .width(Length::Fixed(260.0)),
+        ))
 }
 
 /// F12: an internal command from the list, or an own program with parameters.

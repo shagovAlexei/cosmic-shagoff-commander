@@ -65,6 +65,7 @@ impl App {
                     c.plugins_off.push(id.to_string());
                 }
             }
+            Setting::AccessKey(k) => c.access_key = k,
             Setting::ColSet(k) => c.col_set = k,
             Setting::ViewModes(m) => c.view_modes = m,
             // 0: own program (typed below), else `builtins()[i - 1]`.
@@ -138,6 +139,33 @@ impl App {
             self.config_not_saved(&e);
         }
         self.apply_config(c)
+    }
+
+    /// The clouds may be used: a key or the trial, which starts here; else says why.
+    pub(super) fn cloud_access(&mut self) -> bool {
+        use shagoff_core::access::{self, Access};
+        let now = unix_now();
+        if self.config.cloud_trial == 0 {
+            match &self.config_handler {
+                Some(h) => {
+                    if let Err(e) = self.config.set_cloud_trial(h, now) {
+                        self.config_not_saved(&e);
+                    }
+                }
+                None => self.config.cloud_trial = now,
+            }
+        }
+        let over =
+            access::status(&self.config.access_key, self.config.cloud_trial, now) == Access::Over;
+        if over {
+            self.say(StatusKind::Error, fl!("access-over-say"));
+        }
+        !over
+    }
+
+    /// `device` is no cloud, or `cloud_access`.
+    pub(super) fn cloud_ok(&mut self, device: &Path) -> bool {
+        !device.to_string_lossy().starts_with("rclone:") || self.cloud_access()
     }
 
     /// New settings, from the settings drawer or the config watcher (a hand edit).
@@ -571,6 +599,7 @@ impl App {
             return Task::none();
         }
         match items.get(i) {
+            Some(item) if item.kind == Item::Mount && !self.cloud_ok(&item.path) => Task::none(),
             Some(item) if item.kind == Item::Mount => {
                 self.say(StatusKind::Busy, fl!("mounting"));
                 let device = item.path.to_string_lossy().into_owned();

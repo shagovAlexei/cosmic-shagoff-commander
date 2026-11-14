@@ -6200,6 +6200,22 @@ mod mount_tests {
     }
 
     #[test]
+    fn clouds_start_a_trial_and_refuse_once_it_is_over() {
+        let mut app = app_with(Config::default(), State::default());
+        let disk = std::path::Path::new("/dev/sda1");
+        assert!(app.cloud_ok(disk));
+        assert_eq!(app.config.cloud_trial, 0, "a disk starts no trial");
+        assert!(app.cloud_ok(std::path::Path::new("rclone:gdrive:gdrive")));
+        assert!(app.config.cloud_trial > 0);
+        app.config.cloud_trial = 1;
+        assert!(!app.cloud_ok(std::path::Path::new("rclone:gdrive:gdrive")));
+        assert_eq!(app.status.as_ref().map(|s| s.kind), Some(StatusKind::Error));
+        assert!(app.cloud_ok(disk));
+        let _ = app.update(Message::CloudAdd("gdrive"));
+        assert!(app.dialog.is_none(), "no account added after the trial");
+    }
+
+    #[test]
     fn cloud_plugin_switch_round_trips_through_config() {
         let mut app = app_with(Config::default(), State::default());
         let _ = app.set(Setting::Plugin("gdrive", false));
