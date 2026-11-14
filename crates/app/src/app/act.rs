@@ -4,6 +4,7 @@ use super::*;
 
 impl App {
     pub(super) fn act(&mut self, side: usize, action: Action) -> Task<Message> {
+        self.verify = None; // a dialog closed without OK leaves its «Verify» behind
         // An error stays in the status line until the next action in that pane.
         self.panes[side].active_mut().error = None;
         // A message lasts until the next action; "working…" until its result.

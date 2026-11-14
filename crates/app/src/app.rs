@@ -536,6 +536,8 @@ pub struct App {
     pub(crate) lister: Option<Box<Lister>>,
     /// Files from archives open in the editor (F4).
     pub(crate) edited: Vec<Edited>,
+    /// F5 / F6 dialog's «Verify» once toggled (`None`: as the setting); dropped by the next action.
+    pub(crate) verify: Option<bool>,
     /// Ctrl+Z: how to take back the last move, copy, F8 or F7.
     pub(crate) undo: Option<shagoff_core::undo::Undo>,
     /// Archives opened from inside another (155): the copy in the temp dir → the dir in the outer
@@ -1416,6 +1418,7 @@ impl Application for App {
                 font,
                 icon,
                 &self.config,
+                self.verify.unwrap_or(self.config.verify_copy),
             ));
         }
         self.job
@@ -1533,6 +1536,7 @@ impl App {
             lister: None,
             edited: Vec::new(),
             undo: None,
+            verify: None,
             nested: HashMap::new(),
             shown_tabs: [0; 2],
             updating: None,

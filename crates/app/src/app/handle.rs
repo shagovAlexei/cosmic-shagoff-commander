@@ -4,6 +4,9 @@ use super::*;
 
 impl App {
     pub(super) fn handle(&mut self, message: Message) -> Task<Message> {
+        if matches!(message, Message::DialogCancel) {
+            self.verify = None; // F5 / F6's «Verify» goes with its dialog
+        }
         match message {
             // The focused terminal took these (F8 in mc, Ctrl+R in bash, Esc in vim): a key a
             // text field leaves to us, `route_event` passes on at any status — not this one's.
@@ -631,6 +634,13 @@ impl App {
                 }
                 (Some(Dialog::Pack(p)), Toggle::EncryptNames) => p.names = !p.names,
                 (Some(Dialog::Unpack { own_dir, .. }), Toggle::OwnDir) => *own_dir = !*own_dir,
+                (
+                    Some(Dialog::Input {
+                        op: InputOp::Copy | InputOp::Move,
+                        ..
+                    }),
+                    Toggle::Verify,
+                ) => self.verify = Some(!self.verify.unwrap_or(self.config.verify_copy)),
                 (Some(Dialog::Checksum { separate, .. }), Toggle::SumSeparate) => {
                     *separate = !*separate
                 }
@@ -1698,6 +1708,7 @@ impl App {
                     side, dir, sources, ..
                 }) = self.dialog.take()
                 {
+                    self.verify = None;
                     self.dialog = Some(Dialog::Input {
                         op,
                         side,

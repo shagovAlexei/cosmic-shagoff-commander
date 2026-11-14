@@ -610,6 +610,8 @@ pub enum Toggle {
     EncryptNames,
     OwnDir,
     SumSeparate,
+    /// F5 / F6: read the copies back and compare.
+    Verify,
 }
 
 pub struct MultiRename {
@@ -1003,6 +1005,7 @@ fn drop_menu<'a>(
 }
 
 /// `list_h`: the most a list dialog's rows may take (the panel's rows), 0 before the first layout.
+#[allow(clippy::too_many_arguments)] // `verify`: the F5 / F6 checkbox, kept by the app
 pub fn view<'a>(
     d: &'a Dialog,
     input_id: &widget::Id,
@@ -1011,6 +1014,7 @@ pub fn view<'a>(
     font: ListFont,
     icon: Option<widget::Icon>,
     cfg: &'a crate::config::Config,
+    verify: bool,
 ) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
@@ -1053,6 +1057,22 @@ pub fn view<'a>(
                 InputOp::SaveDetails(_) => fl!("menu-save-details").replace('…', ""),
             };
             let control = match op {
+                // TC «Verify»: as the setting, for this one job.
+                // Not out of an archive: extracting reads nothing back.
+                InputOp::Copy | InputOp::Move
+                    if !(sources.first())
+                        .and_then(|s| s.parent())
+                        .is_some_and(shagoff_core::archive::within) =>
+                {
+                    column![
+                        what_to(sources, icon, fl!("to"), field(input).into()),
+                        widget::checkbox(verify)
+                            .label(fl!("copy-verify"))
+                            .on_toggle(|_| Message::Toggle(Toggle::Verify)),
+                    ]
+                    .spacing(12)
+                    .into()
+                }
                 InputOp::Copy | InputOp::Move | InputOp::Link | InputOp::Combine => {
                     what_to(sources, icon, fl!("to"), field(input).into())
                 }

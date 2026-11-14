@@ -24,7 +24,7 @@ Light theme (*Settings → Theme*, or the system's):
 ## Features
 
 - Two panels with tabs (lock, rename, move between panels), Total Commander keys: F3–F8, Shift+F5/F6, Insert / Space / Num+ / Num− marking, Alt+letter quick search, history and hotlist
-- Copy / move / delete with conflict answers (replace, skip, replace older, rename, keep both), trash or permanent delete, clipboard compatible with COSMIC Files
+- Copy / move / delete with conflict answers (replace, skip, replace older, rename, keep both), «Verify» in the F5 / F6 dialog (the copies read back and compared), trash or permanent delete, clipboard compatible with COSMIC Files
 - Archives as folders: zip, tar.gz / bz2 / xz / zst, 7z — browse, copy in and out, pack / unpack (zip / 7z with a password, 7z names encrypted too if asked); rar, iso, deb, rpm, cab — browse and copy out (read through `bsdtar`, the `libarchive-tools` package)
 - Git in the panels: the branch in the path line, names coloured by their state (changed, new, ignored, conflict), a «Git» column in View → Columns
 - Ctrl+Z undoes the last move, rename, copy, delete to the trash or new folder; a replace or a delete for good says it cannot be undone
