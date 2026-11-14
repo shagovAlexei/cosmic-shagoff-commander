@@ -7,6 +7,8 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::undo::Undo;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
     Copy,
@@ -140,6 +142,8 @@ pub struct Report {
     pub cancelled: bool,
     /// Sources processed completely (for unmarking).
     pub completed: Vec<PathBuf>,
+    /// How to take it back (Ctrl+Z); `None`: nothing done.
+    pub undo: Option<crate::undo::Undo>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -282,6 +286,13 @@ pub fn delete(paths: &[PathBuf], permanent: bool, h: &mut dyn Handler) -> Report
         }
         h.progress(i as u64 + 1, total, p);
     }
+    if !report.completed.is_empty() {
+        report.undo = Some(if permanent {
+            Undo::Lost(crate::why::UNDO_PERMANENT)
+        } else {
+            Undo::Trashed(report.completed.clone())
+        });
+    }
     report
 }
 
@@ -414,15 +425,24 @@ fn transfer_checked(
         approved: None,
         aside: None,
         verify,
+        depth: 0,
+        landed: None,
+        lost: false,
     };
     let mut report = Report::default();
+    // (where it went, where it was) of each completed source.
+    let mut done = Vec::new();
     for ((src, dst), size) in pairs.iter().zip(sizes) {
+        t.landed = None;
         match t.entry(src, dst, Some(size)) {
             Step::Done => {
                 // Moved out of the trash (or renamed in it): its info is of no item now.
                 if method != Method::Copy && fs::symlink_metadata(src).is_err() {
                     crate::trashcan::forget(src);
+                    // Moved back it would be a trash item with no info: no undo.
+                    t.lost |= crate::trashcan::inside(src);
                 }
+                done.push((t.landed.take().unwrap_or_else(|| dst.clone()), src.clone()));
                 report.completed.push(src.clone())
             }
             Step::Skipped => {}
@@ -432,6 +452,16 @@ fn transfer_checked(
             }
         }
     }
+    report.undo = if t.lost {
+        Some(Undo::Lost(crate::why::UNDO_REPLACED))
+    } else if done.is_empty() {
+        None
+    } else if method == Method::Copy {
+        Some(Undo::Copied(done.into_iter().map(|(at, _)| at).collect()))
+    } else {
+        done.reverse();
+        Some(Undo::Moved(method, done))
+    };
     report
 }
 
@@ -464,6 +494,12 @@ struct Transfer<'a> {
     aside: Option<PathBuf>,
     /// Copies are read back and compared: as set when the job started, so one job is all alike.
     verify: bool,
+    /// 0 for a top-level source, deeper for what is inside it.
+    depth: usize,
+    /// Where the top-level source went when a conflict answer gave it another name.
+    landed: Option<PathBuf>,
+    /// Something existing was replaced, merged into or moved aside: no undo.
+    lost: bool,
 }
 
 impl Transfer<'_> {
@@ -580,7 +616,10 @@ impl Transfer<'_> {
 
     fn dir(&mut self, src: &Path, dst: &Path, meta: &Metadata) -> Step {
         let created = match fs::symlink_metadata(dst) {
-            Ok(dm) if dm.is_dir() => false, // merge into the existing dir
+            Ok(dm) if dm.is_dir() => {
+                self.lost = true;
+                false // merge into the existing dir
+            }
             Ok(_) => return self.clash(dst, tree_size(src)),
             Err(_) => {
                 if let Err(s) = self.retry(dst, || fs::create_dir(dst)) {
@@ -605,7 +644,10 @@ impl Transfer<'_> {
         };
         let mut complete = true;
         for name in names {
-            match self.entry(&src.join(&name), &dst.join(&name), None) {
+            self.depth += 1;
+            let step = self.entry(&src.join(&name), &dst.join(&name), None);
+            self.depth -= 1;
+            match step {
                 Step::Done => {}
                 Step::Skipped => complete = false,
                 Step::Cancel => return Step::Cancel,
@@ -728,7 +770,7 @@ impl Transfer<'_> {
         let mut dst = dst.to_path_buf();
         loop {
             let Ok(dm) = fs::symlink_metadata(&dst) else {
-                return Ok(dst);
+                return Ok(self.land(dst, false));
             };
             if dm.is_dir() {
                 return Err(self.clash(&dst, size));
@@ -736,10 +778,10 @@ impl Transfer<'_> {
             // Answered already: Replace (`approved`), or «Rename old» still pending (`aside`,
             // a move falling back to a copy across filesystems).
             if self.approved.take_if(|p| *p == dst).is_some() || self.aside.as_ref() == Some(&dst) {
-                return Ok(dst);
+                return Ok(self.land(dst, true));
             }
             match self.decide(src, meta, &dst, &dm) {
-                Decision::Replace => return Ok(dst),
+                Decision::Replace => return Ok(self.land(dst, true)),
                 Decision::Skip => {
                     self.done += size;
                     return Err(Step::Skipped);
@@ -748,10 +790,19 @@ impl Transfer<'_> {
                 Decision::Rename(new) => dst = new,
                 Decision::RenameOld => {
                     self.aside = Some(dst.clone());
-                    return Ok(dst);
+                    return Ok(self.land(dst, true));
                 }
             }
         }
+    }
+
+    /// `destination`'s answer: noted for the undo.
+    fn land(&mut self, dst: PathBuf, existing: bool) -> PathBuf {
+        self.lost |= existing;
+        if self.depth == 0 {
+            self.landed = Some(dst.clone());
+        }
+        dst
     }
 
     /// Right before the new one takes `dst`: a skip or failure until then leaves the old one as is.
@@ -1088,6 +1139,79 @@ mod tests {
     }
 
     #[test]
+    fn a_chain_of_renames_is_undone_last_first() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b, c) = (t.path().join("a"), t.path().join("b"), t.path().join("c"));
+        write(&a, "a");
+        write(&b, "b");
+        // Ctrl+M a → b, b → c: planned b → c first.
+        let pairs = vec![(b.clone(), c.clone()), (a.clone(), b.clone())];
+        let r = transfer(Method::Rename, &pairs, &mut Script::default());
+        let Some(Undo::Moved(method, back)) = r.undo else {
+            panic!("{:?}", r.undo);
+        };
+        transfer(method, &back, &mut Script::default());
+        assert_eq!((read(&a), read(&b)), ("a".into(), "b".into()));
+        assert!(!c.exists());
+    }
+
+    #[test]
+    fn the_undo_says_where_things_went_and_refuses_after_a_replace() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b, d) = (t.path().join("a"), t.path().join("b"), t.path().join("d"));
+        write(&a, "a");
+        write(&b, "b");
+        write(&d.join("b"), "old");
+        write(&t.path().join("dir/x"), "x");
+        // A move, one renamed by the conflict answer: where each one really went.
+        let mut h = Script {
+            conflicts: vec![Resolution::Rename("b2".into())],
+            ..Script::default()
+        };
+        let pairs = vec![(a.clone(), d.join("a")), (b.clone(), d.join("b"))];
+        let r = transfer(Method::Move, &pairs, &mut h);
+        assert_eq!(
+            r.undo,
+            Some(Undo::Moved(
+                Method::Move,
+                vec![(d.join("b2"), b), (d.join("a"), a.clone())]
+            ))
+        );
+        // A copy: its copies.
+        let r = transfer(
+            Method::Copy,
+            &[(d.join("a"), a.clone())],
+            &mut Script::default(),
+        );
+        assert_eq!(r.undo, Some(Undo::Copied(vec![a.clone()])));
+        // Replaced: nothing to undo.
+        let mut h = Script {
+            conflicts: vec![Resolution::Replace],
+            ..Script::default()
+        };
+        let r = transfer(Method::Copy, &[(d.join("b2"), d.join("b"))], &mut h);
+        assert_eq!(r.undo, Some(Undo::Lost(crate::why::UNDO_REPLACED)));
+        // Merged into an existing dir: its old contents would go back too.
+        write(&t.path().join("d/dir/y"), "y");
+        let r = transfer(
+            Method::Move,
+            &[(t.path().join("dir"), d.join("dir"))],
+            &mut Script::default(),
+        );
+        assert_eq!(r.undo, Some(Undo::Lost(crate::why::UNDO_REPLACED)));
+        // Nothing done: no record.
+        let r = transfer(
+            Method::Move,
+            &[(a.clone(), d.join("a"))],
+            &mut Script::default(),
+        );
+        assert_eq!(r.undo, None);
+        // Deleted for good.
+        let r = delete(&[a], true, &mut Script::default());
+        assert_eq!(r.undo, Some(Undo::Lost(crate::why::UNDO_PERMANENT)));
+    }
+
+    #[test]
     fn plan_into_existing_dir_and_new_name() {
         let d = tempfile::tempdir().unwrap();
         let (a, to) = (d.path().join("a"), d.path().join("to"));
@@ -1193,7 +1317,8 @@ mod tests {
             r,
             Report {
                 cancelled: false,
-                completed: vec![a.clone()]
+                completed: vec![a.clone()],
+                undo: Some(Undo::Copied(vec![c.clone()])),
             }
         );
         assert_eq!(read(&a), "hello"); // copy keeps the source

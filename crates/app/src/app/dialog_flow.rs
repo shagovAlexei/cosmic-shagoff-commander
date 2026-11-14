@@ -597,7 +597,7 @@ impl App {
                 let file = cwd.join(name);
                 let name = name.to_string();
                 make(side, cwd, name.clone(), Some(name), New::Copy, move || {
-                    templates::create(&template, &file)
+                    templates::create(&template, &file).map(|_| Vec::new())
                 })
             }
             Dialog::Input {
@@ -1065,7 +1065,7 @@ impl App {
         let cwd = self.panes[side].active().panel.cwd().to_path_buf();
         let (file, name) = (cwd.join(name), name.to_string());
         make(side, cwd, name.clone(), Some(name), New::File, move || {
-            ops::new_file(&file).map(|_| ())
+            ops::new_file(&file).map(|_| Vec::new())
         })
     }
 
@@ -1094,7 +1094,7 @@ impl App {
         // In the background: on a dead network mount `mkdir` never returns.
         let (dir, name) = (cwd.join(name), name.to_string());
         make(side, cwd, name, first(), New::Dir, move || {
-            std::fs::create_dir_all(dir)
+            shagoff_core::undo::mkdir(&dir)
         })
     }
 

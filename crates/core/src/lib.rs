@@ -48,6 +48,7 @@ pub mod thumbcache;
 pub mod thumbnailer;
 pub mod trashcan;
 pub mod tree;
+pub mod undo;
 pub mod update;
 pub mod viewport;
 pub mod why;

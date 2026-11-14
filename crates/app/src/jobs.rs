@@ -177,7 +177,9 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
     };
     std::thread::spawn(move || {
         let mut ends = Ends(Some(tx.clone()));
-        let report = match job {
+        // Ctrl+Z takes back F5 / F6 / F8 only (unpacking moves its files out through `transfer`).
+        let undoable = matches!(job, Job::Transfer { .. } | Job::Delete { .. });
+        let mut report = match job {
             Job::Transfer { method, pairs } => ops::transfer(method, &pairs, &mut h),
             Job::Delete { paths, permanent } => ops::delete(&paths, permanent, &mut h),
             Job::Pack {
@@ -256,6 +258,7 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                         Report {
                             cancelled: b.cancelled,
                             completed: done,
+                            undo: None,
                         }
                     } else {
                         let d = ops::delete(&delete, permanent, &mut h);
@@ -263,6 +266,7 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                         Report {
                             cancelled: d.cancelled,
                             completed: done,
+                            undo: None,
                         }
                     }
                 }
@@ -292,6 +296,7 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
                     Report {
                         cancelled: d.cancelled,
                         completed: d.completed,
+                        undo: None,
                     }
                 }
             }
@@ -306,6 +311,9 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
             // F6 into it deletes what went in (`Change::Add::move_sources`), not whole sources.
             Job::Repack { archive, change } => repack::modify(&archive, &change, &mut h),
         };
+        if !undoable {
+            report.undo = None;
+        }
         ends.0 = None;
         let _ = tx.unbounded_send(Event::Finished(Arc::new(report)));
     });

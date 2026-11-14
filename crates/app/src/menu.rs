@@ -52,6 +52,7 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         (vec![Ctrl], K::Letter(Code::KeyX, "x"), a(Action::ClipCut)),
         (vec![Ctrl], K::Letter(Code::KeyC, "c"), a(Action::ClipCopy)),
         (vec![Ctrl], K::Letter(Code::KeyV, "v"), a(Action::ClipPaste)),
+        (vec![Ctrl], K::Letter(Code::KeyZ, "z"), a(Action::Undo)),
         (vec![], K::Named(Named::F3), a(Action::View)),
         (vec![], K::Named(Named::F4), a(Action::Edit)),
         (vec![Alt], K::Named(Named::Enter), a(Action::Properties)),
@@ -589,6 +590,8 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-clip-cut"), Action::ClipCut),
                 b(fl!("menu-clip-copy"), Action::ClipCopy),
                 b(fl!("menu-clip-paste"), Action::ClipPaste),
+                menu::Item::Divider,
+                b(fl!("menu-undo"), Action::Undo),
             ],
         ),
         (

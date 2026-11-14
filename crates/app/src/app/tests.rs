@@ -773,8 +773,42 @@ fn f7_made_in_the_background_rereads_or_says_why() {
     };
     let _ = app.update(made(Err("Permission denied".into())));
     assert!(app.msg().is_some_and(|m| m.contains("Permission denied")));
-    let _ = app.update(made(Ok(())));
+    let _ = app.update(made(Ok(vec![])));
     assert_eq!(pending_path(&app), Some(tmp.clone())); // read again, the cursor onto "new"
+}
+
+#[test]
+fn ctrl_z_takes_back_f7_and_says_when_it_cannot() {
+    let mut app = app_with(Config::default(), State::default());
+    let _ = app.update(Message::Key(Action::Undo));
+    assert_eq!(app.msg(), Some(fl!("undo-nothing").as_str()));
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("new");
+    std::fs::create_dir(&dir).unwrap();
+    let _ = app.update(Message::Made {
+        side: 0,
+        cwd: tmp.path().to_path_buf(),
+        name: "new".into(),
+        first: Some("new".into()),
+        what: New::Dir,
+        made: Ok(vec![dir.clone()]),
+    });
+    let _ = app.update(Message::Key(Action::Undo));
+    assert!(!dir.exists() && app.undo.is_none());
+    // Deleted for good: said so, and said again on the next Ctrl+Z.
+    let done = Report {
+        undo: Some(Undo::Lost(shagoff_core::why::UNDO_PERMANENT)),
+        ..Report::default()
+    };
+    let job = Job::Delete {
+        paths: vec![],
+        permanent: true,
+    };
+    let _ = app.start_job(0, OpKind::Delete, job, None);
+    let _ = app.finish_job(&done);
+    let _ = app.update(Message::Key(Action::Undo));
+    let _ = app.update(Message::Key(Action::Undo));
+    assert_eq!(app.msg(), Some(fl!("why-undo-permanent").as_str()));
 }
 
 #[test]
@@ -1434,6 +1468,7 @@ fn regression_viewer_n_in_an_archive_cancelled_keeps_the_cursor_on_the_shown_fil
     let done = Report {
         cancelled: false,
         completed: vec![a.join("a.txt")],
+        undo: None,
     };
     let _ = app.update(Message::Op(jobs::Event::Finished(Arc::new(done))));
     assert_eq!(app.lister.as_ref().unwrap().name, "a.txt");
@@ -1443,6 +1478,7 @@ fn regression_viewer_n_in_an_archive_cancelled_keeps_the_cursor_on_the_shown_fil
     let stopped = Report {
         cancelled: true,
         completed: Vec::new(),
+        undo: None,
     };
     let _ = app.update(Message::Op(jobs::Event::Finished(Arc::new(stopped))));
     assert_eq!(app.lister.as_ref().unwrap().name, "a.txt");
@@ -2961,7 +2997,7 @@ fn shift_f4_creates_the_file_and_puts_the_cursor_on_it() {
         what: New::File,
         made,
     };
-    let _ = app.update(made(Ok(())));
+    let _ = app.update(made(Ok(vec![])));
     assert_eq!(pending_path(&app), Some(tmp.path().to_path_buf())); // read again, onto it
     let _ = app.update(made(Err("Permission denied".into())));
     assert!(app.msg().is_some_and(|m| m.contains("Permission denied")));
@@ -4207,6 +4243,7 @@ fn regression_edited_file_is_asked_again_when_putting_it_back_failed() {
     let done = Arc::new(Report {
         cancelled: false,
         completed: vec![PathBuf::from("a.zip")],
+        undo: None,
     });
     let _ = app.update(Message::Op(jobs::Event::Finished(done)));
     let _ = app.update(Message::EditTick);

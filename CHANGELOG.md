@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.147.0 — 2026-11-14
+
+- Ctrl+Z (Mark → Undo) undoes the last operation: a move or rename goes back, copies go to the trash, files deleted to the trash come back, a new folder is removed while empty. A replace, a merge into an existing folder or a delete for good is not undone, and says so
+
 ## 0.146.0 — 2026-11-14
 
 - Panels: in a git working copy the branch is shown in the path line, names are coloured by their state (changed, new, ignored, conflict), and View → Columns has a «Git» column

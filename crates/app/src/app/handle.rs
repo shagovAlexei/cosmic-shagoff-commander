@@ -2384,7 +2384,10 @@ impl App {
                 what,
                 made,
             } => match made {
-                Ok(()) => {
+                Ok(dirs) => {
+                    if !dirs.is_empty() {
+                        self.undo = Some(Undo::Made(dirs));
+                    }
                     if what == New::File {
                         let argv = launch::command(
                             &self.config.editor,

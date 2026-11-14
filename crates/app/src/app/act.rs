@@ -1039,6 +1039,7 @@ impl App {
                 }
             }
             Action::ClipPaste => return clip::take(),
+            Action::Undo => return self.undo_last(side),
             Action::Copy
             | Action::CopySame
             | Action::Link
