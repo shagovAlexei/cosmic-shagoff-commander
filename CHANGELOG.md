@@ -4,11 +4,11 @@ Restored from the merged pull requests and tags (the GitHub releases older than 
 
 ## 0.144.0 — 2026-11-14
 
-- About: the clouds' trial and the key field are here, under the version (the field moved from Settings → Clouds)
+- Clouds: improved functions
 
 ## 0.143.0 — 2026-11-14
 
-- Settings → Clouds: a trial period and a key field
+- Clouds: improved functions
 
 ## 0.142.2 — 2026-11-14
 
