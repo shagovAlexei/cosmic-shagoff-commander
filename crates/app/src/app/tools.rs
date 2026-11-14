@@ -11,6 +11,20 @@ impl App {
         sources: Vec<PathBuf>,
         input: &str,
     ) -> Task<Message> {
+        // The dialog's «Verify», or the setting (Ctrl+V, a drop with no dialog): read once, for
+        // every group below.
+        let verify = self.verify.take().unwrap_or(self.config.verify_copy);
+        self.transfer_with(op, side, sources, input, verify)
+    }
+
+    fn transfer_with(
+        &mut self,
+        op: InputOp,
+        side: usize,
+        sources: Vec<PathBuf>,
+        input: &str,
+        verify: bool,
+    ) -> Task<Message> {
         // Search results in the panel: files from archives go out one archive dir at a time (each
         // its own job, queued), the ones on disk together.
         if op != InputOp::Rename {
@@ -21,7 +35,7 @@ impl App {
             });
             if groups.len() > 1 {
                 let tasks: Vec<_> = (groups.into_iter())
-                    .map(|g| self.start_transfer(op, side, g, input))
+                    .map(|g| self.transfer_with(op, side, g, input, verify))
                     .collect();
                 return Task::batch(tasks);
             }
@@ -146,7 +160,12 @@ impl App {
             }
         };
         let replan = (op != InputOp::Rename).then_some((sources, target));
-        self.start_queued(side, kind, Job::Transfer { method, pairs }, focus, replan)
+        let job = Job::Transfer {
+            method,
+            pairs,
+            verify,
+        };
+        self.start_queued(side, kind, job, focus, replan)
     }
 
     /// Ctrl+Shift+D: two marked files of this panel, else the files under both cursors.

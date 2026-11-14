@@ -122,7 +122,11 @@ impl App {
         match undo {
             // Moved back by the same engine: progress, conflicts, and Ctrl+Z again redoes it.
             Undo::Moved(method, pairs) => {
-                let job = Job::Transfer { method, pairs };
+                let job = Job::Transfer {
+                    method,
+                    pairs,
+                    verify: self.config.verify_copy,
+                };
                 self.start_job(side, OpKind::Move, job, None)
             }
             Undo::Copied(paths) => {

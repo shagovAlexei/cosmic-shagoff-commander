@@ -13,6 +13,8 @@ pub enum Job {
     Transfer {
         method: Method,
         pairs: Vec<(PathBuf, PathBuf)>,
+        /// Copies read back and compared (F5 / F6 «Verify»).
+        verify: bool,
     },
     Delete {
         paths: Vec<PathBuf>,
@@ -180,7 +182,11 @@ pub fn spawn(job: Job) -> (Control, fmpsc::UnboundedReceiver<Event>) {
         // Ctrl+Z takes back F5 / F6 / F8 only (unpacking moves its files out through `transfer`).
         let undoable = matches!(job, Job::Transfer { .. } | Job::Delete { .. });
         let mut report = match job {
-            Job::Transfer { method, pairs } => ops::transfer(method, &pairs, &mut h),
+            Job::Transfer {
+                method,
+                pairs,
+                verify,
+            } => ops::transfer_checked(method, &pairs, &mut h, verify),
             Job::Delete { paths, permanent } => ops::delete(&paths, permanent, &mut h),
             Job::Pack {
                 format,
@@ -390,6 +396,7 @@ mod sync_tests {
     #[test]
     fn describe_names_the_first_source_the_rest_and_the_target() {
         let job = Job::Transfer {
+            verify: false,
             method: Method::Copy,
             pairs: vec![
                 ("/a/x.iso".into(), "/mnt/x.iso".into()),

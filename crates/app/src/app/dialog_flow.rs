@@ -779,6 +779,7 @@ impl App {
                     return self.start_job(m.side, OpKind::Repack, job, focus);
                 }
                 let job = Job::Transfer {
+                    verify: false, // renames copy nothing
                     method: Method::Rename,
                     pairs,
                 };

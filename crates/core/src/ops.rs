@@ -407,7 +407,7 @@ pub fn transfer(method: Method, pairs: &[(PathBuf, PathBuf)], h: &mut dyn Handle
 }
 
 /// `transfer`, the copies read back and compared (`verify`) or not.
-fn transfer_checked(
+pub fn transfer_checked(
     method: Method,
     pairs: &[(PathBuf, PathBuf)],
     h: &mut dyn Handler,

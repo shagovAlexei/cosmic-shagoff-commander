@@ -2357,6 +2357,23 @@ fn other_key_closes_search_and_acts() {
 }
 
 #[test]
+fn f5_verify_starts_as_the_setting_and_lasts_one_dialog() {
+    let mut app = files_app(&["alpha"]);
+    app.config.verify_copy = true;
+    let _ = app.update(Message::Key(Action::Down)); // off ".."
+    let _ = app.update(Message::Key(Action::Copy));
+    assert!(matches!(app.dialog, Some(Dialog::Input { .. })));
+    assert_eq!(app.verify, None); // shown as the setting: on
+    let _ = app.update(Message::Toggle(Toggle::Verify));
+    assert_eq!(app.verify, Some(false));
+    let _ = app.update(Message::Toggle(Toggle::Verify));
+    assert_eq!(app.verify, Some(true));
+    let _ = app.update(Message::Toggle(Toggle::Verify));
+    let _ = app.update(Message::DialogCancel); // gone with its dialog
+    assert_eq!(app.verify, None);
+}
+
+#[test]
 fn enter_in_search_opens_the_dir() {
     let mut app = files_app(&[]);
     let t = app.panes[0].active();

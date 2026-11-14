@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.148.0 — 2026-11-15
+
+- Copy / move: the F5 / F6 dialog has a «Verify» checkbox (the copies read back from the disk and compared with the source), ticked at first as the «Verify copies» setting says
+
 ## 0.147.0 — 2026-11-14
 
 - Ctrl+Z (Mark → Undo) undoes the last operation: a move or rename goes back, copies go to the trash, files deleted to the trash come back, a new folder is removed while empty. A replace, a merge into an existing folder or a delete for good is not undone, and says so

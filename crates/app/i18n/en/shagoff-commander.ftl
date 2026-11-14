@@ -1060,3 +1060,4 @@ update-manual = this system installs from the release page
 undo-nothing = Nothing to undo
 undo-failed = Not undone: { $err }
 undo-busy = Wait for the operation to end, then undo
+copy-verify = Verify (read the copies back and compare)
