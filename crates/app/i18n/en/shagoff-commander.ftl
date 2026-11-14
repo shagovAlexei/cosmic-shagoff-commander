@@ -961,6 +961,7 @@ why-not-in-trash = Not an item of the trash, or its trash info is missing
 why-crc-mismatch = Joined, but the CRC does not match: a part is damaged or missing
 why-missing-part = A part is missing: the numbers of the parts have a gap
 why-no-room = The unpacked files would not fit in the free space (Skip: unpack anyway)
+why-no-bsdtar = bsdtar is needed to read this archive: install the libarchive-tools package (bsdtar on Fedora)
 why-no-signature = The release has no valid signature: not installed
 why-client-needed = The client ID and the client secret of your app are needed
 why-no-sums = No checksum lines in the file

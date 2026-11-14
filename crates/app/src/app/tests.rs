@@ -3133,6 +3133,8 @@ fn a_nested_archive_shows_where_it_lies_and_is_never_changed() {
     };
     assert!(changes_nested(&repack(tmp)));
     assert!(!changes_nested(&repack("/d/outer.zip".into())));
+    // A format that is only read (225) is refused wherever it is.
+    assert!(changes_nested(&repack("/d/disk.iso".into())));
 }
 
 #[test]

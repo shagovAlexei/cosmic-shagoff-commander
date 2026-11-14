@@ -25,7 +25,7 @@ Light theme (*Settings → Theme*, or the system's):
 
 - Two panels with tabs (lock, rename, move between panels), Total Commander keys: F3–F8, Shift+F5/F6, Insert / Space / Num+ / Num− marking, Alt+letter quick search, history and hotlist
 - Copy / move / delete with conflict answers (replace, skip, replace older, rename, keep both), trash or permanent delete, clipboard compatible with COSMIC Files
-- Archives as folders: zip, tar.gz / bz2 / xz / zst, 7z — browse, copy in and out, pack / unpack (zip / 7z with a password, 7z names encrypted too if asked)
+- Archives as folders: zip, tar.gz / bz2 / xz / zst, 7z — browse, copy in and out, pack / unpack (zip / 7z with a password, 7z names encrypted too if asked); rar, iso, deb, rpm, cab — browse and copy out (read through `bsdtar`, the `libarchive-tools` package)
 - Built-in viewer (F3): text with wrap and code pages (guessed: Cyrillic 1251 / KOI8-R / 866, Western, Central European, Greek, Japanese, Chinese…), hex, images; quick view in the other panel (Ctrl+Q), also inside archives
 - Find files (masks or regex, text inside, size / date, inside archives, duplicates), compare and synchronize folders, compare files side by side
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs, clouds (OneDrive, Google Drive, Dropbox, Box, Yandex Disk, pCloud, Google Photos, HiDrive, Mail.ru Cloud, S3, Backblaze B2, Nextcloud / WebDAV, Koofr, Seafile, Zoho WorkDrive, Jottacloud, MEGA, Proton Drive, iCloud Drive) through rclone

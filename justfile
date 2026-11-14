@@ -71,7 +71,7 @@ deb: (build-release '--locked')
     Maintainer: Shagov Alexei <shagov.alexei@gmail.com>
     Installed-Size: $(du -sk "$root/usr" | cut -f1)
     Depends: $libs, libglib2.0-bin, xdg-utils, curl, gpgv
-    Recommends: cosmic-edit, gvfs-backends, gvfs-fuse
+    Recommends: cosmic-edit, gvfs-backends, gvfs-fuse, libarchive-tools
     Suggests: rclone
     Section: utils
     Priority: optional

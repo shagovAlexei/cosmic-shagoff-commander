@@ -19,14 +19,16 @@ pub(super) fn lister_scroll(l: &mut Lister, x: f32, y: f32) -> Task<Message> {
 /// reach nothing the user keeps — refused, by the one place every archive change goes through.
 pub(super) fn changes_nested(job: &Job) -> bool {
     let tmp = archive::temp_root();
+    // Or one of a format that is only read (225), wherever it is.
+    let fixed = |a: &Path| a.starts_with(&tmp) || archive::fixed(a);
     match job {
-        Job::Repack { archive, .. } | Job::ExtractMove { archive, .. } => archive.starts_with(&tmp),
+        Job::Repack { archive, .. } | Job::ExtractMove { archive, .. } => fixed(archive),
         Job::Cross {
             from,
             to,
             move_after,
             ..
-        } => to.starts_with(&tmp) || (*move_after && from.starts_with(&tmp)),
+        } => fixed(to) || (*move_after && fixed(from)),
         _ => false,
     }
 }

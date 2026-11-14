@@ -5,9 +5,19 @@ use super::*;
 impl App {
     /// `action` would change an archive opened from inside another (155): a temp copy.
     pub(super) fn nested_change(&self, side: usize, action: Action) -> bool {
+        self.changes(side, action, |t, _| t.starts_with(archive::temp_root()))
+    }
+
+    /// `action` would change an archive of a format that is only read (225: rar, iso, deb…).
+    pub(super) fn fixed_change(&self, side: usize, action: Action) -> bool {
+        self.changes(side, action, |_, a| archive::fixed(a))
+    }
+
+    /// `action` would change the archive a panel is in, and `is(panel's path, archive)` holds.
+    fn changes(&self, side: usize, action: Action, is: impl Fn(&Path, &Path) -> bool) -> bool {
         let nested = |s: usize| {
             let t = self.panes[s].active().target();
-            t.starts_with(archive::temp_root()) && archive::split_path(&t).is_some()
+            archive::split_path(&t).is_some_and(|(a, _)| is(&t, &a))
         };
         use Action as A;
         let here = matches!(

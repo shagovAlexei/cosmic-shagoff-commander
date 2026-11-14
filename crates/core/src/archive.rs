@@ -17,10 +17,16 @@ pub enum Format {
     Bz2,
     Xz,
     Zst,
+    // Read only, through `bsdtar` (`Foreign`).
+    Rar,
+    Iso,
+    Deb,
+    Rpm,
+    Cab,
 }
 
 /// Lower-case suffixes, longest match first so "a.tar.gz" is TarGz, not Gz.
-const SUFFIXES: [(&str, Format); 16] = [
+const SUFFIXES: [(&str, Format); 21] = [
     (".tar.gz", Format::TarGz),
     (".tar.bz2", Format::TarBz2),
     (".tar.xz", Format::TarXz),
@@ -37,6 +43,11 @@ const SUFFIXES: [(&str, Format); 16] = [
     (".bz2", Format::Bz2),
     (".xz", Format::Xz),
     (".zst", Format::Zst),
+    (".rar", Format::Rar),
+    (".iso", Format::Iso),
+    (".deb", Format::Deb),
+    (".rpm", Format::Rpm),
+    (".cab", Format::Cab),
 ];
 
 impl Format {
@@ -70,6 +81,11 @@ impl Format {
             Format::Bz2 => "bz2",
             Format::Xz => "xz",
             Format::Zst => "zst",
+            Format::Rar => "rar",
+            Format::Iso => "iso",
+            Format::Deb => "deb",
+            Format::Rpm => "rpm",
+            Format::Cab => "cab",
         }
     }
 
@@ -733,8 +749,89 @@ fn decoder<R: Read + 'static>(f: Format, r: R) -> io::Result<Box<dyn Read>> {
         Format::TarBz2 | Format::Bz2 => Box::new(bzip2::read::MultiBzDecoder::new(r)),
         Format::TarXz | Format::Xz => Box::new(liblzma::read::XzDecoder::new_multi_decoder(r)),
         Format::TarZst | Format::Zst => Box::new(zstd::stream::read::Decoder::new(r)?),
-        Format::Zip | Format::SevenZ => return Err(io::ErrorKind::InvalidInput.into()),
+        _ => return Err(io::ErrorKind::InvalidInput.into()),
     })
+}
+
+/// A rar, iso, deb, rpm or cab as a tar stream: `bsdtar -cf - @archive` (libarchive reads them
+/// all, the tar code here reads the rest). An error exit is this reader's error at its end.
+// ponytail: the whole archive goes through the pipe to list it or to take one file out (as a
+// tar.gz does); `bsdtar --include` for the chosen entries if a big ISO proves slow.
+struct Foreign {
+    child: std::process::Child,
+    out: Option<std::process::ChildStdout>,
+    err: Option<std::thread::JoinHandle<String>>,
+}
+
+impl Foreign {
+    fn open(archive: &Path) -> io::Result<Foreign> {
+        use std::process::Stdio;
+        if crate::host::which("bsdtar").is_none() {
+            return Err(io::Error::other(crate::why::NO_BSDTAR));
+        }
+        // `@` takes the rest as a path, whatever it starts with; a relative one would be the
+        // host's cwd inside a flatpak.
+        let mut arg = std::ffi::OsString::from("@");
+        arg.push(crate::host::outside(&std::path::absolute(archive)?));
+        let mut child = crate::host::command("bsdtar")
+            .args(["-cf", "-"])
+            .arg(arg)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let out = child.stdout.take();
+        // Read aside: a child blocked on a full stderr would never end its stdout.
+        let err = child.stderr.take().map(|mut e| {
+            std::thread::spawn(move || {
+                let mut s = String::new();
+                let _ = e.read_to_string(&mut s);
+                s
+            })
+        });
+        Ok(Foreign { child, out, err })
+    }
+}
+
+impl Read for Foreign {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let Some(out) = &mut self.out else {
+            return Ok(0);
+        };
+        let n = out.read(buf)?;
+        if n == 0 && !buf.is_empty() {
+            self.out = None;
+            if !self.child.wait()?.success() {
+                let said = (self.err.take())
+                    .and_then(|t| t.join().ok())
+                    .unwrap_or_default();
+                // Its last line is «Error exit delayed from previous errors» when there were some.
+                let why = (said.lines().map(|l| l.trim_start_matches("bsdtar: ")))
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("bsdtar failed");
+                return Err(io::Error::new(io::ErrorKind::InvalidData, why.to_string()));
+            }
+        }
+        Ok(n)
+    }
+}
+
+impl Drop for Foreign {
+    fn drop(&mut self) {
+        // The pipe closed first: inside a flatpak the kill reaches only `flatpak-spawn`, the
+        // host's bsdtar ends on its next write.
+        self.out = None;
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The tar stream of a tree archive that is one: a tar, a compressed one, or a `foreign` format.
+fn tar_stream<R: Read + 'static>(f: Format, archive: &Path, r: R) -> io::Result<Box<dyn Read>> {
+    match f.foreign() {
+        true => Ok(Box::new(Foreign::open(archive)?)),
+        false => decoder(f, r),
+    }
 }
 
 /// A reader that keeps the last `TAIL` bytes read: a tar's end marker (two zero blocks) is there.
@@ -789,7 +886,16 @@ fn read_archive(f: Format, archive: &Path, r: Counted, st: &mut Stage) -> Result
     match f {
         Format::Zip => read_zip(r, st, password(archive).as_deref(), name_encoding(archive)),
         Format::SevenZ => read_7z(r, st, password(archive).as_deref()),
-        f if f.is_tree() => read_tar(decoder(f, r)?, st),
+        f if f.is_tree() => {
+            let mut r = tar_stream(f, archive, r)?;
+            read_tar(&mut r, st)?;
+            if f.foreign() {
+                // To its end: that is where bsdtar's failure shows (a tar reader stops at the
+                // end marker, and bsdtar writes one whatever happened).
+                io::copy(&mut r, &mut io::sink())?;
+            }
+            Ok(())
+        }
         f => single(decoder(f, r)?, st),
     }
 }
@@ -951,7 +1057,7 @@ fn files(archive: &Path, stop: &AtomicBool, strict: bool, f: &mut OnFile) -> io:
             stopped()?;
             r.map_err(sz_password_error)
         }
-        f_ => tar(decoder(f_, file)?, f),
+        f_ => tar(tar_stream(f_, archive, file)?, f),
     }
 }
 
@@ -985,6 +1091,19 @@ impl Format {
     pub fn can_encrypt(self) -> bool {
         matches!(self, Format::Zip | Format::SevenZ)
     }
+
+    /// Read through `bsdtar`, never written: rar, iso, deb, rpm, cab.
+    pub fn foreign(self) -> bool {
+        use Format::*;
+        matches!(self, Rar | Iso | Deb | Rpm | Cab)
+    }
+}
+
+/// An archive that opens as a folder but can't be changed, by its name alone.
+pub fn fixed(archive: &Path) -> bool {
+    (archive.file_name())
+        .and_then(|n| Format::detect(&n.to_string_lossy()))
+        .is_some_and(Format::foreign)
 }
 
 /// A 7z whose names are encrypted (its header): not listed without the password. A repack keeps
@@ -1099,17 +1218,12 @@ fn read_index(f: Format, archive: &Path, stop: &AtomicBool) -> io::Result<Vec<It
             return Err(io::Error::from(io::ErrorKind::NotADirectory));
         }
         _ => {
-            let r: Box<dyn Read> = match f {
-                Format::TarGz => Box::new(flate2::read::MultiGzDecoder::new(file)),
-                Format::TarBz2 => Box::new(bzip2::read::MultiBzDecoder::new(file)),
-                Format::TarXz => Box::new(liblzma::read::XzDecoder::new_multi_decoder(file)),
-                Format::TarZst => Box::new(zstd::stream::read::Decoder::new(file)?),
-                _ => Box::new(file),
-            };
-            let mut a = tar::Archive::new(r);
+            let mut a = tar::Archive::new(tar_stream(f, archive, file)?);
+            let mut n = 0;
             for e in a.entries()? {
                 stopped()?;
                 let e = e?;
+                n += 1;
                 let h = e.header();
                 let t = h.entry_type();
                 let file = t.is_file() || t.is_gnu_sparse() || t.is_contiguous();
@@ -1125,6 +1239,11 @@ fn read_index(f: Format, archive: &Path, stop: &AtomicBool) -> io::Result<Vec<It
                     mtime,
                     h.mode().ok(),
                 );
+            }
+            if f.foreign() && n == 0 {
+                // Nothing came out: bsdtar's reason (not an archive, a format it can't read)
+                // rather than an empty folder. With entries, what was read is shown.
+                io::copy(&mut a.into_inner(), &mut io::sink())?;
             }
         }
     }
@@ -1810,7 +1929,7 @@ impl Packer {
                 z.include_checksum(true)?;
                 tar(Enc::Zst(z))
             }
-            Format::Gz | Format::Bz2 | Format::Xz | Format::Zst => {
+            _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     crate::why::NOT_PACK_FORMAT,
@@ -3968,5 +4087,77 @@ mod tests {
             temp_root_in(Some("cache".into()), home), // relative: ignored
             Path::new("/home/u/.cache/shagoff-commander")
         );
+    }
+
+    #[test]
+    fn foreign_formats_open_as_folders_and_are_fixed() {
+        for (name, f) in [
+            ("a.RAR", Format::Rar),
+            ("a.iso", Format::Iso),
+            ("a_1.0_amd64.deb", Format::Deb),
+            ("a.rpm", Format::Rpm),
+            ("a.cab", Format::Cab),
+        ] {
+            assert_eq!(Format::detect(name), Some(f));
+            assert!(f.foreign() && f.is_tree() && !Format::PACK.contains(&f));
+            assert!(fixed(Path::new("/x").join(name).as_path()));
+        }
+        assert!(!fixed(Path::new("/x/a.zip")));
+        assert!(!fixed(Path::new("/x/a.txt")));
+    }
+
+    /// An ISO image made by bsdtar itself; None without bsdtar (the tests then pass over).
+    fn iso_fixture(dir: &Path, name: &str) -> Option<PathBuf> {
+        crate::host::which("bsdtar")?;
+        let src = dir.join("src");
+        fs::create_dir_all(src.join("docs")).unwrap();
+        fs::write(src.join("docs/a.txt"), "aa").unwrap();
+        fs::write(src.join("b c.txt"), "bbb").unwrap();
+        let out = dir.join(name);
+        let ok = std::process::Command::new("bsdtar")
+            .args(["--format=iso9660", "-cf"])
+            .arg(&out)
+            .arg("-C")
+            .arg(&src)
+            .args(["docs", "b c.txt"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        Some(out)
+    }
+
+    #[test]
+    fn a_foreign_archive_is_listed_extracted_and_tested() {
+        use std::sync::atomic::AtomicBool;
+        let d = tempfile::tempdir().unwrap();
+        // bsdtar tells the format by the contents: the same path serves every foreign name.
+        let Some(a) = iso_fixture(d.path(), "a.rar") else {
+            return;
+        };
+        assert_eq!(
+            listed(&list(&a, Path::new(""), true).unwrap()),
+            [("b c.txt".to_string(), false), ("docs".to_string(), true)]
+        );
+        let docs = list(&a, Path::new("docs"), true).unwrap();
+        assert_eq!(listed(&docs), [("a.txt".to_string(), false)]);
+        assert_eq!(docs[0].size, 2);
+        let out = d.path().join("out");
+        let stop = AtomicBool::new(false);
+        let f = extract_one(&a, Path::new("docs"), Path::new("a.txt"), &out, &stop).unwrap();
+        assert_eq!(fs::read_to_string(f).unwrap(), "aa");
+        assert_eq!(test(&a, &stop).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_foreign_archive_that_is_none_is_an_error_with_bsdtars_reason() {
+        let d = tempfile::tempdir().unwrap();
+        if crate::host::which("bsdtar").is_none() {
+            return;
+        }
+        let a = d.path().join("junk.cab");
+        fs::write(&a, "not an archive").unwrap();
+        let e = list(&a, Path::new(""), true).unwrap_err();
+        assert_eq!(e.to_string(), "Unrecognized archive format");
     }
 }

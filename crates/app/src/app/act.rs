@@ -301,7 +301,7 @@ impl App {
             }
             _ => {}
         }
-        if self.read_only(side, action) {
+        if self.read_only(side, action) || self.fixed_change(side, action) {
             self.say(StatusKind::Error, fl!("archive-read-only"));
             return Task::none();
         }

@@ -64,6 +64,8 @@ curl = "*"
 [package.metadata.generate-rpm.recommends]
 gvfs = "*"
 gvfs-fuse = "*"
+# rar, iso, deb, rpm, cab are read through it.
+bsdtar = "*"
 
 # Clouds (Settings → Clouds) mount through rclone.
 [package.metadata.generate-rpm.suggests]

@@ -474,6 +474,7 @@ impl Panel {
         let archive = !e.is_dir()
             && !e.is_link
             && crate::archive::is_tree_name(&e.name)
+            && !crate::archive::fixed(Path::new(&e.name))
             && !crate::archive::within(&self.cwd);
         match (e.is_dir(), archive) {
             (true, _) => Some(self.drop_dir(Some(i))),
