@@ -128,3 +128,14 @@ flatpak:
 # Regenerate flatpak/cargo-sources.json after Cargo.lock changes (flatpak-builder-tools' cargo generator)
 flatpak-sources generator='flatpak-cargo-generator.py':
     uv run --with aiohttp --with tomlkit python3 {{generator}} Cargo.lock -o flatpak/cargo-sources.json
+
+# A cloud key for a buyer's e-mail, signed with the release key: mail the line it prints.
+access-key email key='~/.config/minisign/shagoff.key':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    e={{quote(email)}}
+    [[ $e =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || { echo "bad e-mail" >&2; exit 1; }
+    d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+    printf 'shagoff-commander access\n%s' "$e" > "$d/m"
+    minisign -S -s {{key}} -m "$d/m" -x "$d/m.sig" -t "$e"
+    echo "$e $(sed -n 2p "$d/m.sig") $(sed -n 4p "$d/m.sig")"

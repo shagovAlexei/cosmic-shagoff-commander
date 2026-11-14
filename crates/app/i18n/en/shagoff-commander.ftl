@@ -383,6 +383,16 @@ rclone-or = or the latest one from rclone.org, without sudo (signature checked):
 rclone-get = Install rclone from rclone.org
 rclone-get-short = Install newer rclone
 rclone-update = Update to { $version }
+access = Shagoff Commander Pro
+access-trial = Clouds: free trial, { $days ->
+    [one] { $days } day left
+   *[other] { $days } days left
+}
+access-over = Clouds: the free month is over
+access-over-say = The clouds' free month is over: buy Pro in Settings → Clouds
+access-buy = Buy Pro
+access-key = Pro key
+access-key-bad = Pro key (does not fit)
 rclone-own = rclone { $version } from rclone.org (ours, in place of the system's)
 rclone-getting = Downloading rclone from rclone.org…
 rclone-got = rclone { $version } installed: clouds use it now (mounted ones keep the old one until unmounted)
