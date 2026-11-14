@@ -574,7 +574,7 @@ fn clouds_section<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messa
         );
         section = section.add(settings::item_row(row));
     }
-    section = pro_rows(app, section);
+    section = access_rows(app, section);
     let off = &app.config.plugins_off;
     for p in shagoff_core::cloud::PLUGINS {
         let on = !off.iter().any(|o| o == p.id);
@@ -614,38 +614,30 @@ fn clouds_section<'a>(app: &'a App, form: &'a SettingsForm) -> Element<'a, Messa
     section.into()
 }
 
-/// Cloud access: the key or the trial's days, «Buy» and the key field while there is no key.
-fn pro_rows<'a>(
+/// Cloud access as text: the key's e-mail, or the trial's days.
+pub fn access_state(c: &crate::config::Config) -> Result<String, String> {
+    use shagoff_core::access::{self, Access};
+    match access::status(&c.access_key, c.cloud_trial, crate::app::unix_now()) {
+        Access::Key(email) => Ok(email),
+        Access::Trial(days) => Err(fl!("access-trial", days = days)),
+        Access::Over => Err(fl!("access-over")),
+    }
+}
+
+/// The key's e-mail or the trial's days with «Buy»; the key itself is typed in About.
+fn access_rows<'a>(
     app: &'a App,
     section: settings::Section<'a, Message>,
 ) -> settings::Section<'a, Message> {
-    use shagoff_core::access::{self, Access};
-    let c = &app.config;
-    let state = match access::status(&c.access_key, c.cloud_trial, crate::app::unix_now()) {
-        Access::Key(email) => {
-            return section.add(settings::item(fl!("access"), widget::text::body(email)));
-        }
-        Access::Trial(days) => fl!("access-trial", days = days),
-        Access::Over => fl!("access-over"),
-    };
-    let bad = !c.access_key.trim().is_empty();
-    section
-        .add(settings::item_row(vec![
+    match access_state(&app.config) {
+        Ok(email) => section.add(settings::item(fl!("access"), widget::text::body(email))),
+        Err(state) => section.add(settings::item_row(vec![
             widget::text::body(state).width(Length::Fill).into(),
             widget::button::suggested(fl!("access-buy"))
                 .on_press(Message::OpenUrl(BUY_URL.to_string()))
                 .into(),
-        ]))
-        .add(settings::item(
-            if bad {
-                fl!("access-key-bad")
-            } else {
-                fl!("access-key")
-            },
-            widget::text_input("", c.access_key.clone())
-                .on_input(|s| Message::Setting(Setting::AccessKey(s)))
-                .width(Length::Fixed(260.0)),
-        ))
+        ])),
+    }
 }
 
 /// F12: an internal command from the list, or an own program with parameters.

@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.144.0 — 2026-11-14
+
+- About: the clouds' trial and the key field are here, under the version (the field moved from Settings → Clouds)
+
 ## 0.143.0 — 2026-11-14
 
 - Settings → Clouds: a trial period and a key field

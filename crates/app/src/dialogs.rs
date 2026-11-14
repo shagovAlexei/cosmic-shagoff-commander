@@ -1010,6 +1010,7 @@ pub fn view<'a>(
     list_h: f32,
     font: ListFont,
     icon: Option<widget::Icon>,
+    cfg: &'a crate::config::Config,
 ) -> Element<'a, Message> {
     let cancel = widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel);
     let ok = widget::button::suggested(fl!("ok")).on_press(Message::DialogSubmit);
@@ -2648,7 +2649,7 @@ pub fn view<'a>(
             .primary_action(ok)
             .secondary_action(cancel)
             .into(),
-        Dialog::About { check } => about(check.as_ref(), list_h),
+        Dialog::About { check } => about(check.as_ref(), list_h, cfg),
         Dialog::Changelog => changelog(list_h),
         Dialog::Crashed { report } => widget::dialog()
             .title(fl!("crash-title"))
@@ -2832,8 +2833,39 @@ pub fn progress<'a>(
 }
 
 /// `list_h`: the panel rows' height, the scrolled part's most (its buttons stay in the window).
-fn about(check: Option<&shagoff_core::update::Status>, list_h: f32) -> Element<'_, Message> {
-    use crate::drawer::{DONATE_URL, REPO};
+fn about<'a>(
+    check: Option<&'a shagoff_core::update::Status>,
+    list_h: f32,
+    cfg: &'a crate::config::Config,
+) -> Element<'a, Message> {
+    use crate::drawer::{BUY_URL, DONATE_URL, REPO, Setting};
+    // The cloud key: its e-mail, or the trial's days, «Buy» and the field to paste it in.
+    let access: Element<'a, Message> = match crate::drawer::access_state(cfg) {
+        Ok(email) => widget::text::body(format!("{}: {email}", fl!("access"))).into(),
+        Err(state) => {
+            let bad = !cfg.access_key.trim().is_empty();
+            widget::column::with_capacity(3)
+                .spacing(8)
+                .align_x(cosmic::iced::Alignment::Center)
+                .push(widget::text::body(state))
+                .push(
+                    widget::row::with_capacity(2)
+                        .spacing(8)
+                        .align_y(cosmic::iced::Alignment::Center)
+                        .push(
+                            widget::text_input(fl!("access-key"), cfg.access_key.as_str())
+                                .on_input(|s| Message::Setting(Setting::AccessKey(s)))
+                                .width(Length::Fixed(260.0)),
+                        )
+                        .push(
+                            widget::button::suggested(fl!("access-buy"))
+                                .on_press(Message::OpenUrl(BUY_URL.to_string())),
+                        ),
+                )
+                .push_maybe(bad.then(|| widget::text::caption(fl!("access-key-bad"))))
+                .into()
+        }
+    };
     use shagoff_core::update::Status;
     let mut check_btn = widget::button::standard(fl!("update-check"));
     if check != Some(&Status::Checking) {
@@ -2877,6 +2909,7 @@ fn about(check: Option<&shagoff_core::update::Status>, list_h: f32) -> Element<'
                 ),
         )
         .push_maybe(note.map(widget::text::body))
+        .push(access)
         .push(widget::text::body(fl!("about-comments")))
         .push(widget::text::caption(format!(
             "{} Shagov Alexei · GPL-3.0-only",
