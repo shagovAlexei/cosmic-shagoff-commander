@@ -391,10 +391,10 @@ access-trial = Облака: бесплатный пробный период, {
    *[other] осталось { $days } дней
 }
 access-over = Облака: бесплатный месяц закончился
-access-over-say = Бесплатный месяц облаков закончился: купите Pro в Настройки → Облака
+access-over-say = Бесплатный месяц облаков закончился: купите Pro в Справка → О программе
 access-buy = Купить Pro
 access-key = Ключ Pro
-access-key-bad = Ключ Pro (не подходит)
+access-key-bad = Ключ не подходит
 rclone-own = rclone { $version } с rclone.org (свой, вместо системного)
 rclone-getting = Загрузка rclone с rclone.org…
 rclone-got = rclone { $version } установлен: облака теперь работают через него (подключённые — со старым, пока их не отключить)

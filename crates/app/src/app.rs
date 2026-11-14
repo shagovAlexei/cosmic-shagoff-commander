@@ -1389,6 +1389,7 @@ impl Application for App {
                 list_h,
                 font,
                 icon,
+                &self.config,
             ));
         }
         self.job

@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.144.0" date="2026-11-14">
+      <description><p>About shows the clouds' trial and takes the key.</p></description>
+    </release>
     <release version="0.143.0" date="2026-11-14">
       <description><p>Settings → Clouds: a trial period and a key field.</p></description>
     </release>

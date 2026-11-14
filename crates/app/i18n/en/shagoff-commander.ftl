@@ -389,10 +389,10 @@ access-trial = Clouds: free trial, { $days ->
    *[other] { $days } days left
 }
 access-over = Clouds: the free month is over
-access-over-say = The clouds' free month is over: buy Pro in Settings → Clouds
+access-over-say = The clouds' free month is over: buy Pro in Help → About
 access-buy = Buy Pro
 access-key = Pro key
-access-key-bad = Pro key (does not fit)
+access-key-bad = The key does not fit
 rclone-own = rclone { $version } from rclone.org (ours, in place of the system's)
 rclone-getting = Downloading rclone from rclone.org…
 rclone-got = rclone { $version } installed: clouds use it now (mounted ones keep the old one until unmounted)
