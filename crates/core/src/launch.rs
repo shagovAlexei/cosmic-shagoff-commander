@@ -35,10 +35,19 @@ pub fn as_root(exe: &Path, dir: &Path, var: impl Fn(&str) -> Option<OsString>) -
         };
         set("WAYLAND_DISPLAY", full);
     }
+    // Xlib's default cookie is the user's ~/.Xauthority; root's HOME is /root.
+    let xauth = var("XAUTHORITY").or_else(|| {
+        let home = var("HOME")?;
+        var("DISPLAY").map(|_| Path::new(&home).join(".Xauthority").into())
+    });
+    if let Some(x) = xauth {
+        set("XAUTHORITY", x);
+    }
     let keep = [
         "DISPLAY",
-        "XAUTHORITY",
         "LANG",
+        "LC_ALL",
+        "LC_MESSAGES",
         "LANGUAGE",
         "XDG_CURRENT_DESKTOP",
         "ICED_BACKEND",
@@ -74,9 +83,16 @@ mod tests {
             "/a b",
         ];
         assert_eq!(argv, want.map(OsString::from));
-        let abs = |k: &str| (k == "WAYLAND_DISPLAY").then(|| "/tmp/w".into());
-        let argv = as_root(Path::new("/x"), Path::new("/"), abs);
+        let x11 = |k: &str| match k {
+            "WAYLAND_DISPLAY" => Some("/tmp/w".into()),
+            "DISPLAY" => Some(":0".into()),
+            "HOME" => Some("/home/u".into()),
+            _ => None,
+        };
+        let argv = as_root(Path::new("/x"), Path::new("/"), x11);
         assert_eq!(argv[2], "WAYLAND_DISPLAY=/tmp/w");
+        assert_eq!(argv[3], "XAUTHORITY=/home/u/.Xauthority");
+        assert_eq!(argv[4], "DISPLAY=:0");
     }
 
     #[test]

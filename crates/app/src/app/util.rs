@@ -715,7 +715,10 @@ pub(super) fn file_in_its_dir(path: &Path) -> Option<String> {
     (!enter).then_some(e.name)
 }
 
-pub(super) fn run_watched(argv: &[String], dir: &Path) -> std::io::Result<Task<Message>> {
+pub(super) fn run_watched<S: AsRef<std::ffi::OsStr>>(
+    argv: &[S],
+    dir: &Path,
+) -> std::io::Result<Task<Message>> {
     use std::io::BufRead;
     use std::process::Stdio;
     if argv.is_empty() {

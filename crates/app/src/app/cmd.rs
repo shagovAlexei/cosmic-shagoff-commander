@@ -312,10 +312,7 @@ impl App {
     /// Commands → Open terminal: a window in the active panel's dir (inside an archive: the
     /// archive's dir, the one on disk).
     pub(super) fn open_terminal(&mut self) {
-        let cwd = self.panes[self.active].active().panel.cwd().to_path_buf();
-        let dir = archive::split_path(&cwd)
-            .and_then(|(a, _)| a.parent().map(Path::to_path_buf))
-            .unwrap_or(cwd);
+        let dir = self.disk_dir();
         let argv = match self.terminal() {
             Some(t) => t.argv.clone(),
             None => self.config.terminal.iter().take(1).cloned().collect(),
@@ -328,28 +325,34 @@ impl App {
 
     /// A window of ours as root on the active panel's dir (232): only an installed program
     /// (`props::helper_exe`, as for 163); a cancelled password is pkexec's own business.
-    pub(super) fn open_as_root(&mut self) {
-        let cwd = self.panes[self.active].active().panel.cwd().to_path_buf();
-        let dir = archive::split_path(&cwd)
-            .and_then(|(a, _)| a.parent().map(Path::to_path_buf))
-            .unwrap_or(cwd);
+    pub(super) fn open_as_root(&mut self) -> Task<Message> {
+        let dir = self.disk_dir();
         let exe = std::env::current_exe().map_err(|e| e.to_string());
         let exe = match exe.and_then(|e| shagoff_core::props::helper_exe(&e)) {
             Ok(exe) => exe,
-            Err(e) => return self.say(StatusKind::Error, crate::why::message(&e)),
+            Err(e) => {
+                self.say(StatusKind::Error, crate::why::message(&e));
+                return Task::none();
+            }
         };
         let argv = shagoff_core::launch::as_root(&exe, &dir, |k| std::env::var_os(k));
-        let child = std::process::Command::new(&argv[0])
-            .args(&argv[1..])
-            .stdin(std::process::Stdio::null())
-            .spawn();
-        match child {
-            Ok(child) => reap(child),
-            Err(e) => self.say(
-                StatusKind::Error,
-                fl!("cmd-failed", error = format!("pkexec: {e}")),
-            ),
+        // pkexec's refusal (no polkit agent, wrong password) shows as an error.
+        match run_watched(&argv, &dir) {
+            Ok(task) => task,
+            Err(e) => {
+                let e = fl!("cmd-failed", error = format!("pkexec: {e}"));
+                self.say(StatusKind::Error, e);
+                Task::none()
+            }
         }
+    }
+
+    /// The active panel's dir on disk: an archive's (a nested one's outermost) for a path in it.
+    fn disk_dir(&self) -> PathBuf {
+        let cwd = self.shown(self.panes[self.active].active().panel.cwd());
+        archive::split_path(&cwd)
+            .and_then(|(a, _)| a.parent().map(Path::to_path_buf))
+            .unwrap_or(cwd)
     }
 
     /// Ctrl+↑: the dir under the cursor (an archive as a dir, ".." the parent), else the panel's own.
