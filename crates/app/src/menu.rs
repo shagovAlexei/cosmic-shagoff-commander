@@ -645,7 +645,14 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         b(fl!("menu-pick-shell"), Action::PickShell),
                     ],
                 ),
-            ],
+            ]
+            .into_iter()
+            // No root from the flatpak (232).
+            .chain(
+                (!shagoff_core::host::inside())
+                    .then(|| b(fl!("menu-open-as-root"), Action::OpenAsRoot)),
+            )
+            .collect(),
         ),
         (
             fl!("menu-tabs"),
@@ -1421,6 +1428,7 @@ mod tests {
                             | Action::ConfigureColors
                             | Action::ConfigureKeys
                             | Action::OpenTerminal
+                            | Action::OpenAsRoot
                             | Action::PickTerminal
                             | Action::PickShell
                             | Action::ChecksumCreate

@@ -1,4 +1,5 @@
 app-title = Shagoff Commander
+app-title-root = Shagoff Commander — administrator
 col-name = Name
 col-ext = Ext
 col-size = Size
@@ -820,6 +821,7 @@ menu-terminal-default = Default ({ $name })
 menu-terminal-none = Default (none found)
 menu-builtin-terminal = Built-in terminal
 menu-pick-shell = Shell…
+menu-open-as-root = Open as administrator
 menu-shell = Shell
 menu-shell-default = Default ({ $name })
 term-failed = The terminal did not start: { $err }

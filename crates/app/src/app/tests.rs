@@ -7630,3 +7630,16 @@ fn crypt_dialog_waits_for_matching_passwords_and_decrypt_takes_only_encrypted_na
             .is_some_and(|m| m.starts_with(&fl!("crypt-failed", n = 1)))
     );
 }
+
+#[test]
+fn open_as_root_refuses_a_program_not_installed_by_root() {
+    // The test binary is in target/: never handed to pkexec (232).
+    let (mut app, _tmp) = lister_app(Config::default());
+    let _ = app.update(Message::Key(Action::OpenAsRoot));
+    let status = app.status.as_ref().expect("a refusal");
+    assert_eq!(status.kind, StatusKind::Error);
+    assert_eq!(
+        status.text,
+        crate::why::message(shagoff_core::why::UNSAFE_HELPER)
+    );
+}
