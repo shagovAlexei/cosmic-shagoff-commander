@@ -495,6 +495,94 @@ pub struct Find {
     pub stop: Option<Arc<AtomicBool>>,
     /// ↑/↓ moved into the results: Enter (a field's submit) goes to the file, not a new search.
     pub in_list: bool,
+    /// The search template last picked or saved (233).
+    pub template: Option<usize>,
+    /// «Save template…»: the name being typed.
+    pub naming: Option<String>,
+}
+
+/// The find dialog's search templates (233).
+#[derive(Clone, Debug)]
+pub enum TemplateMsg {
+    Pick(usize),
+    Save,
+    Name(String),
+    SaveOk,
+    SaveCancel,
+    Delete,
+}
+
+impl Find {
+    /// A new dialog on `dir` with `p`'s conditions.
+    pub fn new(side: usize, dir: String, p: &crate::config::FindPrefs) -> Self {
+        let mut f = Self {
+            side,
+            mask: String::new(),
+            dir,
+            find_text: false,
+            help: false,
+            text: String::new(),
+            case_sensitive: false,
+            regex: false,
+            name_regex: false,
+            archives: false,
+            dupes: false,
+            dup_by: Default::default(),
+            groups: Vec::new(),
+            min_size: String::new(),
+            max_size: String::new(),
+            days: String::new(),
+            attrs: String::new(),
+            error: None,
+            root: None,
+            results: Vec::new(),
+            total: 0,
+            current: String::new(),
+            cursor: 0,
+            id: 0, // set by each search start
+            stop: None,
+            in_list: false,
+            template: None,
+            naming: None,
+        };
+        f.set_prefs(p);
+        f
+    }
+
+    /// The conditions as they stand (what the next search and a template keep).
+    pub fn prefs(&self) -> crate::config::FindPrefs {
+        crate::config::FindPrefs {
+            mask: self.mask.clone(),
+            find_text: self.find_text,
+            text: self.text.clone(),
+            case_sensitive: self.case_sensitive,
+            regex: self.regex,
+            name_regex: self.name_regex,
+            archives: self.archives,
+            dupes: self.dupes,
+            dup_by: self.dup_by,
+            min_size: self.min_size.clone(),
+            max_size: self.max_size.clone(),
+            days: self.days.clone(),
+            attrs: self.attrs.clone(),
+        }
+    }
+
+    pub fn set_prefs(&mut self, p: &crate::config::FindPrefs) {
+        self.mask = p.mask.clone();
+        self.find_text = p.find_text;
+        self.text = p.text.clone();
+        self.case_sensitive = p.case_sensitive;
+        self.regex = p.regex;
+        self.name_regex = p.name_regex;
+        self.archives = p.archives;
+        self.dupes = p.dupes;
+        self.dup_by = p.dup_by;
+        self.min_size = p.min_size.clone();
+        self.max_size = p.max_size.clone();
+        self.days = p.days.clone();
+        self.attrs = p.attrs.clone();
+    }
 }
 
 /// Closing the dialog in any way stops its search.
@@ -812,6 +900,56 @@ impl Dialog {
             _ => None,
         }
     }
+}
+
+/// The find dialog's search templates (233): picker, «Save…», «Delete»; while a name is typed,
+/// its field with OK / Cancel.
+fn find_templates<'a>(
+    f: &'a Find,
+    list: &[crate::config::FindTemplate],
+) -> Vec<Element<'a, Message>> {
+    use TemplateMsg as T;
+    let msg = Message::FindTemplate;
+    if let Some(name) = &f.naming {
+        return vec![
+            widget::text_input(fl!("find-template-name"), name)
+                .id(template_name_id())
+                .on_input(move |s| msg(T::Name(s)))
+                .on_submit(move |_| msg(T::SaveOk))
+                .width(Length::Fixed(220.0))
+                .into(),
+            widget::button::suggested(fl!("find-template-ok"))
+                .on_press_maybe((!name.trim().is_empty()).then(|| msg(T::SaveOk)))
+                .into(),
+            widget::button::standard(fl!("cancel"))
+                .on_press(msg(T::SaveCancel))
+                .into(),
+        ];
+    }
+    let names: Vec<String> = list.iter().map(|t| t.name.clone()).collect();
+    let mut v: Vec<Element<'a, Message>> = Vec::new();
+    if !names.is_empty() {
+        v.push(widget::text::body(fl!("find-templates")).into());
+        v.push(widget::dropdown(names, f.template, move |i| msg(T::Pick(i))).into());
+    }
+    v.push(
+        widget::button::standard(fl!("find-template-save"))
+            .on_press(msg(T::Save))
+            .into(),
+    );
+    if f.template.is_some() {
+        v.push(
+            widget::button::standard(fl!("find-template-delete"))
+                .on_press(msg(T::Delete))
+                .into(),
+        );
+    }
+    v
+}
+
+/// The find dialog's «Save template…» name field.
+pub fn template_name_id() -> widget::Id {
+    widget::Id::new("find-template-name")
 }
 
 /// The list dialog's scroll area: ↑ / ↓ keep the cursor in view.
@@ -2353,13 +2491,18 @@ pub fn view<'a>(
                                 edit(fl!("find-attrs"), &f.attrs, FindField::Attrs),
                             ]
                             .spacing(8),
-                            widget::flex_row(vec![
-                                run.into(),
-                                go.into(),
-                                feed.into(),
-                                cancel.into()
-                            ])
-                            .spacing(8),
+                            widget::flex_row(
+                                // Typing a template's name: only its field and buttons.
+                                match f.naming {
+                                    Some(_) => Vec::new(),
+                                    None => vec![run.into(), go.into(), feed.into(), cancel.into()],
+                                }
+                                .into_iter()
+                                .chain(find_templates(f, &cfg.find_templates))
+                                .collect()
+                            )
+                            .spacing(8)
+                            .align_items(cosmic::iced::Alignment::Center),
                             widget::text(status).wrapping(Wrapping::WordOrGlyph),
                             widget::scrollable(list).height(list_height(f.results.len())),
                         ]

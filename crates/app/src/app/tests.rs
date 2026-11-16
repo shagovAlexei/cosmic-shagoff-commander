@@ -7643,3 +7643,43 @@ fn open_as_root_refuses_a_program_not_installed_by_root() {
         crate::why::message(shagoff_core::why::UNSAFE_HELPER)
     );
 }
+
+#[test]
+fn find_templates_save_replace_pick_and_delete() {
+    use dialogs::TemplateMsg as T;
+    let mut app = app_with(Config::default(), State::default());
+    let _ = app.update(Message::Key(Action::FindFiles));
+    find_dialog(&mut app).mask = "*.rs".into();
+    let _ = app.update(Message::FindTemplate(T::Save));
+    let _ = app.update(Message::FindTemplate(T::Name("rust".into())));
+    let _ = app.update(Message::FindTemplate(T::SaveOk));
+    assert_eq!(find_dialog(&mut app).naming, None);
+    // The same name replaces it.
+    find_dialog(&mut app).mask = "*.rs *.toml".into();
+    let _ = app.update(Message::FindTemplate(T::Save));
+    assert_eq!(find_dialog(&mut app).naming.as_deref(), Some("rust"));
+    let _ = app.update(Message::FindTemplate(T::SaveOk));
+    assert_eq!(app.config.find_templates.len(), 1);
+    assert_eq!(app.config.find_templates[0].find.mask, "*.rs *.toml");
+    // A blank name saves nothing.
+    let _ = app.update(Message::FindTemplate(T::Save));
+    let _ = app.update(Message::FindTemplate(T::Name("  ".into())));
+    let _ = app.update(Message::FindTemplate(T::SaveOk));
+    let _ = app.update(Message::DialogCancel); // Esc: only the name goes
+    assert_eq!(find_dialog(&mut app).naming, None);
+    assert_eq!(app.config.find_templates.len(), 1);
+    // Picking fills the fields, the dialog's dir stays.
+    let f = find_dialog(&mut app);
+    let dir = f.dir.clone();
+    (f.mask, f.find_text, f.template) = ("*".into(), true, None);
+    let _ = app.update(Message::FindTemplate(T::Pick(0)));
+    let f = find_dialog(&mut app);
+    assert_eq!(
+        (f.mask.as_str(), f.find_text, f.template),
+        ("*.rs *.toml", false, Some(0))
+    );
+    assert_eq!(f.dir, dir);
+    let _ = app.update(Message::FindTemplate(T::Delete));
+    assert!(app.config.find_templates.is_empty());
+    assert_eq!(find_dialog(&mut app).template, None);
+}

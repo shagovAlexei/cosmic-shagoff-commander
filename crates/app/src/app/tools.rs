@@ -551,21 +551,7 @@ impl App {
             return Task::none();
         };
         let side = f.side;
-        self.find = config::FindPrefs {
-            mask: f.mask.clone(),
-            find_text: f.find_text,
-            text: f.text.clone(),
-            case_sensitive: f.case_sensitive,
-            regex: f.regex,
-            name_regex: f.name_regex,
-            archives: f.archives,
-            dupes: f.dupes,
-            dup_by: f.dup_by,
-            min_size: f.min_size.clone(),
-            max_size: f.max_size.clone(),
-            days: f.days.clone(),
-            attrs: f.attrs.clone(),
-        };
+        self.find = f.prefs();
         let root = self.panes[side].active().target().join(f.dir.trim());
         let root_searched = root.clone();
         // «Искать текст» off: names only, whatever the field holds.
@@ -636,6 +622,60 @@ impl App {
     }
 
     /// "To panel": the active tab of the dialog's panel lists the results until it is left.
+    /// Alt+F7's search templates (233): pick one into the fields, save the fields under a name
+    /// (the same name replaced), delete the one picked.
+    pub(super) fn find_template(&mut self, m: dialogs::TemplateMsg) -> Task<Message> {
+        use dialogs::TemplateMsg as T;
+        let Some(Dialog::Find(f)) = &mut self.dialog else {
+            return Task::none();
+        };
+        let mut list = self.config.find_templates.clone();
+        match m {
+            T::Pick(i) => {
+                if let Some(t) = list.get(i) {
+                    f.set_prefs(&t.find);
+                    (f.template, f.error) = (Some(i), None);
+                }
+            }
+            T::Save => {
+                let name = f.template.and_then(|i| list.get(i));
+                f.naming = Some(name.map(|t| t.name.clone()).unwrap_or_default());
+                return widget::text_input::focus(dialogs::template_name_id());
+            }
+            T::Name(s) => f.naming = f.naming.as_ref().map(|_| s),
+            T::SaveCancel => f.naming = None,
+            T::SaveOk => {
+                let Some(name) = f.naming.as_deref().map(str::trim).filter(|n| !n.is_empty())
+                else {
+                    return Task::none();
+                };
+                let t = config::FindTemplate {
+                    name: name.to_string(),
+                    find: f.prefs(),
+                };
+                let i = match list.iter().position(|o| o.name == t.name) {
+                    Some(i) => {
+                        list[i] = t;
+                        i
+                    }
+                    None => {
+                        list.push(t);
+                        list.len() - 1
+                    }
+                };
+                (f.template, f.naming) = (Some(i), None);
+                return self.set(Setting::FindTemplates(list));
+            }
+            T::Delete => {
+                if let Some(i) = f.template.take().filter(|&i| i < list.len()) {
+                    list.remove(i);
+                    return self.set(Setting::FindTemplates(list));
+                }
+            }
+        }
+        Task::none()
+    }
+
     pub(super) fn find_feed(&mut self) -> Task<Message> {
         let Some(Dialog::Find(f)) = &self.dialog else {
             return Task::none();
