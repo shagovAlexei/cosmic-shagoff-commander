@@ -135,6 +135,11 @@ fn table() -> Vec<(Vec<Modifier>, K, MenuAct)> {
         ),
         (vec![Ctrl], K::Letter(Code::KeyL, "l"), a(Action::Occupied)),
         (
+            vec![Ctrl, Shift],
+            K::Letter(Code::KeyL, "l"),
+            a(Action::SpaceMap),
+        ),
+        (
             vec![Alt, Shift],
             K::Named(Named::F9),
             a(Action::TestArchives),
@@ -498,6 +503,7 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         b(fl!("menu-set-date"), Action::SetDate),
                         b(fl!("menu-count-dirs"), Action::CountDirs),
                         b(fl!("menu-occupied"), Action::Occupied),
+                        b(fl!("menu-space-map"), Action::SpaceMap),
                         menu::Item::Divider,
                         b(fl!("menu-multi-rename"), Action::MultiRename),
                         b(fl!("menu-compare-files"), Action::CompareFiles),

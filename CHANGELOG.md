@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.149.0 — 2026-11-16
+
+- Space map (Ctrl+Shift+L, Files → Attributes): the folder under the cursor (or this one) read in the background and shown as bars, biggest first, with the space on disk and share (hard links counted once, folders that could not be read marked); Enter / → steps into a folder, ← / Backspace back out, «Go» opens the shown folder in the panel. It stays on the folder's filesystem, as `du -x`
+
 ## 0.148.0 — 2026-11-15
 
 - Copy / move: the F5 / F6 dialog has a «Verify» checkbox (the copies read back from the disk and compared with the source), ticked at first as the «Verify copies» setting says

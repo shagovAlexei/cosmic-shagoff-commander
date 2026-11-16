@@ -692,6 +692,36 @@ impl App {
                     |u| cosmic::Action::App(Message::Occupied(u)),
                 );
             }
+            Action::SpaceMap => {
+                // The dir under the cursor (not `..`), else this one.
+                let cwd = panel.cwd().to_path_buf();
+                let root = (panel.current())
+                    .filter(|e| e.is_dir() && e.name != PARENT)
+                    .map_or(cwd.clone(), |e| cwd.join(&e.os_name));
+                if loading || archive::within(&root) {
+                    return Task::none();
+                }
+                let (id, stop) = (self.next_id(), Arc::new(AtomicBool::new(false)));
+                self.dialog = Some(Dialog::SpaceMap {
+                    side,
+                    id,
+                    root: root.clone(),
+                    map: None,
+                    _stop: dialogs::StopOnDrop(stop.clone()),
+                });
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            shagoff_core::spacemap::scan(&root, &stop)
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(Arc::new)
+                    },
+                    move |tree| cosmic::Action::App(Message::SpaceMapped(id, tree)),
+                );
+            }
             Action::TestArchives => {
                 // One at a time; not on the rows of a dir being left.
                 if self.testing || loading {

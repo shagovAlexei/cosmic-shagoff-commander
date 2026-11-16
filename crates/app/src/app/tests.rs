@@ -2374,6 +2374,37 @@ fn f5_verify_starts_as_the_setting_and_lasts_one_dialog() {
 }
 
 #[test]
+fn space_map_steps_in_and_goes_to_the_row() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("big/sub")).unwrap();
+    std::fs::write(tmp.path().join("big/sub/x"), vec![1; 300_000]).unwrap();
+    std::fs::write(tmp.path().join("small"), "x").unwrap();
+    let mut app = app_with(Config::default(), State::default());
+    let stop = Arc::new(AtomicBool::new(false));
+    app.dialog = Some(Dialog::SpaceMap {
+        side: 0,
+        id: 7,
+        root: tmp.path().to_path_buf(),
+        map: None,
+        _stop: dialogs::StopOnDrop(stop.clone()),
+    });
+    let tree = shagoff_core::spacemap::scan(tmp.path(), &stop).map(Arc::new);
+    let _ = app.update(Message::SpaceMapped(6, tree.clone())); // an older map's: dropped
+    assert!(matches!(
+        app.dialog,
+        Some(Dialog::SpaceMap { map: None, .. })
+    ));
+    let _ = app.update(Message::SpaceMapped(7, tree));
+    let _ = app.update(Message::Key(Action::Enter)); // into big/
+    let _ = app.update(Message::Key(Action::Enter)); // into sub/
+    let _ = app.update(Message::Key(Action::Parent)); // back, onto sub
+    let _ = app.update(Message::Key(Action::Enter)); // into sub/ again
+    let _ = app.update(Message::Key(Action::Enter)); // a file: «Go»
+    assert!(app.dialog.is_none() && stop.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(pending_path(&app), Some(tmp.path().join("big/sub")));
+}
+
+#[test]
 fn enter_in_search_opens_the_dir() {
     let mut app = files_app(&[]);
     let t = app.panes[0].active();

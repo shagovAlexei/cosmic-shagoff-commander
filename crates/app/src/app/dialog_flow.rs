@@ -445,6 +445,20 @@ impl App {
                     move |r| cosmic::Action::App(Message::Summed(tab, r)),
                 )
             }
+            // The panel to the dir shown, the cursor on the row's entry («the rest»: none).
+            Dialog::SpaceMap {
+                side, map: Some(m), ..
+            } => {
+                self.active = side;
+                let focus = (m.current())
+                    .filter(|n| !n.name.is_empty())
+                    .map(|n| n.name.to_string_lossy().into_owned());
+                self.load(side, m.dir(), focus)
+            }
+            d @ Dialog::SpaceMap { map: None, .. } => {
+                self.dialog = Some(d); // still reading: «Go» waits
+                Task::none()
+            }
             Dialog::Tree { side, tree, .. } => match tree.current() {
                 Some(n) => {
                     self.active = side;

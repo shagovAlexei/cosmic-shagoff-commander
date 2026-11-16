@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.149.0" date="2026-11-16">
+      <description><p>Space map: a folder's contents as bars by size, stepping into folders.</p></description>
+    </release>
     <release version="0.148.0" date="2026-11-15">
       <description><p>A «Verify» checkbox in the copy and move dialogs.</p></description>
     </release>
