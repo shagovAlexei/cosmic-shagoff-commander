@@ -133,7 +133,6 @@ pub fn attrs(e: &Entry) -> String {
     format!("{kind}{}", perms(e.mode))
 }
 
-/// TC name column: dirs as `[name]`, files without the extension shown in its own column.
 /// F2's first selection in a name (235): up to its last dot, in graphemes (what a text field
 /// counts); the whole name for a dir, a name without a dot and a dotfile (`.bashrc`).
 pub fn rename_stem(name: &str, dir: bool) -> usize {
@@ -145,6 +144,7 @@ pub fn rename_stem(name: &str, dir: bool) -> usize {
     stem.graphemes(true).count()
 }
 
+/// TC name column: dirs as `[name]`, files without the extension shown in its own column.
 pub fn display_name(e: &Entry) -> String {
     if e.is_dir() {
         format!("[{}]", e.name)

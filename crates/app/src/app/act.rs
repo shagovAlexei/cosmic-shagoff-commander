@@ -372,10 +372,10 @@ impl App {
             let focus = match (focus, rename) {
                 (true, true) => {
                     self.rename_whole = false;
-                    Task::batch([
-                        widget::text_input::focus(self.input_id.clone()),
-                        self.rename_select(),
-                    ])
+                    let cur = self.panes[side].active().panel.current();
+                    self.rename_dir = cur.is_some_and(|e| e.is_dir());
+                    // In order: focusing moves the cursor to the end.
+                    widget::text_input::focus(self.input_id.clone()).chain(self.rename_select())
                 }
                 (true, false) => widget::text_input::focus(self.input_id.clone()),
                 _ => Task::none(),

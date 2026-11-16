@@ -437,6 +437,8 @@ pub struct App {
     pub(crate) input_id: widget::Id,
     /// F2 in the rename field: the whole name selected (else the name without its extension).
     rename_whole: bool,
+    /// The file being renamed is a dir (its name is selected whole).
+    rename_dir: bool,
     /// Quick search / filter field, if open.
     pub search: Option<Search>,
     pub home: PathBuf,
@@ -1500,6 +1502,7 @@ impl App {
             quitting: false,
             input_id: widget::Id::unique(),
             rename_whole: false,
+            rename_dir: false,
             search: None,
             home,
             config,

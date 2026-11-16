@@ -5,14 +5,10 @@ use super::*;
 impl App {
     /// The rename field's selection: the whole name or up to its extension (`rename_whole`).
     pub(super) fn rename_select(&self) -> Task<Message> {
-        let Some(Dialog::Input { input, side, .. }) = &self.dialog else {
+        let Some(Dialog::Input { input, .. }) = &self.dialog else {
             return Task::none();
         };
-        let dir = (self.panes[*side].active().panel.current()).is_some_and(|e| e.is_dir());
-        let end = match self.rename_whole {
-            true => format::rename_stem(input, true),
-            false => format::rename_stem(input, dir),
-        };
+        let end = format::rename_stem(input, self.rename_dir || self.rename_whole);
         widget::text_input::select_range(self.input_id.clone(), 0, end)
     }
 
