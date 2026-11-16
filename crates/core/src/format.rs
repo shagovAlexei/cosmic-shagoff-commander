@@ -134,6 +134,17 @@ pub fn attrs(e: &Entry) -> String {
 }
 
 /// TC name column: dirs as `[name]`, files without the extension shown in its own column.
+/// F2's first selection in a name (235): up to its last dot, in graphemes (what a text field
+/// counts); the whole name for a dir, a name without a dot and a dotfile (`.bashrc`).
+pub fn rename_stem(name: &str, dir: bool) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    let stem = match name.rfind('.') {
+        Some(i) if i > 0 && !dir => &name[..i],
+        _ => name,
+    };
+    stem.graphemes(true).count()
+}
+
 pub fn display_name(e: &Entry) -> String {
     if e.is_dir() {
         format!("[{}]", e.name)
@@ -247,6 +258,17 @@ pub fn details_table(rows: &[(&Entry, String)], tz: &TimeZone, head: Option<[&st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_stem_stops_at_the_last_dot_of_a_files_name() {
+        assert_eq!(rename_stem("a.tar.gz", false), 5);
+        assert_eq!(rename_stem("notes.txt", false), 5);
+        assert_eq!(rename_stem("Makefile", false), 8);
+        assert_eq!(rename_stem(".bashrc", false), 7);
+        assert_eq!(rename_stem("v1.2", true), 4); // a dir: all of it
+        // A decomposed «й» (и + U+0306) is one grapheme for the field.
+        assert_eq!(rename_stem("ми\u{306}.txt", false), 2);
+    }
     use crate::listing::Kind;
     use std::time::{Duration, UNIX_EPOCH};
 

@@ -361,11 +361,24 @@ impl App {
                     |k| cosmic::Action::App(Message::CryptKeys(k)),
                 )
             });
+            let rename = matches!(
+                &d,
+                Dialog::Input {
+                    op: InputOp::Rename,
+                    ..
+                }
+            );
             self.dialog = Some(d);
-            let focus = if focus {
-                widget::text_input::focus(self.input_id.clone())
-            } else {
-                Task::none()
+            let focus = match (focus, rename) {
+                (true, true) => {
+                    self.rename_whole = false;
+                    Task::batch([
+                        widget::text_input::focus(self.input_id.clone()),
+                        self.rename_select(),
+                    ])
+                }
+                (true, false) => widget::text_input::focus(self.input_id.clone()),
+                _ => Task::none(),
             };
             return Task::batch([focus, keys.unwrap_or_else(Task::none)]);
         }

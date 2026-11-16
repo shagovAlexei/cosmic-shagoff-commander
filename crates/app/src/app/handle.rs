@@ -2122,6 +2122,19 @@ impl App {
             }
             // Quick search, viewer search or command line; not a dialog's or a settings field.
             // F2 only: Shift+F6 is Rename too.
+            // F2 again in the rename field: the name with its extension, then without, … (235).
+            Message::FieldKey(Action::Rename)
+                if matches!(
+                    self.dialog,
+                    Some(Dialog::Input {
+                        op: InputOp::Rename,
+                        ..
+                    })
+                ) =>
+            {
+                self.rename_whole = !self.rename_whole;
+                return self.rename_select();
+            }
             Message::FieldKey(Action::Rename)
                 if !self.mods.shift()
                     && matches!(

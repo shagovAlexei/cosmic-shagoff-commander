@@ -435,6 +435,8 @@ pub struct App {
     quitting: bool,
     /// Id of the dialog text field (one field at a time), for focusing it on open.
     pub(crate) input_id: widget::Id,
+    /// F2 in the rename field: the whole name selected (else the name without its extension).
+    rename_whole: bool,
     /// Quick search / filter field, if open.
     pub search: Option<Search>,
     pub home: PathBuf,
@@ -1497,6 +1499,7 @@ impl App {
             dragging: false,
             quitting: false,
             input_id: widget::Id::unique(),
+            rename_whole: false,
             search: None,
             home,
             config,
