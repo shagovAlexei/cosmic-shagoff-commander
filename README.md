@@ -37,7 +37,7 @@ Light theme (*Settings → Theme*, or the system's):
 - View → «Window parts»: hide the button bar, drive buttons, tabs, path line, column headers, status bar, command line, F-key buttons; «Panel at 100 %» — one panel across the whole width, «Panels one above the other»
 - Thumbnails view (Ctrl+Shift+F1): pictures, PDF, video — through the desktop's own thumbnailers, in a sandbox; the folder tree in the panel (Ctrl+F8) or beside the panels (Ctrl+Shift+F8)
 - The trash as a folder: browse it, restore files to where they came from, delete for good, empty it
-- Checksums (MD5 / SHA1 / SHA256 / SHA512) — create and verify; split a file into parts and combine them back; new file from a template; change the date and time of files
+- Checksums (MD5 / SHA1 / SHA256 / SHA512) — create and verify; encrypt and decrypt files with GnuPG (a password or a public key); split a file into parts and combine them back; new file from a template; change the date and time of files
 - A Start menu of your own commands (with submenus), your own hotkeys for any command (Configuration → Hotkeys), saved view modes and the columns of the full view
 - Signed updates: a new release is offered at start and installed only if its signature checks; after a crash the next start offers to report it (nothing is sent by itself)
 - Right button marks files as in Total Commander (drag it across rows to mark them), held it opens the menu (or the menu at once — a setting), full / brief view, file type icons, two looks: Classic (Total Commander) and Modern (COSMIC)

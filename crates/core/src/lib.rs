@@ -10,6 +10,7 @@ pub mod cmdline;
 pub mod colors;
 pub mod columns;
 pub mod crash;
+pub mod crypt;
 pub mod diff;
 pub mod drives;
 pub mod format;

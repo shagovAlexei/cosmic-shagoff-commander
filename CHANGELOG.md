@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.150.0 — 2026-11-16
+
+- Encrypt / decrypt files (Files → Archives and checksums): `name` → `name.gpg` with a password (AES-256) or to a public key from your GnuPG keyring, and back (`.gpg`, `.pgp`, `.asc`); a key's own passphrase is asked by GnuPG itself. Through the `gpg` program; the password goes to it on its input, never on the command line, and is not cached; an existing file is never replaced
+
 ## 0.149.0 — 2026-11-16
 
 - Space map (Ctrl+Shift+L, Files → Attributes): the folder under the cursor (or this one) read in the background and shown as bars, biggest first, with the space on disk and share (hard links counted once, folders that could not be read marked); Enter / → steps into a folder, ← / Backspace back out, «Go» opens the shown folder in the panel. It stays on the folder's filesystem, as `du -x`

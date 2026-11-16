@@ -186,12 +186,12 @@ impl App {
                 if let Some(d) = &self.dialog {
                     // Modal: panels must not move. Enter confirms a dialog without a text field.
                     if action == Action::Enter
-                        && matches!(
+                        && (matches!(
                             d,
                             Dialog::ConfirmDelete { .. }
                                 | Dialog::Props(_)
                                 | Dialog::Checksum { .. }
-                        )
+                        ) || matches!(d, Dialog::Crypt(c) if !c.asks()))
                     {
                         return self.submit_dialog();
                     }
@@ -604,6 +604,16 @@ impl App {
                     p.path = archive::with_format(&p.path, f);
                 }
                 self.save_pack_format(f);
+            }
+            Message::CryptKey(i) => {
+                if let Some(Dialog::Crypt(c)) = &mut self.dialog {
+                    c.key = i;
+                }
+            }
+            Message::CryptPassword(again, s) => {
+                if let Some(Dialog::Crypt(c)) = &mut self.dialog {
+                    *(if again { &mut c.again } else { &mut c.password }) = s;
+                }
             }
             Message::ArchivePassword(s) => {
                 if let Some(Dialog::Password { password, .. }) = &mut self.dialog {
@@ -1507,6 +1517,43 @@ impl App {
                     Err(e) if e.is_empty() => {} // stopped
                     Err(e) => self.say(StatusKind::Error, e),
                 }
+            }
+            Message::CryptKeys(keys) => {
+                if let Some(Dialog::Crypt(c)) = &mut self.dialog {
+                    c.labels.extend(keys.iter().map(|k| k.uid.clone()));
+                    c.keys = keys;
+                }
+            }
+            Message::Crypted(tab, made, bad) => {
+                self.testing = false;
+                let busy = [
+                    super::dialog_flow::crypt_busy(false),
+                    super::dialog_flow::crypt_busy(true),
+                ];
+                if (self.status.as_ref()).is_some_and(|s| busy.contains(&s.text)) {
+                    self.status = None;
+                }
+                if !bad.is_empty() {
+                    let head = fl!("crypt-failed", n = bad.len());
+                    self.say(StatusKind::Error, format!("{head}\n{}", bad.join("\n")));
+                } else if !made.is_empty() {
+                    self.say(StatusKind::Info, fl!("crypt-done", n = made.len()));
+                }
+                let side = self.side_of(tab);
+                let focus = (made.first()).map(|f| {
+                    f.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
+                });
+                return Task::batch(
+                    (0..2)
+                        .map(|s| {
+                            let to = self.panes[s].active().target();
+                            self.reload(s, to, focus.clone().filter(|_| side == Some(s)))
+                        })
+                        .collect::<Vec<_>>(),
+                );
             }
             Message::Verified(results) => {
                 self.testing = false;

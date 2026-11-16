@@ -345,13 +345,20 @@ impl App {
                     | Dialog::Unpack { .. }
                     | Dialog::Find(_)
                     | Dialog::Connect { .. }
-            );
+            ) || matches!(&d, Dialog::Crypt(c) if c.asks());
+            let keys = matches!(&d, Dialog::Crypt(c) if !c.decrypt).then(|| {
+                Task::perform(
+                    async { (tokio::task::spawn_blocking(crypt::keys).await).unwrap_or_default() },
+                    |k| cosmic::Action::App(Message::CryptKeys(k)),
+                )
+            });
             self.dialog = Some(d);
-            return if focus {
+            let focus = if focus {
                 widget::text_input::focus(self.input_id.clone())
             } else {
                 Task::none()
             };
+            return Task::batch([focus, keys.unwrap_or_else(Task::none)]);
         }
         let row_h = self.row_h();
         let t = self.panes[side].active_mut();
@@ -1204,6 +1211,12 @@ impl App {
                     return Task::none();
                 };
                 return self.load(side, home, None);
+            }
+            // Here only when `dialog_for` found no files to (de)crypt, or one is running.
+            Action::Encrypt | Action::Decrypt if self.testing => {}
+            Action::Encrypt | Action::Decrypt => {
+                self.say(StatusKind::Error, fl!("crypt-no-files"));
+                return Task::none();
             }
             // Here only when `dialog_for` found no parts under the cursor.
             Action::CombineFiles => {

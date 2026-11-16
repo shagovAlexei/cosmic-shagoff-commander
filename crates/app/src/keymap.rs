@@ -65,6 +65,10 @@ pub enum Action {
     EmptyTrash,
     /// Files → «Verify checksums» (TC `cm_CRCcheck`).
     ChecksumVerify,
+    /// Files → «Encrypt…» (gpg: a password or a key; no TC command).
+    Encrypt,
+    /// Files → «Decrypt…» (`.gpg` / `.pgp` / `.asc`).
+    Decrypt,
     /// Files → the file under the cursor in parts / the parts under the cursor joined back
     /// (TC `cm_Split`, `cm_Combine`).
     SplitFile,

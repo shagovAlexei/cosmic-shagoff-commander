@@ -1066,3 +1066,32 @@ space-map-reading = Reading the folder… (Esc stops)
 space-map-head = { $path } — { $size } in { $files } files
 space-map-others = The rest: { $n } files
 space-map-unread = (not all read)
+
+# Files → Encrypt / Decrypt (gpg)
+menu-encrypt = Encrypt…
+menu-decrypt = Decrypt…
+crypt-encrypt = Encrypt files
+crypt-decrypt = Decrypt files
+crypt-with = Encrypt with
+crypt-by-password = A password
+crypt-password = Password
+crypt-password-again = Password again
+crypt-encrypt-go = Encrypt
+crypt-decrypt-go = Decrypt
+crypt-decrypt-password = Encrypted with a password.
+crypt-decrypt-key = Locked by a key: GPG asks for the key's passphrase itself.
+crypt-encrypting = Encrypting…
+crypt-decrypting = Decrypting…
+crypt-done = { $n ->
+    [one] Done: 1 file
+   *[other] Done: { $n } files
+}
+crypt-failed = { $n ->
+    [one] 1 file failed:
+   *[other] { $n } files failed:
+}
+crypt-no-files = No files to encrypt or decrypt (folders: pack them first; decrypting takes .gpg, .pgp, .asc)
+why-no-gpg = GPG is needed to encrypt and decrypt (package gnupg)
+why-bad-password = Wrong password
+why-no-secret-key = The secret key for this file is not in your keyring
+why-not-encrypted = Not an encrypted file (.gpg, .pgp, .asc)

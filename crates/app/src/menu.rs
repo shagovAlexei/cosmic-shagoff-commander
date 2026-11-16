@@ -522,6 +522,9 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         b(fl!("menu-checksum-verify"), Action::ChecksumVerify),
                         b(fl!("menu-split"), Action::SplitFile),
                         b(fl!("menu-combine"), Action::CombineFiles),
+                        menu::Item::Divider,
+                        b(fl!("menu-encrypt"), Action::Encrypt),
+                        b(fl!("menu-decrypt"), Action::Decrypt),
                     ],
                 ),
                 menu::Item::Divider,
@@ -1422,6 +1425,8 @@ mod tests {
                             | Action::PickShell
                             | Action::ChecksumCreate
                             | Action::ChecksumVerify
+                            | Action::Encrypt
+                            | Action::Decrypt
                             | Action::EditPath
                             | Action::OpenTrash
                             | Action::ArchiveEncoding
