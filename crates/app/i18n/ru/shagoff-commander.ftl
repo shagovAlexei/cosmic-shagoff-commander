@@ -1,4 +1,5 @@
 app-title = Shagoff Commander
+app-title-root = Shagoff Commander — администратор
 col-name = Имя
 col-ext = Расш.
 col-size = Размер
@@ -822,6 +823,7 @@ menu-terminal-default = По умолчанию ({ $name })
 menu-terminal-none = По умолчанию (не найден)
 menu-builtin-terminal = Встроенный терминал
 menu-pick-shell = Оболочка…
+menu-open-as-root = Открыть от администратора
 menu-shell = Оболочка
 menu-shell-default = По умолчанию ({ $name })
 term-failed = Терминал не запустился: { $err }

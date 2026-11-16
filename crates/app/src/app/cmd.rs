@@ -326,6 +326,32 @@ impl App {
         }
     }
 
+    /// A window of ours as root on the active panel's dir (232): only an installed program
+    /// (`props::helper_exe`, as for 163); a cancelled password is pkexec's own business.
+    pub(super) fn open_as_root(&mut self) {
+        let cwd = self.panes[self.active].active().panel.cwd().to_path_buf();
+        let dir = archive::split_path(&cwd)
+            .and_then(|(a, _)| a.parent().map(Path::to_path_buf))
+            .unwrap_or(cwd);
+        let exe = std::env::current_exe().map_err(|e| e.to_string());
+        let exe = match exe.and_then(|e| shagoff_core::props::helper_exe(&e)) {
+            Ok(exe) => exe,
+            Err(e) => return self.say(StatusKind::Error, crate::why::message(&e)),
+        };
+        let argv = shagoff_core::launch::as_root(&exe, &dir, |k| std::env::var_os(k));
+        let child = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(std::process::Stdio::null())
+            .spawn();
+        match child {
+            Ok(child) => reap(child),
+            Err(e) => self.say(
+                StatusKind::Error,
+                fl!("cmd-failed", error = format!("pkexec: {e}")),
+            ),
+        }
+    }
+
     /// Ctrl+↑: the dir under the cursor (an archive as a dir, ".." the parent), else the panel's own.
     pub(super) fn tab_target(&self, side: usize) -> PathBuf {
         let t = self.panes[side].active();

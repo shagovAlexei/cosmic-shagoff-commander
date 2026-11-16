@@ -314,6 +314,9 @@ pub enum Action {
     /// Commands → "Open terminal": the chosen terminal in the active panel's dir (TC
     /// `cm_ExecuteDOS`).
     OpenTerminal,
+    /// Commands → "Open as administrator": a window of ours as root on the active panel's dir
+    /// (232, pkexec).
+    OpenAsRoot,
     /// Commands → "Terminal…": choose the terminal from the installed ones.
     PickTerminal,
     /// Ctrl+O (TC: hide the panels, see the console): the built-in terminal over the whole height

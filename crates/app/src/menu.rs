@@ -645,6 +645,7 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                         b(fl!("menu-pick-shell"), Action::PickShell),
                     ],
                 ),
+                b(fl!("menu-open-as-root"), Action::OpenAsRoot),
             ],
         ),
         (
@@ -1421,6 +1422,7 @@ mod tests {
                             | Action::ConfigureColors
                             | Action::ConfigureKeys
                             | Action::OpenTerminal
+                            | Action::OpenAsRoot
                             | Action::PickTerminal
                             | Action::PickShell
                             | Action::ChecksumCreate

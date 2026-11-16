@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.152.0 — 2026-11-16
+
+- Commands → «Open as administrator»: a second window of the program as root (asked by the system's password dialog) on the active panel's dir; its title says «administrator». Only the program installed in /usr; not in the flatpak
+
 ## 0.151.0 — 2026-11-16
 
 - Viewer (F3): a Markdown file (`.md`, `.markdown`) opens formatted — headings, lists, quotes, code blocks, tables, links that open in the browser; «Markdown (5)» / key 5 to it, 1 back to the text, search (F7) shows the text. Code (Rust, C-like languages, Python and shell scripts, SQL, Lua, config files…) is shown with keywords, strings, comments and numbers in colour

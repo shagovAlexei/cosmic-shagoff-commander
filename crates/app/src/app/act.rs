@@ -403,6 +403,10 @@ impl App {
                 self.open_terminal();
                 return Task::none();
             }
+            Action::OpenAsRoot => {
+                self.open_as_root();
+                return Task::none();
+            }
             Action::PickTerminal => {
                 let (items, cursor) = self.terminal_items();
                 self.dialog = Some(Dialog::List {

@@ -1107,7 +1107,7 @@ impl Application for App {
     }
 
     fn init(mut core: Core, flags: Flags) -> (Self, Task<Message>) {
-        core.window.header_title = fl!("app-title");
+        core.window.header_title = app_title();
         // Tab is ours (switch pane); libcosmic's Tab focus-walk would also focus buttons that Enter then fires.
         core.set_keyboard_nav(false);
         let home = std::env::home_dir().unwrap_or_else(|| "/".into());
@@ -1121,7 +1121,7 @@ impl Application for App {
             .then(|| cosmic::command::set_theme(cfg.app_theme.theme()));
         if !cfg.language.is_empty() {
             crate::i18n::init(&config::languages(&cfg.language, Vec::new()));
-            core.window.header_title = fl!("app-title");
+            core.window.header_title = app_title();
         }
         let (mut app, task) = Self::build(core, cfg, state, flags.left, home);
         let volumes = app.refresh_volumes(true);

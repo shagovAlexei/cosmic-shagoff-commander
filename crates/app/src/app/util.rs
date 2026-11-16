@@ -673,6 +673,14 @@ pub(super) fn scan_terminals() -> Task<Message> {
     )
 }
 
+/// The window's title; the one run as root says so (232).
+pub(super) fn app_title() -> String {
+    match shagoff_core::launch::is_root() {
+        true => fl!("app-title-root"),
+        false => fl!("app-title"),
+    }
+}
+
 /// A command line in `dir`, its output dropped (TC closes the console too).
 pub(super) fn spawn_in(argv: &[String], dir: &Path) -> std::io::Result<()> {
     use std::process::Stdio;
