@@ -371,11 +371,11 @@ impl Lister {
             self.mode = match lister::detect(&self.name, l.doc.text()) {
                 Mode::Image if l.image.is_none() => Mode::Hex,
                 // Formatted only whole (a big file is read window by window).
-                Mode::Markdown if l.doc.truncated() => Mode::Text,
+                Mode::Markdown if l.doc.truncated() || l.doc.total > MD_MAX => Mode::Text,
                 m => m,
             };
             // Not UTF-8: guess the code page, unless one was chosen (A / S / K, the list).
-            if self.mode == Mode::Text && !self.chosen {
+            if matches!(self.mode, Mode::Text | Mode::Markdown) && !self.chosen {
                 self.encoding = lister::guess(&l.doc.bytes);
             }
         }
@@ -494,7 +494,8 @@ impl Lister {
 
     /// Markdown can be shown: a Markdown file read whole.
     pub fn can_md(&self) -> bool {
-        lister::is_markdown(&self.name) && self.ok().is_some_and(|l| !l.doc.truncated())
+        lister::is_markdown(&self.name)
+            && (self.ok()).is_some_and(|l| !l.doc.truncated() && l.doc.total <= MD_MAX)
     }
 
     fn parse_md(&mut self) {
@@ -586,8 +587,14 @@ impl Lister {
     /// Returns the y to scroll to on a match.
     pub fn find(&mut self, forward: bool, again: bool) -> Option<f32> {
         // Rows are the text's: Markdown is searched as text (TC: search shows the plain file).
+        // The page's scroll is not the rows': from the first row; nothing found, it stays formatted.
         if self.mode == Mode::Markdown {
             self.mode = Mode::Text;
+            let at = self.find_from(0, forward);
+            if at.is_none() {
+                self.mode = Mode::Markdown;
+            }
+            return at;
         }
         let start = match (again, self.hit) {
             (true, Some(h)) if forward => h + 1,
@@ -839,6 +846,9 @@ fn mode_button(label: String, mode: Mode, current: Mode) -> Element<'static, Mes
     b.on_press(Message::ListerMode(mode)).into()
 }
 
+/// Markdown is formatted up to this size: it is parsed and laid out whole, on the UI thread.
+const MD_MAX: u64 = 1 << 20;
+
 pub fn view(l: &Lister) -> Element<'_, Message> {
     let mut modes = vec![
         mode_button(fl!("lister-text"), Mode::Text, l.mode),
@@ -1031,6 +1041,7 @@ fn content(l: &Lister) -> Element<'_, Message> {
             .wrapping(Wrapping::None)
     };
     let lang = shagoff_core::syntax::lang(&l.name);
+    let colours = code_colours();
     for i in range.clone() {
         let line = l.row_text(doc, txt, i);
         let picked = l.sel.and_then(|s| s.in_row(i, line.chars().count()));
@@ -1048,7 +1059,7 @@ fn content(l: &Lister) -> Element<'_, Message> {
             }
             // Code: coloured, but not under the search match's own colours.
             None => match lang.filter(|_| l.hit != Some(i) && l.mode == Mode::Text) {
-                Some(lang) => coloured(line, lang, l.size),
+                Some(lang) => coloured(line, lang, l.size, &colours),
                 None => mono(line).into(),
             },
         };
@@ -1093,26 +1104,33 @@ fn content(l: &Lister) -> Element<'_, Message> {
 }
 
 /// A code row: its keywords, strings, comments and numbers in the theme's colours.
+/// The colours of `syntax::Kind`s in the theme: keyword, string, number, comment.
+fn code_colours() -> [cosmic::iced::Color; 4] {
+    let theme = cosmic::theme::active();
+    let c = theme.cosmic();
+    let mut comment: cosmic::iced::Color = c.on_bg_color().into();
+    comment.a = 0.55;
+    [
+        c.accent_text_color().into(),
+        c.success_color().into(),
+        c.warning_color().into(),
+        comment,
+    ]
+}
+
 fn coloured(
     line: String,
     lang: &shagoff_core::syntax::Lang,
     size: u16,
+    colours: &[cosmic::iced::Color; 4],
 ) -> Element<'static, Message> {
     use cosmic::iced::widget::{rich_text, span};
     use shagoff_core::syntax::Kind;
-    let theme = cosmic::theme::active();
-    let c = theme.cosmic();
-    let colour = |k: Kind| -> cosmic::iced::Color {
-        match k {
-            Kind::Keyword => c.accent_text_color().into(),
-            Kind::Str => c.success_color().into(),
-            Kind::Number => c.warning_color().into(),
-            Kind::Comment => {
-                let mut g: cosmic::iced::Color = c.on_bg_color().into();
-                g.a = 0.55;
-                g
-            }
-        }
+    let colour = |k: Kind| match k {
+        Kind::Keyword => colours[0],
+        Kind::Str => colours[1],
+        Kind::Number => colours[2],
+        Kind::Comment => colours[3],
     };
     let mono = cosmic::font::mono();
     let mut spans = Vec::new();
@@ -1163,7 +1181,12 @@ fn markdown(l: &Lister) -> Element<'_, Message> {
 
     let page = markdown::view(items, settings).map(|url: String| {
         // Only what a browser opens: a relative link is a file of the repo, not on the web.
-        if url.contains("://") || url.starts_with("mailto:") {
+        // http(s) and mail only: a file:// or an app's own scheme from a file read is not run.
+        let lower = url.to_ascii_lowercase();
+        if ["http://", "https://", "mailto:"]
+            .iter()
+            .any(|p| lower.starts_with(p))
+        {
             Message::OpenUrl(url)
         } else {
             Message::ListerWake // a redraw: nothing to do
@@ -1500,6 +1523,9 @@ mod tests {
         l.set_mode(Mode::Text);
         l.set_mode(Mode::Markdown);
         assert_eq!(l.mode, Mode::Markdown);
+        l.query = "absent".into();
+        assert!(l.find(true, false).is_none());
+        assert_eq!(l.mode, Mode::Markdown); // nothing found: stays formatted
         l.query = "text".into();
         assert!(l.find(true, false).is_some());
         assert_eq!((l.mode, l.hit), (Mode::Text, Some(2)));

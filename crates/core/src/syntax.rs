@@ -16,8 +16,12 @@ pub enum Kind {
 pub struct Lang {
     /// Line comment openers.
     line: &'static [&'static str],
+    /// They open a comment only first on the line (config files: `#` in a value is the value's).
+    line_first: bool,
     /// `/* … */` comments.
     block: bool,
+    /// `'x'` is a char literal, a lone `'` (a lifetime) is not a quote.
+    chars: bool,
     quotes: &'static [u8],
     keywords: &'static [&'static str],
 }
@@ -67,42 +71,56 @@ const LUA_KEYWORDS: &[&str] = &[
 const DATA_KEYWORDS: &[&str] = &["true", "false", "null", "yes", "no", "on", "off"];
 
 const RUST: Lang = Lang {
+    line_first: false,
+    chars: true,
     line: &["//"],
     block: true,
     quotes: b"\"", // ' opens a lifetime as often as a char
     keywords: RUST_KEYWORDS,
 };
 const C: Lang = Lang {
+    line_first: false,
+    chars: false,
     line: &["//"],
     block: true,
     quotes: b"\"'`",
     keywords: C_KEYWORDS,
 };
 const SCRIPT: Lang = Lang {
+    line_first: false,
+    chars: false,
     line: &["#"],
     block: false,
     quotes: b"\"'",
     keywords: SCRIPT_KEYWORDS,
 };
 const SQL: Lang = Lang {
+    line_first: false,
+    chars: false,
     line: &["--"],
     block: true,
     quotes: b"'\"",
     keywords: SQL_KEYWORDS,
 };
 const LUA: Lang = Lang {
+    line_first: false,
+    chars: false,
     line: &["--"],
     block: false,
     quotes: b"\"'",
     keywords: LUA_KEYWORDS,
 };
 const DATA: Lang = Lang {
+    line_first: true,
+    chars: false,
     line: &["#", ";"],
     block: false,
     quotes: b"\"'",
     keywords: DATA_KEYWORDS,
 };
 const CSS: Lang = Lang {
+    line_first: false,
+    chars: false,
     line: &[],
     block: true,
     quotes: b"\"'",
@@ -126,7 +144,7 @@ pub fn lang(name: &str) -> Option<&'static Lang> {
         | "groovy" | "gradle" | "zig" | "v" | "qml" => &C,
         "py" | "pyw" | "sh" | "bash" | "zsh" | "fish" | "rb" | "pl" | "pm" | "r" | "cmake"
         | "nix" | "ps1" | "tcl" | "awk" | "mk" => &SCRIPT,
-        "sql" | "hs" => &SQL,
+        "sql" => &SQL,
         "lua" => &LUA,
         "toml" | "yaml" | "yml" | "ini" | "conf" | "cfg" | "json" | "jsonc" | "desktop"
         | "service" | "env" | "properties" => &DATA,
@@ -139,25 +157,47 @@ fn ident(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// The end of a char literal `'x'` / `'\n'` / `'\''` opening at `i`.
+fn char_literal(line: &str, i: usize) -> Option<usize> {
+    let rest = line.get(i + 1..)?;
+    let len = match rest.strip_prefix('\\') {
+        // `'\''`: the escaped quote is the char.
+        Some(esc) => esc.find('\'')? + 1 + usize::from(esc.starts_with('\'')),
+        None => rest.chars().next()?.len_utf8(),
+    };
+    (rest.as_bytes().get(len) == Some(&b'\'')).then_some(i + 1 + len + 1)
+}
+
 /// The coloured byte ranges of `line` (ascending, apart); the rest is plain.
 pub fn spans(line: &str, lang: &Lang) -> Vec<(Range<usize>, Kind)> {
     let b = line.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
+    // Bytes, never `&line[i..]`: `i` may stand inside a non-ASCII char.
+    let at = |i: usize, m: &str| b[i..].starts_with(m.as_bytes());
     while i < b.len() {
-        let rest = &line[i..];
-        if lang.line.iter().any(|m| rest.starts_with(m)) {
+        let first = b[..i].iter().all(u8::is_ascii_whitespace);
+        if (first || !lang.line_first) && lang.line.iter().any(|m| at(i, m)) {
             out.push((i..b.len(), Kind::Comment));
             break;
         }
-        if lang.block && rest.starts_with("/*") {
-            let end = rest[2..].find("*/").map_or(b.len(), |e| i + 2 + e + 2);
+        if lang.block && at(i, "/*") {
+            let end = (i + 2..b.len())
+                .find(|&j| at(j, "*/"))
+                .map_or(b.len(), |j| j + 2);
             out.push((i..end, Kind::Comment));
             i = end;
             continue;
         }
         let c = b[i];
-        if lang.quotes.contains(&c) {
+        if lang.chars && c == b'\'' {
+            if let Some(end) = char_literal(line, i) {
+                out.push((i..end, Kind::Str));
+                i = end;
+            } else {
+                i += 1; // a lifetime
+            }
+        } else if lang.quotes.contains(&c) {
             let mut j = i + 1;
             while j < b.len() && b[j] != c {
                 j += if b[j] == b'\\' { 2 } else { 1 };
@@ -202,6 +242,38 @@ mod tests {
                 (k, line[r].to_string())
             })
             .collect()
+    }
+
+    #[test]
+    fn regression_non_ascii_outside_strings_does_not_panic() {
+        assert_eq!(
+            shown("matches!(c, 'а'..='я') // ok", "a.rs"),
+            [
+                ("s", "'а'".into()),
+                ("s", "'я'".into()),
+                ("c", "// ok".into())
+            ]
+        );
+        assert_eq!(
+            shown("x = 5 × 3 # да", "a.py"),
+            [("n", "5".into()), ("n", "3".into()), ("c", "# да".into())]
+        );
+        assert_eq!(shown("é/*", "a.c"), [("c", "/*".into())]);
+    }
+
+    #[test]
+    fn rust_chars_and_config_values() {
+        assert_eq!(
+            shown(r#"if c == '"' { return; } '\'' 'a"#, "a.rs"),
+            [
+                ("k", "if".into()),
+                ("s", r#"'"'"#.into()),
+                ("k", "return".into()),
+                ("s", r"'\''".into())
+            ]
+        );
+        assert_eq!(shown("url: http://h/p#a ; x", "a.yaml"), []);
+        assert_eq!(shown("  # note", "a.yaml"), [("c", "# note".into())]);
     }
 
     #[test]
