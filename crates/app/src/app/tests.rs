@@ -7708,11 +7708,12 @@ fn tab_set_saved_and_opened_brings_both_panes_tabs_back() {
     let _ = app.update(Message::DialogSubmit);
     assert_eq!(app.config.tab_sets.len(), 1);
     assert_eq!(app.config.tab_sets[0].name, "work");
-    // Elsewhere, then the set.
-    let _ = app.update(Message::Key(Action::CloseOtherTabs));
-    app.panes[0].active_mut().locked = false;
-    listed_at(&mut app, 0, tmp.path());
+    // Elsewhere, with another tab more, then the set.
     app.active = 0;
+    app.panes[0].active_mut().locked = false;
+    let _ = app.update(Message::Key(Action::NewTab));
+    listed_at(&mut app, 0, tmp.path());
+    assert_eq!(app.panes[0].items().len(), 3);
     let _ = app.update(Message::Key(Action::OpenTabSet(0)));
     assert_eq!(cwds(&app, 0), [a.clone(), b.clone()]);
     assert_eq!(cwds(&app, 1), std::slice::from_ref(&c));
