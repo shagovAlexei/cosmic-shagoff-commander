@@ -221,6 +221,12 @@ pub enum Action {
     FocusCmdLine,
     /// View → Columns: the columns shown now, saved as a mode with a name (TC `cm_ConfigViewModes`).
     SaveViewMode,
+    /// Tabs → Tab sets → «Save tabs as…» (TC `cm_SaveTabs`, favourite tabs; 234).
+    SaveTabSet,
+    /// Tabs → Tab sets → set `i`: both panes' tabs replaced by it (TC `cm_LoadTabs`).
+    OpenTabSet(usize),
+    /// Tabs → «Delete tab set» → set `i`.
+    DeleteTabSet(usize),
     /// View → Columns → Delete view mode: the saved mode at this index.
     DeleteViewMode(usize),
     /// Ctrl+Shift+F8: the tree beside the panels (TC `cm_SeparateTreeSwitch`).

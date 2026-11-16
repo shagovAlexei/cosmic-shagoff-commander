@@ -7682,3 +7682,44 @@ fn find_templates_save_replace_pick_and_delete() {
     assert!(app.config.find_templates.is_empty());
     assert_eq!(find_dialog(&mut app).template, None);
 }
+
+#[test]
+fn tab_set_saved_and_opened_brings_both_panes_tabs_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b, c) = (
+        tmp.path().join("a"),
+        tmp.path().join("b"),
+        tmp.path().join("c"),
+    );
+    for d in [&a, &b, &c] {
+        std::fs::create_dir(d).unwrap();
+    }
+    let mut app = app_with(Config::default(), State::default());
+    listed_at(&mut app, 0, &a);
+    let _ = app.update(Message::Key(Action::NewTab));
+    listed_at(&mut app, 0, &b);
+    app.panes[0].active_mut().locked = true;
+    listed_at(&mut app, 1, &c);
+    app.active = 1;
+    let _ = app.update(Message::Key(Action::SaveTabSet));
+    if let Some(Dialog::Input { input, .. }) = &mut app.dialog {
+        *input = " work ".into();
+    }
+    let _ = app.update(Message::DialogSubmit);
+    assert_eq!(app.config.tab_sets.len(), 1);
+    assert_eq!(app.config.tab_sets[0].name, "work");
+    // Elsewhere, with another tab more, then the set.
+    app.active = 0;
+    app.panes[0].active_mut().locked = false;
+    let _ = app.update(Message::Key(Action::NewTab));
+    listed_at(&mut app, 0, tmp.path());
+    assert_eq!(app.panes[0].items().len(), 3);
+    let _ = app.update(Message::Key(Action::OpenTabSet(0)));
+    assert_eq!(cwds(&app, 0), [a.clone(), b.clone()]);
+    assert_eq!(cwds(&app, 1), std::slice::from_ref(&c));
+    assert_eq!(app.panes[0].active_index(), 1);
+    assert!(app.panes[0].active().locked);
+    assert_eq!(app.active, 1);
+    let _ = app.update(Message::Key(Action::DeleteTabSet(0)));
+    assert!(app.config.tab_sets.is_empty());
+}

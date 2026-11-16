@@ -46,6 +46,8 @@ pub enum InputOp {
     Combine,
     /// View → Columns → «Save as view mode…»: its name.
     ViewMode,
+    /// Tabs → «Save tabs as…»: the set's name (234).
+    TabSet,
 }
 
 /// What the mask dialog does: Num+ / Num− mark by it, Ctrl+F12 shows only the files it takes.
@@ -1246,6 +1248,7 @@ pub fn view<'a>(
                 InputOp::Rename => fl!("rename"),
                 InputOp::TabName => fl!("tab-rename"),
                 InputOp::ViewMode => fl!("menu-save-view-mode").replace('…', ""),
+                InputOp::TabSet => fl!("menu-save-tab-set").replace('…', ""),
                 InputOp::OpenWith => fl!("open-with-other-title"),
                 // The menu items' names, without their «…».
                 InputOp::SaveMarks => fl!("menu-save-marks-file").replace('…', ""),

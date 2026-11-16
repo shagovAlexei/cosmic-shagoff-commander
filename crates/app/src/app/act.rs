@@ -163,6 +163,15 @@ impl App {
                 }
                 return Task::none();
             }
+            Action::OpenTabSet(i) => return self.open_tab_set(i),
+            Action::DeleteTabSet(i) => {
+                let mut sets = self.config.tab_sets.clone();
+                if i < sets.len() {
+                    sets.remove(i);
+                    return self.set(Setting::TabSets(sets));
+                }
+                return Task::none();
+            }
             Action::DeleteViewMode(i) => {
                 let mut modes = self.config.view_modes.clone();
                 if i < modes.len() {
@@ -952,6 +961,9 @@ impl App {
             | Action::ToggleCol(_)
             | Action::ViewMode(_)
             | Action::SaveViewMode
+            | Action::SaveTabSet
+            | Action::OpenTabSet(_)
+            | Action::DeleteTabSet(_)
             | Action::DeleteViewMode(_)
             | Action::ToggleHumanSizes
             | Action::ToggleActiveFrame
