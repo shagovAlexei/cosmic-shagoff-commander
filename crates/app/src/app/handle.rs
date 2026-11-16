@@ -99,6 +99,32 @@ impl App {
                     }
                     return list_snap(tree.cursor, tree.rows.len());
                 }
+                if let Some(Dialog::SpaceMap { map: Some(m), .. }) = &mut self.dialog {
+                    const PAGE: isize = 10;
+                    match action {
+                        Action::Up => m.move_cursor(-1),
+                        Action::Down => m.move_cursor(1),
+                        Action::PageUp => m.move_cursor(-PAGE),
+                        Action::PageDown => m.move_cursor(PAGE),
+                        Action::Home => m.move_cursor(-isize::MAX / 2),
+                        Action::End => m.move_cursor(isize::MAX / 2),
+                        // Into a dir (one with nothing read: nothing); on a file: «Go» (the
+                        // panel onto it); on «the rest»: nothing.
+                        Action::Enter
+                            if m.current().is_some_and(|n| !n.dir && !n.name.is_empty()) =>
+                        {
+                            return self.submit_dialog();
+                        }
+                        Action::Right | Action::Enter => {
+                            m.step_in();
+                        }
+                        Action::Left | Action::Parent => {
+                            m.step_out();
+                        }
+                        _ => return Task::none(),
+                    }
+                    return list_snap(m.cursor, m.shown().children.len());
+                }
                 if let Some(Dialog::List { cursor, items, .. }) = &mut self.dialog {
                     // Separators are skipped, as in a menu.
                     let step = |from: usize, up: bool| {
@@ -1317,6 +1343,28 @@ impl App {
                     }
                     // Closed: the cursor may be on the closed one now.
                     return Task::batch([self.reveal_active(side), self.tree_follow(side)]);
+                }
+            }
+            Message::SpaceMapped(from, tree) => {
+                if let Some(Dialog::SpaceMap { id, root, map, .. }) = &mut self.dialog
+                    && *id == from
+                    && let Some(tree) = tree
+                {
+                    *map = Some(shagoff_core::spacemap::Map::new(
+                        root.clone(),
+                        Arc::unwrap_or_clone(tree),
+                    ));
+                }
+            }
+            Message::SpaceMapPick(i) => {
+                if let Some(Dialog::SpaceMap { map: Some(m), .. }) = &mut self.dialog {
+                    if m.cursor == i {
+                        if m.step_in() {
+                            return list_snap(0, m.shown().children.len());
+                        }
+                        return Task::none();
+                    }
+                    m.cursor = i.min(m.shown().children.len().saturating_sub(1));
                 }
             }
             Message::TreePick(i) => {

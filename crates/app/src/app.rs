@@ -661,6 +661,10 @@ pub enum Message {
     TreeRowToggle(usize, usize),
     /// Alt+F10: a click on row i (on the row under the cursor: open / close it).
     TreePick(usize),
+    /// Ctrl+Shift+L: the dir read for map `id` (`None`: stopped).
+    SpaceMapped(u64, Option<Arc<shagoff_core::spacemap::Node>>),
+    /// A click on row i of the space map (on the row under the cursor: step into it).
+    SpaceMapPick(usize),
     /// Alt+F10: for the tree dialog with this id, dirs read — each with its subdirs — and the one
     /// to put the cursor on.
     TreeFilled(u64, Vec<(PathBuf, Vec<OsString>)>, Option<PathBuf>),

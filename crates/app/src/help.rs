@@ -92,6 +92,7 @@ pub fn sections() -> Vec<(String, Vec<Row>)> {
                 r("Alt+Enter", fl!("menu-properties"), Action::Properties),
                 r("Alt+Shift+Enter", fl!("menu-count-dirs"), Action::CountDirs),
                 r("Ctrl+L", fl!("menu-occupied"), Action::Occupied),
+                r("Ctrl+Shift+L", fl!("menu-space-map"), Action::SpaceMap),
                 r(
                     "Alt+Shift+F9",
                     fl!("menu-test-archives"),

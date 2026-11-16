@@ -49,6 +49,8 @@ pub enum Action {
     OpenRight,
     /// Ctrl+L: occupied space of the targets, in the status line.
     Occupied,
+    /// Ctrl+Shift+L: the dir as a map of what takes how much, stepping into dirs.
+    SpaceMap,
     /// Alt+Shift+F9: the archives among the targets read through (TC «Test archives»).
     TestArchives,
     /// Files → «Create checksum files» (TC `cm_CRCcreate`, no default key).
@@ -539,6 +541,7 @@ pub fn action(key: &Key, physical: Physical, mods: Modifiers) -> Option<Action> 
         (Physical::Code(Code::NumpadMultiply), false, false) => Some(Action::Invert),
         (Physical::Code(Code::NumpadDivide), false, false) => Some(Action::RestoreMarks),
         (Physical::Code(Code::KeyL), true, false) => Some(Action::Occupied),
+        (Physical::Code(Code::KeyL), true, true) => Some(Action::SpaceMap),
         (Physical::Code(Code::NumpadAdd | Code::KeyA), true, false) => Some(Action::SelectAll),
         (Physical::Code(Code::NumpadSubtract), true, false) => Some(Action::UnselectAll),
         (Physical::Code(Code::NumpadAdd), true, true) => Some(Action::ThumbZoomIn),

@@ -67,6 +67,15 @@ pub enum UpdateStage {
     Failed(String),
 }
 
+/// Sets its flag when dropped: a background read stops with the dialog that waits for it.
+pub struct StopOnDrop(pub Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 pub enum Dialog {
     /// Help → About (as in ShagShell Secure): the support note, the version with the update check
     /// right under it (its answer: up to date or why not), what the program is, the links.
@@ -83,6 +92,16 @@ pub enum Dialog {
     Update {
         tag: String,
         stage: UpdateStage,
+    },
+    /// Ctrl+Shift+L: what `root`'s contents take; `map` is `None` while it is read.
+    SpaceMap {
+        side: usize,
+        /// Reads for another (an earlier) map are dropped.
+        id: u64,
+        root: PathBuf,
+        map: Option<shagoff_core::spacemap::Map>,
+        /// The read stops when the dialog goes, however it goes.
+        _stop: StopOnDrop,
     },
     /// Alt+F10 (TC «Change directory via tree»): the dirs as an outline; Enter goes there.
     Tree {
@@ -1428,6 +1447,85 @@ pub fn view<'a>(
                     ),
             }
             .into()
+        }
+        Dialog::SpaceMap { root, map, .. } => {
+            let control: Element<'a, Message> = match map {
+                None => column![
+                    widget::text::body(root.display().to_string()).wrapping(Wrapping::WordOrGlyph),
+                    widget::text::caption(fl!("space-map-reading")),
+                ]
+                .spacing(8)
+                .into(),
+                Some(m) => {
+                    let shown = m.shown();
+                    let total = shown.size.max(1) as f64;
+                    let mut list = column![].spacing(1);
+                    for (i, n) in shown.children.iter().enumerate() {
+                        let name = n.name.to_string_lossy();
+                        let mut label = match (n.name.is_empty(), n.dir) {
+                            (true, _) => fl!("space-map-others", n = n.files),
+                            (false, true) => format!("{name}/"),
+                            (false, false) => name.into_owned(),
+                        };
+                        if n.unread {
+                            label = format!("{label}  {}", fl!("space-map-unread"));
+                        }
+                        let share = n.size as f64 / total;
+                        let size = format!(
+                            "{}   {:.0} %",
+                            crate::view::human(n.size), // a map: K / M / G at a glance
+                            share * 100.0
+                        );
+                        list = list.push(
+                            row![
+                                widget::progress_bar::determinate_linear(share as f32)
+                                    .width(Length::Fixed(90.0))
+                                    .girth(8),
+                                menu_row_with(
+                                    None,
+                                    None,
+                                    label,
+                                    size,
+                                    i == m.cursor,
+                                    Message::SpaceMapPick(i),
+                                    font,
+                                ),
+                            ]
+                            .spacing(8)
+                            .align_y(cosmic::iced::Alignment::Center),
+                        );
+                    }
+                    let list = widget::scrollable(list)
+                        .id(list_scroll_id())
+                        .height(Length::Shrink);
+                    let list = widget::container(list).max_height(if list_h > 0.0 {
+                        list_h - 30.0
+                    } else {
+                        f32::INFINITY
+                    });
+                    let head = fl!(
+                        "space-map-head",
+                        path = m.dir().display().to_string(),
+                        size = crate::view::human(shown.size),
+                        files = shown.files
+                    );
+                    column![
+                        widget::text::caption(head).wrapping(Wrapping::WordOrGlyph),
+                        list
+                    ]
+                    .spacing(8)
+                    .into()
+                }
+            };
+            widget::dialog()
+                .title(fl!("menu-space-map"))
+                .control(control)
+                .primary_action(
+                    widget::button::suggested(fl!("tree-go"))
+                        .on_press_maybe(map.is_some().then_some(Message::DialogSubmit)),
+                )
+                .secondary_action(cancel)
+                .into()
         }
         Dialog::Tree { tree, .. } => {
             // ponytail: every row built each frame, as the other list dialogs; a dir of thousands
