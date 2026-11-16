@@ -174,6 +174,8 @@ pub struct Config {
     pub col_set: Vec<String>,
     /// View → Columns: sets of columns to pick from, saved by name.
     pub view_modes: Vec<ViewMode>,
+    /// Alt+F7 → search templates (TC's «Load/Save»): the conditions saved by name (233).
+    pub find_templates: Vec<FindTemplate>,
     /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
     pub toolbar: Vec<ToolButton>,
     /// TC's Start menu: its items as buttons (`tip` the item's name; a separator is `toolbar::SEP`).
@@ -316,6 +318,14 @@ pub struct HotEntry {
     pub path: PathBuf,
 }
 
+/// A search template: the find dialog's conditions under a name (the dir is the panel's).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FindTemplate {
+    pub name: String,
+    pub find: FindPrefs,
+}
+
 /// A named set of columns of the full view (View → Columns → modes).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewMode {
@@ -391,6 +401,7 @@ impl Default for Config {
             columns: [60.0, 90.0, 130.0, 80.0],
             col_set: shagoff_core::columns::default_keys(),
             view_modes: default_view_modes(),
+            find_templates: Vec::new(),
             toolbar: crate::toolbar::default_bar(),
             start_menu: Vec::new(),
             hotkeys: Vec::new(),

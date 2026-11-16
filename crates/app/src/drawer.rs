@@ -110,6 +110,7 @@ pub enum Setting {
     AccessKey(String),
     ColSet(Vec<String>),
     ViewModes(Vec<crate::config::ViewMode>),
+    FindTemplates(Vec<crate::config::FindTemplate>),
     /// Ctrl+W on the last tab goes home.
     LastTabHome(bool),
     RightMarks(bool),

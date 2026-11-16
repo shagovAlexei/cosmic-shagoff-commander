@@ -295,34 +295,11 @@ impl App {
                     Some((a, _)) => a.parent().map_or(cwd.to_path_buf(), Path::to_path_buf),
                     None => cwd.to_path_buf(),
                 };
-                Some(Dialog::Find(Box::new(dialogs::Find {
+                Some(Dialog::Find(Box::new(dialogs::Find::new(
                     side,
-                    mask: self.find.mask.clone(),
-                    dir: dir.display().to_string(),
-                    find_text: self.find.find_text,
-                    help: false,
-                    text: self.find.text.clone(),
-                    case_sensitive: self.find.case_sensitive,
-                    regex: self.find.regex,
-                    name_regex: self.find.name_regex,
-                    archives: self.find.archives,
-                    dupes: self.find.dupes,
-                    dup_by: self.find.dup_by,
-                    groups: Vec::new(),
-                    min_size: self.find.min_size.clone(),
-                    max_size: self.find.max_size.clone(),
-                    days: self.find.days.clone(),
-                    attrs: self.find.attrs.clone(),
-                    error: None,
-                    root: None,
-                    results: Vec::new(),
-                    total: 0,
-                    current: String::new(),
-                    cursor: 0,
-                    id: 0, // set by each search start
-                    stop: None,
-                    in_list: false,
-                })))
+                    dir.display().to_string(),
+                    &self.find,
+                ))))
             }
             Action::CompareFiles => {
                 let (left, right) = self.diff_pair(side)?;

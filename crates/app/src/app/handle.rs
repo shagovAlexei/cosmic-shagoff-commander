@@ -813,6 +813,7 @@ impl App {
                 return Task::batch(tasks);
             }
             Message::FindFeed => return self.find_feed(),
+            Message::FindTemplate(m) => return self.find_template(m),
             Message::FeedKey(other) => {
                 // As the button: nothing to feed, nothing done.
                 if let Some(Dialog::Find(f)) = &self.dialog {
@@ -1694,6 +1695,11 @@ impl App {
             Message::Escape(_) if matches!(&self.dialog, Some(Dialog::Diff(d)) if d.editing.is_some()) =>
             {
                 return self.handle(Message::DiffEditDone(false));
+            }
+            // Esc while a search template's name is typed drops only that (233).
+            Message::Escape(_) if matches!(&self.dialog, Some(Dialog::Find(f)) if f.naming.is_some()) =>
+            {
+                return self.find_template(dialogs::TemplateMsg::SaveCancel);
             }
             Message::Escape(_) => return self.handle(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {

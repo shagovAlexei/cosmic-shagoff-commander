@@ -872,6 +872,8 @@ pub enum Message {
     PropsDone(usize, Vec<String>),
     /// Alt+F7: the results into the dialog's panel (TC "Feed to listbox").
     FindFeed,
+    /// Alt+F7's search templates (233).
+    FindTemplate(dialogs::TemplateMsg),
     /// Alt+L, by the physical key (any layout): "To panel" in the search window, otherwise the
     /// action it would have been (quick search; `None` from a text field).
     FeedKey(Option<Action>),

@@ -68,6 +68,7 @@ impl App {
             Setting::AccessKey(k) => c.access_key = k,
             Setting::ColSet(k) => c.col_set = k,
             Setting::ViewModes(m) => c.view_modes = m,
+            Setting::FindTemplates(t) => c.find_templates = t,
             // 0: own program (typed below), else `builtins()[i - 1]`.
             Setting::F12(0) => {
                 if crate::toolbar::builtin(&c.f12.cmd).is_some() {
