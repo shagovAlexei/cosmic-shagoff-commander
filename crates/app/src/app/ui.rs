@@ -3,6 +3,15 @@
 use super::*;
 
 impl App {
+    /// The rename field's selection: the whole name or up to its extension (`rename_whole`).
+    pub(super) fn rename_select(&self) -> Task<Message> {
+        let Some(Dialog::Input { input, .. }) = &self.dialog else {
+            return Task::none();
+        };
+        let end = format::rename_stem(input, self.rename_dir || self.rename_whole);
+        widget::text_input::select_range(self.input_id.clone(), 0, end)
+    }
+
     /// Thumbnails view: start making the pictures on screen that are not made yet, a few at a
     /// time (each one done asks for the next through `update`).
     pub(super) fn want_thumbs(&mut self) -> Task<Message> {

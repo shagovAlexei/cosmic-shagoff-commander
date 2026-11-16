@@ -7723,3 +7723,32 @@ fn tab_set_saved_and_opened_brings_both_panes_tabs_back() {
     let _ = app.update(Message::Key(Action::DeleteTabSet(0)));
     assert!(app.config.tab_sets.is_empty());
 }
+
+#[test]
+fn f2_in_the_rename_field_switches_name_and_name_with_extension() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "").unwrap();
+    let mut app = app_with(Config::default(), State::default());
+    listed_at(&mut app, 0, tmp.path());
+    let _ = app.update(Message::Key(Action::Down));
+    let _ = app.update(Message::Key(Action::Rename));
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::Input {
+            op: InputOp::Rename,
+            ..
+        })
+    ));
+    assert!(!app.rename_whole); // the name without «.txt» first
+    let _ = app.update(Message::FieldKey(Action::Rename));
+    assert!(app.rename_whole);
+    let _ = app.update(Message::FieldKey(Action::Rename));
+    assert!(!app.rename_whole);
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::Input {
+            op: InputOp::Rename,
+            ..
+        })
+    ));
+}

@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.155.0 — 2026-11-16
+
+- Rename (F2 / Shift+F6): the name without its extension is selected at once (a folder, a name without a dot and a dotfile: all of it); F2 again selects the name with its extension, again without, and so on
+
 ## 0.154.0 — 2026-11-16
 
 - Tabs → «Tab sets»: «Save tabs as…» keeps both panels' tabs (dirs, locks, views, sorting, names) under a name; picking a set opens its tabs in place of the current ones; «Delete tab set» beside it
