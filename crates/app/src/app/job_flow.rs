@@ -50,7 +50,9 @@ impl App {
             Action::Pack | Action::MoveToArchive | Action::Unpack | Action::Link => {
                 inside(side) || inside(1 - side)
             }
-            Action::ChecksumCreate | Action::SetDate => inside(side),
+            Action::ChecksumCreate | Action::SetDate | Action::Encrypt | Action::Decrypt => {
+                inside(side)
+            }
             // Parts are read and written as files on disk.
             Action::SplitFile | Action::CombineFiles => inside(side) || inside(1 - side),
             // One side in an archive syncs (158): jobs extract from it and add to it.

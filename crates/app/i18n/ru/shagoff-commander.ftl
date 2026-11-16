@@ -1065,3 +1065,30 @@ space-map-reading = Подсчёт… (Esc — остановить)
 space-map-head = { $path } — { $size } в { $files } файлах
 space-map-others = Остальное: файлов { $n }
 space-map-unread = (прочитано не всё)
+
+# Файлы → Зашифровать / Расшифровать (gpg)
+menu-encrypt = Зашифровать…
+menu-decrypt = Расшифровать…
+crypt-encrypt = Зашифровать файлы
+crypt-decrypt = Расшифровать файлы
+crypt-with = Чем зашифровать
+crypt-by-password = Паролем
+crypt-password = Пароль
+crypt-password-again = Пароль ещё раз
+crypt-encrypt-go = Зашифровать
+crypt-decrypt-go = Расшифровать
+crypt-decrypt-password = Зашифровано паролем.
+crypt-decrypt-key = Зашифровано ключом: пароль ключа GPG спросит сам.
+crypt-encrypting = Шифрование…
+crypt-decrypting = Расшифровка…
+crypt-done = { $n ->
+    [one] Готово: { $n } файл
+    [few] Готово: { $n } файла
+   *[other] Готово: { $n } файлов
+}
+crypt-failed = Не удалось ({ $n }):
+crypt-no-files = Нет файлов для шифрования или расшифровки (папки сначала упакуйте; расшифровываются .gpg, .pgp, .asc)
+why-no-gpg = Для шифрования нужен gpg (пакет gnupg)
+why-bad-password = Неверный пароль
+why-no-secret-key = Секретного ключа для этого файла нет в вашей связке
+why-not-encrypted = Не зашифрованный файл (.gpg, .pgp, .asc)

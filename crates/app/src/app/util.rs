@@ -346,6 +346,8 @@ pub(super) fn on_files(a: Action) -> bool {
             | A::TestArchives
             | A::ChecksumCreate
             | A::ChecksumVerify
+            | A::Encrypt
+            | A::Decrypt
             | A::SplitFile
             | A::CombineFiles
             | A::Properties

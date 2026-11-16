@@ -7607,3 +7607,26 @@ fn regression_metainfo_has_this_release() {
         .and_then(|s| s.split('"').next());
     assert_eq!(first, Some(env!("CARGO_PKG_VERSION")));
 }
+
+#[test]
+fn crypt_dialog_waits_for_matching_passwords_and_decrypt_takes_only_encrypted_names() {
+    let mut app = files_app(&["notes.txt"]);
+    let _ = app.update(Message::Key(Action::Down));
+    let _ = app.update(Message::Key(Action::Decrypt)); // not a .gpg
+    assert_eq!(app.msg(), Some(fl!("crypt-no-files").as_str()));
+    let _ = app.update(Message::Key(Action::Encrypt));
+    assert!(matches!(&app.dialog, Some(Dialog::Crypt(c)) if !c.decrypt && c.key == 0));
+    let _ = app.update(Message::CryptPassword(false, "pw".into()));
+    let _ = app.update(Message::DialogSubmit); // the second one missing: stays
+    assert!(matches!(&app.dialog, Some(Dialog::Crypt(c)) if !c.ready()));
+    let _ = app.update(Message::CryptPassword(true, "pw".into()));
+    assert!(matches!(&app.dialog, Some(Dialog::Crypt(c)) if c.ready()));
+    let _ = app.update(Message::DialogSubmit);
+    assert!(app.dialog.is_none());
+    assert_eq!(app.msg(), Some(fl!("crypt-encrypting").as_str()));
+    let _ = app.update(Message::Crypted(0, Vec::new(), vec!["notes.txt: x".into()]));
+    assert!(
+        app.msg()
+            .is_some_and(|m| m.starts_with(&fl!("crypt-failed", n = 1)))
+    );
+}

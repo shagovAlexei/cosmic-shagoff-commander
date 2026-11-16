@@ -54,4 +54,8 @@ reasons! {
         "the last operation replaced files, merged folders or took them out of the trash: it cannot be undone";
     UNDO_PERMANENT = "why-undo-permanent", "the last operation deleted for good: it cannot be undone";
     NOT_EMPTY = "why-not-empty", "the folder is not empty any more";
+    NO_GPG = "why-no-gpg", "gpg is needed to encrypt and decrypt (package gnupg)";
+    BAD_PASSWORD = "why-bad-password", "wrong password";
+    NO_SECRET_KEY = "why-no-secret-key", "the secret key for this file is not in your keyring";
+    NOT_ENCRYPTED = "why-not-encrypted", "not an encrypted file (.gpg, .pgp, .asc)";
 }

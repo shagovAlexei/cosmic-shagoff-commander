@@ -382,6 +382,38 @@ impl App {
                 let to = dir_input(self.panes[1 - side].active().panel.cwd());
                 Some(input(InputOp::Combine, parts, to))
             }
+            Action::Encrypt | Action::Decrypt => {
+                let decrypt = action == Action::Decrypt;
+                // Dirs by the panel's rows, not a `stat` here (as «Verify checksums»).
+                let dirs: std::collections::HashSet<PathBuf> = (panel.entries().iter())
+                    .filter(|e| e.is_dir())
+                    .map(|e| panel.cwd().join(&e.os_name))
+                    .collect();
+                let sources: Vec<PathBuf> = (panel.targets().into_iter())
+                    .filter(|p| !dirs.contains(p))
+                    .filter(|p| {
+                        let name = p.file_name().unwrap_or_default().to_string_lossy();
+                        !decrypt || crypt::plain_name(&name).is_some()
+                    })
+                    .collect();
+                if sources.is_empty() || self.testing {
+                    return None; // `act` says why
+                }
+                // The keys come in `CryptKeys` (gpg is not run on the UI thread).
+                let (keys, labels) = (Vec::new(), vec![fl!("crypt-by-password")]);
+                let ask = decrypt && sources.iter().any(|p| crypt::file_wants_password(p));
+                Some(Dialog::Crypt(Box::new(Crypt {
+                    side,
+                    sources,
+                    decrypt,
+                    keys,
+                    labels,
+                    key: 0,
+                    password: String::new(),
+                    again: String::new(),
+                    ask,
+                })))
+            }
             Action::ChecksumCreate => {
                 let sources = panel.targets();
                 (!sources.is_empty()).then(|| Dialog::Checksum {
@@ -418,6 +450,56 @@ impl App {
             return Task::none();
         };
         match d {
+            d @ Dialog::Crypt(_) if !matches!(&d, Dialog::Crypt(c) if c.ready()) => {
+                self.dialog = Some(d); // the passwords are not there yet
+                Task::none()
+            }
+            Dialog::Crypt(c) => {
+                let Crypt {
+                    side,
+                    sources,
+                    decrypt,
+                    keys,
+                    key,
+                    password,
+                    ask,
+                    ..
+                } = *c;
+                let tab = self.panes[side].active().id;
+                let fpr = (key.checked_sub(1))
+                    .and_then(|i| keys.get(i))
+                    .map(|k| k.fpr.clone());
+                self.say(StatusKind::Busy, crypt_busy(decrypt));
+                self.testing = true; // one at a time, as Alt+Shift+F9
+                // ponytail: one password for all the password-locked files; ask per file if
+                // people decrypt sets with different ones.
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let (made, bad) = crypt::each(&sources, |s| match (decrypt, &fpr) {
+                                (true, _) => {
+                                    let pw = ask && crypt::file_wants_password(s);
+                                    crypt::decrypt(s, pw.then_some(password.as_str()))
+                                }
+                                (false, Some(f)) => crypt::encrypt(s, &crypt::Lock::Key(f)),
+                                (false, None) => {
+                                    crypt::encrypt(s, &crypt::Lock::Password(&password))
+                                }
+                            });
+                            let bad = (bad.into_iter())
+                                .map(|(s, e)| {
+                                    let name = s.file_name().unwrap_or_default().to_string_lossy();
+                                    format!("{name}: {}", crate::why::text(&e))
+                                })
+                                .collect();
+                            (made, bad)
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    move |(made, bad)| cosmic::Action::App(Message::Crypted(tab, made, bad)),
+                )
+            }
             Dialog::Checksum {
                 side,
                 sources,
@@ -1141,5 +1223,14 @@ impl App {
             },
             cosmic::Action::App,
         )
+    }
+}
+
+/// The status line while files are (de)crypted.
+pub(super) fn crypt_busy(decrypt: bool) -> String {
+    if decrypt {
+        fl!("crypt-decrypting")
+    } else {
+        fl!("crypt-encrypting")
     }
 }

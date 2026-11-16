@@ -1,8 +1,8 @@
 use crate::clip;
 use crate::config::{self, Config, HotEntry, LastTab, State, ToolButton};
 use crate::dialogs::{
-    self, Dialog, DupBox, FindField, InputOp, Item, ListItem, ListKind, MaskOp, MrField, SyncOpt,
-    Toggle, UpdateStage,
+    self, Crypt, Dialog, DupBox, FindField, InputOp, Item, ListItem, ListKind, MaskOp, MrField,
+    SyncOpt, Toggle, UpdateStage,
 };
 use crate::drawer::{self, Drawer, Setting, SettingsForm};
 use crate::fl;
@@ -24,6 +24,7 @@ use shagoff_core::checksum::{self, Algo, Check};
 use shagoff_core::clipboard::Kind as ClipKind;
 use shagoff_core::cloud;
 use shagoff_core::cmdline::{self, Cmd};
+use shagoff_core::crypt;
 use shagoff_core::drives::{self, Drive};
 use shagoff_core::format::{self, TimeZone};
 use shagoff_core::history::History;
@@ -576,7 +577,7 @@ pub struct App {
     pub masks: Vec<String>,
     /// "Open with…" → "Other program…" commands, last first; ↑ / ↓ as for masks.
     pub other_cmds: Vec<String>,
-    /// Alt+Shift+F9 under way: another waits for it.
+    /// Alt+Shift+F9, «Verify checksums» or Encrypt / Decrypt under way: another waits for it.
     testing: bool,
 }
 
@@ -780,6 +781,14 @@ pub enum Message {
     SumAlgo(Algo),
     /// Checksum files written (tab, the files) or the error.
     Summed(u64, Result<Vec<PathBuf>, String>),
+    /// Encrypt / Decrypt: the encrypt dialog's lock (0 = a password, else `keys[i - 1]`).
+    CryptKey(usize),
+    /// Encrypt: the keyring's keys, read after the dialog opened.
+    CryptKeys(Vec<crypt::Key>),
+    /// Encrypt / Decrypt: a password field (`true`: the second one).
+    CryptPassword(bool, String),
+    /// Files (de)crypted (tab, the files made, the errors as «name: why»).
+    Crypted(u64, Vec<PathBuf>, Vec<String>),
     /// Each checksum file verified: its (file, result) rows, or why it could not be read.
     Verified(Vec<(PathBuf, Result<checksum::Report, String>)>),
     /// Items put back from the trash: the ones that could not be, with why.

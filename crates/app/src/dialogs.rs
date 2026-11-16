@@ -194,6 +194,8 @@ pub enum Dialog {
         /// One file per file (TC «Separate file for each file»), else one for all.
         separate: bool,
     },
+    /// Files → «Encrypt…» / «Decrypt…». Boxed: the key list.
+    Crypt(Box<Crypt>),
     /// Files → «Split file»: `sources[0]` cut into parts of `size` (as typed) in `path`.
     Split {
         side: usize,
@@ -585,6 +587,41 @@ pub enum FindField {
     Attrs,
 }
 
+pub struct Crypt {
+    pub side: usize,
+    pub sources: Vec<PathBuf>,
+    pub decrypt: bool,
+    /// Encrypt: the keyring's keys; the dropdown's labels are «Password» + their uids.
+    pub keys: Vec<shagoff_core::crypt::Key>,
+    pub labels: Vec<String>,
+    /// 0: a password, else `keys[key - 1]`.
+    pub key: usize,
+    pub password: String,
+    pub again: String,
+    /// Decrypt: some file is locked by a password (else gpg-agent asks for the key's own).
+    pub ask: bool,
+}
+
+impl Crypt {
+    /// The password fields are shown.
+    pub fn asks(&self) -> bool {
+        if self.decrypt {
+            self.ask
+        } else {
+            self.key == 0
+        }
+    }
+
+    /// OK can be pressed.
+    pub fn ready(&self) -> bool {
+        match (self.asks(), self.decrypt) {
+            (false, _) => true,
+            (true, true) => !self.password.is_empty(),
+            (true, false) => !self.password.is_empty() && self.password == self.again,
+        }
+    }
+}
+
 pub struct Pack {
     pub side: usize,
     pub sources: Vec<PathBuf>,
@@ -753,6 +790,7 @@ impl Dialog {
             Dialog::Pack(p) => Some(&p.sources),
             Dialog::Unpack { archives, .. } => Some(archives),
             Dialog::Checksum { sources, .. } => Some(sources),
+            Dialog::Crypt(c) => Some(&c.sources),
             Dialog::Split { sources, .. }
             | Dialog::Input {
                 op: InputOp::Combine,
@@ -2064,6 +2102,70 @@ pub fn view<'a>(
                 )
                 .primary_action(
                     widget::button::suggested(fl!("checksum-go")).on_press(Message::DialogSubmit),
+                )
+                .secondary_action(cancel)
+                .into()
+        }
+        Dialog::Crypt(c) => {
+            let pw = |label: String, value: &'a str, again: bool| {
+                let mut f = widget::secure_input("", value, None, true)
+                    .on_input(move |s| Message::CryptPassword(again, s));
+                if !again {
+                    f = f.id(input_id.clone());
+                }
+                if c.ready() {
+                    f = f.on_submit(|_| Message::DialogSubmit);
+                }
+                column![widget::text::caption(label), f]
+                    .spacing(2)
+                    .width(Length::Fill)
+            };
+            let fields = c.asks().then(|| -> Element<'a, Message> {
+                if c.decrypt {
+                    pw(fl!("crypt-password"), &c.password, false).into()
+                } else {
+                    row![
+                        pw(fl!("crypt-password"), &c.password, false),
+                        pw(fl!("crypt-password-again"), &c.again, true),
+                    ]
+                    .spacing(8)
+                    .into()
+                }
+            });
+            let head: Element<'a, Message> = if c.decrypt {
+                what_to(
+                    &c.sources,
+                    icon,
+                    String::new(),
+                    widget::text::body(if c.ask {
+                        fl!("crypt-decrypt-password")
+                    } else {
+                        fl!("crypt-decrypt-key")
+                    })
+                    .into(),
+                )
+            } else {
+                let picked = Some(c.key);
+                what_to(
+                    &c.sources,
+                    icon,
+                    fl!("crypt-with"),
+                    widget::dropdown(&c.labels, picked, Message::CryptKey)
+                        .width(Length::Fill)
+                        .into(),
+                )
+            };
+            let (title, go) = if c.decrypt {
+                (fl!("crypt-decrypt"), fl!("crypt-decrypt-go"))
+            } else {
+                (fl!("crypt-encrypt"), fl!("crypt-encrypt-go"))
+            };
+            widget::dialog()
+                .title(title)
+                .control(column![head].push_maybe(fields).spacing(12))
+                .primary_action(
+                    widget::button::suggested(go)
+                        .on_press_maybe(c.ready().then_some(Message::DialogSubmit)),
                 )
                 .secondary_action(cancel)
                 .into()
