@@ -319,7 +319,8 @@ pub struct HotEntry {
 }
 
 /// A search template: the find dialog's conditions under a name (the dir is the panel's).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FindTemplate {
     pub name: String,
     pub find: FindPrefs,

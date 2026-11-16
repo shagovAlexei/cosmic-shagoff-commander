@@ -621,7 +621,6 @@ impl App {
         }
     }
 
-    /// "To panel": the active tab of the dialog's panel lists the results until it is left.
     /// Alt+F7's search templates (233): pick one into the fields, save the fields under a name
     /// (the same name replaced), delete the one picked.
     pub(super) fn find_template(&mut self, m: dialogs::TemplateMsg) -> Task<Message> {
@@ -634,12 +633,11 @@ impl App {
             T::Pick(i) => {
                 if let Some(t) = list.get(i) {
                     f.set_prefs(&t.find);
-                    (f.template, f.error) = (Some(i), None);
+                    (f.template, f.error, f.in_list) = (Some(t.name.clone()), None, false);
                 }
             }
             T::Save => {
-                let name = f.template.and_then(|i| list.get(i));
-                f.naming = Some(name.map(|t| t.name.clone()).unwrap_or_default());
+                f.naming = Some(f.template.clone().unwrap_or_default());
                 return widget::text_input::focus(dialogs::template_name_id());
             }
             T::Name(s) => f.naming = f.naming.as_ref().map(|_| s),
@@ -653,22 +651,20 @@ impl App {
                     name: name.to_string(),
                     find: f.prefs(),
                 };
-                let i = match list.iter().position(|o| o.name == t.name) {
-                    Some(i) => {
-                        list[i] = t;
-                        i
-                    }
-                    None => {
-                        list.push(t);
-                        list.len() - 1
-                    }
-                };
-                (f.template, f.naming) = (Some(i), None);
+                (f.template, f.naming) = (Some(t.name.clone()), None);
+                // The same name: replaced.
+                match list.iter_mut().find(|o| o.name == t.name) {
+                    Some(o) => *o = t,
+                    None => list.push(t),
+                }
                 return self.set(Setting::FindTemplates(list));
             }
+            // By name: the list may have changed under the dialog (another window's save).
             T::Delete => {
-                if let Some(i) = f.template.take().filter(|&i| i < list.len()) {
-                    list.remove(i);
+                let name = f.template.take();
+                let n = list.len();
+                list.retain(|t| Some(&t.name) != name.as_ref());
+                if list.len() != n {
                     return self.set(Setting::FindTemplates(list));
                 }
             }
@@ -676,6 +672,7 @@ impl App {
         Task::none()
     }
 
+    /// "To panel": the active tab of the dialog's panel lists the results until it is left.
     pub(super) fn find_feed(&mut self) -> Task<Message> {
         let Some(Dialog::Find(f)) = &self.dialog else {
             return Task::none();

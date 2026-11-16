@@ -1696,12 +1696,12 @@ impl App {
             {
                 return self.handle(Message::DiffEditDone(false));
             }
-            Message::Escape(_) => return self.handle(Message::DialogCancel),
             // Esc while a search template's name is typed drops only that (233).
-            Message::DialogCancel if matches!(&self.dialog, Some(Dialog::Find(f)) if f.naming.is_some()) =>
+            Message::Escape(_) if matches!(&self.dialog, Some(Dialog::Find(f)) if f.naming.is_some()) =>
             {
                 return self.find_template(dialogs::TemplateMsg::SaveCancel);
             }
+            Message::Escape(_) => return self.handle(Message::DialogCancel),
             Message::DialogCancel => match self.dialog.take() {
                 Some(Dialog::Update {
                     stage: UpdateStage::Working,

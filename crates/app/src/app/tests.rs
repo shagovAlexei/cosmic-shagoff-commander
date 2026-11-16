@@ -7665,7 +7665,8 @@ fn find_templates_save_replace_pick_and_delete() {
     let _ = app.update(Message::FindTemplate(T::Save));
     let _ = app.update(Message::FindTemplate(T::Name("  ".into())));
     let _ = app.update(Message::FindTemplate(T::SaveOk));
-    let _ = app.update(Message::DialogCancel); // Esc: only the name goes
+    let w = app.window_id();
+    let _ = app.update(Message::Escape(w)); // only the name goes
     assert_eq!(find_dialog(&mut app).naming, None);
     assert_eq!(app.config.find_templates.len(), 1);
     // Picking fills the fields, the dialog's dir stays.
@@ -7674,10 +7675,8 @@ fn find_templates_save_replace_pick_and_delete() {
     (f.mask, f.find_text, f.template) = ("*".into(), true, None);
     let _ = app.update(Message::FindTemplate(T::Pick(0)));
     let f = find_dialog(&mut app);
-    assert_eq!(
-        (f.mask.as_str(), f.find_text, f.template),
-        ("*.rs *.toml", false, Some(0))
-    );
+    assert_eq!((f.mask.as_str(), f.find_text), ("*.rs *.toml", false));
+    assert_eq!(f.template.as_deref(), Some("rust"));
     assert_eq!(f.dir, dir);
     let _ = app.update(Message::FindTemplate(T::Delete));
     assert!(app.config.find_templates.is_empty());

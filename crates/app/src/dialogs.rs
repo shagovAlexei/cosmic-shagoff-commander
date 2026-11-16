@@ -495,8 +495,8 @@ pub struct Find {
     pub stop: Option<Arc<AtomicBool>>,
     /// ↑/↓ moved into the results: Enter (a field's submit) goes to the file, not a new search.
     pub in_list: bool,
-    /// The search template last picked or saved (233).
-    pub template: Option<usize>,
+    /// The search template last picked or saved, by name (233).
+    pub template: Option<String>,
     /// «Save template…»: the name being typed.
     pub naming: Option<String>,
 }
@@ -930,7 +930,8 @@ fn find_templates<'a>(
     let mut v: Vec<Element<'a, Message>> = Vec::new();
     if !names.is_empty() {
         v.push(widget::text::body(fl!("find-templates")).into());
-        v.push(widget::dropdown(names, f.template, move |i| msg(T::Pick(i))).into());
+        let at = (f.template.as_ref()).and_then(|n| names.iter().position(|o| o == n));
+        v.push(widget::dropdown(names, at, move |i| msg(T::Pick(i))).into());
     }
     v.push(
         widget::button::standard(fl!("find-template-save"))
@@ -2494,7 +2495,7 @@ pub fn view<'a>(
                             widget::flex_row(
                                 // Typing a template's name: only its field and buttons.
                                 match f.naming {
-                                    Some(_) => Vec::new(),
+                                    Some(_) => vec![run.into()], // Stop stays: a search may run
                                     None => vec![run.into(), go.into(), feed.into(), cancel.into()],
                                 }
                                 .into_iter()
