@@ -176,6 +176,8 @@ pub struct Config {
     pub view_modes: Vec<ViewMode>,
     /// Alt+F7 → search templates (TC's «Load/Save»): the conditions saved by name (233).
     pub find_templates: Vec<FindTemplate>,
+    /// Tabs → Tab sets: both panes' tabs saved by name (234, TC's favourite tabs).
+    pub tab_sets: Vec<TabSet>,
     /// The classic skin's button bar (TC "Change button bar"); default: `toolbar::default_bar`.
     pub toolbar: Vec<ToolButton>,
     /// TC's Start menu: its items as buttons (`tip` the item's name; a separator is `toolbar::SEP`).
@@ -318,6 +320,16 @@ pub struct HotEntry {
     pub path: PathBuf,
 }
 
+/// A tab set: both panes' tabs (dirs, locks, views, sorts, names; no histories) and the
+/// active pane.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TabSet {
+    pub name: String,
+    pub panes: [PaneState; 2],
+    pub active: usize,
+}
+
 /// A search template: the find dialog's conditions under a name (the dir is the panel's).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -402,6 +414,7 @@ impl Default for Config {
             col_set: shagoff_core::columns::default_keys(),
             view_modes: default_view_modes(),
             find_templates: Vec::new(),
+            tab_sets: Vec::new(),
             toolbar: crate::toolbar::default_bar(),
             start_menu: Vec::new(),
             hotkeys: Vec::new(),

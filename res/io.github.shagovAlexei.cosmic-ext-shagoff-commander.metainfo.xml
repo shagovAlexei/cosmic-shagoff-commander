@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.154.0" date="2026-11-16">
+      <description><p>Tabs: tab sets saved by name.</p></description>
+    </release>
     <release version="0.153.0" date="2026-11-16">
       <description><p>Find files: search templates saved by name.</p></description>
     </release>

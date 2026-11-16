@@ -116,6 +116,7 @@ impl App {
             }
             Action::Mkdir => Some(input(InputOp::Mkdir, Vec::new(), String::new())),
             Action::SaveViewMode => Some(input(InputOp::ViewMode, Vec::new(), String::new())),
+            Action::SaveTabSet => Some(input(InputOp::TabSet, Vec::new(), String::new())),
             // TC offers the file under the cursor (an existing one is just opened).
             Action::NewFile => {
                 let name = panel
@@ -802,6 +803,28 @@ impl App {
                     None => modes.push(mode),
                 }
                 self.set(Setting::ViewModes(modes))
+            }
+            Dialog::Input {
+                op: InputOp::TabSet,
+                input,
+                ..
+            } => {
+                let name = input.trim();
+                if name.is_empty() {
+                    return Task::none();
+                }
+                // The same name: replaced.
+                let set = config::TabSet {
+                    name: name.to_string(),
+                    panes: [0, 1].map(|s| self.pane_state(s, false)),
+                    active: self.active,
+                };
+                let mut sets = self.config.tab_sets.clone();
+                match sets.iter_mut().find(|t| t.name == set.name) {
+                    Some(t) => *t = set,
+                    None => sets.push(set),
+                }
+                self.set(Setting::TabSets(sets))
             }
             Dialog::Input {
                 op: InputOp::TabName,

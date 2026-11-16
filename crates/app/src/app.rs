@@ -1368,6 +1368,7 @@ impl Application for App {
             vertical: self.vertical,
             side_tree: self.side_tree.is_some(),
             cols: shagoff_core::columns::Col::ALL.map(|c| self.shown_cols().contains(&c)),
+            tab_sets: c.tab_sets.iter().map(|t| t.name.clone()).collect(),
             modes: (c.view_modes.iter())
                 .map(|m| {
                     (
@@ -1591,24 +1592,7 @@ impl App {
                 }
                 _ => None,
             };
-            let mut tabs = Tabs::new(app.new_tab(paths[0].clone()));
-            for p in &paths[1..] {
-                tabs.open_after(app.new_tab(p.clone()));
-            }
-            tabs.select(active);
-            for (i, t) in tabs.items_mut().iter_mut().enumerate() {
-                t.locked = locked(i);
-                if roam(i) {
-                    t.home = Some(t.panel.cwd().to_path_buf());
-                }
-                t.thumbs = saved.thumbs.get(i).copied().unwrap_or(false);
-                if let Some(&s) = saved.sort.get(i) {
-                    t.panel.set_sort_order(s);
-                }
-                t.brief = !t.thumbs && saved.brief.get(i).copied().unwrap_or(false);
-                t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
-                t.history = saved.history.get(i).cloned().unwrap_or_default();
-            }
+            let mut tabs = app.tabs_from(saved, &paths, active);
             if let Some(l) = extra {
                 tabs.open_after(app.new_tab(l));
             }

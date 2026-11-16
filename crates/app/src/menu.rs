@@ -411,6 +411,8 @@ pub struct Checks {
     pub cols: [bool; shagoff_core::columns::Col::ALL.len()],
     /// The view modes' names, and whether the columns shown are that mode's.
     pub modes: Vec<(String, bool)>,
+    /// Tabs → Tab sets: their names.
+    pub tab_sets: Vec<String>,
     pub human_sizes: bool,
     pub active_frame: bool,
     /// The classic look: only there is «Frame around the active panel» offered (the modern
@@ -687,6 +689,22 @@ fn all_menus(checks: Checks, lock: Lock) -> Vec<(String, Vec<Item>)> {
                 b(fl!("menu-tab-rename"), Action::TabRename),
                 b(fl!("menu-tab-left"), Action::MoveTabLeft),
                 b(fl!("menu-tab-right"), Action::MoveTabRight),
+                menu::Item::Divider,
+                menu::Item::Folder(
+                    fl!("menu-tab-sets"),
+                    (checks.tab_sets.iter().enumerate())
+                        .map(|(i, name)| b(name.clone(), Action::OpenTabSet(i)))
+                        .chain((!checks.tab_sets.is_empty()).then_some(menu::Item::Divider))
+                        .chain([b(fl!("menu-save-tab-set"), Action::SaveTabSet)])
+                        .collect(),
+                ),
+                // Beside «Tab sets», not inside it: a submenu holds no submenu.
+                menu::Item::Folder(
+                    fl!("menu-delete-tab-set"),
+                    (checks.tab_sets.iter().enumerate())
+                        .map(|(i, name)| b(name.clone(), Action::DeleteTabSet(i)))
+                        .collect(),
+                ),
                 menu::Item::Divider,
                 b(fl!("menu-close-tab"), Action::CloseTab),
                 b(fl!("menu-close-other-tabs"), Action::CloseOtherTabs),
@@ -1344,6 +1362,7 @@ mod tests {
             let checks = Checks {
                 classic,
                 modes: vec![("A".into(), false), ("B".into(), true)],
+                tab_sets: vec!["S".into()],
                 ..Checks::default()
             };
             let mut found = Vec::new();
@@ -1421,6 +1440,9 @@ mod tests {
                             | Action::FocusCmdLine
                             | Action::SaveViewMode
                             | Action::DeleteViewMode(_)
+                            | Action::SaveTabSet
+                            | Action::OpenTabSet(_)
+                            | Action::DeleteTabSet(_)
                             | Action::ToggleHumanSizes
                             | Action::ToggleActiveFrame
                             | Action::ConfigureToolbar

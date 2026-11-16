@@ -47,42 +47,7 @@ impl App {
             }
         };
         let state = State {
-            panes: [0, 1].map(|s| PaneState {
-                // One locked with dir changes allowed opens in its dir next time.
-                tabs: self.panes[s]
-                    .items()
-                    .iter()
-                    .map(|t| {
-                        t.home
-                            .clone()
-                            .unwrap_or_else(|| t.panel.cwd().to_path_buf())
-                    })
-                    .collect(),
-                roam: self.panes[s]
-                    .items()
-                    .iter()
-                    .map(|t| t.home.is_some())
-                    .collect(),
-                active: self.panes[s].active_index(),
-                locked: self.panes[s].items().iter().map(|t| t.locked).collect(),
-                brief: self.panes[s].items().iter().map(|t| t.brief).collect(),
-                thumbs: self.panes[s].items().iter().map(|t| t.thumbs).collect(),
-                sort: (self.panes[s].items().iter())
-                    .map(|t| t.panel.sort())
-                    .collect(),
-                names: (self.panes[s].items().iter())
-                    .map(|t| t.name.clone().unwrap_or_default())
-                    .collect(),
-                history: if self.config.keep_history {
-                    self.panes[s]
-                        .items()
-                        .iter()
-                        .map(|t| t.history.clone())
-                        .collect()
-                } else {
-                    Vec::new()
-                },
-            }),
+            panes: [0, 1].map(|s| self.pane_state(s, self.config.keep_history)),
             active: self.active,
             find: self.find.clone(),
             sync: self.sync.clone(),
@@ -104,6 +69,77 @@ impl App {
             log::warn!("state: {e}");
         }
         self.saved = state;
+    }
+
+    /// Pane `s`'s tabs as saved (the state file, a tab set); `history`: with each tab's.
+    pub(super) fn pane_state(&self, s: usize, history: bool) -> PaneState {
+        let tabs = self.panes[s].items();
+        PaneState {
+            // One locked with dir changes allowed opens in its dir next time.
+            tabs: (tabs.iter())
+                .map(|t| {
+                    t.home
+                        .clone()
+                        .unwrap_or_else(|| t.panel.cwd().to_path_buf())
+                })
+                .collect(),
+            roam: tabs.iter().map(|t| t.home.is_some()).collect(),
+            active: self.panes[s].active_index(),
+            locked: tabs.iter().map(|t| t.locked).collect(),
+            brief: tabs.iter().map(|t| t.brief).collect(),
+            thumbs: tabs.iter().map(|t| t.thumbs).collect(),
+            sort: tabs.iter().map(|t| t.panel.sort()).collect(),
+            names: (tabs.iter())
+                .map(|t| t.name.clone().unwrap_or_default())
+                .collect(),
+            history: match history {
+                true => tabs.iter().map(|t| t.history.clone()).collect(),
+                false => Vec::new(),
+            },
+        }
+    }
+
+    /// Tabs on `paths` (`active` selected) with what `saved` says of each (lock, view, sort…).
+    pub(super) fn tabs_from(
+        &mut self,
+        saved: &PaneState,
+        paths: &[PathBuf],
+        active: usize,
+    ) -> Tabs<Tab> {
+        let locked = |i: usize| saved.locked.get(i).copied().unwrap_or(false);
+        let mut tabs = Tabs::new(self.new_tab(paths[0].clone()));
+        for p in &paths[1..] {
+            tabs.open_after(self.new_tab(p.clone()));
+        }
+        tabs.select(active);
+        for (i, t) in tabs.items_mut().iter_mut().enumerate() {
+            t.locked = locked(i);
+            if saved.roam.get(i).copied().unwrap_or(false) {
+                t.home = Some(t.panel.cwd().to_path_buf());
+            }
+            t.thumbs = saved.thumbs.get(i).copied().unwrap_or(false);
+            if let Some(&s) = saved.sort.get(i) {
+                t.panel.set_sort_order(s);
+            }
+            t.brief = !t.thumbs && saved.brief.get(i).copied().unwrap_or(false);
+            t.name = saved.names.get(i).filter(|n| !n.is_empty()).cloned();
+            t.history = saved.history.get(i).cloned().unwrap_or_default();
+        }
+        tabs
+    }
+
+    /// Tabs → Tab sets → `i` (234): both panes' tabs become the set's (a missing dir: its
+    /// nearest parent), the active pane its.
+    pub(super) fn open_tab_set(&mut self, i: usize) -> Task<Message> {
+        let Some(set) = self.config.tab_sets.get(i).cloned() else {
+            return Task::none();
+        };
+        for (side, saved) in set.panes.iter().enumerate() {
+            let (paths, active) = session::restore(saved, &self.home);
+            self.panes[side] = self.tabs_from(saved, &paths, active);
+        }
+        self.active = set.active.min(1);
+        self.load_all()
     }
 
     /// Parent window of context menu popups.

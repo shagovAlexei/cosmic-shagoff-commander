@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.154.0 — 2026-11-16
+
+- Tabs → «Tab sets»: «Save tabs as…» keeps both panels' tabs (dirs, locks, views, sorting, names) under a name; picking a set opens its tabs in place of the current ones; «Delete tab set» beside it
+
 ## 0.153.0 — 2026-11-16
 
 - Find files (Alt+F7): search templates — «Save template…» keeps all the conditions under a name (the same name is replaced), «Template:» picks one back into the fields, «Delete template» removes it
