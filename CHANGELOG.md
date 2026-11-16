@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.151.0 — 2026-11-16
+
+- Viewer (F3): a Markdown file (`.md`, `.markdown`) opens formatted — headings, lists, quotes, code blocks, tables, links that open in the browser; «Markdown (5)» / key 5 to it, 1 back to the text, search (F7) shows the text. Code (Rust, C-like languages, Python and shell scripts, SQL, Lua, config files…) is shown with keywords, strings, comments and numbers in colour
+
 ## 0.150.0 — 2026-11-16
 
 - Encrypt / decrypt files (Files → Archives and checksums): `name` → `name.gpg` with a password (AES-256) or to a public key from your GnuPG keyring, and back (`.gpg`, `.pgp`, `.asc`); a key's own passphrase is asked by GnuPG itself. Through the `gpg` program; the password goes to it on its input, never on the command line, and is not cached; an existing file is never replaced

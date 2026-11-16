@@ -29,7 +29,7 @@ Light theme (*Settings → Theme*, or the system's):
 - Git in the panels: the branch in the path line, names coloured by their state (changed, new, ignored, conflict), a «Git» column in View → Columns
 - Space map (Ctrl+Shift+L): a folder's contents as bars, biggest first, with size and share; Enter steps into a folder, Backspace back out, «Go» opens it in the panel
 - Ctrl+Z undoes the last move, rename, copy, delete to the trash or new folder; a replace or a delete for good says it cannot be undone
-- Built-in viewer (F3): text with wrap and code pages (guessed: Cyrillic 1251 / KOI8-R / 866, Western, Central European, Greek, Japanese, Chinese…), hex, images; quick view in the other panel (Ctrl+Q), also inside archives
+- Built-in viewer (F3): text with wrap and code pages (guessed: Cyrillic 1251 / KOI8-R / 866, Western, Central European, Greek, Japanese, Chinese…), hex, images, Markdown formatted, code in colour; quick view in the other panel (Ctrl+Q), also inside archives
 - Find files (masks or regex, text inside, size / date, inside archives, duplicates), compare and synchronize folders, compare files side by side
 - Properties with permission bits, multi-rename, command line `path>`, network mounts through gvfs, clouds (OneDrive, Google Drive, Dropbox, Box, Yandex Disk, pCloud, Google Photos, HiDrive, Mail.ru Cloud, S3, Backblaze B2, Nextcloud / WebDAV, Koofr, Seafile, Zoho WorkDrive, Jottacloud, MEGA, Proton Drive, iCloud Drive) through rclone
 - Terminal of your choice (Commands → Terminal…: the system default or any installed one) opens in the panel's folder and runs Shift+Enter

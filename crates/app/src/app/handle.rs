@@ -1221,6 +1221,11 @@ impl App {
                     }
                 }
             }
+            Message::ListerMdScrolled(y, h, total) => {
+                if let Some(l) = &mut self.lister {
+                    (l.offset.1, l.height, l.md_h) = (y, h, total);
+                }
+            }
             Message::ListerFit => {
                 if let Some(l) = &mut self.lister {
                     l.zoom = None;

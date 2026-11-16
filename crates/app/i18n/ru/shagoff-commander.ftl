@@ -467,6 +467,7 @@ lister-text = Текст (1)
 lister-wrap = Перенос (W)
 lister-hex = Hex (3)
 lister-image = Картинка (4)
+lister-markdown = Markdown (5)
 lister-loading = Чтение…
 lister-info-lines = строк: { $n }, { $size } б
 lister-info = { $size } б

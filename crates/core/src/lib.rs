@@ -43,6 +43,7 @@ pub mod sort;
 pub mod spacemap;
 pub mod split;
 pub mod sync;
+pub mod syntax;
 pub mod tabs;
 pub mod templates;
 pub mod terminals;

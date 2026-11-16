@@ -591,11 +591,13 @@ pub fn lister_key(key: &Key, physical: Physical, mods: Modifiers) -> Option<List
         _ if !mods.is_empty() => return None,
         _ => {}
     }
-    // TC: 1 text, 3 hex, 4 multimedia; N / P next / previous file; Q closes.
+    // TC: 1 text, 3 hex, 4 multimedia, 5 formatted (HTML there, Markdown here); N / P next /
+    // previous file; Q closes.
     Some(match physical {
         Physical::Code(Code::Digit1 | Code::Numpad1) => ListerKey::Mode(Mode::Text),
         Physical::Code(Code::Digit3 | Code::Numpad3) => ListerKey::Mode(Mode::Hex),
         Physical::Code(Code::Digit4 | Code::Numpad4) => ListerKey::Mode(Mode::Image),
+        Physical::Code(Code::Digit5 | Code::Numpad5) => ListerKey::Mode(Mode::Markdown),
         Physical::Code(Code::KeyN) => ListerKey::Next,
         Physical::Code(Code::KeyP) => ListerKey::Prev,
         Physical::Code(Code::KeyQ) => ListerKey::Close,
