@@ -1050,6 +1050,8 @@ pub enum Message {
     Letter(ListerKey, char),
     /// x, y scroll offset, viewport height.
     ListerScrolled(f32, f32, f32),
+    /// F3 Markdown scrolled: y, the view's height, the page's.
+    ListerMdScrolled(f32, f32, f32),
     /// Viewer selection: pointer over the text (viewport px), left button down / up.
     ListerPointer(f32, f32),
     ListerPress,

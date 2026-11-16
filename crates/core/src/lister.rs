@@ -15,6 +15,8 @@ pub enum Mode {
     Text,
     Hex,
     Image,
+    /// A Markdown file formatted (231).
+    Markdown,
 }
 
 /// Byte order mark of the file: windows past the first are decoded the same way.
@@ -417,9 +419,19 @@ pub fn detect(name: &str, bytes: &[u8]) -> Mode {
         Mode::Image
     } else if bytes[..bytes.len().min(8192)].contains(&0) {
         Mode::Hex
+    } else if is_markdown(name) {
+        Mode::Markdown
     } else {
         Mode::Text
     }
+}
+
+/// A Markdown file by its name.
+pub fn is_markdown(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [".md", ".markdown", ".mdown", ".mkd"]
+        .iter()
+        .any(|e| lower.ends_with(e))
 }
 
 /// Byte ranges of the lines (without `\n` / `\r\n`), lines wider than `max_cols` cells split:
@@ -863,6 +875,7 @@ mod tests {
         assert_eq!(detect("a.bin", b"ab\0cd"), Mode::Hex);
         assert_eq!(detect("a.txt", "привет".as_bytes()), Mode::Text);
         assert_eq!(detect("png", b""), Mode::Text); // no extension
+        assert_eq!(detect("README.MD", b"# x"), Mode::Markdown);
     }
 
     #[test]

@@ -259,6 +259,9 @@ pub struct Lister {
     pub slide: Option<Slide>,
     /// Where a search through other windows started: window start, scroll y, the match shown.
     origin: Option<(u64, f32, Option<usize>)>,
+    /// `Mode::Markdown`: the file parsed (when the mode is first shown) and the height it takes.
+    md: Option<Vec<widget::markdown::Item>>,
+    pub md_h: f32,
 }
 
 impl Lister {
@@ -316,6 +319,8 @@ impl Lister {
             file: None,
             slide: None,
             origin: None,
+            md: None,
+            md_h: 0.0,
             query: String::new(),
             searching: false,
             scroll: widget::Id::unique(),
@@ -365,6 +370,8 @@ impl Lister {
         if let Ok(l) = loaded.as_ref() {
             self.mode = match lister::detect(&self.name, l.doc.text()) {
                 Mode::Image if l.image.is_none() => Mode::Hex,
+                // Formatted only whole (a big file is read window by window).
+                Mode::Markdown if l.doc.truncated() => Mode::Text,
                 m => m,
             };
             // Not UTF-8: guess the code page, unless one was chosen (A / S / K, the list).
@@ -373,6 +380,7 @@ impl Lister {
             }
         }
         self.loaded = Some(loaded);
+        self.md = None;
         self.zoom = None; // each picture opens fitted
         self.allocation = None;
         self.wake_until = None;
@@ -451,6 +459,11 @@ impl Lister {
             Some(l) if l.shape != shape => Some(Text::new(&l.doc, shape.0, shape.1)),
             _ => None,
         };
+        self.md = None; // another encoding: parsed again
+        self.md_h = 0.0;
+        if self.mode == Mode::Markdown {
+            self.parse_md();
+        }
         self.hit = None;
         self.sel = None; // rows changed under it
     }
@@ -479,16 +492,38 @@ impl Lister {
         }
     }
 
-    /// `4` on a file that is not an image does nothing.
+    /// Markdown can be shown: a Markdown file read whole.
+    pub fn can_md(&self) -> bool {
+        lister::is_markdown(&self.name) && self.ok().is_some_and(|l| !l.doc.truncated())
+    }
+
+    fn parse_md(&mut self) {
+        if self.md.is_none()
+            && let Some((doc, text)) = self.text()
+        {
+            let s = String::from_utf8_lossy(text.bytes(doc));
+            self.md = Some(widget::markdown::parse(&s).collect());
+        }
+    }
+
+    /// `4` on a file that is not an image does nothing, `5` on one that is not Markdown neither.
     pub fn set_mode(&mut self, mode: Mode) {
         // While reading: the mode detected on arrival would undo it.
         if self.loaded.is_none() {
             return;
         }
-        if mode != Mode::Image || self.ok().is_some_and(|l| l.image.is_some()) {
+        let ok = match mode {
+            Mode::Image => self.ok().is_some_and(|l| l.image.is_some()),
+            Mode::Markdown => self.can_md(),
+            _ => true,
+        };
+        if ok {
             self.mode = mode;
             self.hit = None;
             self.sel = None;
+            if mode == Mode::Markdown {
+                self.parse_md();
+            }
         }
     }
 
@@ -509,6 +544,7 @@ impl Lister {
         // A zoomed picture pans by PAN px and pages by the window, the text by rows.
         let (step, total, page) = match self.zoomed().filter(|_| self.mode == Mode::Image) {
             Some((_, h)) => (PAN, h, self.height * 0.9),
+            None if self.mode == Mode::Markdown => (self.row_h(), self.md_h, self.height * 0.9),
             None => (
                 self.row_h(),
                 self.rows() as f32 * self.row_h(),
@@ -549,6 +585,10 @@ impl Lister {
     /// Search: from the top visible row (`again`: from the row after / before the last match).
     /// Returns the y to scroll to on a match.
     pub fn find(&mut self, forward: bool, again: bool) -> Option<f32> {
+        // Rows are the text's: Markdown is searched as text (TC: search shows the plain file).
+        if self.mode == Mode::Markdown {
+            self.mode = Mode::Text;
+        }
         let start = match (again, self.hit) {
             (true, Some(h)) if forward => h + 1,
             (true, Some(h)) => h.checked_sub(1)?,
@@ -564,7 +604,7 @@ impl Lister {
                 lister::find_line(text.bytes(doc), &text.lines, &self.query, start, forward)
             }
             Mode::Hex => lister::find_bytes(&doc.bytes, self.query.as_bytes(), start, forward),
-            Mode::Image => None,
+            Mode::Image | Mode::Markdown => None, // `find` turns Markdown to text
         }?;
         self.hit = Some(row);
         // A couple of rows of context above the match.
@@ -804,6 +844,9 @@ pub fn view(l: &Lister) -> Element<'_, Message> {
         mode_button(fl!("lister-text"), Mode::Text, l.mode),
         mode_button(fl!("lister-hex"), Mode::Hex, l.mode),
     ];
+    if l.can_md() {
+        modes.push(mode_button(fl!("lister-markdown"), Mode::Markdown, l.mode));
+    }
     if l.ok().is_some_and(|x| x.image.is_some()) {
         modes.push(mode_button(fl!("lister-image"), Mode::Image, l.mode));
     }
@@ -925,6 +968,9 @@ fn content(l: &Lister) -> Element<'_, Message> {
     let (Some(x), Some((doc, txt))) = (l.ok(), l.text()) else {
         return widget::Space::new().into();
     };
+    if l.mode == Mode::Markdown {
+        return markdown(l);
+    }
     if l.mode == Mode::Image {
         let img: Element<'_, Message> = match (&x.image, l.zoomed()) {
             // Zoomed: its own size times the zoom, scrolled (also by the keys) when bigger.
@@ -984,6 +1030,7 @@ fn content(l: &Lister) -> Element<'_, Message> {
             .font(cosmic::font::mono())
             .wrapping(Wrapping::None)
     };
+    let lang = shagoff_core::syntax::lang(&l.name);
     for i in range.clone() {
         let line = l.row_text(doc, txt, i);
         let picked = l.sel.and_then(|s| s.in_row(i, line.chars().count()));
@@ -999,7 +1046,11 @@ fn content(l: &Lister) -> Element<'_, Message> {
                 ]
                 .into()
             }
-            None => mono(line).into(),
+            // Code: coloured, but not under the search match's own colours.
+            None => match lang.filter(|_| l.hit != Some(i) && l.mode == Mode::Text) {
+                Some(lang) => coloured(line, lang, l.size),
+                None => mono(line).into(),
+            },
         };
         let hit = l.hit == Some(i);
         list = list.push(
@@ -1038,6 +1089,97 @@ fn content(l: &Lister) -> Element<'_, Message> {
         .on_press(Message::ListerPress)
         .on_release(Message::ListerRelease)
         .on_double_click(Message::ListerDoubleClick)
+        .into()
+}
+
+/// A code row: its keywords, strings, comments and numbers in the theme's colours.
+fn coloured(
+    line: String,
+    lang: &shagoff_core::syntax::Lang,
+    size: u16,
+) -> Element<'static, Message> {
+    use cosmic::iced::widget::{rich_text, span};
+    use shagoff_core::syntax::Kind;
+    let theme = cosmic::theme::active();
+    let c = theme.cosmic();
+    let colour = |k: Kind| -> cosmic::iced::Color {
+        match k {
+            Kind::Keyword => c.accent_text_color().into(),
+            Kind::Str => c.success_color().into(),
+            Kind::Number => c.warning_color().into(),
+            Kind::Comment => {
+                let mut g: cosmic::iced::Color = c.on_bg_color().into();
+                g.a = 0.55;
+                g
+            }
+        }
+    };
+    let mono = cosmic::font::mono();
+    let mut spans = Vec::new();
+    let mut at = 0;
+    for (r, k) in shagoff_core::syntax::spans(&line, lang) {
+        if r.start > at {
+            spans.push(span(line[at..r.start].to_string()).font(mono));
+        }
+        spans.push(
+            span(line[r.clone()].to_string())
+                .font(mono)
+                .color(colour(k)),
+        );
+        at = r.end;
+    }
+    if at < line.len() {
+        spans.push(span(line[at..].to_string()).font(mono));
+    }
+    rich_text::<'static, (), Message, cosmic::Theme, cosmic::Renderer>(spans)
+        .size(size)
+        .font(mono)
+        .wrapping(Wrapping::None)
+        .into()
+}
+
+/// `Mode::Markdown`: the file formatted, scrolled as a whole; a link opens in the browser.
+fn markdown(l: &Lister) -> Element<'_, Message> {
+    use widget::markdown;
+    let Some(items) = &l.md else {
+        return widget::Space::new().into();
+    };
+    let theme = cosmic::theme::active();
+    let c = theme.cosmic();
+    let palette = cosmic::iced::theme::Palette {
+        background: c.bg_color().into(),
+        text: c.on_bg_color().into(),
+        primary: c.accent_text_color().into(),
+        success: c.success_color().into(),
+        warning: c.warning_color().into(),
+        danger: c.destructive_color().into(),
+    };
+    let mut style = markdown::Style::from_palette(palette);
+    style.font = cosmic::font::default();
+    style.code_block_font = cosmic::font::mono();
+    style.inline_code_font = cosmic::font::mono();
+    let mut settings = markdown::Settings::with_text_size(l.size, style);
+    settings.code_size = settings.text_size * 0.9; // 0.75 by default: hard to read
+
+    let page = markdown::view(items, settings).map(|url: String| {
+        // Only what a browser opens: a relative link is a file of the repo, not on the web.
+        if url.contains("://") || url.starts_with("mailto:") {
+            Message::OpenUrl(url)
+        } else {
+            Message::ListerWake // a redraw: nothing to do
+        }
+    });
+    widget::scrollable(widget::container(page).padding([0, 12, 12, 0]))
+        .id(l.scroll.clone())
+        .on_scroll(|v| {
+            Message::ListerMdScrolled(
+                v.absolute_offset().y,
+                v.bounds().height,
+                v.content_bounds().height,
+            )
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
         .into()
 }
 
@@ -1095,7 +1237,11 @@ mod tests {
     }
 
     fn text(s: &str) -> Lister {
-        let mut l = Lister::new(0, "a.txt".into(), 1, crate::config::LISTER_SIZE);
+        named("a.txt", s)
+    }
+
+    fn named(name: &str, s: &str) -> Lister {
+        let mut l = Lister::new(0, name.into(), 1, crate::config::LISTER_SIZE);
         let doc = Doc {
             bytes: s.as_bytes().to_vec(),
             decoded: None,
@@ -1344,5 +1490,21 @@ mod tests {
         l.set_mode(Mode::Hex);
         assert_eq!(l.mode, Mode::Hex);
         assert_eq!(l.rows(), 1);
+    }
+
+    #[test]
+    fn markdown_opens_formatted_5_only_for_one_and_search_turns_it_to_text() {
+        let mut l = named("README.md", "# Title\n\ntext");
+        assert_eq!(l.mode, Mode::Markdown);
+        assert!(l.md.as_ref().is_some_and(|m| m.len() == 2));
+        l.set_mode(Mode::Text);
+        l.set_mode(Mode::Markdown);
+        assert_eq!(l.mode, Mode::Markdown);
+        l.query = "text".into();
+        assert!(l.find(true, false).is_some());
+        assert_eq!((l.mode, l.hit), (Mode::Text, Some(2)));
+        let mut t = text("# no");
+        t.set_mode(Mode::Markdown); // not a Markdown file
+        assert_eq!(t.mode, Mode::Text);
     }
 }

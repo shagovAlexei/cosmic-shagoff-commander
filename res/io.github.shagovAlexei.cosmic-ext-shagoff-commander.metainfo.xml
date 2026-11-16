@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.151.0" date="2026-11-16">
+      <description><p>Viewer (F3): Markdown shown formatted, code in colour.</p></description>
+    </release>
     <release version="0.150.0" date="2026-11-16">
       <description><p>Encrypt and decrypt files with GnuPG: a password or a public key.</p></description>
     </release>

@@ -465,6 +465,7 @@ lister-text = Text (1)
 lister-wrap = Wrap (W)
 lister-hex = Hex (3)
 lister-image = Image (4)
+lister-markdown = Markdown (5)
 lister-loading = Reading…
 lister-info-lines = { $n } lines, { $size } B
 lister-info = { $size } B
