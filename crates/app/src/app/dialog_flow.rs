@@ -273,12 +273,21 @@ impl App {
                     dirs.iter().any(|d| d == p)
                 });
                 let path = self.panes[1 - side].active().panel.cwd().join(name);
+                let mut path = path.display().to_string();
+                let mask = self.config.pack_date_mask.clone();
+                let stamp = match self.config.pack_date {
+                    true => pack_stamp(&mask, &self.tz),
+                    false => String::new(),
+                };
+                path = archive::dated(&path, &stamp);
                 Some(Dialog::Pack(Box::new(dialogs::Pack {
                     side,
                     sources,
                     dirs,
                     base,
-                    path: path.display().to_string(),
+                    path,
+                    mask,
+                    stamp,
                     format,
                     move_after: action == Action::MoveToArchive,
                     separate: false,
@@ -882,6 +891,17 @@ impl App {
                 self.start_job(m.side, OpKind::Move, job, focus)
             }
             Dialog::Pack(p) => {
+                if p.mask != self.config.pack_date_mask {
+                    let mask = p.mask.clone();
+                    match &self.config_handler {
+                        Some(h) => {
+                            if let Err(e) = self.config.set_pack_date_mask(h, mask) {
+                                self.config_not_saved(&e);
+                            }
+                        }
+                        None => self.config.pack_date_mask = mask,
+                    }
+                }
                 let Ok(password) = p.password() else {
                     self.dialog = Some(Dialog::Pack(p)); // Enter does nothing until they match
                     return Task::none();
@@ -895,10 +915,12 @@ impl App {
                 let is_dir = |s: &Path| p.dirs.iter().any(|d| d == s);
                 let mut groups =
                     archive::groups(&p.sources, &p.base, &path, p.format, p.separate, &is_dir);
-                if p.dated {
-                    let stamp = format::name_stamp(std::time::SystemTime::now(), &self.tz);
+                // One archive: the date is in the path as shown; one per file or into a dir
+                // (`…/`, the default name): added to each.
+                let named = !p.separate && !p.path.trim().ends_with('/');
+                if !named && !p.stamp.is_empty() {
                     for (_, a) in &mut groups {
-                        *a = archive::dated(a, &stamp);
+                        *a = archive::dated(&a.to_string_lossy(), &p.stamp).into();
                     }
                 }
                 // Cursor on the new archive when it lands in this panel.

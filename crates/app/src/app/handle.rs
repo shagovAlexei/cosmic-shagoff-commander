@@ -642,6 +642,17 @@ impl App {
                     *recursive = b;
                 }
             }
+            // Kept in the config when packing (`submit_dialog`), not on every key.
+            Message::PackDateMask(mask) => {
+                if let Some(Dialog::Pack(p)) = &mut self.dialog {
+                    if p.dated {
+                        let stamp = pack_stamp(&mask, &self.tz);
+                        p.path = archive::restamp(&p.path, &p.stamp, &stamp);
+                        p.stamp = stamp;
+                    }
+                    p.mask = mask;
+                }
+            }
             Message::PackPassword(again, s) => {
                 if let Some(Dialog::Pack(p)) = &mut self.dialog {
                     *if again { &mut p.again } else { &mut p.password } = s;
@@ -652,6 +663,13 @@ impl App {
                 (Some(Dialog::Pack(p)), Toggle::Separate) => p.separate = !p.separate,
                 (Some(Dialog::Pack(p)), Toggle::PackDate) => {
                     p.dated = !p.dated;
+                    // Shown in the path at once, there to be edited.
+                    p.path = archive::undated(&p.path, &p.stamp);
+                    p.stamp = match p.dated {
+                        true => pack_stamp(&p.mask, &self.tz),
+                        false => String::new(),
+                    };
+                    p.path = archive::dated(&p.path, &p.stamp);
                     let v = p.dated;
                     match &self.config_handler {
                         Some(h) => {
@@ -661,6 +679,10 @@ impl App {
                         }
                         None => self.config.pack_date = v,
                     }
+                    // The path's end in view: the name with its date.
+                    return widget::text_input::focus(self.input_id.clone()).chain(
+                        widget::text_input::move_cursor_to_end(self.input_id.clone()),
+                    );
                 }
                 (Some(Dialog::Pack(p)), Toggle::Encrypt) => {
                     p.encrypt = !p.encrypt;

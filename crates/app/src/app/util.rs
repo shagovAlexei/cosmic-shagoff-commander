@@ -673,6 +673,12 @@ pub(super) fn scan_terminals() -> Task<Message> {
     )
 }
 
+/// Alt+F5 «Add date to name»: `mask` at this moment; a `/` would make it a dir: dropped.
+pub(super) fn pack_stamp(mask: &str, tz: &TimeZone) -> String {
+    let s = shagoff_core::multirename::stamp(mask, std::time::SystemTime::now(), tz);
+    s.replace('/', "")
+}
+
 /// The window's title; the one run as root says so (232).
 pub(super) fn app_title() -> String {
     match shagoff_core::launch::is_root() {

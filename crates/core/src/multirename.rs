@@ -89,6 +89,17 @@ pub fn new_name(rule: &Rule, old: &str, mtime: SystemTime, index: usize, tz: &Ti
     apply_case(&out, rule.case)
 }
 
+/// Alt+F5 «Add date to name»: `mask`'s date tokens (`[Y] [M] [D] [h] [m] [s]`, as in the
+/// multi-rename) at `t`; other text as typed.
+pub fn stamp(mask: &str, t: SystemTime, tz: &TimeZone) -> String {
+    let rule = Rule {
+        name: mask.to_string(),
+        ext: String::new(),
+        ..Rule::default()
+    };
+    new_name(&rule, "", t, 0, tz)
+}
+
 struct Ctx<'a> {
     name: &'a str,
     ext: &'a str,
@@ -384,6 +395,16 @@ mod tests {
         );
         let plus3 = TimeZone::fixed(jiff::tz::offset(3));
         assert_eq!(new_name(&rule("[h]", ""), "a", when(), 0, &plus3), "17");
+    }
+
+    #[test]
+    fn stamp_takes_the_date_tokens_and_keeps_the_rest() {
+        let utc = TimeZone::UTC;
+        assert_eq!(
+            stamp("_[Y]-[M]-[D]-[h]-[m]", when(), &utc),
+            "_2026-10-02-14-05"
+        );
+        assert_eq!(stamp(" [Y]_[M]_[D]", when(), &utc), " 2026_10_02");
     }
 
     #[test]
