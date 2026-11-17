@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.156.0 — 2026-11-17
+
+- Pack (Alt+F5): «Add date to name» puts the date into the path at once (unticked, it goes), so it can be edited there; beside it, its mask with the multi-rename's date variables ([Y] [M] [D] [h] [m] [s], the rest as typed; `_[Y]-[M]-[D]-[h]-[m]` by default), kept for next time
+
 ## 0.155.0 — 2026-11-16
 
 - Rename (F2 / Shift+F6): the name without its extension is selected at once (a folder, a name without a dot and a dotfile: all of it); F2 again selects the name with its extension, again without, and so on

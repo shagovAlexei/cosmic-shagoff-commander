@@ -723,8 +723,14 @@ pub struct Pack {
     pub format: Format,
     pub move_after: bool,
     pub separate: bool,
-    /// «Add date to name»: `archive::dated` on each archive at submit.
+    /// «Add date to name»: `stamp` is in `path` (and added to each archive's name with
+    /// `separate`).
     pub dated: bool,
+    /// What `dated` adds, with date tokens (`config.pack_date_mask`).
+    pub mask: String,
+    /// `mask` at the time it was put in `path` ("" while not dated): taken out again, or
+    /// replaced when the mask changes.
+    pub stamp: String,
     /// Zip / 7z «Шифровать» (TC): shows the password fields.
     pub encrypt: bool,
     /// Typed twice, as in TC (a typo would lock the files away).
@@ -1986,9 +1992,20 @@ pub fn view<'a>(
                         widget::checkbox(p.separate)
                             .label(fl!("pack-separate"))
                             .on_toggle(|_| Message::Toggle(Toggle::Separate)),
-                        widget::checkbox(p.dated)
-                            .label(fl!("pack-date"))
-                            .on_toggle(|_| Message::Toggle(Toggle::PackDate)),
+                        row![
+                            widget::checkbox(p.dated)
+                                .label(fl!("pack-date"))
+                                .on_toggle(|_| Message::Toggle(Toggle::PackDate)),
+                            widget::tooltip(
+                                widget::text_input("", &p.mask)
+                                    .on_input(Message::PackDateMask)
+                                    .width(Length::Fixed(200.0)),
+                                widget::text(fl!("pack-date-tokens")),
+                                widget::tooltip::Position::Bottom,
+                            ),
+                        ]
+                        .spacing(12)
+                        .align_y(cosmic::iced::Alignment::Center),
                     ]
                     .push_maybe(p.format.can_encrypt().then(|| {
                         widget::checkbox(p.encrypt)

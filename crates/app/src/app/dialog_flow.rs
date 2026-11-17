@@ -273,12 +273,21 @@ impl App {
                     dirs.iter().any(|d| d == p)
                 });
                 let path = self.panes[1 - side].active().panel.cwd().join(name);
+                let mut path = path.display().to_string();
+                let mask = self.config.pack_date_mask.clone();
+                let stamp = match self.config.pack_date {
+                    true => self.pack_stamp(&mask),
+                    false => String::new(),
+                };
+                path = archive::dated(&path, &stamp);
                 Some(Dialog::Pack(Box::new(dialogs::Pack {
                     side,
                     sources,
                     dirs,
                     base,
-                    path: path.display().to_string(),
+                    path,
+                    mask,
+                    stamp,
                     format,
                     move_after: action == Action::MoveToArchive,
                     separate: false,
@@ -895,10 +904,10 @@ impl App {
                 let is_dir = |s: &Path| p.dirs.iter().any(|d| d == s);
                 let mut groups =
                     archive::groups(&p.sources, &p.base, &path, p.format, p.separate, &is_dir);
-                if p.dated {
-                    let stamp = format::name_stamp(std::time::SystemTime::now(), &self.tz);
+                // One archive: the date is in the path as shown; one per file: added to each.
+                if p.separate && !p.stamp.is_empty() {
                     for (_, a) in &mut groups {
-                        *a = archive::dated(a, &stamp);
+                        *a = archive::dated(&a.to_string_lossy(), &p.stamp).into();
                     }
                 }
                 // Cursor on the new archive when it lands in this panel.

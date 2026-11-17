@@ -4025,6 +4025,34 @@ fn pack_date_checkbox_is_remembered() {
 }
 
 #[test]
+fn pack_date_goes_into_the_path_and_follows_the_mask() {
+    let (_tmp, mut app) = pack_setup();
+    let _ = app.update(Message::Key(Action::Pack));
+    let path = |app: &App| match &app.dialog {
+        Some(Dialog::Pack(p)) => p.path.clone(),
+        _ => panic!(),
+    };
+    let plain = path(&app);
+    assert!(plain.ends_with("/readme.zip"), "{plain}");
+    let _ = app.update(Message::Toggle(dialogs::Toggle::PackDate));
+    let dated = path(&app);
+    let year = app.pack_stamp("[Y]");
+    assert!(
+        dated.contains(&format!("/readme_{year}-")) && dated.ends_with(".zip"),
+        "{dated}"
+    );
+    // Another mask: the date in the path changes with it, the mask is kept.
+    let _ = app.update(Message::PackDateMask(" [Y]".into()));
+    assert!(path(&app).ends_with(&format!("/readme {year}.zip")));
+    assert_eq!(app.config.pack_date_mask, " [Y]");
+    // Another format keeps it; unticked, it goes.
+    let _ = app.update(Message::PackFormat(archive::Format::TarGz));
+    assert!(path(&app).ends_with(&format!("/readme {year}.tar.gz")));
+    let _ = app.update(Message::Toggle(dialogs::Toggle::PackDate));
+    assert!(path(&app).ends_with("/readme.tar.gz"));
+}
+
+#[test]
 fn pack_password_must_be_typed_twice_alike() {
     let (_tmp, mut app) = pack_setup();
     let _ = app.update(Message::Key(Action::Pack));

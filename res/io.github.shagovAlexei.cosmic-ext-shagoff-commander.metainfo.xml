@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.156.0" date="2026-11-17">
+      <description><p>Pack: the date shown in the archive's path at once, its format your own.</p></description>
+    </release>
     <release version="0.155.0" date="2026-11-16">
       <description><p>Rename: the name without its extension selected, F2 switches to the whole name.</p></description>
     </release>

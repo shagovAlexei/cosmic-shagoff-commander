@@ -801,6 +801,8 @@ pub enum Message {
     TrashListed(usize, Result<Vec<PathBuf>, String>),
     /// Alt+F5's password field (`true`: the second one).
     PackPassword(bool, String),
+    /// Alt+F5: the «Add date to name» mask typed.
+    PackDateMask(String),
     /// Change date and time: a field's text / a time's box / «Now» / «inside folders».
     DateText(usize, String),
     DateChange(usize, bool),

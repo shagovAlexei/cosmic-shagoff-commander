@@ -104,6 +104,8 @@ pub struct Config {
     pub pack_format: String,
     /// Alt+F5 «Add date to name»: last state of the checkbox.
     pub pack_date: bool,
+    /// Alt+F5 «Add date to name»: what is added, with the multi-rename's date tokens.
+    pub pack_date_mask: String,
     /// Files → «Create checksum files»: the last algorithm picked (`Algo::ext`).
     pub checksum_algo: String,
     /// Interface language: "" (system), "en", "ru".
@@ -330,6 +332,9 @@ pub struct TabSet {
     pub active: usize,
 }
 
+/// `pack_date_mask` of a new install: `a_2026-11-17-09-30.zip`.
+pub const PACK_DATE_MASK: &str = "_[Y]-[M]-[D]-[h]-[m]";
+
 /// A search template: the find dialog's conditions under a name (the dir is the panel's).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -377,6 +382,7 @@ impl Default for Config {
             hotlist: Vec::new(),
             pack_format: "zip".into(),
             pack_date: false,
+            pack_date_mask: PACK_DATE_MASK.into(),
             checksum_algo: "sha256".into(),
             language: String::new(),
             app_theme: AppTheme::System,

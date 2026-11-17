@@ -135,14 +135,25 @@ pub fn with_format(path: &str, f: Format) -> String {
     format!("{base}.{}", f.ext())
 }
 
-/// Alt+F5 «Add date to name»: `_stamp` before the archive extension (`a.tar.gz` →
-/// `a_<stamp>.tar.gz`), at the end of a name without one.
-pub fn dated(path: &Path, stamp: &str) -> PathBuf {
-    let name = path
-        .file_name()
-        .map_or(String::new(), |n| n.to_string_lossy().into_owned());
-    let stem = stem(&name);
-    path.with_file_name(format!("{stem}_{stamp}{}", &name[stem.len()..]))
+/// Alt+F5 «Add date to name»: `stamp` before the archive extension (`a.tar.gz` →
+/// `a<stamp>.tar.gz`), at the end of a name without one. On a path typed as text (the field).
+pub fn dated(path: &str, stamp: &str) -> String {
+    let at = path.rfind('/').map_or(0, |i| i + 1);
+    let end = at + stem(&path[at..]).len();
+    format!("{}{stamp}{}", &path[..end], &path[end..])
+}
+
+/// `dated` undone: `stamp`'s last place in the file name taken out (the name left as typed if
+/// it is not there).
+pub fn undated(path: &str, stamp: &str) -> String {
+    let at = path.rfind('/').map_or(0, |i| i + 1);
+    match path[at..].rfind(stamp) {
+        Some(i) if !stamp.is_empty() => {
+            let i = at + i;
+            format!("{}{}", &path[..i], &path[i + stamp.len()..])
+        }
+        _ => path.to_string(),
+    }
 }
 
 /// `(sources, archive)` per archive to write. `path` ending in `/` is a dir (default name inside);
@@ -2535,17 +2546,18 @@ mod tests {
 
     #[test]
     fn dated_puts_the_stamp_before_the_archive_extension() {
-        let d = |p: &str| dated(Path::new(p), "2026-11-05-17-47");
-        assert_eq!(
-            d("/x/shagshell.zip"),
-            Path::new("/x/shagshell_2026-11-05-17-47.zip")
-        );
-        assert_eq!(
-            d("/x/a.b.tar.gz"),
-            Path::new("/x/a.b_2026-11-05-17-47.tar.gz")
-        );
-        assert_eq!(d("/x/A.7Z"), Path::new("/x/A_2026-11-05-17-47.7Z"));
-        assert_eq!(d("/x/noext"), Path::new("/x/noext_2026-11-05-17-47"));
+        let s = "_2026-11-05-17-47";
+        let d = |p: &str| dated(p, s);
+        assert_eq!(d("/x/shagshell.zip"), "/x/shagshell_2026-11-05-17-47.zip");
+        assert_eq!(d("/x/a.b.tar.gz"), "/x/a.b_2026-11-05-17-47.tar.gz");
+        assert_eq!(d("/x/A.7Z"), "/x/A_2026-11-05-17-47.7Z");
+        assert_eq!(d("/x.y/noext"), "/x.y/noext_2026-11-05-17-47");
+        assert_eq!(d("a.zip"), "a_2026-11-05-17-47.zip");
+        // And back; a name edited past it stays.
+        for p in ["/x/a.b.tar.gz", "/x.y/noext", "a.zip"] {
+            assert_eq!(undated(&dated(p, s), s), p);
+        }
+        assert_eq!(undated("/x/renamed.zip", s), "/x/renamed.zip");
     }
 
     #[test]
