@@ -136,11 +136,28 @@ pub fn with_format(path: &str, f: Format) -> String {
 }
 
 /// Alt+F5 «Add date to name»: `stamp` before the archive extension (`a.tar.gz` →
-/// `a<stamp>.tar.gz`), at the end of a name without one. On a path typed as text (the field).
+/// `a<stamp>.tar.gz`), at the end of a name without one. On a path typed as text (the field);
+/// a dir (`…/`) has no name to date: as it is.
 pub fn dated(path: &str, stamp: &str) -> String {
+    if path.ends_with('/') {
+        return path.to_string();
+    }
     let at = path.rfind('/').map_or(0, |i| i + 1);
     let end = at + stem(&path[at..]).len();
     format!("{}{stamp}{}", &path[..end], &path[end..])
+}
+
+/// The date in the path changed: `old` replaced where it stands (edits around it stay), else
+/// `new` put in as `dated` does.
+pub fn restamp(path: &str, old: &str, new: &str) -> String {
+    let at = path.rfind('/').map_or(0, |i| i + 1);
+    match path[at..].rfind(old) {
+        Some(i) if !old.is_empty() => {
+            let i = at + i;
+            format!("{}{new}{}", &path[..i], &path[i + old.len()..])
+        }
+        _ => dated(path, new),
+    }
 }
 
 /// `dated` undone: `stamp`'s last place in the file name taken out (the name left as typed if
@@ -2558,6 +2575,9 @@ mod tests {
             assert_eq!(undated(&dated(p, s), s), p);
         }
         assert_eq!(undated("/x/renamed.zip", s), "/x/renamed.zip");
+        assert_eq!(d("/x/r/"), "/x/r/"); // a dir: the default name is dated at packing
+        assert_eq!(restamp("/x/a_1-v2.zip", "_1", "_22"), "/x/a_22-v2.zip");
+        assert_eq!(restamp("/x/a.zip", "_1", "_22"), "/x/a_22.zip");
     }
 
     #[test]

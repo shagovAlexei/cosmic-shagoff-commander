@@ -642,22 +642,15 @@ impl App {
                     *recursive = b;
                 }
             }
+            // Kept in the config when packing (`submit_dialog`), not on every key.
             Message::PackDateMask(mask) => {
-                let stamp = self.pack_stamp(&mask);
                 if let Some(Dialog::Pack(p)) = &mut self.dialog {
                     if p.dated {
-                        p.path = archive::dated(&archive::undated(&p.path, &p.stamp), &stamp);
+                        let stamp = pack_stamp(&mask, &self.tz);
+                        p.path = archive::restamp(&p.path, &p.stamp, &stamp);
                         p.stamp = stamp;
                     }
-                    p.mask = mask.clone();
-                }
-                match &self.config_handler {
-                    Some(h) => {
-                        if let Err(e) = self.config.set_pack_date_mask(h, mask) {
-                            self.config_not_saved(&e);
-                        }
-                    }
-                    None => self.config.pack_date_mask = mask,
+                    p.mask = mask;
                 }
             }
             Message::PackPassword(again, s) => {
@@ -673,7 +666,7 @@ impl App {
                     // Shown in the path at once, there to be edited.
                     p.path = archive::undated(&p.path, &p.stamp);
                     p.stamp = match p.dated {
-                        true => multirename::stamp(&p.mask, std::time::SystemTime::now(), &self.tz),
+                        true => pack_stamp(&p.mask, &self.tz),
                         false => String::new(),
                     };
                     p.path = archive::dated(&p.path, &p.stamp);

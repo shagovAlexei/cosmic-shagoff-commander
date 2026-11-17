@@ -660,11 +660,6 @@ impl App {
         items
     }
 
-    /// Alt+F5 «Add date to name»: `mask` at this moment.
-    pub(super) fn pack_stamp(&self, mask: &str) -> String {
-        shagoff_core::multirename::stamp(mask, std::time::SystemTime::now(), &self.tz)
-    }
-
     pub(super) fn save_pack_format(&mut self, f: Format) {
         let v = f.ext().to_string();
         match &self.config_handler {

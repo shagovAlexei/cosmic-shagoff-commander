@@ -276,7 +276,7 @@ impl App {
                 let mut path = path.display().to_string();
                 let mask = self.config.pack_date_mask.clone();
                 let stamp = match self.config.pack_date {
-                    true => self.pack_stamp(&mask),
+                    true => pack_stamp(&mask, &self.tz),
                     false => String::new(),
                 };
                 path = archive::dated(&path, &stamp);
@@ -891,6 +891,17 @@ impl App {
                 self.start_job(m.side, OpKind::Move, job, focus)
             }
             Dialog::Pack(p) => {
+                if p.mask != self.config.pack_date_mask {
+                    let mask = p.mask.clone();
+                    match &self.config_handler {
+                        Some(h) => {
+                            if let Err(e) = self.config.set_pack_date_mask(h, mask) {
+                                self.config_not_saved(&e);
+                            }
+                        }
+                        None => self.config.pack_date_mask = mask,
+                    }
+                }
                 let Ok(password) = p.password() else {
                     self.dialog = Some(Dialog::Pack(p)); // Enter does nothing until they match
                     return Task::none();
@@ -904,8 +915,10 @@ impl App {
                 let is_dir = |s: &Path| p.dirs.iter().any(|d| d == s);
                 let mut groups =
                     archive::groups(&p.sources, &p.base, &path, p.format, p.separate, &is_dir);
-                // One archive: the date is in the path as shown; one per file: added to each.
-                if p.separate && !p.stamp.is_empty() {
+                // One archive: the date is in the path as shown; one per file or into a dir
+                // (`…/`, the default name): added to each.
+                let named = !p.separate && !p.path.trim().ends_with('/');
+                if !named && !p.stamp.is_empty() {
                     for (_, a) in &mut groups {
                         *a = archive::dated(&a.to_string_lossy(), &p.stamp).into();
                     }

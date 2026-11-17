@@ -4036,7 +4036,10 @@ fn pack_date_goes_into_the_path_and_follows_the_mask() {
     assert!(plain.ends_with("/readme.zip"), "{plain}");
     let _ = app.update(Message::Toggle(dialogs::Toggle::PackDate));
     let dated = path(&app);
-    let year = app.pack_stamp("[Y]");
+    let year = match &app.dialog {
+        Some(Dialog::Pack(p)) => p.stamp[1..5].to_string(), // `_YYYY-…`
+        _ => panic!(),
+    };
     assert!(
         dated.contains(&format!("/readme_{year}-")) && dated.ends_with(".zip"),
         "{dated}"
@@ -4044,12 +4047,15 @@ fn pack_date_goes_into_the_path_and_follows_the_mask() {
     // Another mask: the date in the path changes with it, the mask is kept.
     let _ = app.update(Message::PackDateMask(" [Y]".into()));
     assert!(path(&app).ends_with(&format!("/readme {year}.zip")));
-    assert_eq!(app.config.pack_date_mask, " [Y]");
     // Another format keeps it; unticked, it goes.
     let _ = app.update(Message::PackFormat(archive::Format::TarGz));
     assert!(path(&app).ends_with(&format!("/readme {year}.tar.gz")));
     let _ = app.update(Message::Toggle(dialogs::Toggle::PackDate));
     assert!(path(&app).ends_with("/readme.tar.gz"));
+    // The mask is kept when packing.
+    assert_eq!(app.config.pack_date_mask, config::PACK_DATE_MASK);
+    let _ = app.update(Message::DialogSubmit);
+    assert_eq!(app.config.pack_date_mask, " [Y]");
 }
 
 #[test]
