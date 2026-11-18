@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.156.2 — 2026-11-18
+
+- X11 (Xfce and others): the window has the program's own icon in the taskbar and Alt+Tab, not a generic one (the F3 window too)
+
 ## 0.156.1 — 2026-11-18
 
 - Old graphics cards under X11 (OpenGL 3.3, e.g. Radeon HD 4570): the program no longer crashes at start, it draws in software; the window's title is set, so the taskbar shows «Shagoff Commander», not «Untitled window»

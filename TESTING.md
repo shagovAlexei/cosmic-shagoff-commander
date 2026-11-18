@@ -163,6 +163,7 @@
 | `regression_google_photos_is_written_without_rename` | F5 в `upload/` Google Фото: «Input/output error» — копия писалась во временный файл и переименовывалась, а Google Фото переименовывать не умеет | 0.142.0 |
 | `regression_update_offered_only_for_a_newer_rclone` | Настройки → Облака: «Обновить» у своего rclone висела всегда, даже при последней версии | 0.142.2 |
 | `regression_old_gl_gets_software_renderer` | Старая видеокарта (Radeon HD 4570, OpenGL 3.3, X11): iced не получал устройство wgpu, сам уходил на tiny-skia при прозрачном окне — паника softbuffer «Visual 0x70 … unsupported» при запуске | 0.156.1 |
+| `regression_x11_window_icon_is_argb_with_its_size` | X11 (Xfce): на панели задач у окна стандартный значок — `window::set_icon` из iced доходит до winit-x11 чужим типом и стирает `_NET_WM_ICON` | 0.156.2 |
 
 ## Ручной чек-лист UI
 
@@ -2758,5 +2759,23 @@ glxinfo -B | grep -E "Device|Max core"   # OpenGL 3.3 или ниже
 - [ ] Кнопка окна подписана «Shagoff Commander», не «Untitled window».
 3. На компьютере с COSMIC запустить так же.
 - [ ] Строк про GPU нет, окно рисуется как раньше; в панели COSMIC подпись «Shagoff Commander».
+
+Уборка: не нужна.
+
+### Значок окна на X11 (0.156.2)
+
+Нужен X11-рабочий стол с панелью задач (Xfce, например Linux Lite).
+
+Подготовка: не нужна.
+
+Шаги и что должно быть:
+1. Запустить `shagoff-commander`.
+- [ ] На кнопке окна в панели задач — значок программы (синее окно с двумя панелями), не стандартный.
+2. В терминале: `xprop _NET_WM_ICON | head -2`, щёлкнуть по окну программы.
+- [ ] `Icon (64 x 64):`.
+3. Alt+Tab.
+- [ ] В переключателе тот же значок.
+4. F3 на любом текстовом файле (просмотр в отдельном окне).
+- [ ] У окна просмотра на панели задач тот же значок.
 
 Уборка: не нужна.

@@ -7786,3 +7786,15 @@ fn f2_in_the_rename_field_switches_name_and_name_with_extension() {
         })
     ));
 }
+
+#[test]
+fn regression_x11_window_icon_is_argb_with_its_size() {
+    let mut png = Vec::new();
+    let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([0x11, 0x22, 0x33, 0xff]));
+    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let data = super::util::net_wm_icon(&png).unwrap();
+    assert_eq!(&data[..2], &[64, 64]);
+    assert_eq!(data.len(), 2 + 64 * 64);
+    assert_eq!(data[2], 0xff11_2233);
+}

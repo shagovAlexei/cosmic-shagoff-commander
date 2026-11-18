@@ -4659,7 +4659,7 @@ dependencies = [
 
 [[package]]
 name = "shagoff-commander"
-version = "0.156.1"
+version = "0.156.2"
 dependencies = [
  "alacritty_terminal",
  "cosmic-text",
@@ -4678,12 +4678,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "wgpu",
+ "x11rb",
  "zip",
 ]
 
 [[package]]
 name = "shagoff-core"
-version = "0.156.1"
+version = "0.156.2"
 dependencies = [
  "bzip2",
  "chardetng",
