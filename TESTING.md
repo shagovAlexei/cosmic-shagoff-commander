@@ -162,6 +162,7 @@
 | `regression_a_readdir_error_is_the_dirs_error` | Облако, сервер которого отказывает (Яндекс: 410), показывалось пустым каталогом вместо ошибки чтения | 0.142.0 |
 | `regression_google_photos_is_written_without_rename` | F5 в `upload/` Google Фото: «Input/output error» — копия писалась во временный файл и переименовывалась, а Google Фото переименовывать не умеет | 0.142.0 |
 | `regression_update_offered_only_for_a_newer_rclone` | Настройки → Облака: «Обновить» у своего rclone висела всегда, даже при последней версии | 0.142.2 |
+| `regression_old_gl_gets_software_renderer` | Старая видеокарта (Radeon HD 4570, OpenGL 3.3, X11): iced не получал устройство wgpu, сам уходил на tiny-skia при прозрачном окне — паника softbuffer «Visual 0x70 … unsupported» при запуске | 0.156.1 |
 
 ## Ручной чек-лист UI
 
@@ -2741,3 +2742,21 @@ mkdir -p /tmp/pd/l /tmp/pd/r && touch /tmp/pd/l/Script.sh /tmp/pd/l/b.txt
 7. Alt+F5 на `Script.sh`, в пути стереть имя до `/tmp/pd/r/` (каталог), галочка стоит — «Упаковать»: `Script_ГГГГ_ММ_ДД.zip` (имя по умолчанию с датой). Маска с `/` (`_[Y]/[M]`) — в пути `_ГГГГММ`, без нового каталога.
 
 Уборка: `rm -rf /tmp/pd`; вернуть маску `_[Y]-[M]-[D]-[h]-[m]`, если нужна прежняя.
+
+### Запуск на старой видеокарте под X11 и заголовок окна (0.156.1)
+
+Нужна машина с X11 и старой видеокартой без storage-буферов в OpenGL (например, Linux Lite 7.8, Radeon HD 4570, OpenGL 3.3).
+
+Подготовка:
+```sh
+glxinfo -B | grep -E "Device|Max core"   # OpenGL 3.3 или ниже
+```
+Шаги и что должно быть:
+1. Запустить из терминала: `RUST_LOG=warn shagoff-commander`.
+- [ ] Окно открывается, не падает. В терминале строки `GPU limit max_storage_buffers_per_shader_stage: 0 < 4` и `GPU short of what iced_wgpu needs: software rendering`.
+2. Посмотреть на панель задач Xfce.
+- [ ] Кнопка окна подписана «Shagoff Commander», не «Untitled window».
+3. На компьютере с COSMIC запустить так же.
+- [ ] Строк про GPU нет, окно рисуется как раньше; в панели COSMIC подпись «Shagoff Commander».
+
+Уборка: не нужна.
