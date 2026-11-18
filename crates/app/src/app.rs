@@ -1152,6 +1152,12 @@ impl Application for App {
         });
         let volumes = Task::batch([volumes].into_iter().chain(update));
         let task = Task::batch([task, volumes].into_iter().chain(theme));
+        // header_title is drawn by us; X11 taskbars (Xfce) read the window's own: else «Untitled window».
+        let title = app
+            .core
+            .main_window_id()
+            .map(|w| cosmic::ApplicationExt::set_window_title(&mut app, app_title(), w));
+        let task = Task::batch([task].into_iter().chain(title));
         app.saved = saved;
         (app.config_handler, app.state_handler) = (ch, sh);
         (app, task)

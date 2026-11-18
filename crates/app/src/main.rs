@@ -92,13 +92,33 @@ fn pick_renderer() -> bool {
         ..Default::default()
     }));
     let f16 = wgpu::DownlevelFlags::SHADER_F16_IN_F32;
-    if !adapter.is_ok_and(|a| a.get_downlevel_capabilities().flags.contains(f16)) {
-        log::warn!("GPU without SHADER_F16_IN_F32: software rendering (ICED_BACKEND=tiny-skia)");
+    let fits = |a: &wgpu::Adapter| {
+        a.get_downlevel_capabilities().flags.contains(f16) && iced_device_fits(&a.limits())
+    };
+    if !adapter.is_ok_and(|a| fits(&a)) {
+        log::warn!(
+            "GPU short of what iced_wgpu needs: software rendering (ICED_BACKEND=tiny-skia)"
+        );
         // SAFETY: first thing in main, before any other thread exists.
         unsafe { std::env::set_var("ICED_BACKEND", "tiny-skia") };
         return true;
     }
     false
+}
+
+/// The weakest device iced_wgpu's compositor asks for (`downlevel_defaults` with its own bind
+/// limits). Short of it (OpenGL 3.3 on an old Radeon), iced falls back to tiny-skia by itself,
+/// after the window is made transparent, and softbuffer panics on its 32-bit X11 visual.
+fn iced_device_fits(allowed: &wgpu::Limits) -> bool {
+    let wanted = wgpu::Limits {
+        max_bind_groups: 2,
+        max_non_sampler_bindings: 2048,
+        ..wgpu::Limits::downlevel_defaults()
+    };
+    wanted.check_limits_with_fail_fn(allowed, false, |name, want, have| {
+        log::warn!("GPU limit {name}: {have} < {want}: software rendering");
+    });
+    wanted.check_limits(allowed)
 }
 
 /// libcosmic looks icons up in the "Cosmic" theme. Outside COSMIC (Xfce on Linux Lite) there is
@@ -133,4 +153,17 @@ fn desktop_icon_theme() -> Option<String> {
         )
     })
     .filter(|t| icons::theme_installed(t, &dirs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::iced_device_fits;
+
+    #[test]
+    fn regression_old_gl_gets_software_renderer() {
+        // GL ES 3 / old desktop GL: no storage buffers, iced_wgpu cannot get its device.
+        assert!(!iced_device_fits(&wgpu::Limits::downlevel_webgl2_defaults()));
+        assert!(iced_device_fits(&wgpu::Limits::downlevel_defaults()));
+        assert!(iced_device_fits(&wgpu::Limits::default()));
+    }
 }

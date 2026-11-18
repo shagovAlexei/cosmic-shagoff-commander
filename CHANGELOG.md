@@ -2,6 +2,10 @@
 
 Restored from the merged pull requests and tags (the GitHub releases older than the newest five are deleted by CI; see `.github/workflows/release.yml`). Newest first. Add an entry here in every PR that bumps the version.
 
+## 0.156.1 — 2026-11-18
+
+- Old graphics cards under X11 (OpenGL 3.3, e.g. Radeon HD 4570): the program no longer crashes at start, it draws in software; the window's title is set, so the taskbar shows «Shagoff Commander», not «Untitled window»
+
 ## 0.156.0 — 2026-11-17
 
 - Pack (Alt+F5): «Add date to name» puts the date into the path at once (unticked, it goes), so it can be edited there; beside it, its mask with the multi-rename's date variables ([Y] [M] [D] [h] [m] [s], the rest as typed; `_[Y]-[M]-[D]-[h]-[m]` by default), kept for next time

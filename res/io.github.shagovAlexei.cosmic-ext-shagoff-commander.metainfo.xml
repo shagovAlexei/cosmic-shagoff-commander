@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.156.1" date="2026-11-18">
+      <description><p>Old graphics cards under X11 no longer crash the program at start; the taskbar shows its name.</p></description>
+    </release>
     <release version="0.156.0" date="2026-11-17">
       <description><p>Pack: the date shown in the archive's path at once, its format your own.</p></description>
     </release>
