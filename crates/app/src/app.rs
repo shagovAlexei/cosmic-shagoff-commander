@@ -985,6 +985,8 @@ pub enum Message {
     SplitAt(cosmic::iced::window::Id, f32, f32),
     /// The main window's width, for the divider (`Opened` / `Resized`).
     WindowWidth(cosmic::iced::window::Id, f32),
+    /// A window of ours is up: its icon (`WindowWidth` too).
+    WindowOpened(cosmic::iced::window::Id, f32),
     SplitEnd,
     SplitReset,
     ColDragStart(usize, usize),

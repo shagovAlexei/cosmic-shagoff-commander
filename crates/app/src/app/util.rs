@@ -70,10 +70,12 @@ pub(super) fn route_event(
         cosmic::iced::Event::Window(cosmic::iced::window::Event::Closed) => {
             Some(Message::WindowClosed(window))
         }
-        cosmic::iced::Event::Window(
-            cosmic::iced::window::Event::Resized(size)
-            | cosmic::iced::window::Event::Opened { size, .. },
-        ) => Some(Message::WindowWidth(window, size.width)),
+        cosmic::iced::Event::Window(cosmic::iced::window::Event::Resized(size)) => {
+            Some(Message::WindowWidth(window, size.width))
+        }
+        cosmic::iced::Event::Window(cosmic::iced::window::Event::Opened { size, .. }) => {
+            Some(Message::WindowOpened(window, size.width))
+        }
         // Where files are held, in window coordinates: a zone's own `on_drop` point is shifted by
         // the scrollable it sits in. The right-button drop menu opens at the last one.
         cosmic::iced::Event::Dnd(DndEvent::Offer(
@@ -680,6 +682,49 @@ pub(super) fn pack_stamp(mask: &str, tz: &TimeZone) -> String {
 }
 
 /// The window's title; the one run as root says so (232).
+/// The app icon on an X11 window (`_NET_WM_ICON`): Xfce's taskbar shows a generic one without
+/// it. Wayland goes by the app id. Our own connection: iced's `set_icon` never reaches winit-x11.
+pub(super) fn set_x11_icon(w: &dyn cosmic::iced::window::Window) {
+    use cosmic::iced::window::raw_window_handle::RawWindowHandle;
+    use x11rb::{protocol::xproto::*, wrapper::ConnectionExt as _};
+    let xid = match w.window_handle().map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Xlib(h)) => h.window as u32,
+        Ok(RawWindowHandle::Xcb(h)) => h.window.get(),
+        _ => return,
+    };
+    let set = || -> Option<()> {
+        let (conn, _) = x11rb::connect(None).ok()?;
+        let atom = conn
+            .intern_atom(false, b"_NET_WM_ICON")
+            .ok()?
+            .reply()
+            .ok()?
+            .atom;
+        let data = net_wm_icon(include_bytes!(
+            "../../../../res/icons/shagoff-commander-512.png"
+        ))?;
+        // Checked: unchecked, the connection closed before the request went out.
+        let set = conn.change_property32(PropMode::REPLACE, xid, atom, AtomEnum::CARDINAL, &data);
+        set.ok()?.check().ok()
+    };
+    if set().is_none() {
+        log::warn!("window icon: X11 property not set");
+    }
+}
+
+/// `_NET_WM_ICON` data: width, height, then ARGB pixels, 64 px from a PNG.
+pub(super) fn net_wm_icon(png: &[u8]) -> Option<Vec<u32>> {
+    let img = image::load_from_memory(png).ok()?;
+    let img = img
+        .resize(64, 64, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    let (w, h) = img.dimensions();
+    let px = img
+        .pixels()
+        .map(|p| u32::from_be_bytes([p[3], p[0], p[1], p[2]]));
+    Some([w, h].into_iter().chain(px).collect())
+}
+
 pub(super) fn app_title() -> String {
     match shagoff_core::launch::is_root() {
         true => fl!("app-title-root"),

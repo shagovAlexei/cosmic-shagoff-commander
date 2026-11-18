@@ -2289,6 +2289,11 @@ impl App {
             }
             Message::WindowWidth(window, w) if window == self.window_id() => self.win_w = w,
             Message::WindowWidth(..) => {}
+            Message::WindowOpened(window, w) => {
+                let width = self.update(Message::WindowWidth(window, w));
+                let icon = cosmic::iced::window::run(window, set_x11_icon).discard();
+                return Task::batch([width, icon]);
+            }
             Message::Dismiss(None) => self.status = None,
             Message::Dismiss(Some(side)) => self.panes[side].active_mut().error = None,
             Message::SplitStart => {

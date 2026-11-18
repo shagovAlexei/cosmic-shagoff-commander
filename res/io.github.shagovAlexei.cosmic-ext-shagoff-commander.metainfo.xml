@@ -58,6 +58,9 @@
     <color type="primary" scheme_preference="dark">#1d4a57</color>
   </branding>
   <releases>
+    <release version="0.156.2" date="2026-11-18">
+      <description><p>X11: the program's own icon in the taskbar.</p></description>
+    </release>
     <release version="0.156.1" date="2026-11-18">
       <description><p>Old graphics cards under X11 no longer crash the program at start; the taskbar shows its name.</p></description>
     </release>
