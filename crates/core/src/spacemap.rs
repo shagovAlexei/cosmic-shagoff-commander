@@ -227,8 +227,8 @@ mod tests {
     fn the_map_steps_in_and_back_out_onto_the_dir_left() {
         let t = tempfile::tempdir().unwrap();
         fs::create_dir_all(t.path().join("a/b")).unwrap();
-        fs::write(t.path().join("a/b/x"), vec![0; 10]).unwrap();
-        fs::write(t.path().join("z"), vec![0; 5]).unwrap();
+        fs::write(t.path().join("a/b/x"), vec![1; 100_000]).unwrap();
+        fs::write(t.path().join("z"), vec![1; 50_000]).unwrap();
         fs::create_dir(t.path().join("empty")).unwrap();
         let tree = scan(t.path(), &AtomicBool::new(false)).unwrap();
         let mut m = Map::new(t.path().to_path_buf(), tree);
